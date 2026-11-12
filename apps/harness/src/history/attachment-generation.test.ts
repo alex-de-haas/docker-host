@@ -19,7 +19,7 @@ const actor = { userId: "owner", principalId: "reader", hostRole: "host.admin" }
 const bytes = Buffer.from("immutable accepted input ".repeat(2048));
 const digest = createHash("sha256").update(bytes).digest("hex");
 const revision = BigInt("0x" + digest.slice(0, 32)).toString();
-let root: string, target: string, sessions: SessionStore, history: HistoryService, reads: number;
+let root: string, target: string, sessions: SessionStore, history: HistoryService, reads: number, journalReads: number;
 const record: SessionRecord = { id: "chat", createdBy: "owner", status: "idle", title: null, context: null,
   harnessSessionId: null, createdAt: "2026-11-12T00:00:00.000Z", updatedAt: "2026-11-12T00:00:00.000Z", lastEventSeq: 0 };
 const append = (seq: number, type: string, rest: Record<string, unknown>) => sessions.appendEvent(record.id, { seq, type, ts: record.createdAt, ...rest });
@@ -29,8 +29,12 @@ beforeEach(async () => {
   root = await actual.mkdtemp(path.join(os.tmpdir(), "hosty-attachment-generation-")); sessions = new SessionStore(root);
   await sessions.createSession({ ...record, sourceAttachments: [{ id: "file", name: "proof.txt", digest, size: bytes.length }] });
   const directory = path.join(sessions.messageQueueDirectory(record.id), "files"); await actual.mkdir(directory, { recursive: true });
-  target = path.join(directory, digest); await actual.writeFile(target, bytes); reads = 0;
-  vi.mocked(fs.readFile).mockImplementation(async (...args) => { if (args[0] === target) reads++; return actual.readFile(...args); });
+  target = path.join(directory, digest); await actual.writeFile(target, bytes); reads = 0; journalReads = 0;
+  vi.mocked(fs.readFile).mockImplementation(async (...args) => {
+    if (args[0] === target) reads++;
+    if (args[0] === path.join(root, "sessions", record.id, "events.ndjson")) journalReads++;
+    return actual.readFile(...args);
+  });
   vi.mocked(fs.open).mockImplementation(async (...args) => {
     const handle = await actual.open(...args);
     if (args[0] === target) {
@@ -45,9 +49,11 @@ afterEach(async () => { history.close(); vi.restoreAllMocks(); await actual.rm(r
 
 it("does not reread immutable payloads for repeated history references and streaming source updates", async () => {
   await append(1, "user_message", { text: "inspect", attachments: ["proof.txt", "proof.txt"], attachmentDigests: { "proof.txt": digest } });
-  await append(2, "user_message", { text: "inspect again", attachments: ["proof.txt"], attachmentDigests: { "proof.txt": digest } });
-  for (let seq = 3; seq < 9; seq++) await append(seq, "assistant_text", { text: `stream frame ${seq}` });
+  for (let seq = 2; seq < 11; seq++) await append(seq, "user_message", { text: "inspect again", attachments: ["proof.txt"], attachmentDigests: { "proof.txt": digest } });
+  for (let seq = 11; seq < 17; seq++) await append(seq, "assistant_text", { text: `stream frame ${seq}` });
+  journalReads = 0;
   await history.read(actor, { conversation: { provider, id: record.id } });
+  expect(journalReads).toBeLessThanOrEqual(2);
   expect(reads).toBe(1);
   expect(await attachmentFile(sessions, record.id, "proof.txt", { revision, offset: 0, length: bytes.length }, digest)).toEqual(bytes);
   expect(reads).toBe(2);

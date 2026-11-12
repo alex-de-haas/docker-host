@@ -84,6 +84,8 @@ export class HistoryService {
     await this.storage.locked(async () => {
       const state = await this.sync();
       for (const [key, acl] of Object.entries(guard.acls)) {
+        if (state.unavailable?.includes(key) && (state.partitions?.[key]?.owner === actor.userId || this.grants(state, key, actor).length))
+          fail("history_recovery_required", "This conversation history requires storage recovery.", 503);
         const source = state.conversations[key];
         if (!source || source.acl !== acl || guard.disclosures[key] !== this.disclosure(state, key, actor) || source.metadata.ownerUserId !== actor.userId && !this.grants(state, key, actor).length)
           fail("revision_conflict", "Source access changed before delivery. Read the current source again.", 409);
@@ -128,7 +130,7 @@ export class HistoryService {
           const source = events.find(event => `event-${event.seq}` === entry.ref.id);
           const identities = source?.attachmentDigests as Record<string, string> | undefined;
           const identity = identities?.[part.attachmentId];
-          const file = await attachmentFile(this.sessions, record.id, part.attachmentId, undefined, identity);
+          const file = await attachmentFile(this.sessions, record.id, part.attachmentId, undefined, identity, record);
           if (!Buffer.isBuffer(file)) { part.revision = file.revision; part.sizeBytes = file.sizeBytes; }
         } catch (error) {
           if ((error as { code?: string }).code?.startsWith("session_storage_") || error instanceof ProviderError && error.code === "history_recovery_required") { attachmentUnavailable = true; continue; }

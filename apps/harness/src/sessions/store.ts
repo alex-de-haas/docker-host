@@ -250,10 +250,24 @@ export class SessionStore {
     finally { if (this.writes.get(id) === task) this.writes.delete(id); }
   }
   assertWritable(id: string): void { if (this.sealed.has(id)) throw this.sealed.get(id)!; }
+  private async settleSourceDirectory(id: string, target: string): Promise<void> {
+    await durableMkdir(path.dirname(target));
+    // A reopened partial directory chain must also settle its persisted session boundary.
+    try { await syncDirectory(this.sessionDir(id)); }
+    catch (error) { throw new DurableWriteError(target, error); }
+  }
+  /** Reconcile an existing byte publication before acknowledging its retained identity. */
+  async settleSourcePublication(id: string, target: string): Promise<void> {
+    await this.serialize(id, async () => {
+      const info = await lstat(target);
+      if (!info.isFile() || info.isSymbolicLink()) throw this.problem(id, new Error("invalid retained source publication"));
+      await this.settleSourceDirectory(id, target);
+    }, true);
+  }
   /** Authoritative attachment/upload bytes use the same uncertain-write fence as records. */
   async saveSourceFile(id: string, target: string, content: string | Buffer, create = false): Promise<void> {
     await this.serialize(id, async () => {
-      await durableMkdir(path.dirname(target));
+      await this.settleSourceDirectory(id, target);
       await (create ? durableCreateFile(target, content) : durableWriteFile(target, content));
     }, true);
   }
@@ -310,10 +324,17 @@ export class SessionStore {
   async acceptedAttachmentMetadata(id: string, nameOrId: string, identity?: string): Promise<AcceptedAttachmentMetadata | null> {
     return this.loadAcceptedAttachment(id, nameOrId, identity, false);
   }
+  /** Internal history projection reuses a source record/journal already reconciled by its caller. */
+  async acceptedAttachmentMetadataFromSnapshot(record: SessionRecord, nameOrId: string, identity?: string): Promise<AcceptedAttachmentMetadata | null> {
+    this.sessionDir(record.id); this.assertWritable(record.id);
+    if (record.storageRecovery) throw new SessionStorageError(record.id, record.storageRecovery.code, record.storageRecovery.message);
+    if (await this.deleted(record.id)) return null;
+    return this.loadAcceptedAttachment(record.id, nameOrId, identity, false, record);
+  }
   private loadAcceptedAttachment(id: string, nameOrId: string, identity: string | undefined, content: true): Promise<AcceptedAttachment | null>;
-  private loadAcceptedAttachment(id: string, nameOrId: string, identity: string | undefined, content: false): Promise<AcceptedAttachmentMetadata | null>;
-  private async loadAcceptedAttachment(id: string, nameOrId: string, identity: string | undefined, content: boolean): Promise<AcceptedAttachmentMetadata | AcceptedAttachment | null> {
-    const record = await this.readRecord(id);
+  private loadAcceptedAttachment(id: string, nameOrId: string, identity: string | undefined, content: false, snapshot?: SessionRecord): Promise<AcceptedAttachmentMetadata | null>;
+  private async loadAcceptedAttachment(id: string, nameOrId: string, identity: string | undefined, content: boolean, snapshot?: SessionRecord): Promise<AcceptedAttachmentMetadata | AcceptedAttachment | null> {
+    const record = snapshot ?? await this.readRecord(id);
     const revision = (digest: string) => /^[a-f0-9]{64}$/.test(digest) ? BigInt("0x" + digest.slice(0, 32)).toString() : "invalid";
     const file = record?.sourceAttachments?.findLast(candidate => (candidate.name === nameOrId || candidate.id === nameOrId)
       && (!identity || candidate.digest === identity || revision(candidate.digest) === identity));

@@ -286,11 +286,17 @@ it("keeps healthy conversations and global receipts available when one committed
 
 it("does not infer deletion or revoke sharing from a corrupt source record", async () => {
   const grant = await share(), before = await history.storage.read();
+  const snapshot = await history.read(owner, { conversation: ref() });
   await writeFile(path.join(root, "sessions", record.id, "record.json"), "\0".repeat(100));
   expect((await history.list(owner, { provider })).conversations).toEqual([]);
   const next = await history.storage.read(); expect(next.shares[0]!.id).toBe(grant.grant.id);
   expect(next.sequence).toBe(before.sequence); expect(next.partitions![record.id]).toEqual(before.partitions![record.id]);
   await expect(history.get(owner, { entry: entry(1) })).rejects.toMatchObject({ code: "history_recovery_required" });
+  let delivered = false;
+  await expect(history.deliver(owner, snapshot, () => { delivered = true; })).rejects.toMatchObject({ code: "history_recovery_required" });
+  await rm(path.join(root, "sessions", record.id, "record.json"));
+  await expect(history.deliver(owner, snapshot, () => { delivered = true; })).rejects.toMatchObject({ code: "history_recovery_required" });
+  expect(delivered).toBe(false);
 });
 
 it("isolates malformed query snapshots and expires their continuations without blocking source deletion", async () => {

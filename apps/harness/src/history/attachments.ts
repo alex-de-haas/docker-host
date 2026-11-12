@@ -1,16 +1,18 @@
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import path from "node:path";
-import type { SessionStore } from "../sessions/store.js";
+import type { SessionRecord, SessionStore } from "../sessions/store.js";
 import { fingerprint } from "./projection.js";
 import { fail, missing } from "./storage.js";
 
 const stamp = (info: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number }) => BigInt("0x" + fingerprint([info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs]).slice(0, 32)).toString();
 /** Open a regular source-owned cache file without following a tool-created link. No path leaves Harness. */
-export async function attachmentFile(sessions: SessionStore, conversation: string, name: string, read?: { revision: string; offset: number; length: number }, identity?: string) {
+export async function attachmentFile(sessions: SessionStore, conversation: string, name: string, read?: { revision: string; offset: number; length: number }, identity?: string, source?: SessionRecord) {
+  if (!read && source && source.id !== conversation) return fail("history_recovery_required", "The source attachment snapshot differs from its conversation.", 503);
   const accepted = read
     ? await sessions.acceptedAttachment(conversation, name, identity ?? read.revision)
-    : await sessions.acceptedAttachmentMetadata(conversation, name, identity);
+    : source ? await sessions.acceptedAttachmentMetadataFromSnapshot(source, name, identity)
+      : await sessions.acceptedAttachmentMetadata(conversation, name, identity);
   if (accepted) {
     if (!read) return { attachmentId: name, revision: accepted.revision, name: accepted.name, mediaType: "application/octet-stream", sizeBytes: accepted.size };
     if (!("bytes" in accepted) || !Buffer.isBuffer(accepted.bytes)) return fail("history_recovery_required", "The accepted attachment content requires verification.", 503);

@@ -30,6 +30,16 @@ History metadata reconciliation reuses a bounded, payload-free integrity proof
 for an unchanged physical attachment generation. Initial verification and every
 actual content read check the full digest; file identity, size and nanosecond
 modification/change times invalidate the metadata proof after replacement or damage.
+Reconciliation passes its already-validated session snapshot to metadata checks,
+so historical attachment references do not each reread the transcript. Actual
+reads retain fresh source reconciliation, and final delivery refuses a source
+that becomes corrupt or missing after the original query.
+
+The source writer creates upload directory chains durably before acknowledgement
+and settles their persisted session boundary. A verified existing blob or upload
+receipt also re-enters the fenced writer and settles its publication before UUID
+replay succeeds, including after reopening an uncertain first upload. A sealed
+writer cannot acknowledge an upload through an existing-file fast path.
 
 The API and Worker each hold an OS-backed exclusive writer lock for their data
 role before startup recovery or mutation. The lock file contains no conversations.
@@ -124,7 +134,7 @@ Verified in a registered local Core workspace on macOS ARM64 with Node 24.18.0,
 .NET 10.0.402 and Docker 29.9.3:
 
 - `npm run harness:lint` passes backend/web TypeScript and ESLint.
-- `npm run harness:test` passes 3,010 tests across 254 files. Four child-process
+- `npm run harness:test` covers 3,016 tests across 255 files. Four child-process
   crash probes stop after preparation, input commit, native-effect simulation and
   accepted-receipt commit; reopening never duplicates the synthetic effect.
 - `npm run harness:build-web` and
@@ -136,8 +146,8 @@ Verified in a registered local Core workspace on macOS ARM64 with Node 24.18.0,
   passes normal child Core password login and launch-code identity, compiled
   assets, accepted paused input/attachment and UUID replay after real API/Worker
   restart, isolated corrupt session/run records and the controlled Chrome UI
-  scenarios. Cold start is 41.648 s, warm restart 2.137 s and missing-output
-  recovery 27.940 s. Parent Finish confirms resource removal.
+  scenarios. Cold start is 56.911 s, warm restart 2.060 s and missing-output
+  recovery 32.501 s. Parent Finish confirms resource removal.
 - Version consistency, documentation links/index and whitespace checks pass.
 
 Standalone storage checks on Windows with Node 24.19.0 pass 11 scenarios plus a
@@ -168,7 +178,11 @@ ILCompiler advisory/analyzer warnings and complete without errors.
   and repeated direct references without exhausting pending-upload capacity.
 - Count payload reads across repeated history metadata/streaming updates. Verify
   actual content reads still hash bytes and physical-generation changes, exact
-  restored-mtime corruption and missing cached files require recovery.
+  restored-mtime corruption and missing cached files require recovery. Bound
+  transcript reads independently of historical attachment-reference count.
+- Inject first-upload directory flush and post-publication blob/receipt flush
+  failures. Refuse same-process replay through a sealed writer, then settle the
+  original UUID after reopen without skipping leaf or session directory flushes.
 - Seal source storage during execution and verify Stop reaches the real native
   child or Worker while retaining durable recovery evidence and source leases.
 - Attach during normal admission, settle it through authoritative refresh, and

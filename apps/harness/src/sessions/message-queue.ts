@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, stat, open, rm } from "node:fs/promises";
+import { readFile, readdir, stat, open, rm } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
@@ -124,13 +124,15 @@ export class MessageQueue {
   }
   private async retain(id: string, bytes: Buffer): Promise<string> {
     const digest = createHash("sha256").update(bytes).digest("hex"), target = this.filePath(id, digest);
-    await mkdir(path.dirname(target), { recursive: true });
     try {
       const existing = await readFile(target);
-      if (existing.length === bytes.length && createHash("sha256").update(existing).digest("hex") === digest) return digest;
+      if (existing.length === bytes.length && createHash("sha256").update(existing).digest("hex") === digest) {
+        await this.store.settleSourcePublication(id, target); return digest;
+      }
       return fail("queue_attachment_changed", "A retained attachment failed verification. Preserve the queue for recovery.", 503);
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    const files = await readdir(path.dirname(target));
+    // saveSourceFile creates the missing chain durably, preserving its highest new parent entry.
+    const files = await readdir(path.dirname(target)).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? [] : Promise.reject(error));
     const sizes = await Promise.all(files.filter(f => /^[a-f0-9]{64}$/.test(f)).map(f => stat(path.join(path.dirname(target), f))));
     if (sizes.length >= MAX_ATTACHMENTS_PER_SESSION || sizes.reduce((sum, f) => sum + f.size, 0) + bytes.length > MAX_SESSION_ATTACHMENT_BYTES)
       return fail("queue_attachment_capacity", "This conversation's durable attachment allowance is full.", 413);
@@ -159,12 +161,12 @@ export class MessageQueue {
       // an earlier queued entry was retired and its queue-only bytes were collected.
       if (this.state(record).claimedAttachments[id]) await this.change(record, next => { delete next.claimedAttachments[id]; });
       await this.retain(record.id, bytes); await this.attachmentBytes(record.id, prior);
+      await this.store.settleSourcePublication(record.id, receiptPath);
       return { id: prior.id, name: prior.name, size: prior.size, displayName: prior.displayName };
     }
     await this.attachmentCapacity(record, id);
     await this.retain(record.id, bytes);
     const attachment = { id, name: fitToBytes(`q-${id}-${safe}`, 200), displayName: safe, size, digest, originalName };
-    await mkdir(path.dirname(receiptPath), { recursive: true });
     await this.store.saveSourceFile(record.id, receiptPath, JSON.stringify(attachment));
     return { id, name: attachment.name, size, displayName: safe };
   }
@@ -202,7 +204,6 @@ export class MessageQueue {
       const snapshot = { id, name: fitToBytes(`q-${id}-${name}`, 200), displayName: name,
         size: bytes.length, digest, originalName: name };
       const receiptPath = path.join(this.root(record.id), "uploads", id + ".json");
-      await mkdir(path.dirname(receiptPath), { recursive: true });
       await this.store.saveSourceFile(record.id, receiptPath, JSON.stringify(snapshot));
       result.push(snapshot);
     }
