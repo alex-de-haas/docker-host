@@ -40,12 +40,13 @@ async function setup(stopAndWait: () => Promise<void> = async () => {}) {
 describe("direct worker contract", () => {
   it("transports verified instruction provenance and rejects mismatched metadata", async () => {
     const f = await setup();
-    const valid = { ...request(), options: { systemPrompt: "instructions", instructionSources: [{ source: "runtime" as const, text: "instructions" }] } };
+    const valid = { ...request(), skillExportId: "a".repeat(64), options: { systemPrompt: "instructions", instructionSources: [{ source: "runtime" as const, text: "instructions" }] } };
     expect((await f.put("run-bad", { ...valid, options: { ...valid.options, systemPrompt: "different" } })).status).toBe(400);
     expect((await f.put("run-invalid", { ...valid, options: { ...valid.options, systemPrompt: 12 as never } })).status).toBe(400);
     expect((await f.put("run-good", valid)).status).toBe(202);
     await expect.poll(f.options).toBeDefined();
     expect(f.options()?.instructionSources).toEqual(valid.options.instructionSources);
+    expect(f.options()?.skillExportId).toBe(valid.skillExportId);
   });
   it("authenticates execution independently from public health", async () => {
     const f = await setup();

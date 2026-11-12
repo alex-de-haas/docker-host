@@ -47,6 +47,8 @@ describe("codex harness adapter", () => {
     delete process.env.HOSTY_TEST_PREDICTION_VERSION;
     delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
     delete process.env.HOSTY_TEST_CONTEXT_CATALOG;
+    delete process.env.HOSTY_TEST_SKILL_ROOTS;
+    delete process.env.HOSTY_TEST_REJECT_SKILL_ROOTS;
   });
 
   function start(resumeHarnessSessionId?: string): HarnessRun {
@@ -59,6 +61,43 @@ describe("codex harness adapter", () => {
     });
     return run;
   }
+
+  it.each([undefined, "existing-native-thread"])("registers selected skill roots before opening native context (%s) and retains the connection home", async resumeHarnessSessionId => {
+    const nativeHome = path.join(authDir, "selected-skills"), connectionHome = path.join(authDir, "connection");
+    const roots = [path.join(nativeHome, ".agents", "skills")];
+    process.env.HOSTY_TEST_SKILL_ROOTS = JSON.stringify(roots);
+    run = new CodexHarnessAdapter({ dataDir: authDir, codexHome: connectionHome }).start({ sessionId: "skills", cwd: process.cwd(),
+      nativeHome, skillExportId: "a".repeat(64), resumeHarnessSessionId, onEvent: event => events.push(event) });
+    run.send("native-skills");
+    await waitFor(() => events.find(event => event.type === "result" || event.type === "error"), "selected skill registration");
+    expect(events.filter(event => event.type === "error")).toEqual([]);
+    const reply = events.find(event => event.type === "assistant_text");
+    expect(reply?.type === "assistant_text" && JSON.parse(reply.text)).toEqual({ roots, home: nativeHome, codexHome: connectionHome,
+      thread: resumeHarnessSessionId ?? "thread-fake-1" });
+  });
+
+  it("leaves native skill roots unchanged when an isolated home has no skill export", async () => {
+    process.env.HOSTY_TEST_SKILL_ROOTS = "[]";
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "no-skills", cwd: process.cwd(),
+      nativeHome: path.join(authDir, "isolated-no-skills"), onEvent: event => events.push(event) });
+    run.send("native-skills");
+    await waitFor(() => events.find(event => event.type === "result" || event.type === "error"), "unmodified skill roots");
+    expect(events.filter(event => event.type === "error")).toEqual([]);
+    const reply = events.find(event => event.type === "assistant_text");
+    expect(reply?.type === "assistant_text" && JSON.parse(reply.text).roots).toEqual([]);
+  });
+
+  it("reports refused selected skill roots before dispatching a native thread", async () => {
+    const nativeHome = path.join(authDir, "refused-skills");
+    process.env.HOSTY_TEST_SKILL_ROOTS = JSON.stringify([path.join(nativeHome, ".agents", "skills")]);
+    process.env.HOSTY_TEST_REJECT_SKILL_ROOTS = "1";
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "refused-skills", cwd: process.cwd(),
+      nativeHome, skillExportId: "b".repeat(64), onEvent: event => events.push(event) });
+    run.send("native-skills");
+    const error = await waitFor(() => events.find(event => event.type === "error"), "skill registration failure");
+    expect(error).toMatchObject({ message: "fixture skill roots refused" });
+    expect(events.some(event => event.type === "harness_session" || event.type === "result")).toBe(false);
+  });
 
   it("attaches local instruction/catalog estimates without changing native totals and refreshes on MCP replacement", async () => {
     run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(),

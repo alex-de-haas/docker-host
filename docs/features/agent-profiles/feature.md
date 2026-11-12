@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-11-04
+updated: 2026-11-12
 summary: Shared Harness agent configurations with connection, model, reasoning, role instructions and explicit skills, selectable before a conversation starts.
 components: [apps/harness]
 ---
@@ -80,7 +80,9 @@ unlock them.
 The session stores a copy of the selected profile. At the first admitted message it captures common
 workflow instructions, common operator instructions and role instructions. The profile then remains
 fixed, including after restart. Editing or deleting the source profile does not rewrite the stored
-role, instructions or skill selection. Existing explicit model/reasoning controls remain available
+role, instructions or skill selection. Codex receives the exported selection through its native
+process-local skill roots before each fresh or resumed thread, including on Windows; delivery does
+not depend on a process home override or alter shared connection configuration. Existing explicit model/reasoning controls remain available
 between turns; the provider retains its existing started-session lock. Unavailable configured
 providers/models are reported rather than silently replaced. A profile with a missing default
 connection requires an available connection before execution.
