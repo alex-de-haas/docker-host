@@ -7,19 +7,23 @@ import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
 import { SessionAgentSettings, type AgentSettingsNotice } from "@/components/session-agent-settings";
 import { SessionAutonomy } from "@/components/session-autonomy";
 import { SessionExecutionRecovery } from "@/components/session-execution-recovery";
+import { StorageRecoveryNotice } from "@/components/storage-recovery-notice";
 import { SessionExecutionIndicator } from "@/components/session-execution-indicator";
 import { useHostyUi } from "@hosty-sdk/app/ui/react";
 import { AssistantActivity } from "@/components/assistant-activity";
 import type { SessionActivity } from "../../../src/harness/activity";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 import { SpeechInput } from "@/components/speech-input";
 import { SessionCredentials } from "@/components/session-credentials";
 import { SessionSandboxes } from "@/components/session-sandboxes";
 import { SessionWorkspaces } from "@/components/session-workspaces";
 import { usePromptSuggestions } from "@/lib/prompt-suggestions";
-import { PromptSuggestionCard } from "@/components/prompt-suggestion";
+import { MessageQueue, queueFileLabel } from "@/components/message-queue";
+import { useMessageQueue } from "@/lib/use-message-queue";
+import { uploadQueueAttachment, type QueueEntry } from "@/lib/message-queue-api";
+import { clearEditDraft, listPreservedDrafts, outboxFiles, preserveDraft, readEditDraft, removePreservedDraft, restoredFiles, saveEditDraft, type EditDraft, type OutboxFile, type PreservedDraft } from "@/lib/message-outbox";
 import { AppMentionInput, type AppMentionInputHandle } from "@/components/app-mention-input";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { AppContextPicker, type AppContextPickerHandle } from "@/components/app-context-picker";
@@ -55,11 +59,10 @@ import { approvalDecisions, cancelledQuestions, ToolActivity, TranscriptEvent } 
 import { retryHandoff } from "@/lib/assistant-api";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, draftStorageText, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
-import { dispatchPendingSend, forgetPendingSend, readPendingSend, claimPendingSend, PENDING_SEND_PREFIX, PENDING_SEND_CHANGED, withPendingSendLock, isMessageAdmissionRejection, retryPendingSend, type PendingSend } from "@/lib/pending-send";
+import { forgetPendingSend, readPendingSend, PENDING_SEND_PREFIX, PENDING_SEND_CHANGED, withPendingSendLock, retryPendingSend, type PendingSend } from "@/lib/pending-send";
 import { useSessionListRefresh } from "@/lib/use-session-list-refresh";
 import { activityTime, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import {
-  AssistantApiError,
   createSession,
   deleteSession,
   getHealth,
@@ -108,6 +111,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // Retain the expected message-selected session even if fetching it fails.
   const [surfaceSessionId, setSurfaceSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<AssistantSession | null>(null);
+  const sessionSnapshot = useRef<AssistantSession | null>(null);
+  useLayoutEffect(() => { sessionSnapshot.current = session; }, [session]);
   useEffect(() => {
     const route = new URL(window.location.href);
     const expected = route.searchParams.get("session");
@@ -126,6 +131,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [historyReadyFor, setHistoryReadyFor] = useState<string | null>(null);
   const historyLoading = !!session && historyReadyFor !== session.id && connection !== "disconnected";
   const [events, setEvents] = useState<AssistantEvent[]>([]);
+  const transcriptRequestIds = useMemo(() => new Set(events.flatMap(event => event.type === "user_message" && typeof event.clientRequestId === "string" ? [event.clientRequestId] : [])), [events]);
   const [streamed, setStreamed] = useState("");
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -150,6 +156,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const contextPickerRef = useRef<AppContextPickerHandle>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const openContextAfterMenu = useRef(false);
+  const openTemplatesAfterMenu = useRef(false);
   const onSessionChange = useCallback((record: AssistantSession) => {
     const merge = (current: AssistantSession) => current.id !== record.id ? current : {
       ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0)
@@ -171,8 +178,6 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [pending, setPending] = useState<File[]>([]);
   const pendingBySession = useRef(new Map<string, File[]>());
   useEffect(() => { if (session) pendingBySession.current.set(session.id, pending); }, [session, pending]);
-  const [uploadingFile, setUploadingFile] = useState<File | null>(null);
-  const [failedUpload, setFailedUpload] = useState<File | null>(null);
   // Fetched once: the roster changes when apps are installed, not between messages, and a failed
   // read leaves every label as the wire name — which is what the transcript showed before.
   const [appNames, setAppNames] = useState<Record<string, string>>({});
@@ -247,9 +252,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   }
   // A failed inventory read cannot reopen known closed source; only an observed active workflow can.
   const workspaceReadOnly = observedWorkspaceFence || (!observedWorkspaceActive && !!session && fencedWorkspaceSessions.has(session.id));
-  const composerBlocked = workspaceReadOnly || inventory.loading;
+  const composerHidden = workspaceReadOnly || inventory.loading;
+  const storageBlocked = !!session?.storageRecovery || !!session?.sourceAdmission;
+  const composerBlocked = composerHidden || storageBlocked;
   const composerBlockedRef = useRef(composerBlocked);
-  useEffect(() => { composerBlockedRef.current = composerBlocked; }, [composerBlocked]);
+  useLayoutEffect(() => { composerBlockedRef.current = composerBlocked; }, [composerBlocked]);
   const activeSessionId = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   // Reach the current deletion handler from the stream without stale state.
@@ -259,14 +266,206 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   const mentionInputRef = useRef<AppMentionInputHandle>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
-  const suggestions = usePromptSuggestions(session, ready, !!input || pending.length > 0 || uploaded.length > 0);
+  const messageQueue = useMessageQueue(session, ready);
+  const { queue: queueSnapshot, scope: queueScope, perform: performQueue, operation: queueOperation } = messageQueue;
+  const queueReceive = messageQueue.receive;
+  // A new document gets a new view. Reload/duplicated tabs recover a reservation explicitly.
+  const [viewId] = useState(() => crypto.randomUUID());
+  const [editTransition, setEditTransition] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [preserved, setPreserved] = useState<{ scope: string; drafts: PreservedDraft[] } | null>(null);
+  const [composerEpoch, setComposerEpoch] = useState(0);
+  const editFiles = useRef(new WeakMap<File, OutboxFile>());
+  const restoredEdit = useRef("");
+  const currentDraft = useRef({ input, pending, uploaded });
+  useLayoutEffect(() => { currentDraft.current = { input, pending, uploaded }; }, [input, pending, uploaded]);
+  const editing = editDraft?.scope === queueScope ? editDraft : null;
+  const savedDrafts = preserved?.scope === queueScope ? preserved.drafts : [];
+  const editRow = queueSnapshot?.entries.find(entry => entry.id === editing?.entryId);
+  const editOwnershipLost = !!editing && !!queueSnapshot && (editRow?.edit?.reservationId !== editing.reservationId || editRow.edit.viewId !== viewId);
+  const suggestions = usePromptSuggestions(session, ready, !!input || pending.length > 0 || uploaded.length > 0 || !!editing, {
+    insert: text => mentionInputRef.current?.insertPlainText(text) ?? false, scope: queueSnapshot?.installationId,
+  });
   const suggestionsReceive = suggestions.receive;
+  const draftGeneration = useRef(new Map<string, number>());
+  const suggestionInteracted = suggestions.interact;
+  const draftInteracted = useCallback(() => {
+    const id = activeSessionId.current;
+    if (id) draftGeneration.current.set(id, (draftGeneration.current.get(id) ?? 0) + 1);
+    suggestionInteracted();
+  }, [suggestionInteracted]);
+  const editLocked = editSaving || editOwnershipLost || editTransition === session?.id || !!queueOperation && ["reserve_edit", "recover_edit", "save_edit", "cancel_edit"].includes(queueOperation.input.command.type);
   const visibleSuggestion = !running && !sending && !pendingSend && !contextSaving && !mentionSaving && !providerSaving
-    && !composerBlocked && connection === "connected" ? suggestions.suggestion : null;
-  const acceptSuggestion = () => {
-    if (!visibleSuggestion || composerRef.current?.value) return;
-    mentionInputRef.current?.insertPlainText(visibleSuggestion.text!);
-    suggestions.interact();
+    && !composerBlocked && queueSnapshot && connection === "connected" ? suggestions.suggestion : null;
+  const acceptSuggestion = () => { if (visibleSuggestion) void suggestions.select(visibleSuggestion.suggestionId); };
+  const fileSnapshots = useCallback((files: File[]) => files.map(file => {
+    let stored = editFiles.current.get(file);
+    if (!stored) { stored = outboxFiles([file])[0]!; editFiles.current.set(file, stored); }
+    return stored;
+  }), []);
+  const restoreComposer = useCallback((draft: { text: string; attachments: StoredAttachment[]; files: OutboxFile[] }, persist = true) => {
+    draftInteracted();
+    const files = restoredFiles(draft.files);
+    files.forEach((file, index) => editFiles.current.set(file, draft.files[index]!));
+    setInput(draft.text); setUploaded(draft.attachments); setPending(files);
+    if (persist && activeSessionId.current) { writeDraft(activeSessionId.current, draft.text); writeDraftAttachments(activeSessionId.current, draft.attachments); }
+  }, [draftInteracted]);
+  useEffect(() => {
+    if (!queueScope) return;
+    let active = true;
+    void listPreservedDrafts(queueScope).then(drafts => { if (active) setPreserved({ scope: queueScope, drafts }); })
+      .catch(cause => { if (active && typeof indexedDB !== "undefined") setError(String(cause)); });
+    return () => { active = false; };
+  }, [queueScope]);
+  useEffect(() => {
+    const key = queueScope;
+    if (!key) { restoredEdit.current = ""; return; }
+    const entry = queueSnapshot?.entries.find(entry => entry.edit?.viewId === viewId);
+    if (!entry?.edit || restoredEdit.current === `${key}:${entry.edit.reservationId}`) return;
+    let active = true;
+    void Promise.all([readEditDraft(key, entry.id, entry.edit.reservationId), readEditDraft(key, entry.id, `pending:${viewId}`), readEditDraft(key, entry.id)])
+      .then(([exact, pending, current]) => {
+      const local = exact ?? pending ?? current;
+      if (!active || !entry.edit) return;
+      const reusable = local?.entryId === entry.id && local.viewId === viewId;
+      const saved: EditDraft = { scope: key, entryId: entry.id, viewId, reservationId: entry.edit.reservationId,
+        originalDraft: reusable ? local.originalDraft ?? { text: local.stash.text, attachments: local.stash.attachments }
+          : { text: readDraft(session!.id), attachments: readDraftAttachments(session!.id) ?? [] },
+        stash: reusable ? { ...local.stash,
+          ...(local.stash.text === entry.edit.stashedDraft.text ? { attachments: entry.edit.stashedDraft.attachments } : {}) }
+          : { ...entry.edit.stashedDraft, files: [] },
+        buffer: reusable && local.buffer ? local.buffer : { text: entry.edit.text, attachments: entry.edit.attachments, files: [] } };
+      restoredEdit.current = `${key}:${entry.edit.reservationId}`; setEditDraft(saved); restoreComposer(saved.buffer!, false);
+      void saveEditDraft(saved).catch(cause => setError(String(cause)));
+    }).catch(cause => setError(String(cause)));
+    return () => { active = false; };
+  }, [queueScope, queueSnapshot, viewId, restoreComposer, session]);
+  useEffect(() => {
+    if (!editing || editSaving) return;
+    const value = { ...editing, buffer: { text: input, attachments: uploaded, files: fileSnapshots(pending) } };
+    void saveEditDraft(value).catch(cause => setError(String(cause)));
+    const row = queueSnapshot?.entries.find(entry => entry.id === editing.entryId);
+    if (storageBlocked || queueOperation || row?.edit?.reservationId !== editing.reservationId
+      || row.edit.text === (mentionInputRef.current?.serialize() ?? input) && JSON.stringify(row.edit.attachments.map(file => file.name)) === JSON.stringify(uploaded.map(file => file.name))) return;
+    const timer = setTimeout(() => {
+      if (composerBlockedRef.current) return;
+      void performQueue({ type: "update_edit", entryId: editing.entryId, reservationId: editing.reservationId,
+        viewId, text: mentionInputRef.current?.serialize() ?? input, attachments: uploaded.map(file => file.name) }).catch(() => {});
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [editing, input, pending, uploaded, editSaving, fileSnapshots, queueSnapshot, queueOperation, performQueue, viewId, storageBlocked]);
+  const beginQueueEdit = async (entry: QueueEntry, recover = false) => {
+    if (!queueScope || !session || editing || sendingRef.current || editLocked || composerBlockedRef.current) return;
+    const id = session.id; setEditTransition(id);
+    try {
+      const draft = currentDraft.current;
+      const previous = recover ? await readEditDraft(queueScope, entry.id) : null;
+      const keepStash = previous?.entryId === entry.id && previous.stash.text === draft.input && !draft.pending.length;
+      if (previous && !keepStash) await preserveDraft(queueScope, { id: `${previous.reservationId}:stash`, draft: previous.stash });
+      const saved: EditDraft = { scope: queueScope, entryId: entry.id, viewId, reservationId: `pending:${viewId}`,
+        originalDraft: { text: draft.input, attachments: draft.uploaded },
+        stash: keepStash
+          ? previous.stash : { text: draft.input, attachments: draft.uploaded, files: fileSnapshots(draft.pending) },
+        ...(previous?.entryId === entry.id && previous.buffer ? { buffer: previous.buffer } : {}) };
+      await saveEditDraft(saved);
+      await performQueue(recover ? { type: "recover_edit", entryId: entry.id, viewId }
+        : { type: "reserve_edit", entryId: entry.id, viewId, stashedDraft: { text: draft.input, attachments: draft.uploaded.map(file => file.name) } });
+    } catch (cause) { if (activeSessionId.current === id) setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setEditTransition(current => current === id ? null : current); }
+  };
+  const completeQueueEdit = useCallback(async (edit: EditDraft, id: string) => {
+    const original = edit.originalDraft ?? edit.stash;
+    const readShared = () => ({ text: readDraft(id), attachments: readDraftAttachments(id) ?? [], files: [] as OutboxFile[] });
+    const names = (files: StoredAttachment[]) => files.map(file => file.name).sort().join("\n");
+    const changedFrom = (draft: ReturnType<typeof readShared>) => draft.text !== draftStorageText(original.text) || names(draft.attachments) !== names(original.attachments);
+    let shared = readShared(), changed = changedFrom(shared);
+    if (changed) await preserveDraft(edit.scope, { id: edit.reservationId, draft: edit.stash });
+    let drafts = await listPreservedDrafts(edit.scope);
+    // A different tab may have typed while the browser storage transaction completed.
+    shared = readShared();
+    if (!changed && changedFrom(shared)) {
+      await preserveDraft(edit.scope, { id: edit.reservationId, draft: edit.stash });
+      drafts = await listPreservedDrafts(edit.scope); shared = readShared();
+    }
+    changed = changedFrom(shared);
+    if (activeSessionId.current === id) {
+      restoreComposer(changed ? shared : edit.stash);
+      setEditDraft(current => current?.reservationId === edit.reservationId ? null : current); restoredEdit.current = "";
+      setPreserved({ scope: edit.scope, drafts });
+    } else if (!changed) { writeDraft(id, edit.stash.text); writeDraftAttachments(id, edit.stash.attachments); pendingBySession.current.set(id, restoredFiles(edit.stash.files)); }
+    await clearEditDraft(edit.scope, edit.entryId, edit.reservationId);
+  }, [restoreComposer]);
+  useEffect(() => {
+    if (!editing || !session || !editOwnershipLost || editSaving || editTransition || queueOperation) return;
+    const id = session.id, scope = editing.scope;
+    const draft = currentDraft.current;
+    let active = true;
+    // A recovery in another tab invalidates this reservation. Freeze and retain the local buffer
+    // before returning to the ordinary draft; stale saves must never overwrite the new editor.
+    void preserveDraft(scope, { id: `${editing.reservationId}:buffer`, draft: {
+      text: draft.input, attachments: draft.uploaded, files: fileSnapshots(draft.pending),
+    } }).then(async () => {
+      if (!active) return;
+      await completeQueueEdit(editing, id);
+      const drafts = await listPreservedDrafts(scope);
+      if (active && activeSessionId.current === id) setPreserved({ scope, drafts });
+    }).catch(cause => { if (active && activeSessionId.current === id) setError(String(cause)); });
+    return () => { active = false; };
+  }, [editing, session, editOwnershipLost, editSaving, editTransition, queueOperation, fileSnapshots, completeQueueEdit]);
+  const retryQueueOperation = async () => {
+    if (composerBlockedRef.current) return;
+    const command = queueOperation?.input.command, edit = editing, id = session?.id;
+    if (edit && command && ["save_edit", "cancel_edit"].includes(command.type)) setEditSaving(true);
+    try {
+      await performQueue();
+      if (edit && id && command && (command.type === "save_edit" || command.type === "cancel_edit") && command.reservationId === edit.reservationId) await completeQueueEdit(edit, id);
+    } catch { /* The exact operation remains in its recovery row. */ }
+    finally { setEditSaving(false); }
+  };
+  const restorePreservedDraft = async (saved: PreservedDraft) => {
+    if (!queueScope || !session || editing || editLocked || sendingRef.current) return;
+    const scope = queueScope, id = session.id, draft = currentDraft.current;
+    setEditTransition(id);
+    try {
+      // Restoring an older draft never discards the one currently in the composer.
+      if (draft.input || draft.pending.length || draft.uploaded.length) await preserveDraft(scope, {
+        id: crypto.randomUUID(), draft: { text: draft.input, attachments: draft.uploaded, files: fileSnapshots(draft.pending) },
+      });
+      if (activeSessionId.current !== id) return;
+      const latest = { text: readDraft(id), attachments: readDraftAttachments(id) ?? [], files: [] as OutboxFile[] };
+      if (latest.text !== draftStorageText(draft.input)
+        || JSON.stringify(latest.attachments.map(file => file.name).sort()) !== JSON.stringify(draft.uploaded.map(file => file.name).sort())) {
+        restoreComposer(latest, false);
+        setPreserved({ scope, drafts: await listPreservedDrafts(scope) });
+        setError("Another tab changed the draft. Its latest text was kept; restore the saved draft again when ready.");
+        return;
+      }
+      restoreComposer(saved.draft);
+      await removePreservedDraft(scope, saved.id);
+      const drafts = await listPreservedDrafts(scope);
+      if (activeSessionId.current === id) setPreserved({ scope, drafts });
+    } catch (cause) { if (activeSessionId.current === id) setError(String(cause)); }
+    finally { setEditTransition(current => current === id ? null : current); }
+  };
+  const finishQueueEdit = async (save: boolean) => {
+    if (!editing || !session || sendingRef.current || composerBlockedRef.current) return;
+    sendingRef.current = true; setEditSaving(true); setSending(true); setError(null);
+    try {
+      const draft = currentDraft.current, files = fileSnapshots(draft.pending);
+      const text = mentionInputRef.current?.serialize() ?? draft.input;
+      const saved = { ...editing, buffer: { text: draft.input, attachments: draft.uploaded, files } };
+      await saveEditDraft(saved);
+      if (save) for (const file of files) {
+        file.stored ??= await uploadQueueAttachment(session.id, file.id, file.name, file.bytes);
+        await saveEditDraft(saved);
+      }
+      await performQueue(save ? { type: "save_edit", entryId: editing.entryId, reservationId: editing.reservationId,
+        viewId, text, attachments: [...draft.uploaded, ...files.flatMap(file => file.stored ? [file.stored] : [])].map(file => file.name) }
+        : { type: "cancel_edit", entryId: editing.entryId, reservationId: editing.reservationId, viewId });
+      await completeQueueEdit(editing, session.id);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { sendingRef.current = false; setSending(false); setEditSaving(false); }
   };
 
   /** Attaches to one session and follows its log. Shared by reattach, switch and new. */
@@ -277,6 +476,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setContextUsage(emptyContextUsage(record.id));
     setContextDetailsOpen(false);
     setSession(record);
+    sessionSnapshot.current = record;
     setHealth(null);
     void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
     setError(null);
@@ -300,8 +500,6 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     const recoveredFiles = [...new Map([...savedFiles, ...(retainedSend?.attachments ?? [])].map(file => [file.name, file])).values()];
     setUploaded(recoveredFiles);
     if (retainedSend) writeDraftAttachments(record.id, recoveredFiles);
-    setUploadingFile(null);
-    setFailedUpload(null);
     try {
       if (!fullPage) window.localStorage.setItem(SESSION_STORAGE_KEY, record.id);
     } catch {
@@ -325,6 +523,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       (event) => {
         if (abort.signal.aborted) return;
         suggestionsReceive(event);
+        queueReceive(event);
+        if (event.type === "session_message_queue") return;
         if (event.type === "session_suggestion") return;
         if (event.type === "context_usage") {
           setContextUsage(current => applyContextUsage(current, record.id, event));
@@ -367,10 +567,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           }
           return;
         }
-        // A status/context update can make an in-flight settings snapshot too old to merge.
-        // Replace only pending reads; ordinary conversation activity does not poll settings.
-        if (settingsPending && (event.type === "user_message" || event.type === "app_context_changed"
-          || event.type === "session_status" && event.historical !== true)) refreshSettings();
+        // A status/context update can make an in-flight snapshot too old to merge. A live
+        // status also rechecks any admission fence captured before normal dispatch settled.
+        const liveStatus = event.type === "session_status" && event.historical !== true;
+        if (settingsPending && (event.type === "user_message" || event.type === "app_context_changed" || liveStatus)
+          || liveStatus && sessionSnapshot.current?.sourceAdmission) refreshSettings();
         if (event.type === "user_message") {
           const lock = (current: AssistantSession) => current.id === record.id
             ? { ...current, ...(current.providerLocked !== undefined ? { providerLocked: true } : {}), ...(current.profileLocked !== undefined ? { profileLocked: true } : {}) } : current;
@@ -402,6 +603,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item;
           setSessions(current => current.map(applyStatus));
           setSession(current => current ? applyStatus(current) : current);
+          if (sessionSnapshot.current) sessionSnapshot.current = applyStatus(sessionSnapshot.current);
           if (!["running", "awaiting_approval", "awaiting_question"].includes(String(event.status))) {
             setActivity(null);
             setStreamed("");
@@ -434,7 +636,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (state === "disconnected") setStreamed("");
       },
     );
-  }, [onSessionChange, suggestionsReceive, fullPage]);
+  }, [onSessionChange, suggestionsReceive, queueReceive, fullPage]);
 
   // A full-page selection is also a navigation: Shell must restore that exact session on reload.
   const navigateSelection = useCallback(async (sessionId: string | null, workspaceId?: string | null, replace = false) => {
@@ -738,10 +940,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // Written on change rather than on unload: a closed laptop, a crashed tab and a navigation away all
   // skip unload handlers, and those are exactly the cases where the text matters most.
   useEffect(() => {
-    if (session) {
-      writeDraft(session.id, input);
-    }
-  }, [input, session]);
+    if (session && !editing && !editLocked) writeDraft(session.id, input);
+  }, [input, session, editing, editLocked]);
 
   useEffect(() => {
     const refreshPending = () => {
@@ -751,13 +951,13 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     };
     const changed = (event: StorageEvent) => {
       if (session && event.key === PENDING_SEND_PREFIX + session.id) refreshPending();
-      if (session && event.key === `hosty.assistant.draft.${session.id}`) setInput(event.newValue ?? "");
-      if (session && event.key === `hosty.assistant.attachments.${session.id}`) setUploaded(readDraftAttachments(session.id) ?? []);
+      if (session && !editing && !editLocked && event.key === `hosty.assistant.draft.${session.id}`) { draftInteracted(); setInput(event.newValue ?? ""); }
+      if (session && !editing && !editLocked && event.key === `hosty.assistant.attachments.${session.id}`) setUploaded(readDraftAttachments(session.id) ?? []);
     };
     window.addEventListener("storage", changed);
     window.addEventListener(PENDING_SEND_CHANGED, refreshPending);
     return () => { window.removeEventListener("storage", changed); window.removeEventListener(PENDING_SEND_CHANGED, refreshPending); };
-  }, [session]);
+  }, [session, draftInteracted, editing, editLocked]);
 
   // Overlay live status while retaining stream updates for previously selected sessions.
   const listedSessions = useMemo(
@@ -818,7 +1018,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   }, [onSessionChange]);
 
   const recoverSend = useCallback(async () => {
-    if (!pendingSend || sendingRef.current || sendRecoveryBlocked) return;
+    if (!pendingSend || sendingRef.current || sendRecoveryBlocked || composerBlockedRef.current) return;
     const request = pendingSend;
     sendingRef.current = true; setSending(true); setError(null);
     try {
@@ -834,71 +1034,38 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     } finally { sendingRef.current = false; setSending(false); }
   }, [pendingSend, sendRecoveryBlocked, acceptSend]);
 
-  const send = useCallback(async () => {
-    const trimmed = (mentionInputRef.current?.serialize() ?? input).trim();
-    if (!hasMessageContent(trimmed, pending.length, uploaded.length) || !session || pendingSend || sendRecoveryBlocked || composerBlockedRef.current || sendingRef.current || providerSavingRef.current || stoppingRef.current === session.id || running || contextSaving || mentionSavingRef.current || !health?.available) {
-      return;
-    }
-    sendingRef.current = true;
-    setSending(true);
-    setError(null);
-    setFailedUpload(null);
-    let activeFile: File | null = null;
-    let request: PendingSend | undefined;
+  const send = async () => {
+    if (editLocked) return;
+    if (editing) { await finishQueueEdit(true); return; }
+    const text = (mentionInputRef.current?.serialize() ?? input).trim();
+    if (!session || !hasMessageContent(text, pending.length, uploaded.length) || pendingSend || sendRecoveryBlocked || composerBlockedRef.current
+      || sendingRef.current || providerSavingRef.current || contextSaving || mentionSavingRef.current || !queueSnapshot) return;
+    const id = session.id, snapshot = { input, pending, uploaded, generation: draftGeneration.current.get(session.id) ?? 0 };
+    sendingRef.current = true; setSending(true); setError(null);
     try {
-      // Files first, then the message that names them by their stored names — which may differ from
-      // what the operator called them. A failed upload stops here with the text kept, so nothing is
-      // sent that refers to a file the gateway does not have.
-      const stored = [...uploaded];
-      for (const file of pending) {
-        activeFile = file;
-        if (activeSessionId.current === session.id) setUploadingFile(file);
-        const attachment = await uploadAttachment(session.id, file);
-        activeFile = null;
-        // Moved as each lands, not after all have: a failure part-way leaves the ones that made it
-        // in `uploaded` and the rest still pending, so the retry sends exactly what is missing.
-        stored.push(attachment);
-        if (activeSessionId.current === session.id) {
-          setUploaded((current) => [...current, attachment]);
-          setPending((current) => current.filter((candidate) => candidate !== file));
-        }
-        if (!writeDraftAttachments(session.id, stored)) throw new Error("Browser storage is unavailable. Your uploaded attachment remains in this panel; allow storage before sending.");
+      await messageQueue.enqueue({ text, draftText: input, files: pending, attachments: uploaded,
+        promptSuggestions: suggestions.preference?.enabled === true, withoutAppDetails });
+      // Retire this session's persisted snapshot even if the operator switched away while staging.
+      // Compare before clearing so a newer draft from another view survives the acknowledgement.
+      if (readDraft(id) === draftStorageText(snapshot.input)
+        && (draftGeneration.current.get(id) ?? 0) === snapshot.generation) writeDraft(id, "");
+      writeDraftAttachments(id, (readDraftAttachments(id) ?? snapshot.uploaded).filter(file => !snapshot.uploaded.some(sent => sent.name === file.name)));
+      const retained = pendingBySession.current.get(id);
+      if (retained) pendingBySession.current.set(id, retained.filter(file => !snapshot.pending.includes(file)));
+      // Only the submitted snapshot moves into the stack. A newer draft stays editable.
+      if (activeSessionId.current === id) {
+        setComposerEpoch(current => current + 1);
+        setInput(current => (draftGeneration.current.get(id) ?? 0) === snapshot.generation && current === snapshot.input ? "" : current);
+        setPending(current => current.filter(file => !snapshot.pending.includes(file)));
+        setUploaded(current => current.filter(file => !snapshot.uploaded.includes(file)));
+        setWithoutAppDetails(false); setContextUnavailable(false);
       }
-      if (activeSessionId.current === session.id) setUploadingFile(null);
-      // Lock the composer before the HTTP response: SSE may confirm (or finish) the turn first.
-      if (activeSessionId.current === session.id) setStatus("running");
-      request = { version: 1, clientRequestId: crypto.randomUUID(), sessionId: session.id, text: trimmed, draftText: input,
-        attachments: stored, ...(suggestions.preference?.enabled === true ? { promptSuggestions: true } : {}), appContextRevision: session.appContextRevision ?? 0, withoutAppDetails, selectionRevision: session.selectionRevision ?? 0 };
-      await claimPendingSend(request);
-      if (activeSessionId.current === session.id) setPendingSend(request);
-      const receipt = await dispatchPendingSend(request);
-      if (receipt?.state !== "accepted") throw new Error("The send outcome could not be verified. Retry checks the original request before sending again.");
-      await acceptSend(request);
-    } catch (cause) {
-      if (activeSessionId.current !== session.id) return;
-      setFailedUpload(activeFile);
-      // These explicit pre-admission refusals settle the first attempt. Preserve the editable
-      // draft so context/provider corrections can start a distinct intentional request.
-      if (request && isMessageAdmissionRejection(cause)) {
-        forgetPendingSend(request); setPendingSend(current => current?.clientRequestId === request?.clientRequestId ? null : current);
-      }
-      if (cause instanceof AssistantApiError && cause.code === "app_context_unavailable") setContextUnavailable(true);
-      if (cause instanceof AssistantApiError && cause.code === "app_context_conflict") {
-        const current = await getSession(session.id).catch(() => null);
-        if (current) onSessionChange(current);
-      }
-      setError(cause instanceof Error ? cause.message : String(cause));
-      const current = await getSession(session.id).catch(() => null);
-      if (activeSessionId.current === session.id) setStatus(current?.status ?? status);
-    } finally {
-      if (activeSessionId.current === session.id) setUploadingFile(null);
-      sendingRef.current = false;
-      setSending(false);
-    }
-  }, [input, pending, pendingSend, sendRecoveryBlocked, running, status, contextSaving, session, uploaded, withoutAppDetails, health?.available, onSessionChange, acceptSend, suggestions.preference?.enabled]);
+    } catch (cause) { if (activeSessionId.current === id) setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { sendingRef.current = false; setSending(false); }
+  };
 
   const stop = useCallback(async () => {
-    if (!session || !running || sendingRef.current || providerSavingRef.current || stoppingRef.current) return;
+    if (!session || !running && !session.sourceAdmission && !session.workerRun || sendingRef.current || providerSavingRef.current || stoppingRef.current) return;
     const id = session.id;
     stoppingRef.current = id;
     setStoppingSession(id);
@@ -925,8 +1092,6 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setInput("");
     setPending([]);
     setUploaded([]);
-    setUploadingFile(null);
-    setFailedUpload(null);
     setContextUnavailable(false);
     setWithoutAppDetails(false);
     requestedSessionRef.current = null;
@@ -1030,7 +1195,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // Which message each uploaded file belongs to, so a claimed file is drawn under its message and
   // nowhere else.
   const attachmentIndex = useMemo(() => indexAttachments(events), [events]);
-  const items = useMemo(() => transcriptItems(events, attachmentIndex.claimed), [events, attachmentIndex]);
+  const items = useMemo(() => transcriptItems(events, attachmentIndex.claimed, decidedApprovals), [events, attachmentIndex, decidedApprovals]);
   const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
   const mcpActivity = useMemo(() => contextDetailsOpen ? observedMcpActivity(events) : EMPTY_MCP_ACTIVITY, [events, contextDetailsOpen]);
 
@@ -1057,6 +1222,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   return (
     <div className={`harness-conversation flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
+      {fullPage && ready && <StorageRecoveryNotice />}
       {fullPage && inventory.error && <p role="alert" className="border-b px-4 py-2 text-sm text-destructive-foreground">{inventory.error}</p>}
       <div ref={columnsRef} className="flex min-h-0 min-w-0 flex-1">
       {fullPage && <div inert={workspaceModal} style={{ "--navigation-width": `${columns.widths.navigation}px` } as CSSProperties} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} relative w-full shrink-0 border-r md:w-[var(--navigation-width)]`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} activeWorkspaceId={workspace?.id} workspaces={inventory.workspaces}
@@ -1070,7 +1236,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       {fullPage && (!chatVisible || !session) && <div className={`shrink-0 items-center gap-2 border-b px-3 py-2 ${workspace ? "flex" : "flex md:hidden"}`}>{navigationToggle}<div className="ml-auto">{workspaceToggle}</div></div>}
       {fullPage && (!chatVisible || !session) ? <div className="min-h-0 flex-1" aria-label="Workspace center">
         {!workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
-          <p>Choose a workspace or session, create an app or continue building.</p>
+          <p>Choose a workspace or session, or create an app.</p>
           <Button variant="outline" disabled={!ready} onClick={() => void startNew()}>New session</Button>
         </div>}
         {workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
@@ -1094,7 +1260,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             </div>
             <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
               {status !== "idle" && <StatusBadge value={status} />}
-              {composerBlocked && (running || stopping) && <Button type="button" variant="ghost" size="icon-sm" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
+              {composerBlocked && (running || stopping || session?.sourceAdmission || session?.workerRun) && <Button type="button" variant="ghost" size="icon-sm" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
                 {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
               </Button>}
               {session && <SessionExecutionIndicator executionMode={session.executionMode} />}
@@ -1142,16 +1308,22 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       {!fullPage && !showSessions && session && <SessionSandboxes key={`sandbox-${session.id}`} sessionId={session.id} />}
       {!fullPage && !showSessions && session && <SessionWorkspaces key={`workspaces-${session.id}`} session={session} running={running} />}
       {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
-      {session && (session.workerRun || session.workerRecovery?.state === "pending") && <SessionExecutionRecovery key={session.id}
-        sessionId={session.id} refreshKey={`${session.workerRun?.id ?? ""}:${status}:${error ?? ""}`} onRecovered={async () => {
+      {storageBlocked && <section aria-label="Session storage recovery" role="status" className="shrink-0 space-y-1 border-b px-3 py-2 text-sm">
+        <p>{session?.storageRecovery?.message.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 500) || "This message's acceptance or execution outcome needs review."}</p>
+        <p>Your draft is preserved. Sending and queue changes remain blocked until recovery is complete.</p>
+      </section>}
+      {session && (session.workerRun || session.workerRecovery?.state === "pending" || session.sourceAdmission) && <SessionExecutionRecovery key={session.id}
+        sessionId={session.id} refreshKey={`${session.workerRun?.id ?? session.sourceAdmission?.runId ?? ""}:${session.sourceAdmission?.state ?? ""}:${status}:${error ?? ""}`} onRecovered={async () => {
           const current = await getSession(session.id);
-          if (activeSessionId.current === session.id) { onSessionChange(current); setStatus(current.status); setError(null); }
+          if (activeSessionId.current === session.id) {
+            const latest = sessionSnapshot.current;
+            onSessionChange(current);
+            if (!latest || activityTime(current) >= activityTime(latest) && (current.lastEventSeq ?? 0) >= (latest.lastEventSeq ?? 0)) setStatus(current.status);
+            setError(null);
+          }
         }} />}
 
-      {pendingSend && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-warning-soft px-3 py-2 text-sm" role="status">
-        <span className="min-w-0 flex-1">Send not confirmed. Your draft is retained; Retry checks the original request.</span>
-        <Button type="button" variant="outline" size="sm" disabled={sending} onClick={() => void recoverSend()}>{sending ? "Checking send…" : "Retry send"}</Button>
-      </div>}
+
 
       {showSessions ? (
         <SessionList
@@ -1182,7 +1354,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
                   {items.map((item) => item.kind === "activity" ? (
                     <MessageScrollerItem key={item.key} messageId={item.key}>
-                      <ToolActivity events={item.events} appNames={appNames} reviewContext={transcriptReviewContext} commandResults={item.commandResults} toolResults={item.toolResults} />
+                      <ToolActivity events={item.events} appNames={appNames} reviewContext={transcriptReviewContext} commandResults={item.commandResults} toolResults={item.toolResults} approvals={item.approvals} />
                     </MessageScrollerItem>
                   ) : (
                     <MessageScrollerItem key={item.key} messageId={item.key}>
@@ -1202,6 +1374,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       denyReason={health?.capabilities?.denyReason === true}
                       onDecide={decide}
                       onAnswer={answer}
+                      suggestions={{ cards: suggestions.cards, canInsert: !!queueSnapshot && !input && !pending.length && !uploaded.length && !editing,
+                        actionable: !!queueSnapshot && connection === "connected" && !composerBlocked, busy: suggestions.acting,
+                        tabHint: !!visibleSuggestion, onSelect: id => void suggestions.select(id), onDismiss: id => void suggestions.dismiss(id) }}
                     />
                     </div>
                     </MessageScrollerItem>
@@ -1226,7 +1401,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             </MessageScroller>
           </MessageScrollerProvider>}
 
-          {!composerBlocked && <>
+          {!composerHidden && <>
           {contextUnavailable && (
             <label className="flex gap-2 px-3 py-2 text-xs">
               <Checkbox checked={withoutAppDetails} onCheckedChange={value => setWithoutAppDetails(value === true)} />
@@ -1248,21 +1423,53 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 {session.handoffDispatch.state === "queued" && <Button type="button" variant="outline" size="sm" disabled={sending}
                   onClick={() => { setSending(true); void retryHandoff(session.id).then(attach).catch(cause => setError(String(cause))).finally(() => setSending(false)); }}>Retry starting</Button>}
               </div>}
+            <MessageQueue queue={queueSnapshot} outbox={messageQueue.outbox} transcriptRequestIds={transcriptRequestIds} busy={messageQueue.busy || storageBlocked} viewId={viewId}
+              editingId={editing?.entryId} error={messageQueue.error} pendingOperation={!!queueOperation}
+              legacySend={pendingSend} legacyBusy={sending} onLegacyRetry={() => void recoverSend()}
+              onCommand={command => { if (!composerBlockedRef.current) void performQueue(command).catch(() => {}); }}
+              onEdit={(entry, recover) => { void beginQueueEdit(entry, recover); }}
+              onRetryLocal={id => { if (composerBlockedRef.current) return; void messageQueue.retryLocal(id).then(accepted => {
+                if (!accepted || accepted.sessionId !== activeSessionId.current) return;
+                setInput(current => current === accepted.draftText ? "" : current);
+                setPending(current => current.filter(file => !accepted.files.some(sent => sent.bytes === file)));
+                setUploaded(current => current.filter(file => !accepted.attachments.some(sent => sent.name === file.name)));
+              }).catch(cause => setError(String(cause))); }}
+              onRecoverLocal={id => {
+                const scope = queueScope, sessionId = session?.id;
+                if (!scope || !sessionId) return;
+                void messageQueue.recoverLocal(id).then(() => listPreservedDrafts(scope)).then(drafts => {
+                  if (activeSessionId.current === sessionId) setPreserved({ scope, drafts });
+                }).catch(cause => { if (activeSessionId.current === sessionId) setError(String(cause)); });
+              }}
+              onRetryOperation={() => { void retryQueueOperation(); }} onRefresh={() => { void messageQueue.refresh().catch(() => {}); }} />
+            {!!savedDrafts.length && <section aria-label="Saved drafts" className="mx-3 mb-2 max-h-36 overflow-y-auto rounded-lg border px-3 py-2 text-xs">
+              <p className="mb-1 text-muted-foreground">Earlier drafts were preserved while another tab changed this conversation.</p>
+              {savedDrafts.map(saved => <div key={saved.id} className="flex min-w-0 items-center gap-2 py-1">
+                <p className="min-w-0 flex-1 truncate">{saved.draft.text || saved.draft.files.map(file => file.name).join(", ") || "Draft attachments"}</p>
+                <Button type="button" size="sm" variant="ghost" disabled={!!editing || editLocked || sending || composerBlocked}
+                  onClick={() => void restorePreservedDraft(saved)}>Restore draft</Button>
+              </div>)}
+            </section>}
+            {editing && <div className="mx-3 mb-2 flex items-center justify-between gap-2 text-xs text-muted-foreground" role="status">
+              <span>Editing queued message</span><Button type="button" variant="ghost" size="sm" disabled={editSaving || messageQueue.busy || storageBlocked} onClick={() => void finishQueueEdit(false)}>Cancel edit</Button>
+            </div>}
+            {suggestions.insertionError && <div className="mx-3 mb-2 text-xs" role="status">{suggestions.insertionError}
+              <Button type="button" size="sm" variant="ghost" disabled={suggestions.acting || !!input || !!editing || pending.length > 0 || uploaded.length > 0} onClick={() => void suggestions.retryInsertion()}>Retry insertion</Button>
+            </div>}
             <InputGroup aria-label="Message and context" className="@container/composer">
-              {visibleSuggestion && <PromptSuggestionCard text={visibleSuggestion.text!} onAccept={acceptSuggestion} onDismiss={suggestions.interact} />}
               <AppMentionInput
                 ref={mentionInputRef}
                 key={session?.id ?? "empty"}
                 inputRef={composerRef}
                 session={session}
-                contextBusy={contextSaving || sending || providerSaving}
+                contextBusy={contextSaving || editLocked || providerSaving || storageBlocked}
                 onContextChange={onSessionChange}
                 onBusyChange={onMentionSaving}
                 value={input}
-                onChange={text => { suggestions.interact(); setInput(text); }}
-                onCompositionStart={suggestions.interact}
+                onChange={text => { draftInteracted(); setInput(text); }}
+                onCompositionStart={draftInteracted}
                 onPaste={(event) => {
-                  suggestions.interact();
+                  draftInteracted();
                   // Leave native paste intact for every text flavor, including HTML-only clipboards.
                   const images = takePastedImages(event.clipboardData);
                   if (images.length === 0) return;
@@ -1270,7 +1477,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 }}
                 onKeyDown={(event) => {
                   if (visibleSuggestion && !event.nativeEvent.isComposing && event.keyCode !== 229) {
-                    if (event.key === "Escape") { event.preventDefault(); suggestions.interact(); return; }
+                    if (event.key === "Escape") { event.preventDefault(); void suggestions.dismiss(visibleSuggestion.suggestionId); return; }
                     if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); acceptSuggestion(); return; }
                   }
                   if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
@@ -1280,8 +1487,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 }}
                 rows={2}
                 aria-label="Message"
-                placeholder={session ? "Ask the operator assistant…" : "Waiting for the gateway…"}
-                disabled={!session || sending || !!pendingSend || sendRecoveryBlocked}
+                aria-description={visibleSuggestion ? "Suggested next message. Press Tab to insert or Escape to dismiss." : undefined}
+                placeholder={visibleSuggestion?.text ?? (session ? "Ask the operator assistant…" : "Waiting for the gateway…")}
+                disabled={!session || editLocked}
+                readOnly={storageBlocked}
                 className="max-h-48 min-h-20 w-full px-3"
               />
               <input
@@ -1289,12 +1498,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 type="file"
                 multiple
                 hidden
+                disabled={storageBlocked}
                 onChange={(event) => {
                   // Read before the state update is scheduled. A functional updater runs when React
                   // flushes, after this handler has returned — and by then the reset on the next line
                   // has already emptied `files`. Written that way first, every selection appended
                   // nothing: no chip, no upload, a message sent without the file the operator chose.
                   const chosen = takeChosenFiles(event.target);
+                  draftInteracted();
                   setPending((current) => [...current, ...chosen]);
                 }}
               />
@@ -1302,19 +1513,18 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 {(pending.length > 0 || uploaded.length > 0) && (
                   <div className="flex max-h-48 shrink-0 flex-col gap-2 overflow-y-auto pb-2" aria-label="Attachments to send">
                     {uploaded.map((attachment) => (
-                      <ChatAttachment key={`stored-${attachment.name}`} name={attachment.name} size={attachment.size}
-                        description="Uploaded · ready to send" disabled={sending || !!pendingSend} onRemove={() => {
+                      <ChatAttachment key={`stored-${attachment.name}`} name={attachment.displayName ?? queueFileLabel(attachment.name)} size={attachment.size}
+                        description="Uploaded · ready to send" disabled={editLocked || storageBlocked} onRemove={() => {
+                          draftInteracted();
                           const remaining = uploaded.filter(item => item.name !== attachment.name);
                           setUploaded(remaining);
-                          if (session) writeDraftAttachments(session.id, remaining);
+                          if (session && !editing) writeDraftAttachments(session.id, remaining);
                         }} />
                     ))}
                     {pending.map((file, index) => (
                       <ChatAttachment key={`${file.name}-${index}`} name={file.name} size={file.size} file={file}
-                        state={uploadingFile === file ? "uploading" : failedUpload === file ? "error" : "idle"}
-                        description={uploadingFile === file ? "Uploading…" : failedUpload === file ? "Upload failed · send to retry" : "Ready to upload"}
-                        disabled={sending || !!pendingSend}
-                        onRemove={() => setPending(current => current.filter((_, i) => i !== index))} />
+                        state="idle" description="Ready to upload" disabled={editLocked || storageBlocked}
+                        onRemove={() => { draftInteracted(); setPending(current => current.filter((_, i) => i !== index)); }} />
                     ))}
                   </div>
                 )}
@@ -1329,17 +1539,22 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                   <div className="flex min-w-0 flex-1 items-center gap-0.5">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button ref={addButtonRef} type="button" size="icon" variant="ghost" className="@max-[640px]/composer:size-6" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || mentionSaving || providerSaving} aria-label="Add to message"><Plus /></Button>
+                        <Button ref={addButtonRef} type="button" size="icon" variant="ghost" className="@max-[640px]/composer:size-6" disabled={!session || editLocked || mentionSaving || providerSaving || storageBlocked} aria-label="Add to message"><Plus /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent side="top" align="start" onCloseAutoFocus={event => {
                         if (openContextAfterMenu.current) {
                           event.preventDefault(); openContextAfterMenu.current = false;
                           contextPickerRef.current?.open();
                         }
+                        if (openTemplatesAfterMenu.current) {
+                          event.preventDefault(); openTemplatesAfterMenu.current = false;
+                          mentionInputRef.current?.openTemplates();
+                        }
                       }}>
                         <DropdownMenuGroup>
                           <DropdownMenuItem disabled={contextSaving} onSelect={() => { openContextAfterMenu.current = true; }}><Blocks />Add app context</DropdownMenuItem>
-                          <DropdownMenuItem onSelect={() => { suggestions.interact(); fileInputRef.current?.click(); }}><Paperclip />Attach files</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => { draftInteracted(); fileInputRef.current?.click(); }}><Paperclip />Attach files</DropdownMenuItem>
+                          <DropdownMenuItem disabled={contextSaving} onSelect={() => { openTemplatesAfterMenu.current = true; }}><Sparkles />Prompt template</DropdownMenuItem>
                           <DropdownMenuCheckboxItem checked={suggestions.preference?.enabled ?? false} disabled={!suggestions.preference || suggestions.saving}
                             onCheckedChange={() => void suggestions.toggle()}>Prompt suggestions</DropdownMenuCheckboxItem>
                           {(suggestions.error || suggestions.availability === "unsupported" || suggestions.availability === "unavailable") &&
@@ -1350,27 +1565,24 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     </DropdownMenu>
                     <div className="contents @max-[640px]/composer:[&_button]:size-6 @max-[640px]/composer:[&_button]:min-w-6 @max-[640px]/composer:[&_button]:p-0 @max-[640px]/composer:[&_button>span:not(.sr-only)]:hidden">
                     {session && <SessionAgentSettings key={`agent:${session.id}`}
-                      session={{ ...session, status }} busy={sending || stopping || !!pendingSend || sendRecoveryBlocked || mentionSaving || contextSaving || providerSaving}
+                      session={{ ...session, status }} busy={sending || stopping || !!pendingSend || sendRecoveryBlocked || mentionSaving || contextSaving || providerSaving || storageBlocked}
                       onSavingChange={onProviderSaving} onNoticeChange={setAgentNotice} onChange={record => {
                         onSessionChange(record);
                         void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
                       }} />}
-                    {session && <SessionAutonomy key={`autonomy:${session.id}`} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving}
+                    {session && <SessionAutonomy key={`autonomy:${session.id}`} session={{ ...session, status }} busy={sending || stopping || mentionSaving || contextSaving || providerSaving || storageBlocked}
                       onSavingChange={onProviderSaving} onChange={onSessionChange} onErrorChange={setAutonomyNotice} />}
                     </div>
                     {session?.connectionId && <ProviderUsageIndicator key={session.connectionId + ":" + session.connectionRevision} connectionId={session.connectionId} revision={session.connectionRevision} model={session.executionSelection?.model} />}
                     {session && <ContextUsageIndicator key={`context:${session.id}`} usage={contextUsage.sessionId === session.id ? contextUsage.usage : null} connected={connection === "connected"} mcpActivity={mcpActivity} onDetailOpenChange={setContextDetailsOpen} />}
                   </div>
-                  {session && <SpeechInput key={session.id} onStart={suggestions.interact} disabled={sending || !!pendingSend || sendRecoveryBlocked} onText={text => setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text)} />}
-                  {running || stopping ? (
-                    <Button type="button" size="icon" className="shrink-0 @max-[640px]/composer:size-8" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
-                      {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
-                    </Button>
-                  ) : (
-                    <Button type="submit" size="icon" className="shrink-0 @max-[640px]/composer:size-8" disabled={!session || sending || !!pendingSend || sendRecoveryBlocked || providerSaving || contextSaving || mentionSaving || !health?.available || !hasMessageContent(input, pending.length, uploaded.length)} aria-label="Send">
-                      {sending ? <Loader2 className="motion-safe:animate-spin" /> : <Send />}
-                    </Button>
-                  )}
+                  {session && <SpeechInput key={`${session.id}:${editing?.reservationId ?? "draft"}:${composerEpoch}`} onStart={draftInteracted} disabled={editLocked || storageBlocked} onText={text => { draftInteracted(); setInput(current => current ? `${current}${/\s$/.test(current) ? "" : " "}${text}` : text); }} />}
+                  {(running || stopping) && <Button type="button" size="icon" variant="ghost" className="shrink-0 @max-[640px]/composer:size-8" disabled={stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
+                    {stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
+                  </Button>}
+                  <Button type="submit" size="icon" className="shrink-0 @max-[640px]/composer:size-8" disabled={!session || editLocked || sending || !!pendingSend || sendRecoveryBlocked || composerBlocked || providerSaving || contextSaving || mentionSaving || !queueSnapshot || messageQueue.outbox.some(row => row.durable === false) || !hasMessageContent(input, pending.length, uploaded.length)} aria-label={editing ? "Save queued message" : "Send"} title={editing ? "Save queued message" : running ? "Add to queue" : "Send"}>
+                    {sending ? <Loader2 className="motion-safe:animate-spin" /> : <Send />}
+                  </Button>
                 </div>
                 {agentNotice?.sessionId === session?.id && agentNotice?.text && <p role="alert" className="text-xs text-destructive-foreground wrap-anywhere">{agentNotice.text}</p>}
                 {autonomyNotice?.sessionId === session?.id && autonomyNotice?.text && <p role="alert" className="text-xs text-destructive-foreground wrap-anywhere">{autonomyNotice.text}</p>}

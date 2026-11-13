@@ -6,6 +6,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type MediatedProviderInvocation } from "@hosty-sdk/app/providers";
+import type { HistoryCapabilities } from "@hosty-sdk/app/history";
 import { SessionStore } from "../sessions/store.js";
 import { HistoryService } from "./service.js";
 import { historyRoute } from "./routes.js";
@@ -19,7 +20,7 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), "hosty-history-route-")); conversation = randomUUID();
   const sessions = new SessionStore(root); history = new HistoryService(sessions, provider);
   const now = new Date().toISOString();
-  await sessions.createSession({ id: conversation, createdBy: "owner", title: "Private title", context: null, status: "idle", createdAt: now, updatedAt: now, harnessSessionId: null, lastEventSeq: 1 });
+  await sessions.createSession({ id: conversation, createdBy: "owner", title: "Private title", context: null, status: "idle", createdAt: now, updatedAt: now, harnessSessionId: null, lastEventSeq: 0 });
   await sessions.appendEvent(conversation, { type: "user_message", seq: 1, ts: now, text: "private content" });
   server = createServer((request, response) => { void historyRoute(request, response, new URL(request.url!, "http://local"), history).catch(() => response.writeHead(500).end()); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -28,6 +29,23 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); history.close(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(root, { recursive: true, force: true }); });
 const body = () => JSON.stringify({ entry: { conversation: { provider, id: conversation }, id: "event-1" } }, null, 2);
 const get = (headers: Record<string, string> = {}, payload = body()) => fetch(origin + "/api/history/v1/entries/get", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: payload });
+
+it("advertises Core-compatible namespaced extension metadata over the mediated capabilities route", async () => {
+  const validate = vi.spyOn(ProviderClient.prototype, "validateMediated").mockResolvedValue({ ...actor, operation: "capabilities" });
+  const response = await fetch(origin + "/api/history/v1/capabilities", { headers: { authorization: `Bearer ${token}` } });
+  expect(response.status).toBe(200);
+  const capabilities = await response.json() as HistoryCapabilities;
+  expect(capabilities).toMatchObject({ version: 1, entryKinds: expect.arrayContaining(["extension"]), maxPageSize: 200, snapshotLifetimeSeconds: 900 });
+  expect(capabilities.extensions).toHaveLength(1);
+  const extension = capabilities.extensions[0]!;
+  // Core requires namespace/name with a dotted namespace, even when no extension entries exist.
+  expect(extension.name).toMatch(/^[^/]*\.[^/]+\/[^/]+$/);
+  expect(extension).toMatchObject({ name: "hosty.harness/prompt-suggestion", version: 1,
+    schema: { type: "object", required: ["suggestionId", "text", "state"] } });
+  expect(validate).toHaveBeenCalledTimes(2);
+  expect(validate.mock.calls[0]![2]).toMatchObject({ method: "GET", operation: "capabilities", path: "/capabilities" });
+  expect(Buffer.from(validate.mock.calls[0]![2].body).toString()).toBe("");
+});
 
 it("introspects actual request bytes before and after source access without accepting v1 or cookies", async () => {
   const validate = vi.spyOn(ProviderClient.prototype, "validateMediated").mockResolvedValue(actor);

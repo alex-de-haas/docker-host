@@ -37,7 +37,6 @@ jobs:
       desktop: ${{ steps.filter.outputs.desktop }}
       app_sdk: ${{ steps.filter.outputs.app_sdk }}
       app_sdk_dotnet: ${{ steps.filter.outputs.app_sdk_dotnet }}
-      whisper: ${{ steps.filter.outputs.whisper }}
       opus: ${{ steps.filter.outputs.opus }}
       demo_app: ${{ steps.filter.outputs.demo_app }}
       core: ${{ steps.filter.outputs.core }}
@@ -281,20 +280,6 @@ jobs:
 
       - name: Test HostySdk.App
         run: dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj
-
-  whisper:
-    name: Whisper
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: changes
-    if: needs.changes.outputs.whisper == 'true'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.changes.outputs.sha }}
-      - uses: ./.github/actions/setup-dotnet
-      - name: Test Whisper provider (bounded unit suite)
-        run: dotnet test apps/whisper/Hosty.Whisper.Tests/Hosty.Whisper.Tests.csproj
 
   demo-app:
     name: Demo App
@@ -677,7 +662,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
-    needs: [changes, versions, docs, ci-policy, actionlint, shell, desktop, app-sdk, app-sdk-dotnet, whisper, opus, demo-app, core, core-aot, cli, telemetry-backend, marketplace, documents, harness, telemetry-ui, swift-shell, cardputer-shell]
+    needs: [changes, versions, docs, ci-policy, actionlint, shell, desktop, app-sdk, app-sdk-dotnet, opus, demo-app, core, core-aot, cli, telemetry-backend, marketplace, documents, harness, telemetry-ui, swift-shell, cardputer-shell]
     steps:
       - uses: actions/checkout@v7
         with:

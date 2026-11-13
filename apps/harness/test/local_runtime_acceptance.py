@@ -88,6 +88,20 @@ def check(context):
             assert response.status == 200 and len(response.read()) > 0
     say('PASS: production API/worker, password login, Core launch-code identity, sessions API and compiled static assets')
 
+    if os.environ.get('HOSTY_HISTORY_DURABILITY'):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('history_durability_acceptance', workspace/'apps/harness/test/history_durability_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(context, app, app_origin, client, call, timed)
+
+    if os.environ.get('HOSTY_LONG_SPEECH_ACCEPTANCE'):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('long_speech_acceptance', workspace/'apps/harness/test/long_speech_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(context, app, app_origin, client, call, link)
+
     if os.environ.get('HOSTY_EXECUTION_RECOVERY'):
         import importlib.util
         spec = importlib.util.spec_from_file_location('execution_recovery_acceptance', workspace/'apps/harness/test/execution_recovery_acceptance.py')
@@ -116,9 +130,16 @@ def check(context):
     if os.environ.get('HOSTY_SUGGESTIONS_BROWSER'):
         import subprocess
         result = subprocess.run(['node', str(workspace/'apps/harness/test/suggestions-browser.mjs')],
-            input=json.dumps({'core':origin, 'harness':app_origin, 'email':'activation-fixture@example.test', 'password':password, 'link':link}),
+            input=json.dumps({'core':(context.get('child', {}).get('previewUrl') or origin).rstrip('/'), 'harness':app_origin, 'appId':app, 'email':'activation-fixture@example.test', 'password':password, 'link':link}),
             text=True, cwd=workspace)
         assert result.returncode == 0, 'Suggestion browser acceptance failed'
+
+    if os.environ.get('HOSTY_QUEUE_BROWSER'):
+        import subprocess
+        result = subprocess.run(['node', str(workspace/'apps/harness/test/message-queue-browser.mjs')],
+            input=json.dumps({'core':(context.get('child', {}).get('previewUrl') or origin).rstrip('/'), 'harness':app_origin, 'appId':app, 'email':'activation-fixture@example.test', 'password':password, 'link':link}),
+            text=True, cwd=workspace)
+        assert result.returncode == 0, 'Message queue browser acceptance failed'
 
     if os.environ.get('HOSTY_WORK_BROWSER'):
         import subprocess
@@ -206,6 +227,31 @@ def check(context):
         "if(!real(r.resolve(name)).startsWith(real(process.argv[2])+require('node:path').sep))throw Error('External provider fallback');}"
     )
     run(['node', '-e', provider_probe, bundle/'worker.mjs', bundle])
+    # Keep the real browser's paused work and immutable attachment bytes across both lifecycle
+    # paths below. The HTTP fixture has already closed, so a restarted queue must stay paused.
+    retained_queues = {}
+    if os.environ.get('HOSTY_QUEUE_BROWSER'):
+        for session in call(app_origin, '/api/sessions')['sessions']:
+            route = '/api/sessions/'+session['id']+'/message-queue'
+            snapshot = call(app_origin, route)
+            if not snapshot['entries']: continue
+            assert snapshot['paused'] and all(entry['state'] == 'queued' for entry in snapshot['entries'])
+            files = {}
+            for entry in snapshot['entries']:
+                for attachment in entry['attachments']:
+                    path = route+'/attachments/'+urllib.parse.quote(attachment['id'], safe='')
+                    with client.open(app_origin+path, timeout=30) as response:
+                        files[path] = hashlib.sha256(response.read()).hexdigest()
+            retained_queues[route] = (snapshot['entries'], files)
+        assert retained_queues and any(files for _, files in retained_queues.values())
+    def verify_retained_queues():
+        for route, (entries, files) in retained_queues.items():
+            snapshot = call(app_origin, route)
+            assert snapshot['paused'] and snapshot['entries'] == entries
+            for path, digest in files.items():
+                with client.open(app_origin+path, timeout=30) as response:
+                    assert hashlib.sha256(response.read()).hexdigest() == digest
+
     first_runtime = json.loads((app_root/'run/api.json').read_text())['pid']
     warm = timed('restart')
     second_runtime = json.loads((app_root/'run/api.json').read_text())['pid']
@@ -216,6 +262,7 @@ def check(context):
     assert 'Reusing production bundle' in log
     assert call(app_origin, '/api/auth/identity')['status'] == 'active'
     call(app_origin, '/api/sessions')
+    verify_retained_queues()
     say(f'PASS: cold start {cold:.3f}s; warm restart {warm:.3f}s; generation retained, no install/build')
 
     # Remove a real served asset while stopped, then let Core's setup recover the same source.
@@ -226,6 +273,8 @@ def check(context):
     assert json.loads(receipt.read_text())['key'] == metadata['key']
     assert worker_log.read_text().count('Preparing production bundle') == 2
     assert call(app_origin, '/api/auth/identity')['status'] == 'active'
+    verify_retained_queues()
+    if retained_queues: say('PASS: paused queue entries and immutable attachment bytes survive warm restart and missing-output recovery')
     say(f'PASS: missing-output recovery {recovery:.3f}s; same input identity, authenticated API restored')
     run([cli, '--data-root', root, 'apps', 'stop', app])
     say('PASS: local services stopped; parent fixture will Finish the child and verify resource removal')

@@ -1,6 +1,6 @@
 ---
 created: 2026-05-12
-updated: 2026-11-04
+updated: 2026-11-12
 summary: The repository layout, release artifacts and versioning rules for every component.
 ---
 
@@ -202,12 +202,13 @@ The rollout sequence is explicit; code availability does not establish public re
    the feed URL, default ID and exact default manifest reference for catalog consumers; old static
    main URLs do not become stable merely because Core supports feeds.
 
-The nine repository apps are Shell, Desktop, Documents, Marketplace, Demo App, Harness, Telemetry,
-Whisper and OPUS. Docker and supported local production profiles are declared in the configuration;
+The eight repository apps are Shell, Desktop, Documents, Marketplace, Demo App, Harness, Telemetry
+and OPUS. Docker and supported local production profiles are declared in the configuration;
 native source apps retain full commit pins and their existing execution capabilities.
 
 The official app and platform feeds are seeded. The [initial publisher](https://github.com/alex-de-haas/docker-host/actions/runs/41800939028)
-retains all nine complete app releases and the four native Core/CLI pairs. Explicit initial stable
+retains the nine complete app releases present at that baseline, including the since-retired Whisper
+app, and the four native Core/CLI pairs. Explicit initial stable
 promotions publish both entries with stable as the fresh-install default; every promotion revalidates
 the retained bytes without building. The [catalog cutover](https://github.com/alex-de-haas/hosty-catalog/pull/21)
 changes its eight existing first-party entries and is deployed on GitHub Pages. Marketplace remains

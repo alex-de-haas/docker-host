@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-03
+updated: 2026-11-11
 summary: Harness expires reconciled chats, protects attached development sessions and recovers previously accepted cleanup without deleting shared source implicitly.
 components: [apps/harness, apps/core]
 ---
@@ -23,7 +23,10 @@ Automatic expiry does not delete workspaces. The diagnostic API retains eligibil
 information for operational recovery, without displaying internal cleanup states during chat.
 
 Ordinary inactive chats use their last activity time. Active turns, pending answers/approvals,
-queued completion, unresolved handoffs and resource operations prevent expiry. Sandbox-only chats
+queued completion, unresolved handoffs and resource operations prevent expiry. Any
+[message queue](../harness-message-queue/feature.md) entry also protects its conversation, including
+paused, editing, failed and uncertain sends. Queue mutations and retention share the session lock,
+so expiry cannot race an accepted enqueue or dispatch claim. Sandbox-only chats
 with live resources remain protected until explicit Finish; terminal resource ownership is reconciled
 before ordinary-chat expiry. A lack of currently displayed worktrees is not proof of an ordinary chat.
 
@@ -61,9 +64,27 @@ response does not authorize a replacement request. Native execution must stop su
 local removal. Published PRs and other assistants' conversations are not deleted.
 
 Manual conversation removal stops its execution, detaches that session and removes its history/cache.
+It also removes durable queue state, upload UUID receipts, queue snapshots and restored-draft pins.
+When no queue entries remain, ordinary eligibility applies to the conversation; retained upload
+receipts and restored-draft attachments follow its eventual removal rather than keeping it active.
 Dirty workspace source and other conversations remain. Live session resources and pending operations
 still require reconciliation. Retention never invokes unfinished-work discard or cancels unknown
 external processes. Harness keeps no hidden archive of a deleted conversation.
+
+The child Core lifecycle journal records a fresh `environment_consent_required` refusal as rejected,
+so it no longer protects the conversation; an exact retry journals it as pending again. Other errors
+remain pending: a readable 4xx response can follow durable allocation. A refusal after an uncertain
+response cannot disprove that earlier request and
+leaves it pending. Harness sends only one journaled lifecycle attempt per session and request UUID
+at a time; a concurrent exact replay is refused before dispatch and can be retried after that attempt
+settles. Core persists the session context Harness stamps on each creation before allocating
+anything, so manual removal and canonical `environment_list` retire pending creations when Core's
+user-wide inventory lists no child for the session. The legacy HTTP inventory is scoped to the
+calling app and cannot establish absence of a child created through canonical MCP. Deletion uses
+the canonical inventory and preserves pending receipts if that access is unavailable or refused.
+Core may capture an inventory before an overlapping creation persists,
+so an inventory counts only when no creation this Harness process sent for the session was in flight
+or settled after it was requested.
 
 Core returns an explicit `workspaceAbsent` confirmation after checking stored worktree evidence and
 any unfinished deletion journal. Harness combines this with its local workspace history to reconcile
@@ -123,8 +144,17 @@ Pause alone never establishes completion or starts a completed-workspace retenti
   legacy migration, corrupt configuration and unavailable Core classification.
 - Preserve unfinished/deferred work regardless of age, including hidden resource history, a
   closed-unmerged PR, partial multi-repository integration, new edits and explicit resume.
-- Exclude active execution, pending questions/approvals, handoffs and resource operations; reconcile
+- Exclude active execution, pending questions/approvals, every pending queue state, editing
+  reservations, handoffs and resource operations; reconcile
   sandbox-only sessions before deleting their conversation.
+- Release fresh consent refusals and pending creations absent from Core's session inventory;
+  keep in-flight creations, creations overlapping the inventory request and refusals after an
+  uncertain response pending. Refuse concurrent exact lifecycle replays before dispatch, release
+  the in-flight guard after success or failure, and preserve uncertain outcomes on later retries.
+- Keep a post-allocation 409 pending, including across restart, and block deletion when the
+  canonical inventory still contains the accepted child.
+- Cover response loss for canonical MCP creation across Harness restart: app-scoped empty lists
+  cannot retire its receipt, and deletion requires the user-wide inventory without a legacy fallback.
 - Exercise service identity, current installation/session ownership, still-enabled administrator
   ownership, explicit cleanup permission and source/resource grants without saved browser tokens.
 - Recheck Core heads/leases/consumers before deletion. Recover lost responses and partial cleanup

@@ -74,7 +74,10 @@ def harness_history(context, owner, member, conversation):
     value = call(owner, '/conversations/get', {'conversation': reference})
     assert value['ref'] == reference
     call(member, '/conversations/get', {'conversation': reference}, expected=(403, 404))
-    assert call(owner, '/capabilities', {'provider': provider})['version'] == 1
+    capabilities = call(owner, '/capabilities', {'provider': provider})
+    assert capabilities['version'] == 1
+    assert any(extension['name'] == 'hosty.harness/prompt-suggestion' and extension['version'] == 1
+        for extension in capabilities['extensions']), 'Harness must declare its namespaced suggestion extension through Core validation'
     shared = call(owner, '/shares/create', {'ref': reference, 'requestId': str(uuid.uuid4()), 'expectedRevision': value['revision'],
         'selection': {'includeFutureEntries': True}, 'recipientUserIds': [member.user], 'includeAttachments': False, 'extensions': []})
     assert call(member, '/conversations/get', {'conversation': reference})['ref'] == reference

@@ -40,12 +40,14 @@ import { isValidCodeVerifier } from "@hosty-sdk/app/app-code";
 import { isSourceConnectionRoute, requestSourceConnection } from "./source-connections.js";
 import { isWorkspaceAccessReviewRoute, requestWorkspaceAccessReview } from "./workspace-access-reviews.js";
 import { workspaceApplicationsRoute } from "./workspace-applications.js";
+import { MAX_PROMPT_TEMPLATE_BYTES, PromptTemplateStore } from "./prompt-templates/store.js";
 import { serveStaticSite } from "./settings/static-site.js";
 
 // Upper bound for an event stream opened with an app session rather than a delegated token: the
 // cookie is re-validated per request, but a stream is one request, so it gets an explicit ceiling.
 const APP_SESSION_STREAM_SECONDS = 3600;
 import { SessionBusyError, SessionNotFoundError, type SessionManager } from "./sessions/manager.js";
+import { SessionStorageError } from "./sessions/store.js";
 import type { HarnessAdapter } from "./harness/adapter.js";
 import { MAX_SYSTEM_PROMPT_CHARS, type SettingsStore } from "./settings/store.js";
 import { validRetention } from "./settings/store.js";
@@ -84,20 +86,30 @@ export function createGatewayServer(
   const history = new HistoryService(manager.store, { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", installationId: process.env.HOSTY_APP_INSTALLATION_ID ?? "standalone", key: "default" });
   const execution = new AgentSessionService(manager, history.provider);
   const feedback = new FeedbackService(manager, undefined, providers);
+  const promptTemplates = new PromptTemplateStore(manager.store.dataDir);
   const handoffs = new HandoffStore(manager, settings, providers);
   const eventStreams = new EventStreamTransport(manager, Date.now, connections, tasks);
   const translations = connections && settings ? new TranslationService(connections, settings) : null;
-  const recovered = handoffs.sweep().then(() => manager.recoverWorkerRuns()).then(() => manager.recoverMcpApprovals()).catch(error => {
-    // A transient directory/storage failure is retried by the periodic sweep. Keep unrelated
-    // endpoints available and attach the handler immediately, before the first request arrives.
-    console.error("[handoff] startup recovery failed", error);
-  });
+  const recovered = (async () => {
+    const stages: Array<[string, () => Promise<unknown>]> = [
+      ["handoffs", () => handoffs.sweep()], ["runs", () => manager.recoverWorkerRuns()],
+      ["approvals", () => manager.recoverMcpApprovals()], ["queue", () => manager.recoverMessageQueues()],
+    ];
+    for (const [stage, recover] of stages) {
+      try { await recover(); }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        console.warn("[recovery] Startup stage requires attention.", { stage, code: typeof code === "string" ? code.slice(0, 60) : "unavailable" });
+      }
+    }
+  })();
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
-    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams, tasks, feedback, history, execution); }).catch((error) => {
+    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams, tasks, feedback, history, execution, promptTemplates); }).catch((error) => {
       if (response.destroyed) return;
       if (error instanceof ProviderError || error instanceof FeedbackError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
+      if (error instanceof SessionStorageError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
         sendJson(response, 409, { code: "session_busy", message: error.message });
         return;
@@ -125,7 +137,7 @@ export function createGatewayServer(
   eventStreams.attach(server);
   const taskServer = Object.assign(server, { stopTaskDispatch: async () => { await manager.decisions?.close(); await tasks.close(); await feedback.close(); } });
   const close = server.close.bind(server);
-  server.close = ((callback?: (error?: Error) => void) => { void tasks.close(); eventStreams.close(); return close(callback); }) as typeof server.close;
+  server.close = ((callback?: (error?: Error) => void) => { history.close(); void tasks.close(); eventStreams.close(); return close(callback); }) as typeof server.close;
   server.on("close", () => { void manager.decisions?.close(); history.close(); clearInterval(timer); tasks.close(); void feedback.close(); });
   return taskServer;
 }
@@ -149,6 +161,7 @@ async function route(
   feedback: FeedbackService,
   history: HistoryService,
   execution: AgentSessionService,
+  promptTemplates: PromptTemplateStore,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -350,6 +363,15 @@ async function route(
     const token = actor.via === "app-session" ? readAppCredential(request) : null;
     if (!token) throw new FeedbackError("app_session_required", "Open Harness through Core to manage feedback.", 403);
     if (await feedback.route(request, response, url, token, actor.userId, () => readJson(request, 128 * 1024))) return;
+  }
+
+  if (url.pathname === "/api/preferences/prompt-templates") {
+    response.setHeader("Cache-Control", "no-store");
+    if (actor.via !== "app-session") throw new AppContextError(403, "app_session_required", "Open Harness through Core to manage your prompt templates.");
+    if (method === "GET") sendJson(response, 200, await promptTemplates.read(actor.userId));
+    else if (method === "PUT") sendJson(response, 200, await promptTemplates.save(actor.userId, await readJson(request, MAX_PROMPT_TEMPLATE_BYTES)));
+    else sendJson(response, 405, { code: "method_not_allowed", message: "Use GET or PUT for your prompt templates." });
+    return;
   }
 
   if (url.pathname === "/api/preferences/prompt-suggestions" && (method === "GET" || method === "PUT")) {
@@ -703,6 +725,15 @@ async function route(
     return;
   }
 
+  if (url.pathname === "/api/storage-recovery" && method === "GET") {
+    // The common route gate requires a current host administrator. Unknown-owner storage
+    // issues reveal only an opaque identity and bounded diagnostics, never transcript content.
+    await manager.store.listRecordInventory();
+    sendJson(response, 200, { issues: (await manager.store.recoveryIssues()).slice(0, 50),
+      projectionIssues: (await manager.store.projectionIssues()).slice(0, 50) });
+    return;
+  }
+
   if (url.pathname === "/api/sessions" && method === "GET") {
     const records = (await manager.listSessions()).filter(record => record.createdBy === actor.userId);
     const roster = records.some(record => record.appIds?.length)
@@ -911,6 +942,35 @@ async function route(
     return;
   }
 
+  if (rest === "/message-queue" && method === "GET") {
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, await manager.messageQueue(sessionId, actor.userId)); return;
+  }
+  if (rest === "/message-queue/commands" && method === "POST") {
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, await manager.messageQueueCommand(sessionId, actor.userId, await readJson(request, 256 * 1024), await delegationCredential(request, false))); return;
+  }
+  const queueUpload = rest.match(/^\/message-queue\/uploads\/([^/]+)$/);
+  if (queueUpload && method === "PUT") {
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 201, { attachment: await manager.uploadQueueAttachment(sessionId, actor.userId, queueUpload[1]!, url.searchParams.get("name") ?? "attachment", request) }); return;
+  }
+  const queueAttachment = rest.match(/^\/message-queue\/attachments\/([^/]+)$/);
+  if (queueAttachment && method === "GET") {
+    const { attachment, bytes } = await manager.queuedAttachment(sessionId, actor.userId, queueAttachment[1]!);
+    response.setHeader("Cache-Control", "no-store"); response.setHeader("Content-Type", "application/octet-stream"); response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(attachment.displayName ?? attachment.name)}`);
+    response.end(bytes); return;
+  }
+  if (rest === "/suggestions" && method === "GET") {
+    response.setHeader("Cache-Control", "no-store"); sendJson(response, 200, await manager.historicalSuggestions(sessionId, actor.userId)); return;
+  }
+  const suggestionActionMatch = rest.match(/^\/suggestions\/([^/]+)\/actions$/);
+  if (suggestionActionMatch && method === "POST") {
+    if (actor.via !== "app-session") throw new AppContextError(403, "app_session_required", "Open Harness through Core to choose a prompt suggestion.");
+    response.setHeader("Cache-Control", "no-store");
+    sendJson(response, 200, await manager.suggestionAction(sessionId, actor.userId, suggestionActionMatch[1]!, await readJson(request))); return;
+  }
   const messageReceiptMatch = rest.match(/^\/messages\/([^/]+)$/);
   if (messageReceiptMatch && method === "GET") {
     response.setHeader("Cache-Control", "no-store");

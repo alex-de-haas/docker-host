@@ -7,8 +7,9 @@ import {
   AttachmentDescription, AttachmentMedia, AttachmentTitle,
 } from "@/components/ui/attachment";
 
-export function ChatAttachment({ name, size, file, state = "done", description, onRemove, disabled }: {
+export function ChatAttachment({ name, displayName = name, size, file, state = "done", description, onRemove, disabled }: {
   name: string;
+  displayName?: string;
   size: number | null;
   file?: File;
   state?: ComponentProps<typeof Attachment>["state"];
@@ -18,20 +19,20 @@ export function ChatAttachment({ name, size, file, state = "done", description, 
 }) {
   const image = file?.type.startsWith("image/") === true;
   return (
-    <Attachment size="sm" state={state} className="w-full" aria-label={name}
+    <Attachment size="sm" state={state} className="w-full" aria-label={displayName}
       aria-busy={state === "uploading" || state === "processing"}>
       <AttachmentMedia variant={image ? "image" : "icon"}>
         {image && file ? <LocalImagePreview file={file} /> : state === "uploading" ? <Loader2 className="motion-safe:animate-spin" aria-hidden /> : <FileText aria-hidden />}
       </AttachmentMedia>
       <AttachmentContent>
-        <AttachmentTitle title={name}>{name}</AttachmentTitle>
+        <AttachmentTitle title={displayName}>{displayName}</AttachmentTitle>
         <AttachmentDescription title={description} className="tabular-nums">
           {[size === null ? null : formatAttachmentSize(size), description].filter(Boolean).join(" · ")}
         </AttachmentDescription>
       </AttachmentContent>
       {onRemove && <AttachmentActions>
         <AttachmentAction type="button" size="icon-sm" disabled={disabled}
-          aria-label={`Remove ${name}`} onClick={onRemove}><X /></AttachmentAction>
+          aria-label={`Remove ${displayName}`} onClick={onRemove}><X /></AttachmentAction>
       </AttachmentActions>}
     </Attachment>
   );

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-07
+updated: 2026-11-11
 summary: Harness combines conversations and workspace groups in Sessions, with shared navigation, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -127,7 +127,7 @@ Other users' disclosed activity contributes to independent Working, Needs
 attention and Failed counts without exposing private conversation links. Unknown/stopping metadata
 has a separate indication.
 
-New session, Create app and Continue building are available together in Sessions. Create app is available before selecting
+Create app and New session are available together in Sessions. Create app is available before selecting
 a workspace or conversation; it creates an empty conversation and opens the existing form without
 sending a provider message. New session creates an unattached chat; the plus in Sessions
 creates a chat in that workspace. One search and the All, Needs attention, Working and
@@ -240,6 +240,12 @@ Approval cards have an amber header and retain the exact command in an ink code 
 uses the existing one-time decision. Deny… reveals the supported optional reason; providers without
 reason support keep their existing immediate denial. Cancel and denied/cancelled replay states
 retain their original semantics. No session grant or repository/branch metadata is inferred.
+When the provider names the paused call (Claude's tool-use ID, a started Codex command), a decided
+approval folds into that call's row instead of remaining a second card. The row shows Allowed or a
+red Denied/Cancelled badge; a refusal replaces any reported outcome, omits the missing-output note
+and shows its recorded reason when expanded. The collapsed section header counts denied and
+cancelled calls. Only a unique call and approval with the same identity in one recorded turn are
+paired. Other decided approvals collapse to a one-line disclosure that keeps a deny reason visible.
 The composer retains attachments, mentions, dictation and autonomy controls. Its
 [compact action row](../harness-composer-controls/feature.md) groups profile, provider, model and
 reasoning in one Agent settings panel and collapses its label according to composer width.
@@ -278,9 +284,9 @@ does not replace missing, unknown or conflicting command metadata. Cancelled, un
 conflicting outcomes do not count as failures.
 Commands, MCP tools, reads, searches and edits remain in their original order as flat individual
 rows on expansion, without nested groups by tool type. The section keeps its first-call identity
-as more calls arrive, preserving disclosure state and focus. Prose, approvals, questions and turn
-boundaries separate activity sections. Approval cards remain immediately visible outside a collapsed
-section. Each call retains its input/output disclosure and each command its own recorded outcome.
+as more calls arrive, preserving disclosure state and focus. Prose, unfolded approvals, questions
+and turn boundaries separate activity sections; a folded decision and its status changes do not.
+Pending approval cards remain immediately visible outside a collapsed section. Each call retains its input/output disclosure and each command its own recorded outcome.
 MCP calls keep their app/tool identity rather than being assumed read-only.
 
 Transcript notices, including MCP startup failures, appear as single-line disclosures collapsed
@@ -890,9 +896,10 @@ commit, preserves its browser draft and recovers the original allocation/dispatc
 Creation status and Recover actions remain inside the dialog, with a dot on the icon when recovery
 is available. The embedded Assistant places this icon in its header. There is no separate creation
 toolbar above the conversation.
-The Continue building icon beside the Sessions heading, immediately left of New session, opens
-the existing chooser for retained work or a new session from an installed local Git app. Repository
-panels expose reviewed commits, Accept locally, Use locally and optional existing-remote operations
+Retained development work opens through its workspace and conversation in Sessions. To start another
+task, use New session, add the app through Add app context and describe the change. App context is
+descriptive metadata; authorized workspace preparation remains separate and precedes source edits.
+Repository panels expose reviewed commits, Accept locally, Use locally and optional existing-remote operations
 without requiring publication to save or use the app. The
 [creation feature](../app-prototype-workspaces/feature.md) owns source retention, replay, authorization
 and verification; these controls reuse the same sessions, worktrees and child Core panels.
@@ -1098,9 +1105,10 @@ records the startup/recovery measurements; Linux and Windows lifecycle checks ar
 - Session-row deletion requires confirmation without selecting the row, preserves errors for retry,
   prevents duplicate pending requests and retains Core's workspace/resource guards. Verify selected
   session detachment, other drafts, single-row removal without resetting search or activity chips,
-  and compact-only history controls across reloads. Verify accessible icon-only Create app, Continue building
-  and New session actions beside the Sessions heading and count, in that order, with tooltips,
-  dialog focus restoration, retained creation drafts/recovery and the unchanged building chooser, and no separate application selector.
+  and compact-only history controls across reloads. Verify accessible icon-only Create app and
+  New session actions beside the Sessions heading and count, in that order, with tooltips,
+  dialog focus restoration, retained creation drafts/recovery and no separate application selector.
+  Retained work remains reachable in Sessions; New session plus app context does not allocate source.
 
 - Preserve editable workflow defaults, custom/empty text, instruction delivery, independent retention
   policies and unsaved settings drafts. Keep retention protection consistent with Core's
@@ -1121,7 +1129,9 @@ records the startup/recovery measurements; Linux and Windows lifecycle checks ar
   full-page and embedded conversations, initial inventory loading, known fences during unavailable
   inventory, retained drafts/attachments after verified Resume and writable ordinary idle/completed chats.
 - Verify one mixed activity section for adjacent command/MCP/read/edit calls, preserving flat row
-  order without nested type groups and keeping prose, approvals, questions and turns as boundaries;
+  order without nested type groups and keeping prose, unfolded approvals, questions and turns as
+  boundaries; decided approvals fold only into their uniquely identified call in either event order,
+  with refusal badges on the row and section header, and other decided cards collapse to one line;
   exact-source edit aggregation, unknown totals and retained Review/input actions; command ID reuse,
   duplicate/conflicting/late results, missing provider fields and legacy logs. Test bounded summary
   validation before worker/coordinator persistence, SSE replay and append-before-cursor recovery.

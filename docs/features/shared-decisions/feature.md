@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-06
+updated: 2026-11-11
 summary: Core-owned private questions with immutable answers, source delivery receipts and a shared Harness Decisions view.
 components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -76,6 +76,16 @@ request UUID while submission outcome is unknown. A changed revision requires ex
 removed options cannot silently carry into the reviewed draft. Saved answers display a separate
 continuation status. Plain Markdown lists remain ordinary text.
 
+A closed question (answered, withdrawn, expired or stale) collapses to a compact summary: each
+question shows only its saved option labels and free text, or "Not answered", with the full option
+list behind a disclosure. A repeated label also shows its description. Answer time and continuation
+status share one line, and a notice repeated by the originating chat's wait is shown once. Only
+views outside the originating chat link back to it. In the chat a closed question folds to one line,
+like a tool call: saved answers, the first question and a status badge (Answered, red
+Withdrawn/Expired/Failed, amber Blocked when its continuation needs attention). Expanding it shows
+the summary above; Decisions keeps that summary open. Long unbroken text, such as a path, wraps
+inside the card instead of widening the options.
+
 Both native and Docker assistant instructions direct necessary operator questions and choices
 through the provider's available native question tool: Codex `request_user_input` or
 `request_user_input_async`, Claude `AskUserQuestion`, and Ollama `ask_user`. Harness turns those
@@ -120,6 +130,14 @@ Live acceptance with both actual providers verifies option/free-text delivery an
 completion. Claude acceptance also verifies five-minute parking, a full child Core/Harness/Worker restart,
 and exactly one successful continuation of the same native session. Scripted protocol checks
 separately cover duplicate wording, unsupported inputs and worker crash boundaries.
+
+Codex `request_user_input_async` returns at once and publishes its questions on the agent message
+that follows. Harness shows them as a nonblocking Decision with positional question/option IDs and
+free text, in place of that message's plain-text rendering. A shape beyond the Decision limits stays
+visible as text with a notice. No native callback remains, so the Worker keeps no pending frame and
+the saved answer starts the next turn of the same native thread with strict resume. That turn starts
+only when the conversation has no running or waiting turn; an answer saved during a turn waits for
+it to end and never interrupts it.
 
 ## Required Task Input
 
@@ -185,10 +203,15 @@ Verification commands for this delivery:
   explicit content removal and private SSE revocation.
 - SDK tests cover current-user transport, exact request identity, conflicts and missing credentials.
 - Harness tests cover stable native IDs, duplicate labels, free text, secret/nonblocking handling,
+  asynchronous Codex questions answered during a later turn,
   durable inbox-before-ack, unknown native acceptance, same-attempt continuation, cancellation and
   parking races, local/container exit proofs, shared drafts and uncertain submissions.
-- `npm run test:integration -- tasks` uses a disposable parent-managed Core, normal test login,
-  local-only Docker images and an explicitly scripted native provider. It exercises independent Core
+- Component tests cover the compact closed-question summary, including repeated labels and
+  unanswered questions, the folded chat line, its blocked status and the originating-chat link.
+- The optional manual `npm run test:integration -- tasks` follows the
+  [explicit selection policy](../ci-feedback-loop/feature.md#local-integration-checks), rather than
+  running for every Decisions change or PR. When selected, it uses a disposable parent-managed
+  Core, normal test login, local-only Docker images and an explicitly scripted native provider. It exercises independent Core
   answers, five-minute parking, restart, same task attempt, explicit result and the existing Tasks
   journey. `HOSTY_TASKS_BROWSER=1` includes Chromium Tasks/Decisions acceptance; the existing
   `HOSTY_TASKS_PLAYWRIGHT_MODULE` override selects an installed Playwright module.

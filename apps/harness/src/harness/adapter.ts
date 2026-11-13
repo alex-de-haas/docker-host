@@ -83,6 +83,9 @@ export type HarnessEvent =
    * `title` is the harness's own sentence for the prompt and `reason` its explanation for raising
    * it, each only when the harness offers one; the card shows them over anything reconstructed from
    * name and input, and falls back to that reconstruction when they are absent.
+   *
+   * `toolUseId` names the transcript call being paused, only when the adapter can identify exactly
+   * one; the transcript then folds a decided card into that call's row.
    */
   | {
       type: "approval_request";
@@ -91,13 +94,18 @@ export type HarnessEvent =
       input: unknown;
       title?: string;
       reason?: string;
+      toolUseId?: string;
     }
   /**
    * The harness is asking the operator, paused until resolveQuestion is called. Deliberately not an
    * approval: approving the act of being asked a question is nonsense, and the resolution carries
    * answers rather than a verdict.
+   *
+   * `delivery: "message"` marks a question whose native request already returned (Codex
+   * request_user_input_async): there is no callback to answer, and the saved answer starts a later
+   * turn in the same native thread instead.
    */
-  | { type: "question_request"; questionId: string; questions: HarnessQuestion[]; blocking?: boolean; native?: { threadId?: string; turnId?: string; itemId?: string } }
+  | { type: "question_request"; questionId: string; questions: HarnessQuestion[]; blocking?: boolean; delivery?: "message"; native?: { threadId?: string; turnId?: string; itemId?: string } }
   | {
       type: "result";
       status: string;

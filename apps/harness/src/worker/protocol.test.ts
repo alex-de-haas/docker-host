@@ -40,12 +40,13 @@ async function setup(stopAndWait: () => Promise<void> = async () => {}) {
 describe("direct worker contract", () => {
   it("transports verified instruction provenance and rejects mismatched metadata", async () => {
     const f = await setup();
-    const valid = { ...request(), options: { systemPrompt: "instructions", instructionSources: [{ source: "runtime" as const, text: "instructions" }] } };
+    const valid = { ...request(), skillExportId: "a".repeat(64), options: { systemPrompt: "instructions", instructionSources: [{ source: "runtime" as const, text: "instructions" }] } };
     expect((await f.put("run-bad", { ...valid, options: { ...valid.options, systemPrompt: "different" } })).status).toBe(400);
     expect((await f.put("run-invalid", { ...valid, options: { ...valid.options, systemPrompt: 12 as never } })).status).toBe(400);
     expect((await f.put("run-good", valid)).status).toBe(202);
     await expect.poll(f.options).toBeDefined();
     expect(f.options()?.instructionSources).toEqual(valid.options.instructionSources);
+    expect(f.options()?.skillExportId).toBe(valid.skillExportId);
   });
   it("authenticates execution independently from public health", async () => {
     const f = await setup();
@@ -360,7 +361,8 @@ it.each([true, false])("fences unhealthy usage storage without fabricating exit 
   expect(warning).toHaveBeenCalledWith("[worker] Usage persistence failed; admission fenced.", { code: "ENOSPC" });
   expect(JSON.stringify(warning.mock.calls)).not.toContain("private path");
   expect((await f.journal.load("usage-failure")).receipt).toMatchObject({ exitConfirmed: stopped, error: "Worker stopped after usage persistence failed. Check worker logs." });
-  expect(f.engine.occupied).toBe(stopped ? 0 : 1);
+  // The renamed receipt is readable before directory fsync finishes and releases capacity.
+  await expect.poll(() => f.engine.occupied, { timeout: 5000 }).toBe(stopped ? 0 : 1);
 });
 it("recovers a missing run only with exact-generation attestation and retains a late-admission tombstone", async () => {
   const f = await setup();

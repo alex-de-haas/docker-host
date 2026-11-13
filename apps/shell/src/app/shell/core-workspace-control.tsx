@@ -57,6 +57,15 @@ function matchesTarget(activation: Activation, entry: Recovery, state: CoreDevel
     pathKey(activation.activatedCore.generationPath) === pathKey(state.launch.generationPath) &&
     activation.activatedCore.processId === state.launch.processId && activation.activatedCore.startedAt === state.launch.startedAt;
 }
+function completedSwitchHasDifferentLaunch(activation: Activation, entry: Recovery, state: CoreDevelopment | null) {
+  const activated = activation.activatedCore;
+  const current = state?.launch;
+  return activation.id === entry.activationId && activation.workspaceId === entry.workspaceId &&
+    activation.phase === "active" && ownsCore(activation) && !!activated && !!current &&
+    Date.parse(current.startedAt) > Date.parse(activated.startedAt) &&
+    (current.mode !== activated.mode || pathKey(current.projectPath) !== pathKey(activated.projectPath) ||
+      pathKey(current.generationPath) !== pathKey(activated.generationPath));
+}
 function completedReturnWasFollowedByAnotherLaunch(activation: Activation, entry: Recovery, state: CoreDevelopment | null) {
   const pendingReturn = entry.pending?.kind === "return" ? (entry.pending.body.return as { requestId?: string } | undefined)?.requestId : undefined;
   return activation.id === entry.activationId && activation.workspaceId === entry.workspaceId &&
@@ -208,6 +217,7 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
   }, [remember, request, state]);
   const observed = recovery && detail?.status.activation.id === recovery.activationId ? detail.status.activation : null;
   const helper = observed ? detail?.status.helper : null;
+  const laterCoreLaunch = !!recovery && !recovery.pending && !!observed && completedSwitchHasDifferentLaunch(observed, recovery, state);
   const awaitingLaunch = !!recovery?.originalApply && observed?.phase === "active" && !observed.coreReturned && !matchesTarget(observed, recovery, state);
   const awaitingReleaseReturn = recovery?.target?.kind === "release" && !!observed?.coreReturned && (observed.coreReturnTarget?.launch ?? observed.previousCore)?.mode === "release" && state?.launch.mode !== "release";
   const transition = !!recovery && (!!recovery.release && !["failed", "completed"].includes(recovery.release.status ?? "") || !!recovery.pending || !observed && !recovery.release || awaitingLaunch || awaitingReleaseReturn || !!observed && !terminal(observed) && observed.phase !== "active" && !["failed", "paused"].includes(helper?.state ?? ""));
@@ -300,11 +310,13 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
     void run(pending, entry);
   };
   const returnCore = () => {
-    if (disabled || !state?.manageable || !activeUser?.id || !selectedActive || !accept || blockedByRecovery) return;
+    if (disabled || !state?.manageable || !activeUser?.id || !selectedActive || !accept || blockedByRecovery && !laterCoreLaunch) return;
     setReview(null);
     const pending: Pending = { kind: "return", workspaceId: selectedActive.workspaceId,
       body: { activationId: selectedActive.activation.id, return: { requestId: crypto.randomUUID(), apps: [], core: true, acceptDataChanges: true } } };
-    void run(pending, { ...recoveryRef.current, target, workspaceId: selectedActive.workspaceId, activationId: selectedActive.activation.id });
+    const nextTarget: Target | null = laterCoreLaunch ? { kind: "release" } : target;
+    setTarget(nextTarget);
+    void run(pending, { ...recoveryRef.current, target: nextTarget, workspaceId: selectedActive.workspaceId, activationId: selectedActive.activation.id });
   };
   const release = async () => {
     const scope = lifetime.current;
@@ -407,7 +419,7 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
     target?.kind === "workspace" && target.workspaceId === recovery.workspaceId && target.worktreeId === observed.coreWorktreeId;
   const returned = !!observed?.coreReturned || !!observed && terminal(observed);
   const releaseDone = !!completion || target?.kind === "release" && returned && state?.launch.mode === "release";
-  const hardStopped = !!observed?.error || ["failed", "paused"].includes(helper?.state ?? "") || recovery?.release?.status === "failed";
+  const hardStopped = laterCoreLaunch || !!observed?.error || ["failed", "paused"].includes(helper?.state ?? "") || recovery?.release?.status === "failed";
   const transientError = errorStatus === null ? !errorCode : errorStatus >= 500 || [408, 429].includes(errorStatus);
   const stalled = hardStopped || !!error && (!transientError || statusFailures >= 3);
   const reconnecting = !!error && transition && !stalled;
@@ -462,14 +474,15 @@ export function useCoreWorkspaceControl({ coreOrigin, state, workspaces, workspa
       {!showingProgress && !activeDone && !releaseDone && <p className="text-muted-foreground">Your source files and current data are kept. Switching does not restore an earlier backup.</p>}
       {!showingProgress && !recovery && retained.length > 1 && <p>Several saved switches still own Core. Choose one to review before continuing.</p>}
       {!showingProgress && retained.length > 1 && retained.map(entry => <Button key={entry.activation.id} type="button" variant="outline" size="sm" onClick={() => recover(entry)}>Review {workspaces.find(item => item.id === entry.workspaceId)?.name || "saved workspace"}</Button>)}
-      {selectedActive && target?.kind === "release" && !returned && <section className="space-y-3 rounded-lg border p-3" aria-label="Return current Core">
+      {selectedActive && (target?.kind === "release" || laterCoreLaunch) && !returned && <section className="space-y-3 rounded-lg border p-3" aria-label="Return current Core">
         <p>Return Core to the version saved before this workspace was activated{(selectedActive.activation.coreReturnTarget?.launch ?? selectedActive.activation.previousCore)?.mode === "release" ? " (Release)" : ""}.</p>
         {(selectedActive.activation.coreReturnTarget?.launch ?? selectedActive.activation.previousCore)?.mode !== "release" && <p className="text-muted-foreground">The saved version is another development Core. After it is ready, you can continue to the installed Release.</p>}
-        <CheckboxRow label="I understand that the previous Core version will use the current data." checked={accept} disabled={unavailable || busy || blockedByRecovery} onChange={setAccept} />
-        <Button type="button" variant="outline" disabled={unavailable || !accept || busy || blockedByRecovery} onClick={returnCore}>Return Core</Button>
+        <CheckboxRow label="I understand that the previous Core version will use the current data." checked={accept} disabled={unavailable || busy || blockedByRecovery && !laterCoreLaunch} onChange={setAccept} />
+        <Button type="button" variant="outline" disabled={unavailable || !accept || busy || blockedByRecovery && !laterCoreLaunch} onClick={returnCore}>Return Core</Button>
       </section>}
       {recovery && !recovery.release && stalled && <section className="space-y-2 rounded-lg border p-3" aria-label="Core switch recovery">
-        <p>{reconnecting ? "Core has not confirmed the switch yet. The original request is retained so you can retry safely." : "The switch needs attention. Check its progress before starting another switch."}</p>
+        <p>{laterCoreLaunch ? "Core started a different runtime after this switch completed. Review Return to reconcile the saved switch." :
+          reconnecting ? "Core has not confirmed the switch yet. The original request is retained so you can retry safely." : "The switch needs attention. Check its progress before starting another switch."}</p>
         {[observed?.error, helper?.error].filter(Boolean).map((message, index) => <p key={index} className="break-words text-destructive-foreground">{message}</p>)}
         {helper?.logPath && <p className="break-all text-xs text-muted-foreground">Build log: {helper.logPath}</p>}
         <div className="flex flex-wrap gap-2">

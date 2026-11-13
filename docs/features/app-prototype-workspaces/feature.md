@@ -1,6 +1,6 @@
 ---
 created: 2026-10-17
-updated: 2026-11-07
+updated: 2026-11-10
 summary: Local Git app creation, child Core Docker preview, local acceptance, remote publication and versioned development guidance through Harness, MCP and CLI.
 components: [apps/core, apps/cli, apps/harness]
 ---
@@ -46,7 +46,7 @@ responses are reported as upstream errors rather than usable workspace data.
 | Check preview | Review an available check recipe; missing recipes, health and browser verification remain distinct observations |
 | Commit and Accept locally | Review/commit source changes, then explicitly fast-forward canonical main; no push is implied |
 | Use locally | Start the accepted app through normal lifecycle with its ordinary data, independently of the child preview |
-| Continue building | Open retained work or prepare a new session from reviewed accepted main; source does not belong to a chat |
+| Continue development | Open retained work in Sessions, or start New session, add app context and describe the next task; source preparation is a separate authorized operation |
 | Connect remote and publish a PR | Select an existing repository/account and review the separate fetch, integration, push and PR operations |
 | Finish and Complete | Finish removes child resources; Complete verifies every repository before workspace/chat deletion becomes eligible |
 
@@ -261,23 +261,24 @@ validating the requested source app; missing parameters never bypass the authori
 A published branch or open/closed unmerged PR does not satisfy local
 acceptance or merged-work completion and does not authorize source cleanup.
 
-## Continue Building
+## Continuing Development
 
-The full Harness page offers an icon-only **Continue building** button on the right of the Sessions
-heading and count, immediately left of New session, with an accessible name and tooltip. Its chooser
-reads installed local Git apps directly from Core, including apps whose previous conversations have
-been deleted.
-The chooser shows canonical main, the current user's retained worktrees, workflow state and whether
-their clean committed work is already included in main. Unverified source remains visibly unknown.
-It opens an existing Harness session without transferring its leases, resuming a closed workflow or
-starting an agent. Deferred/completed work uses the existing explicit Resume action.
+Open retained work through its workspace and conversation in Sessions. Selecting an existing
+conversation preserves its worktree; it does not transfer leases, resume a closed workflow or start
+an agent. Deferred/completed work uses the existing explicit Resume action.
 
-**New building session** allocates a new conversation and worktree from the reviewed accepted main
-commit. Core serializes preparation with source selection and local acceptance. It refuses a changed
-head, alternate source override, dirty canonical source or a main commit changed outside local
-acceptance. Old worktrees, their edits and active leases are retained. Allocation and preparation
-reuse the same request after a lost response; the browser retains the retry arguments through reload.
-The operator chooses a provider and sends the next instruction in the resulting conversation.
+For another task, use **New session**, choose **Add app context** and describe the change. App
+context supplies descriptive metadata; it does not prepare source or grant access. The agent
+separately prepares an authorized registered workspace before editing source. Installed apps and
+their canonical source remain available after completed conversations and worktrees are deleted;
+source does not belong to a chat.
+
+The server's building-session endpoint remains for compatibility and recovery of outstanding
+requests, without a dedicated public UI action. It allocates a conversation and worktree from the
+reviewed accepted main commit. Core serializes preparation with source selection and local
+acceptance and refuses a changed head, alternate source override, dirty canonical source or a main
+commit changed outside local acceptance. Old worktrees, edits and active leases are retained.
+Allocation and preparation reuse the original request after a lost response and do not start an agent.
 
 Source replacement changes only the selected runtime folder. It does not overwrite the canonical
 repository or move an existing session to another repository. Clearing an override on a local Git app
@@ -347,9 +348,10 @@ in the browser, retained data across reload and were removed through agent-drive
 operator acceptance and ordinary start through Harness, separate authenticated browser data, app
 and Harness restart, agent-driven Finish and completed-worktree removal without losing ordinary data.
 
-[Continuation QA](../../reviews/2026-10-17-local-building-continuation-qa.md) verifies existing and
-new sessions through Harness, source override/clear, restart and continued development after
-completed chats/worktrees are removed. Canonical source remains independent of chat retention.
+[Continuation QA](../../reviews/2026-10-17-local-building-continuation-qa.md) records the former
+building chooser's existing/new-session flow, source override/clear, restart and continued
+development after completed chats/worktrees are removed. Canonical source remains independent of
+chat retention; the archived chooser is no longer a public UI action.
 
 [Multi-service reuse QA](../../reviews/2026-10-17-multi-service-sandbox-reuse-qa.md) covers replacing
 the bootstrap with two services, retained browser-written data, source reload, image rebuild,
@@ -427,7 +429,9 @@ are Core/CLI 0.140.0 and Harness 0.57.0; local acceptance does not attest to reg
 - Exact-head local acceptance, dirty/divergent/stale targets, active writers and running ordinary apps.
 - Interrupted acceptance and repeated local start, foreign-owner and lifecycle-permission refusals.
 - Ordinary Docker data and caches remain separate from preview through reload, restart and Finish.
-- Existing-session continuation preserves its worktree; new sessions start from reviewed accepted main.
+- Existing-session continuation preserves its worktree; New session and descriptive app context do
+  not prepare source until the authorized development task requires it. Compatibility building-session
+  requests retain their reviewed accepted-main and recovery checks.
 - Lost preparation responses and restart reuse the original session without starting an agent.
 - Explicit workspace Delete can remove dirty/outstanding work after one UI confirmation; it retains canonical Git.
 - Source override and clearing retain canonical and worktree files and restore the original binding.

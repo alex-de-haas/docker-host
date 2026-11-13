@@ -208,6 +208,14 @@ export class DecisionsService {
       if (closed(wait)) return;
       if (wait.taskInput) { await this.continueTaskInput(wait); return; }
       if (wait.state === "running" || wait.state === "admitted" || wait.resumeRequested) { await this.observeContinuation(wait); return; }
+      if (wait.event.delivery === "message") {
+        // The native request returned with its turn; the answer starts the next turn in the same thread.
+        await this.manager.checkDecision(wait);
+        if (!await this.manager.decisionTurnAvailable(wait)) return;
+        wait = await this.report(wait, "admitted");
+        wait = await this.update(id, { state: "admitted", resumeRequested: true });
+        await this.observeContinuation(wait); return;
+      }
       if (wait.park && wait.native.workerRunId && this.manager.worker) {
         const receipt = await this.manager.worker.request<WorkerReceipt>(`/v1/runs/${wait.native.workerRunId}`);
         if (receipt.state === "parking") { await this.park(wait); return; }
@@ -274,7 +282,7 @@ export class DecisionsService {
       });
       if (!receipt) {
         await this.manager.checkDecision(wait);
-        await this.manager.resumeDecision(wait, this.credentials.get(wait.owner)!);
+        if (!await this.manager.resumeDecision(wait, this.credentials.get(wait.owner)!)) return;
       } else if (receipt.state !== "accepted") throw new DecisionError("unknown_admission", "Continuation admission needs reconciliation. A second run was not started.", 409);
       const session = await this.manager.getSession(wait.sessionId);
       const resumedRunId = session?.decisionRunIds?.[wait.commandId];

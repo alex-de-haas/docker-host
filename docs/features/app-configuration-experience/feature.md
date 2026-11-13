@@ -1,6 +1,6 @@
 ---
 created: 2026-10-08
-updated: 2026-10-20
+updated: 2026-11-12
 summary: Default-only installation, shared configuration readiness and optional app-author guidance for manifest and app-owned settings.
 components: [apps/core, apps/shell, apps/marketplace, packages/app-sdk]
 ---
@@ -82,7 +82,6 @@ This inventory records the current manifest and app-owned configuration. Every d
 | Harness | No user preference parameters | Its Settings UI owns retention, provider connections and invocation preferences; former retention values initialize app storage once. |
 | Demo App | Greeting, channel, refresh interval, auth preview, all defaulted; optional catalog mounts | Demonstrates generic settings and an app-owned Settings page without forcing migration. |
 | Telemetry | No manifest app settings | Runtime service environment and generated endpoint configuration remain separate. |
-| Whisper | Required model, default small | Installs without input; current model changes require restart. |
 
 Related owner-maintained repositories inspected on 2026-10-08 demonstrate why headless support and
 post-install setup remain necessary: Media Server declares a required TMDb secret without a default

@@ -25,7 +25,7 @@ internal sealed partial class PublicationService
             selected = binding.Connection;
             record = new() { WorkspaceId = tree.Id, Owner = tree.Owner, Provider = binding.Source.Descriptor.Id,
                 Repository = binding.Repository, HeadRepository = binding.Repository, ConnectionId = selected.Id,
-                Branch = tree.Branch, TargetBranch = tree.TargetBranch };
+                Branch = tree.Branch, TargetBranch = binding.TargetBranch };
         }
         else
         {

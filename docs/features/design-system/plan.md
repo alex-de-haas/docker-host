@@ -1,9 +1,9 @@
 ---
 status: In Progress
 created: 2026-10-12
-updated: 2026-10-26
+updated: 2026-11-12
 summary: Remaining Hosty design implementation, acceptance gates and separately reviewed Core/SDK contracts, with stable deliverable IDs.
-components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/documents, apps/telemetry, apps/telemetry-ui, apps/demo-app, apps/marketplace, apps/whisper]
+components: [apps/shell, apps/shell-swift, packages/app-sdk, apps/core, apps/harness, assets/hosty-brand, apps/documents, apps/telemetry, apps/telemetry-ui, apps/demo-app, apps/marketplace]
 ---
 
 # Design System
@@ -37,7 +37,7 @@ restarts, source cleanup, commits or publication.
 | --- | --- |
 | Dashboard | Search and combined state filters; fleet/per-app update checks and review; install; start/stop/restart/autostart; package/source/workspace selection and Return; service state/health/resources and addressable Logs in Manage; Dashboard Logs and More > Console logs entries; configuration, app settings, permissions, backup/restore, removal; addresses/ports/public origins; resources/history and unavailable data; Core source/restart/update controls; environment creation/progress/setup/resume/lifecycle. |
 | Shell chrome and forms | Navigation and current routes, role/permission restrictions, theme and notifications, tools and retained frames, keyboard/focus, unsaved settings and confirmation flows; Apps Open/Standalone and administrator-only Uninstall through Core. |
-| Harness | Sessions, provider/account/model selection, transcript and composer, attachments/speech, approvals, workspace and runtime controls, previews, source/diff/Git/PR/CI/review operations, external workspaces and settings. Workspace/title/app search and activity chips preserve the flat list, ordering and identity; the Sessions heading carries icon-only Create app, Continue building and New session actions with no separate app selector; pinned decisions navigate to the existing card; workspace hiding preserves the mounted context. |
+| Harness | Sessions, provider/account/model selection, transcript and composer, attachments/speech, approvals, workspace and runtime controls, previews, source/diff/Git/PR/CI/review operations, external workspaces and settings. Workspace/title/app search and activity chips preserve the flat list, ordering and identity; the Sessions heading carries icon-only Create app and New session actions with no separate app selector; pinned decisions navigate to the existing card; workspace hiding preserves the mounted context. |
 | Marketplace | Catalog source/settings, refresh/diagnostics, search/category filters, app detail/screenshots/description, feed choice, installed/update states, installation confirmation/cancellation/retry and session-expiry recovery. |
 
 ### Remaining Work And Acceptance Boundary
@@ -867,9 +867,9 @@ new `assets/icon.svg` files at their existing `catalogMetadata.icon` paths. This
 the manifest schema nor its icon contract. Core branding and own-app empty illustrations remain
 separate from runtime icon rendering. Complete the remaining accents and empty artwork under D4.
 
-All seven first-party runtime apps now declare their cell SVG through existing manifest metadata,
-including Whisper. Their completed asset/version adoption is recorded in [feature.md](feature.md)
-and the verification archive. D4 retains the unfinished chart/empty-art/accent work, while D19
+The 2026-10-22 adoption covered seven first-party runtime apps, including the since-retired Whisper
+app. The current manifest inventory is recorded in [feature.md](feature.md), and the original
+asset/version verification remains in the archive. D4 retains the unfinished chart/empty-art/accent work, while D19
 retains theme and font adoption in Plans, Telemetry UI and Demo App. Catalog snapshots keep their
 vendored assets until normal publication; no source/runtime switch follows from this cleanup.
 
@@ -1178,7 +1178,6 @@ first-party app takes a free hue and a free mark. Third-party apps keep their ow
 | Plans | `#60A5FA` | `#2563EB` | P | `XXX` `X*X` `X..` |
 | Telemetry | `#A78BFA` | `#7C3AED` | T | `X*X` `.X.` `.X.` |
 | Harness | `#FB923C` | `#C2410C` | A (agent) | `.X.` `X*X` `X.X` |
-| Whisper | `#F472B6` | `#DB2777` | V (voice) | `X.X` `X.X` `.*.` |
 | Marketplace | `#FACC15` | `#A16207` | M | `XXX` `X*X` `X.X` |
 | Demo App | `#E879F9` | `#C026D3` | D | `XX.` `X*X` `XX.` |
 
@@ -1265,7 +1264,7 @@ described by the roles it provides; each role has one icon, used wherever the ap
 | --- | --- | --- |
 | `ui-client` | `app-window` | Shell, once [replaceable UI clients](../replaceable-ui-clients/plan.md) ships the role |
 | `assistant` | `bot` | Harness |
-| `speech-to-text` | `audio-lines` | Whisper |
+| `speech-to-text` | `audio-lines` | Installed speech providers |
 | `otlp-collector` | `radar` | Telemetry |
 | language model (planned) | `cpu` | reserved |
 | `text-to-speech` (planned) | `volume-2` | reserved |
@@ -1633,9 +1632,10 @@ column; the header's workspace toggle hides and shows it.
 
 ### Sessions
 
-- The Sessions heading and count share a row with icon-only **Create app**, **Continue building**
-  and **New session** actions on the right, in that order, with accessible names and tooltips. Continue building
-  opens its existing chooser. Create app opens its existing form, with creation status and recovery
+- The Sessions heading and count share a row with icon-only **Create app** and **New session**
+  actions on the right, in that order, with accessible names and tooltips. Retained work opens through
+  Sessions; a new development task uses New session and descriptive app context before separate
+  authorized workspace preparation. Create app opens its existing form, with creation status and recovery
   inside the dialog instead of a separate toolbar above the conversation. A search field below matches titles and app context; there is no
   separate application selector.
 - Filter chips — All, Needs you, Working, Failed — each with its count and the state's shape. They
@@ -1712,7 +1712,7 @@ column; the header's workspace toggle hides and shows it.
   reason that is sent with the denial. The canvas also shows Allow for this session; that would be a
   new standing grant beyond today's one-time allow or deny, so it stays out until the open question
   below is settled.
-- The composer keeps attachments, app mentions and Whisper dictation; its bottom row holds the
+- The composer keeps attachments, app mentions and speech dictation; its bottom row holds the
   provider and model and the Normal / Autonomous switch. Keep mode explanations in that menu and
   remove the duplicate footer description. The compact circular Context indicator sits immediately
   after the provider selector in both full-page and embedded chat, with used/maximum tokens,

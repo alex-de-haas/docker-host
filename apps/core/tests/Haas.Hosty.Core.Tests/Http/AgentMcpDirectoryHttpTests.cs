@@ -119,6 +119,87 @@ public sealed class AgentMcpDirectoryHttpTests
         Assert.Empty(await unchanged.Content.ReadAsStringAsync());
     }
 
+    [Theory]
+    [InlineData("http://127.0.0.1:3456", null)]
+    [InlineData("http://127.0.0.1:3456", "https://reader.example.test")]
+    [InlineData("http://[::1]:3456", null)]
+    [InlineData("http://[::1]:3456", "https://reader.example.test")]
+    [InlineData("http://192.0.2.10:3456", "https://reader.example.test")]
+    public async Task McpDirectories_UseTransportWithoutChangingBrowserOrigins(string transport, string? publicOrigin)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var target = CreateApp("independent.reader") with {
+            RuntimeState = "running",
+            Endpoints = [new("api", "http", transport, true)],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
+                ["mcp"] = [new("default", "api", "/api/mcp")] },
+            Settings = publicOrigin is null ? new Dictionary<string, AppSettingValue>()
+                : new Dictionary<string, AppSettingValue> { [PublicOriginSettings.BuildSettingKey("api")] = new(PublicOriginSettings.BuildSettingKey("api"), "string", publicOrigin, false) },
+            Ui = new(null, null, "api", "/", []),
+        };
+        var assistant = CreateApp("independent.assistant") with {
+            ConfirmedRoles = ["assistant"],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
+                ["assistant"] = [new("default", null, "/assistant")] },
+        };
+        await apps.UpsertAppAsync(target);
+        await apps.UpsertAppAsync(assistant);
+
+        await SignInAsync(host, "host.admin");
+        using var admin = host.CreateClient();
+        admin.DefaultRequestHeaders.Add("Cookie", "hosty_session=agent-session");
+        using var adminResponse = await admin.GetAsync("/api/core/agents");
+        adminResponse.EnsureSuccessStatusCode();
+        AssertTransport((await adminResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("targets"));
+
+        using var service = host.CreateClient();
+        service.DefaultRequestHeaders.Authorization = new("Bearer",
+            host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(assistant.Id));
+        using var serviceResponse = await service.GetAsync($"/api/internal/apps/{assistant.Id}/app-directory");
+        serviceResponse.EnsureSuccessStatusCode();
+        var directory = await serviceResponse.Content.ReadFromJsonAsync<JsonElement>();
+        AssertTransport(directory.GetProperty("agents").GetProperty("targets"));
+        var browserUrl = AppSummary.From(target).EmbeddedUrl;
+        Assert.Equal(publicOrigin is null
+            ? (LocalBrowserOrigins.Local(target, target.Endpoints[0]) ?? transport) + "/"
+            : publicOrigin + "/", browserUrl);
+
+        void AssertTransport(JsonElement targets)
+        {
+            var entry = targets.EnumerateArray().Single(item => item.GetProperty("id").GetString() == target.Id);
+            var endpoint = Assert.Single(entry.GetProperty("interfaces").EnumerateArray());
+            Assert.Equal(transport + "/api/mcp", endpoint.GetProperty("url").GetString());
+            Assert.Equal("ready", endpoint.GetProperty("readiness").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task McpDirectory_WithoutTransportIsUnavailableAndDoesNotUsePublicOrigin()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var target = CreateApp("independent.reader") with {
+            RuntimeState = "running",
+            Endpoints = [new("api", "http", "", true, PublicOrigin: "https://reader.example.test")],
+            Settings = new Dictionary<string, AppSettingValue> {
+                [PublicOriginSettings.BuildSettingKey("api")] = new(PublicOriginSettings.BuildSettingKey("api"), "string", "https://reader.example.test", false) },
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
+                ["mcp"] = [new("default", "api", "/api/mcp")] },
+        };
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(target);
+        await SignInAsync(host, "host.admin");
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Add("Cookie", "hosty_session=agent-session");
+
+        using var response = await client.GetAsync("/api/core/agents");
+        response.EnsureSuccessStatusCode();
+        var directory = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var entry = directory.GetProperty("targets").EnumerateArray().Single(item => item.GetProperty("id").GetString() == target.Id);
+        var endpoint = Assert.Single(entry.GetProperty("interfaces").EnumerateArray());
+        Assert.Null(endpoint.GetProperty("url").GetString());
+        Assert.Equal("unavailable", endpoint.GetProperty("readiness").GetString());
+    }
+
     [Fact]
     public async Task AssistantAssignmentsAreExplicitVersionedAndCannotBeSelfGranted()
     {

@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { durableCreateFile, durableMkdir } from "../persistence.js";
 import path from "node:path";
 import { fail } from "./storage.js";
 
@@ -10,8 +11,8 @@ export class ExportCursors {
   private secret(): Promise<Buffer> {
     return this.key ??= (async () => {
       const file = path.join(this.root, "cursor-key");
-      await mkdir(this.root, { recursive: true });
-      try { await writeFile(file, randomBytes(32), { flag: "wx", mode: 0o600 }); }
+      await durableMkdir(this.root);
+      try { await durableCreateFile(file, randomBytes(32)); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
       const key = await readFile(file); if (key.length !== 32) throw new Error("Invalid history cursor signing key"); return key;
     })().catch(error => { this.key = undefined; throw error; });

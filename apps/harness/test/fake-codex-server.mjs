@@ -65,6 +65,9 @@ let pendingApprovalScope = { itemId: "exec-1", turnId: "turn-1" };
 let currentTurnText = "";
 let activeThreadId = "thread-fake-1";
 let proposalTurn = 0;
+let initialized = false;
+let threadOpened = false;
+let extraSkillRoots = [];
 
 process.stdin.on("data", (chunk) => {
   buffer += chunk.toString();
@@ -85,6 +88,12 @@ function fail(reason) {
 }
 
 function handle(msg) {
+  if (["thread/start", "thread/resume"].includes(msg.method)) {
+    if (process.env.HOSTY_TEST_SKILL_ROOTS && JSON.stringify(extraSkillRoots) !== process.env.HOSTY_TEST_SKILL_ROOTS)
+      fail("selected skill roots must be registered before opening a thread");
+    if (process.env.HOSTY_TEST_REJECT_SKILL_ROOTS) fail("thread dispatched after skill roots were refused");
+    threadOpened = true;
+  }
   if (process.env.HOSTY_TEST_AUTONOMY && ["thread/start", "thread/resume", "turn/start"].includes(msg.method)) {
     const autonomous = process.env.HOSTY_TEST_AUTONOMY === "autonomous";
     const expected = msg.method === "turn/start" ? (process.env.HOSTY_TEST_EXTERNAL_SANDBOX ? "externalSandbox" : autonomous ? "dangerFullAccess" : "readOnly") : (autonomous ? "danger-full-access" : "read-only");
@@ -148,7 +157,18 @@ function handle(msg) {
     send({ jsonrpc: "2.0", id: msg.id, result: { userAgent: process.env.HOSTY_TEST_PREDICTION_VERSION ? `fake-codex/${process.env.HOSTY_TEST_PREDICTION_VERSION}` : "fake-codex" } });
     return;
   }
-  if (msg.method === "initialized") return;
+  if (msg.method === "initialized") { initialized = true; return; }
+  if (msg.method === "skills/extraRoots/set") {
+    if (!initialized || threadOpened) fail("skill roots must be registered after initialization and before opening a thread");
+    const roots = msg.params?.extraRoots;
+    if (!Array.isArray(roots) || roots.some(root => typeof root !== "string" || !path.isAbsolute(root))) fail("skill roots must be absolute paths");
+    if (process.env.HOSTY_TEST_SKILL_ROOTS === "[]") fail("a run without selected skills must not change skill roots");
+    if (process.env.HOSTY_TEST_SKILL_ROOTS && JSON.stringify(roots) !== process.env.HOSTY_TEST_SKILL_ROOTS) fail("unexpected selected skill roots");
+    if (process.env.HOSTY_TEST_REJECT_SKILL_ROOTS) { send({ id: msg.id, error: { code: -32000, message: "fixture skill roots refused" } }); return; }
+    extraSkillRoots = roots;
+    send({ id: msg.id, result: {} });
+    return;
+  }
   if (msg.method === "thread/prediction/request") {
     if (currentTurnText === "suggestion-unsupported") { send({ id: msg.id, error: { code: -32601, message: "Method not found" } }); return; }
     if (msg.params.sourceTurnId !== "prediction-source" || msg.params.threadId !== activeThreadId) fail("prediction identity mismatch");
@@ -257,6 +277,21 @@ function handle(msg) {
       if (currentTurnText === "question-nonblocking") send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "independent", text: "Independent work continued." } } });
       return;
     }
+    if (currentTurnText.startsWith("async-question")) {
+      // request_user_input_async returns {"accepted":true}; its questions ride on the agent message.
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "async-turn" } } });
+      const asked = (id, turnId, questions) => send({ method: "item/completed", params: { threadId: activeThreadId, turnId, item: { type: "agentMessage", id,
+        text: questions.map(q => [q.title, ...(q.options ?? []).map(option => `- ${option}`)].join("\n")).join("\n\n"),
+        phase: "final_answer", memoryCitation: null, delivery: "async", questions } } });
+      asked("async-call", "async-turn", currentTurnText === "async-question-oversized"
+        ? Array.from({ length: 5 }, (_, index) => ({ title: `Question ${index + 1}`, options: null }))
+        : currentTurnText === "async-question-options" ? [{ title: "Pick a port", options: Array.from({ length: 9 }, (_, index) => String(8080 + index)) }]
+        : [{ title: "Which branch?", options: ["Main", "Main", "Release"] }, { title: "Anything else?", options: null }]);
+      send({ method: "item/completed", params: { threadId: activeThreadId, turnId: "async-turn", item: { type: "agentMessage", id: "independent",
+        text: "Independent work continued.", phase: "final_answer", memoryCitation: null, delivery: null, questions: null } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "async-turn", status: "completed" } } });
+      return;
+    }
     if (currentTurnText.startsWith("suggestion-")) {
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "prediction-source" } } });
       send({ method: "item/completed", params: { item: { type: "agentMessage", id: "answer", text: "Primary answer" } } });
@@ -266,6 +301,10 @@ function handle(msg) {
     if (currentTurnText === "model-selection") {
       send({ method: "item/completed", params: { item: { type: "agentMessage", id: "selection", text: JSON.stringify({ model: msg.params.model, effort: msg.params.effort, thread: msg.params.threadId }) } } });
       send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "selected", status: "completed" } } }); return;
+    }
+    if (currentTurnText === "native-skills") {
+      send({ method: "item/completed", params: { item: { type: "agentMessage", id: "skills", text: JSON.stringify({ roots: extraSkillRoots, home: process.env.HOME, codexHome, thread: activeThreadId }) } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "skills", status: "completed" } } }); return;
     }
     if (currentTurnText === "provider-usage") {
       send({ method: "account/rateLimits/updated", params: { rateLimits: { limitId: "codex", primary: { usedPercent: 40, windowDurationMins: 300 } } } });

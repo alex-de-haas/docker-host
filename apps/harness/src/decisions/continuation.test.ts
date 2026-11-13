@@ -21,7 +21,7 @@ import type { HarnessStartOptions } from "../harness/adapter.js";
 
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const action of cleanup.splice(0).reverse()) await action(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
-async function setup(nativeQuestion = true, kind: "codex" | "claude" = "codex") {
+async function setup(nativeQuestion = true, kind: "codex" | "claude" = "codex", delivery?: "message") {
   const dir = await mkdtemp(path.join(os.tmpdir(), "decision-native-boundary-")); cleanup.push(() => rm(dir, { recursive: true, force: true }));
   vi.stubEnv("HOSTY_PUBLIC_ORIGIN_HTTP", "https://harness.example.test");
   const journal = new WorkerJournal(path.join(dir, "worker")); await journal.initialize();
@@ -33,8 +33,10 @@ async function setup(nativeQuestion = true, kind: "codex" | "claude" = "codex") 
       starts.push(options);
       return { send: input => {
         inputs.push(input); options.onEvent({ type: "harness_session", harnessSessionId: "native-thread" });
-        if (nativeQuestion && !options.resumeHarnessSessionId) options.onEvent({ type: "question_request", questionId: "native-question", blocking: true,
-          questions: [{ id: "choice", header: "Choose", question: "Which summary?", options: [{ id: "brief", label: "Brief", description: "One paragraph" }], multiSelect: false }] });
+        if (nativeQuestion && !options.resumeHarnessSessionId) options.onEvent({ type: "question_request", questionId: "native-question", blocking: !delivery,
+          ...(delivery ? { delivery } : {}), questions: [{ id: "choice", header: "Choose", question: "Which summary?", options: [{ id: "brief", label: "Brief", description: "One paragraph" }], multiSelect: false }] });
+        // An asynchronous native question returns at once and its turn ends normally.
+        if (nativeQuestion && delivery && !options.resumeHarnessSessionId) options.onEvent({ type: "result", status: "success" });
       }, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => false, interrupt: async () => {}, stop: async () => {}, stopAndWait: stop };
     } }),
   }, 1);
@@ -106,6 +108,85 @@ it("parks, restarts the coordinator, and continues the same native thread once w
   await vi.waitFor(async () => expect((await reopened.manager.getSession(chat.id))?.status).toBe("idle"));
   await reopened.decisions.tick(); expect((await reopened.decisions.local("owner", wait.id)).state).toBe("completed");
   expect((await reopened.manager.store.readEvents(chat.id)).filter(e => e.type === "question_answered")).toHaveLength(1);
+});
+it.each([["codex", false], ["claude", true]] as const)("%s continues its parked question ahead of follow-ups without consuming the queue (paused: %s)", async (kind, paused) => {
+  const f = await setup(true, kind);
+  const chat = await f.manager.createSession({ createdBy: "owner", title: "Question with follow-ups" });
+  await f.manager.postMessage(chat.id, "Ask first", "volatile-current-authority");
+  const wait = await waiting(f, chat.id), entryIds = [randomUUID(), randomUUID()];
+  const queueCommand = async (command: Record<string, unknown>) => f.manager.messageQueueCommand(chat.id, "owner", {
+    requestId: randomUUID(), expectedRevision: (await f.manager.messageQueue(chat.id, "owner")).revision, command,
+  });
+  for (const [index, entryId] of entryIds.entries()) await queueCommand({ type: "enqueue", entryId, text: `Follow-up ${index + 1}`, attachments: [] });
+  if (paused) await queueCommand({ type: "pause" });
+  await expect(f.manager.postMessage(chat.id, "Unrelated new turn", "volatile-current-authority")).rejects.toMatchObject({ code: "queue_pending" });
+  await f.decisions.waits.update(wait.id, w => ({ ...w!, native: { ...w!.native, kind } }));
+  await f.decisions.tick();
+  await vi.waitFor(async () => expect((await f.manager.getSession(chat.id))?.workerRun).toBeUndefined());
+  const saved = await f.decisions.local("owner", wait.id);
+  await f.decisions.resolve("owner", saved.core!.id, { requestId: randomUUID(), expectedRevision: saved.core!.revision, answers: { choice: { optionIds: ["brief"] } } });
+  await f.decisions.tick();
+  await vi.waitFor(() => expect(f.starts).toHaveLength(2));
+  expect(f.starts[1]).toMatchObject({ resumeHarnessSessionId: "native-thread", requireNativeResume: true });
+  expect(f.inputs[1]).toContain(saved.core!.id);
+  await expect(f.manager.postMessage(chat.id, "Forged continuation", "volatile-current-authority", [], {
+    clientRequestId: randomUUID(), actorUserId: "owner", decisionContinuation: {
+      id: wait.id, owner: "someone-else", snapshot: wait.snapshot, cancellationGeneration: wait.cancellationGeneration,
+    },
+  })).rejects.toMatchObject({ code: "stale_input" });
+  const queue = await f.manager.messageQueue(chat.id, "owner");
+  expect(queue.entries.map(entry => [entry.id, entry.state, entry.text])).toEqual(entryIds.map((id, index) => [id, "queued", `Follow-up ${index + 1}`]));
+  expect(queue.paused).toBe(paused);
+  await expect(f.manager.postMessage(chat.id, "Still cannot overtake", "volatile-current-authority")).rejects.toMatchObject({ code: "queue_pending" });
+  await f.decisions.tick(); expect(f.starts).toHaveLength(2);
+  // Pausing future messages must not cancel the continued turn or retire either follow-up.
+  if (!paused) await queueCommand({ type: "pause" });
+  f.starts[1]!.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(async () => expect((await f.manager.getSession(chat.id))?.status).toBe("idle"));
+  expect((await f.manager.messageQueue(chat.id, "owner")).entries.map(entry => entry.id)).toEqual(entryIds);
+  expect((await f.manager.store.readEvents(chat.id)).filter(event => event.type === "user_message").map(event => event.text)).toEqual(["Ask first", "Continue with the saved answer."]);
+});
+it("delivers an asynchronous question's answer as the next turn in the same native thread after the current turn", async () => {
+  const f = await setup(true, "codex", "message");
+  const chat = await f.manager.createSession({ createdBy: "owner", title: "Async question" });
+  await f.manager.postMessage(chat.id, "Ask asynchronously", "volatile-current-authority");
+  await vi.waitFor(async () => expect((await f.manager.getSession(chat.id))?.status).toBe("idle"));
+  const [wait] = await f.decisions.waits.list("owner");
+  expect(wait).toMatchObject({ event: { blocking: false, delivery: "message" }, native: { sessionId: "native-thread" } });
+  // No native callback remains: the run completed without a pending question frame.
+  expect((await f.journal.load(wait!.native.workerRunId!)).receipt).toMatchObject({ state: "completed", pending: [] });
+  await f.decisions.tick();
+  const saved = await f.decisions.local("owner", wait!.id);
+  expect(saved.core?.state).toBe("pending");
+  expect((await f.manager.store.readEvents(chat.id)).find(e => e.type === "question_request")).toMatchObject({ decisionWaitId: wait!.id });
+  // The operator keeps working, then answers while that turn is still running.
+  await f.manager.postMessage(chat.id, "Keep working", "volatile-current-authority");
+  await vi.waitFor(() => expect(f.starts).toHaveLength(2));
+  await f.decisions.resolve("owner", saved.core!.id, { requestId: randomUUID(), expectedRevision: saved.core!.revision, answers: { choice: { optionIds: ["brief"] } } });
+  await f.decisions.tick(); await f.decisions.tick();
+  expect(f.starts).toHaveLength(2);
+  expect(await f.decisions.local("owner", wait!.id)).toMatchObject({ state: "received", core: { continuation: { state: "received" } } });
+  // A turn that starts between the availability check and dispatch defers the same command.
+  const available = vi.spyOn(f.manager, "decisionTurnAvailable").mockResolvedValue(true);
+  await f.decisions.tick(); available.mockRestore();
+  expect(f.starts).toHaveLength(2);
+  const deferred = await f.decisions.local("owner", wait!.id);
+  expect(deferred).toMatchObject({ state: "admitted", resumeRequested: true }); expect(deferred.error).toBeUndefined();
+  f.starts[1]!.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(async () => expect((await f.manager.getSession(chat.id))?.status).toBe("idle"));
+  await f.decisions.tick();
+  await vi.waitFor(() => expect(f.starts).toHaveLength(3));
+  expect(f.starts[2]).toMatchObject({ resumeHarnessSessionId: "native-thread", requireNativeResume: true });
+  expect(f.inputs[2]).toContain(saved.core!.id);
+  expect((await f.manager.store.readEvents(chat.id)).filter(e => e.type === "user_message").map(e => e.text))
+    .toEqual(["Ask asynchronously", "Keep working", "Continue with the saved answer."]);
+  await f.decisions.tick(); expect(f.starts).toHaveLength(3);
+  f.starts[2]!.onEvent({ type: "result", status: "success" });
+  await vi.waitFor(async () => expect((await f.manager.getSession(chat.id))?.status).toBe("idle"));
+  await f.decisions.tick();
+  expect(await f.decisions.local("owner", wait!.id)).toMatchObject({ state: "completed", core: { continuation: { state: "completed" } } });
+  expect((await f.manager.store.readEvents(chat.id)).filter(e => e.type === "question_answered")).toHaveLength(1);
+  expect((await f.manager.getSession(chat.id))?.decisionWaitIds ?? []).toEqual([]);
 });
 it("keeps the original task attempt awaiting input through parking and reports its explicit result after continuation", async () => {
   const f = await setup(), executor = new HarnessTaskExecutor(f.manager), executionId = randomUUID();

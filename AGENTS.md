@@ -16,7 +16,6 @@ Where the version lives:
 - **`apps/shell`**, **`apps/desktop`**, **`apps/marketplace`**, **`apps/documents`**, and **`apps/demo-app`** are first-party runtime apps: bump `version` in their respective `manifest.json` (the artifact source of truth) and keep their `package.json` in step. They version independently from the platform.
 - **`apps/harness`** (Hosty Harness, including its web UI) continues the former Gateway release line. Bump `version` in `apps/harness/manifest.json`, `apps/harness/package.json` and `apps/harness/web/package.json` together. It versions independently from Core and Shell.
 - **`apps/telemetry`** (collector + backend + `apps/telemetry-ui`) ships as one app: bump `version` in `apps/telemetry/manifest.json` and keep the first-party service image tags (`backend`, `ui`) and `apps/telemetry-ui/package.json` in step (`scripts/check-versions.mjs` enforces this). The collector is a third-party image and is exempt.
-- **`apps/whisper`** is an independent local speech runtime app: bump `version` in `apps/whisper/manifest.json` and keep `<Version>` in `apps/whisper/Hosty.Whisper/Hosty.Whisper.csproj` in step. `scripts/check-versions.mjs` checks both.
 - **`apps/opus`** is an independent local translation runtime app: bump `version` in `apps/opus/manifest.json` and keep `apps/opus/package.json` in step. `scripts/check-versions.mjs` checks both.
 - **`apps/shell-swift`** is the native Apple client, not a runtime app: it is installed on the operator's own device rather than on a host, so it has no `manifest.json`. Bump `MARKETING_VERSION` in `apps/shell-swift/Config/Version.xcconfig`. It versions independently from the platform and from `apps/shell`.
 - **`apps/shell-cardputer`** is the native M5Stack Cardputer ADV firmware, not a runtime app. Bump its single version source in `apps/shell-cardputer/version.txt`; ESP-IDF reads that file as `PROJECT_VER`, and `scripts/check-versions.mjs` validates it. It versions independently from every other artifact.
@@ -37,6 +36,10 @@ Where the version lives:
   [local integration guide](docs/features/ci-feedback-loop/feature.md#local-integration-checks).
   Record commands, platforms and results in the PR's Verification section, including any
   checks that could not run and why. Documentation-only changes need no runtime suite.
+  The heavyweight `tasks` integration suite is an exception: run it only on the user's explicit
+  request or under a user-approved verification plan. It is not a routine PR prerequisite, even
+  for task/Harness changes. Run affected fast unit/component tests and builds as usual; describe
+  an unselected `tasks` suite as optional, not as a blocking missing check.
 - **PR descriptions track the plan.** When the work is driven by a `plan.md`, the
   description lists the deliverables this PR completes by ID (`D3`, `D5`) and
   links the feature folder. Always state the version outcome ("0.4.2 → 0.5.0" or "No version

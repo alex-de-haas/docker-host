@@ -370,7 +370,12 @@ internal sealed partial class AgentSkillLibrary(CoreDataPaths paths, IAgentSkill
                 {
                     var destination = Resolve(stage, entry.Info.Name + "/" + file.Path);
                     Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                    await File.WriteAllBytesAsync(destination, file.Content, ct);
+                    ReadOnlyMemory<byte> content = file.Content;
+                    // Validation accepts leading UTF-8 BOMs; native discovery requires frontmatter
+                    // at byte zero. Normalize only exported instructions, preserving installed bytes.
+                    if (file.Path == "SKILL.md")
+                        while (content.Span.StartsWith("\uFEFF"u8)) content = content[3..];
+                    await File.WriteAllBytesAsync(destination, content, ct);
                     if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(destination,
                         UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead |
                         (file.Executable ? UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute : 0));

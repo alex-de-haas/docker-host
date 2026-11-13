@@ -7,8 +7,11 @@ import { canonicalAlias } from "../mcp/core-aliases.js";
 import { coreAliases } from "../mcp/core-migration.js";
 import { AgentObservations } from "../agent-sessions/observations.js";
 import { ollamaAttachments } from "../harness/ollama/attachments.js";
-import { SUGGESTION_TTL_MS, suggestionText } from "../harness/prompt-suggestion.js";
+import { suggestionText } from "../harness/prompt-suggestion.js";
 import { SuggestionPreferences } from "./suggestion-preferences.js";
+import { SuggestionHistory, legacyCompatibleSuggestion } from "./suggestion-history.js";
+import { MessageQueue, type QueueAttempt, type QueueSnapshot } from "./message-queue.js";
+import type { Readable } from "node:stream";
 import { profileConfig, type ProfileStore } from "../profiles/store.js";
 import type { AgentProfileConfig } from "../profiles/types.js";
 import { prepareSkills, skillRequest, validSkillIds } from "../skills.js";
@@ -39,7 +42,7 @@ import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapte
 import { sanitizeCommandResult } from "../harness/command-result.js";
 import { sanitizeToolResult, shouldRetainToolOutput } from "../harness/tool-result.js";
 import { workingActivity, type SessionActivity, type HarnessActivity } from "../harness/activity.js";
-import { messageRequestId, type MessageReceipt, type StoredMessageReceipt, type SessionRecord, type SessionStatus, type SessionStore, type StoredEvent } from "./store.js";
+import { SessionStorageError, messageRequestId, type MessageReceipt, type StoredMessageReceipt, type SessionRecord, type SessionStatus, type SessionStore, type StoredEvent } from "./store.js";
 import type { FeedbackMessageReference } from "../feedback/presentation.js";
 import type { AuditReporter } from "../audit.js";
 import type { SettingsStore } from "../settings/store.js";
@@ -94,8 +97,7 @@ export interface SessionListener {
 interface LiveSession {
   suggestionAllowed?: boolean;
   suggestionContext?: string;
-  suggestion?: { revision: number; attemptId?: string; state: "empty" | "collecting" | "available" | "unavailable"; text?: string; expiresAt?: number; reason?: string };
-  suggestionTimer?: NodeJS.Timeout;
+  suggestion?: { revision: number; attemptId?: string; state: "empty" | "collecting" | "available" | "unavailable"; text?: string; reason?: string };
   activityRunStarted?: boolean;
   toolOutputCalls?: Map<string, string | null>;
   runEpoch?: string;
@@ -229,11 +231,19 @@ export class SessionManager {
 
   private readonly queuedDevelopment = new Map<string, () => Promise<unknown>>();
   private readonly deferredGuards = new Map<string, () => Promise<void>>();
+  private readonly environmentRequests = new Map<string, Set<string>>();
+  /** Per session: journaled creations this process is still sending, and the sequence of the last one to settle. */
+  private readonly environmentCreations = new Map<string, { active: number; settled: number }>();
+  private environmentSequence = 0;
   private readonly live = new Map<string, LiveSession>();
   private readonly suggestionEpoch = randomUUID();
   private readonly suggestionPreferenceGenerations = new Map<string, number>();
   private readonly operations = new Map<string, Promise<unknown>>();
   private readonly actorCredentialRefreshes = new Map<string, { credential: string }>();
+  private readonly queuePumps = new Map<string, Promise<void>>();
+  private readonly queueWakeRequested = new Set<string>();
+  private readonly messageQueues: MessageQueue;
+  private readonly suggestionHistory: SuggestionHistory;
   private serialize<T>(key: string, action: () => Promise<T>): Promise<T> {
     const previous = this.operations.get(key) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(action);
@@ -249,14 +259,12 @@ export class SessionManager {
       record.workspaceAssociation, record.developmentWorkspaces?.map(tree => [tree.id, tree.state, tree.observation?.head])]);
   }
   private suggestionEvent(session: LiveSession): StoredEvent {
-    const stale = session.suggestionContext !== undefined && session.suggestionContext !== this.suggestionSignature(session)
-      || session.suggestion?.expiresAt !== undefined && session.suggestion.expiresAt <= Date.now();
+    const stale = session.suggestionContext !== undefined && session.suggestionContext !== this.suggestionSignature(session);
     if (stale) this.clearSuggestion(session);
     return { seq: -2, ts: new Date().toISOString(), type: "session_suggestion", epoch: this.suggestionEpoch,
       sessionId: session.record.id, userId: session.record.createdBy, ...session.suggestion ?? { revision: 0, state: "empty" } };
   }
   private clearSuggestion(session: LiveSession): void {
-    clearTimeout(session.suggestionTimer); session.suggestionTimer = undefined;
     session.suggestionAllowed = false; session.suggestionContext = undefined;
     session.suggestion = { revision: (session.suggestion?.revision ?? 0) + 1, state: "empty" };
     this.fanOut(session, this.suggestionEvent(session));
@@ -323,6 +331,8 @@ export class SessionManager {
     private readonly executionMode?: "native" | "docker",
     readonly profiles: ProfileStore | null = null,
   ) {
+    this.messageQueues = new MessageQueue(store);
+    this.suggestionHistory = new SuggestionHistory(store, (id, payload) => this.append(id, payload));
     this.observations = new AgentObservations(store);
     this.mcpPolicy = new McpToolPolicy(settings,
       (id, event) => this.serialize(id, async () => {
@@ -422,16 +432,31 @@ export class SessionManager {
       await this.worker.request(`/v1/runs/${wait.native.workerRunId}/park`, "POST", wait.park, true);
     });
   }
-  async resumeDecision(wait: DecisionWait, credential: string): Promise<void> {
-    await this.checkDecision(wait);
+  /** A message-delivered answer waits for the conversation's current turn instead of interrupting it. */
+  async decisionTurnAvailable(wait: DecisionWait): Promise<boolean> {
     const session = await this.getSession(wait.sessionId);
-    if (!session || session.parkedQuestionRun?.id !== wait.native.workerRunId || session.workerRun || !wait.native.sessionId)
+    return !!session && !session.workerRun && !["running", "awaiting_approval", "awaiting_question"].includes(session.status);
+  }
+  /** Returns false only while a message-delivered answer waits for the current turn. */
+  async resumeDecision(wait: DecisionWait, credential: string): Promise<boolean> {
+    await this.checkDecision(wait);
+    const session = await this.getSession(wait.sessionId), message = wait.event.delivery === "message";
+    if (message && !wait.native.sessionId) throw new AppContextError(409, "unsupported_resume", "This question has no saved native thread to continue. The answer is retained.");
+    if (!session || !message && (session.parkedQuestionRun?.id !== wait.native.workerRunId || session.workerRun || !wait.native.sessionId))
       throw new AppContextError(409, "unknown_stop", "Wait for confirmed parking and source release before resuming.");
-    await this.postMessage(wait.sessionId, continuationInput(wait), credential, [], {
-      clientRequestId: wait.commandId, actorUserId: wait.owner, taskDispatch: !!session.taskExecutionId,
-      expectedRevision: session.appContextRevision ?? 0, selectionRevision: session.selectionRevision ?? 0,
-      decisionContinuation: { id: wait.id, owner: wait.owner, snapshot: wait.snapshot, cancellationGeneration: wait.cancellationGeneration },
-    });
+    if (message && !await this.decisionTurnAvailable(wait)) return false;
+    try {
+      await this.postMessage(wait.sessionId, continuationInput(wait), credential, [], {
+        clientRequestId: wait.commandId, actorUserId: wait.owner, taskDispatch: !!session.taskExecutionId,
+        expectedRevision: session.appContextRevision ?? 0, selectionRevision: session.selectionRevision ?? 0,
+        decisionContinuation: { id: wait.id, owner: wait.owner, snapshot: wait.snapshot, cancellationGeneration: wait.cancellationGeneration },
+      });
+    } catch (error) {
+      // Another turn started after the availability check; the same command retries after it.
+      if (message && error instanceof SessionBusyError) return false;
+      throw error;
+    }
+    return true;
   }
   async stopDecisionExecution(wait: DecisionWait): Promise<void> {
     if (wait.event.blocking === false) return;
@@ -608,7 +633,213 @@ export class SessionManager {
   }
 
   async recoverWorkerRuns(): Promise<void> {
-    for (const record of await this.store.listRecords()) if (record.workerRun) await this.requireLive(record.id);
+    for (const record of await this.store.listRecords()) if (record.workerRun && !record.storageRecovery) {
+      try { await this.requireLive(record.id); } catch { /* The affected source/run remains fenced; continue healthy recovery. */ }
+    }
+  }
+
+  async recoverMessageQueues(): Promise<void> {
+    for (const record of await this.store.listRecords()) if (record.messageQueue?.entries.length) {
+      try { if (!record.storageRecovery) { await this.requireLive(record.id); this.wakeMessageQueue(record.id); } } catch { /* Isolate unavailable source sessions. */ }
+    }
+  }
+
+  private queueEvent(session: LiveSession): StoredEvent {
+    return { type: "session_message_queue", seq: -3, ts: new Date().toISOString(), sessionId: session.record.id, queue: this.messageQueues.snapshot(session.record) };
+  }
+  private queueBinding(record: SessionRecord): string {
+    return createHash("sha256").update(JSON.stringify([record.connectionId, record.connectionRevision, record.connectionIdentity, record.harnessKind,
+      record.executionMode, record.autonomyRevision, record.autonomy, record.agentProfile?.id, record.agentProfile?.revision, record.skillIds,
+      record.workspaceAssociation, record.developmentWorkspaces?.map(tree => [tree.id, tree.state, tree.observation?.head])])).digest("hex");
+  }
+  private publishMessageQueue(session: LiveSession): void { this.fanOut(session, this.queueEvent(session)); }
+  async messageQueue(id: string, owner: string): Promise<QueueSnapshot> {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== owner) throw new SessionNotFoundError(id);
+      return this.messageQueues.snapshot(session.record);
+    });
+  }
+  private assertQueueSession(record: SessionRecord): void {
+    if (record.taskExecutionId) throw new AppContextError(409, "task_managed_session", "Task attempts cannot accept an ordinary conversation queue.");
+    if (record.handoffPending || ["queued", "unknown"].includes(record.handoffDispatch?.state ?? ""))
+      throw new AppContextError(409, "handoff_pending", "Resolve the prepared handoff before queuing another message.");
+    if (record.retentionCleanup) throw new AppContextError(409, "cleanup_pending", "Conversation cleanup has already started.");
+  }
+  private async assertQueueWorkspace(session: LiveSession, credential?: string): Promise<void> {
+    const token = credential ?? session.workspaceCredential ?? session.credential;
+    if (this.development?.available && token) {
+      const workflow = token.startsWith("hosty_delegated.") ? (await this.development.retention(session.record.id, session.record.createdBy)).workflow
+        : await this.development.call(session.record.id, token, "workflow-status", {}) as { closure?: string | null; state?: string };
+      if (workflow?.closure || ["completed", "deferred", "deleting", "deleted"].includes(workflow?.state ?? ""))
+        throw new AppContextError(409, "workspace_closed", "Resume the retained workspace before accepting another queued agent message.");
+    } else if (session.record.developmentWorkspaces?.length || session.record.developmentLease)
+      throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials to verify this workspace before queuing another agent message.");
+  }
+  async messageQueueCommand(id: string, owner: string, input: Record<string, unknown>, credential?: string) {
+    const result = await this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== owner) throw new SessionNotFoundError(id);
+      const replay = typeof input.requestId === "string" && this.messageQueues.state(session.record).receipts[input.requestId.toLowerCase()];
+      if (!replay) this.assertQueueSession(session.record);
+      const command = input.command as { type?: unknown } | undefined;
+      if (!replay && ["enqueue", "resume", "retry"].includes(String(command?.type))) await this.assertQueueWorkspace(session, credential);
+      if (credential) { session.workspaceCredential = credential; session.credential = credential; }
+      const result = await this.messageQueues.command(session.record, input); this.publishMessageQueue(session); return result;
+    });
+    this.wakeMessageQueue(id); return result;
+  }
+  async uploadQueueAttachment(id: string, owner: string, uploadId: string, name: string, body: Readable) {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== owner) throw new SessionNotFoundError(id);
+      this.assertQueueSession(session.record);
+      const result = await this.messageQueues.upload(session.record, uploadId, name, body); this.publishMessageQueue(session); return result;
+    });
+  }
+  async queuedAttachment(id: string, owner: string, attachmentId: string) {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== owner) throw new SessionNotFoundError(id);
+      return this.messageQueues.attachment(session.record, attachmentId);
+    });
+  }
+  async suggestionAction(id: string, owner: string, suggestionId: string, input: Record<string, unknown>) {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      return legacyCompatibleSuggestion(await this.suggestionHistory.action(session.record, owner, suggestionId, input, this.suggestionSignature(session)));
+    });
+  }
+  async historicalSuggestions(id: string, owner: string) {
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (session.record.createdBy !== owner) throw new SessionNotFoundError(id);
+      await this.suggestionHistory.reconcile(session.record, this.suggestionSignature(session));
+      return [...(await this.suggestionHistory.read(session.record)).values()].map(legacyCompatibleSuggestion);
+    });
+  }
+  private wakeMessageQueue(id: string): void {
+    if (this.stopping) return;
+    if (this.queuePumps.has(id)) { this.queueWakeRequested.add(id); return; }
+    const work = new Promise<void>(resolve => setImmediate(resolve)).then(() => this.advanceMessageQueue(id));
+    this.queuePumps.set(id, work); this.inFlightEvents.add(work);
+    void work.catch(() => { /* The persisted claim remains recoverable; never replay a failed pump blindly. */ }).finally(() => {
+      if (this.queuePumps.get(id) === work) this.queuePumps.delete(id); this.inFlightEvents.delete(work);
+      if (this.queueWakeRequested.delete(id)) this.wakeMessageQueue(id);
+    });
+  }
+  private async queueWaiting(session: LiveSession, code: string, message: string): Promise<void> {
+    if (session.record.messageQueue?.waiting?.code === code && session.record.messageQueue.waiting.message === message) return;
+    await this.messageQueues.change(session.record, next => { next.waiting = { code, message }; }); this.publishMessageQueue(session);
+  }
+  private async advanceMessageQueue(id: string): Promise<void> {
+    let stopSuggestions = false, again = false;
+    const dispatch = await this.serialize(id, async (): Promise<{ entryId: string; attempt: QueueAttempt; credential: string } | undefined> => {
+      if (this.stopping) return;
+      const session = await this.requireLive(id), queue = this.messageQueues.state(session.record), entry = queue.entries[0];
+      if (!entry || queue.paused || entry.state === "editing" || entry.state === "failed") return;
+      if (entry.attempt && ["sending", "unknown"].includes(entry.state)) {
+        let receipt: StoredMessageReceipt | null;
+        try { receipt = await this.store.readMessageReceipt(id, entry.attempt.clientRequestId); }
+        catch {
+          const unavailable = (next: import("./message-queue.js").MessageQueueRecord) => { const head = next.entries[0]!; head.state = "unknown";
+            head.error = { code: "queue_receipt_unavailable", message: "The saved admission receipt is unavailable. Preserve this message and inspect execution recovery." };
+            next.paused = true; next.reason = head.error.message; };
+          try { await this.messageQueues.change(session.record, unavailable); }
+          catch (error) {
+            if (!(error instanceof SessionStorageError)) throw error;
+            // Corrupt evidence seals durable writes; keep a read-only diagnostic in the live view.
+            const next = structuredClone(this.messageQueues.state(session.record)); unavailable(next); session.record.messageQueue = next;
+          }
+          this.publishMessageQueue(session); return;
+        }
+        if (receipt) {
+          await this.messageQueues.settle(session.record, entry.id, this.publicMessageReceipt(receipt, session.record.createdBy));
+          this.publishMessageQueue(session); again = receipt.state === "accepted"; return;
+        }
+      }
+      if (session.record.sourceAdmission) {
+        await this.queueWaiting(session, "source_admission_recovery_required", "An earlier message has an unresolved admission. Inspect execution recovery before continuing the queue."); return;
+      }
+      if (session.record.status === "suggesting") { stopSuggestions = true; return; }
+      if (!session.run && !session.record.workerRun && session.record.agentRunId
+        && await this.observations.change(state => state.runs.some(run => run.id === session.record.agentRunId && !run.stopConfirmed))) {
+        await this.queueWaiting(session, "worker_recovery_required", "The previous native execution has no confirmed exit. Inspect execution recovery before continuing the queue."); return;
+      }
+      if (session.record.workerRun || ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
+      const credential = session.workspaceCredential ?? session.credential;
+      if (!credential || credential.startsWith("hosty_delegated.")) {
+        await this.queueWaiting(session, "queue_sign_in_required", "Sign in to Harness to continue this saved queue."); return;
+      }
+      const identity = await resolveAppSession(credential, AbortSignal.timeout(5_000));
+      if (identity.status !== "active" || identity.identity.userId !== session.record.createdBy || identity.identity.hostRole !== "host.admin") {
+        await this.queueWaiting(session, "queue_sign_in_required", identity.status === "unavailable" ? "Hosty identity is unavailable. Refresh the queue when Core is ready." : "Sign in to Harness to continue this saved queue."); return;
+      }
+      if (this.stopping) return;
+      try {
+        this.assertQueueSession(session.record);
+        if (session.record.workerRecovery?.state === "pending" || session.record.developmentLeaseState === "admitting")
+          throw new AppContextError(409, "worker_recovery_required", "Confirm the prior execution has stopped before continuing the queue.");
+        const next = structuredClone(queue), head = next.entries[0]!;
+        if (!head.attempt) {
+          head.attempt = { clientRequestId: randomUUID(), text: head.text, attachments: [], appContextRevision: session.record.appContextRevision ?? 0,
+            selectionRevision: session.record.selectionRevision ?? 0, withoutAppDetails: head.withoutAppDetails === true,
+            bindingKey: this.queueBinding(session.record),
+            ...(head.promptSuggestions ? { promptSuggestions: true } : {}) };
+          head.attempt.attachments = await this.messageQueues.materialize(session.record, head);
+        } else {
+          const materialized = await this.messageQueues.materialize(session.record, head);
+          if (JSON.stringify(materialized) !== JSON.stringify(head.attempt.attachments)) throw new Error("Retained attachment identities changed.");
+        }
+        if (head.attempt?.bindingKey && head.attempt.bindingKey !== this.queueBinding(session.record))
+          throw new AppContextError(409, "queue_settings_conflict", "Agent settings or workspace changed after this send was claimed. Review it before retrying.");
+        const { payloadFingerprint: previousFingerprint, ...payload } = head.attempt;
+        const payloadFingerprint = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+        if (previousFingerprint && previousFingerprint !== payloadFingerprint)
+          throw new AppContextError(409, "queue_claim_conflict", "The frozen send details changed. Preserve this attempt for recovery.");
+        head.attempt.payloadFingerprint = payloadFingerprint;
+        head.state = "sending"; delete head.error; delete next.waiting;
+        await this.messageQueues.save(session.record, next); this.publishMessageQueue(session);
+        return { entryId: head.id, attempt: structuredClone(head.attempt), credential };
+      } catch (error) {
+        const message = error instanceof AppContextError ? error.message : "The queued message could not be prepared. Reattach unavailable files or retry.";
+        await this.messageQueues.change(session.record, next => {
+          const head = next.entries[0]!; head.state = "failed"; head.error = { code: error instanceof AppContextError ? error.code : "queue_prepare_failed", message };
+          next.paused = true; next.reason = message;
+        }); this.publishMessageQueue(session); return;
+      }
+    });
+    if (stopSuggestions) { await this.endSuggestions(id); setImmediate(() => this.wakeMessageQueue(id)); return; }
+    if (again) { setImmediate(() => this.wakeMessageQueue(id)); return; }
+    if (!dispatch || this.stopping) return;
+    try {
+      const input = dispatch.attempt;
+      const receipt = await this.postMessage(id, input.text, dispatch.credential, input.attachments, { queueEntryId: dispatch.entryId,
+        clientRequestId: input.clientRequestId, actorUserId: (await this.getSession(id))!.createdBy,
+        expectedRevision: input.appContextRevision, selectionRevision: input.selectionRevision, withoutDetails: input.withoutAppDetails,
+        promptSuggestions: input.promptSuggestions, workspaceCredential: dispatch.credential });
+      if (!receipt) throw new Error("Missing queued admission receipt.");
+      await this.serialize(id, async () => { const session = await this.requireLive(id); await this.messageQueues.settle(session.record, dispatch.entryId, receipt); this.publishMessageQueue(session); });
+    } catch (error) {
+      await this.serialize(id, async () => {
+        const session = await this.requireLive(id);
+        let existing: StoredMessageReceipt | null;
+        try { existing = await this.store.readMessageReceipt(id, dispatch.attempt.clientRequestId); }
+        catch {
+          await this.messageQueues.change(session.record, next => {
+            const entry = next.entries.find(candidate => candidate.id === dispatch.entryId && candidate.attempt?.clientRequestId === dispatch.attempt.clientRequestId);
+            if (!entry) return;
+            entry.state = "unknown"; entry.error = { code: "queue_receipt_unavailable", message: "The saved admission receipt is unavailable. Preserve this message and inspect execution recovery." };
+            next.paused = true; next.reason = entry.error.message;
+          });
+          this.publishMessageQueue(session); return;
+        }
+        const receipt: MessageReceipt = existing ? this.publicMessageReceipt(existing, session.record.createdBy) : {
+          clientRequestId: dispatch.attempt.clientRequestId, state: "rejected", error: { code: error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError ? error.code : "queue_dispatch_failed",
+            message: error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError ? error.message : "The queued message was not admitted. Review it and retry." } };
+        await this.messageQueues.settle(session.record, dispatch.entryId, receipt); this.publishMessageQueue(session);
+      });
+    }
   }
 
   async recoverMcpApprovals(): Promise<void> {
@@ -640,6 +871,7 @@ export class SessionManager {
       }
       session.credentialRefreshPending = false;
     });
+    this.wakeMessageQueue(id);
   }
 
   /** Identity readiness is independent of unrelated conversation queues; keep only the latest actor credential. */
@@ -669,8 +901,9 @@ export class SessionManager {
 
   /** Refresh every already-live conversation owned by this actor; never starts or replays a turn. */
   async refreshActorCredentials(userId: string, credential: string): Promise<void> {
+    for (const record of await this.store.listRecords()) if (record.createdBy === userId && record.messageQueue?.entries.length) await this.requireLive(record.id);
     const results = await Promise.allSettled([...this.live.values()]
-      .filter(s => s.record.createdBy === userId && (s.credential !== credential || s.workspaceCredential !== credential || s.credentialRefreshPending))
+      .filter(s => s.record.createdBy === userId && (s.credential !== credential || s.workspaceCredential !== credential || s.credentialRefreshPending || s.record.messageQueue?.waiting))
       .map(s => this.refreshSessionCredentials(s.record.id, userId, credential)));
     const failure = results.find(r => r.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
@@ -751,8 +984,12 @@ export class SessionManager {
     try { return await this.workspaceActionInner(id, action, input, credential, userId, dispatchGuard); }
     finally {
       const session = this.live.get(id);
-      if (session?.suggestionContext !== undefined && session.suggestionContext !== this.suggestionSignature(session))
-        this.clearSuggestion(session);
+      if (session?.record.suggestionHistoryVersion) {
+        const reconcile = this.serialize(id, () => this.suggestionHistory.reconcile(session.record, this.suggestionSignature(session)));
+        this.inFlightEvents.add(reconcile);
+        void reconcile.finally(() => this.inFlightEvents.delete(reconcile)).catch(() => undefined);
+        if (session.suggestionContext !== undefined && session.suggestionContext !== this.suggestionSignature(session)) this.clearSuggestion(session);
+      }
     }
   }
 
@@ -985,27 +1222,59 @@ export class SessionManager {
       } else if (action !== "environment-list" && !session.record.coreEnvironments?.some(e => e.id === input.environmentId))
         throw new AppContextError(403, "environment_forbidden", "The environment is not associated with this session; list environments to recover an uncertain create.");
       // Setup passwords and arbitrary child API bodies never enter the lifecycle recovery journal.
+      let journal: { requestId: string; creation: boolean; canConfirmRefusal: boolean } | null = null;
       if (action !== "environment-consent" && action !== "environment-setup" && action !== "environment-api" && typeof input.requestId === "string") {
         const operations = session.record.coreEnvironmentOperations ?? [];
         const prior = operations.find(o => o.input.requestId === input.requestId);
         if (prior && (prior.action !== action || stableSandboxInput(prior.input) !== stableSandboxInput(input)))
           throw new AppContextError(409, "environment_replay_conflict", "Reuse the original request UUID and arguments.");
+        // One attempt's refusal cannot establish the outcome of a concurrent replay.
+        if (this.environmentRequests.get(id)?.has(input.requestId))
+          throw new AppContextError(409, "environment_request_in_flight", "Wait for the current attempt to finish before retrying its request UUID.");
+        journal = { requestId: input.requestId, creation: action === "environment-create", canConfirmRefusal: !prior || prior.state === "rejected" };
         if (!prior) {
           if (action !== "environment-finish" && operations.filter(o => o.state === "pending").length >= 32) throw new AppContextError(409, "environment_pending_limit", "Observe pending operations first.");
-          session.record.coreEnvironmentOperations = [...operations.filter(o => o.state === "pending"), ...operations.filter(o => o.state === "observed").slice(-99), { action, input, state: "pending" }];
+          session.record.coreEnvironmentOperations = [...operations.filter(o => o.state === "pending"), ...operations.filter(o => o.state !== "pending").slice(-99), { action, input, state: "pending" }];
+          await this.store.saveRecord(session.record);
+        } else if (prior.state === "rejected") {
+          prior.state = "pending";
           await this.store.saveRecord(session.record);
         }
+        const requests = this.environmentRequests.get(id) ?? new Set<string>();
+        requests.add(input.requestId);
+        this.environmentRequests.set(id, requests);
+        if (journal.creation) {
+          const creations = this.environmentCreations.get(id) ?? { active: 0, settled: 0 };
+          creations.active++;
+          this.environmentCreations.set(id, creations);
+        }
       }
-      return { token, input };
+      return { token, input, journal, inventoryFrom: action === "environment-list" && this.development.environmentInventoryCoversUser ? this.environmentSequence : undefined };
     });
-    const result = await this.development!.environment(prepared.token, action, prepared.input);
+    let result: unknown;
+    try { result = await this.development!.environment(prepared.token, action, prepared.input); }
+    catch (error) {
+      // Consent refusal precedes a fresh allocation. Other readable 4xx errors can follow Core's
+      // durable write and remain uncertain, as does any refusal after a previously uncertain call.
+      // Bookkeeping failures leave the request pending, so the caller still sees the original error.
+      if (prepared.journal) await this.serialize(id, async () => {
+        this.settleEnvironmentRequest(id, prepared.journal!);
+        if (!prepared.journal!.canConfirmRefusal || !(error instanceof AppContextError) || error.status < 400 || error.status >= 500
+          || [408, 429].includes(error.status) || error.code !== "environment_consent_required") return;
+        const session = await this.requireLive(id);
+        const operation = session.record.coreEnvironmentOperations?.find(o => o.input.requestId === prepared.input.requestId);
+        if (operation?.state !== "pending") return;
+        operation.state = "rejected";
+        await this.store.saveRecord(session.record);
+      }).catch(() => undefined);
+      throw error;
+    }
     return this.serialize(id, async () => {
+      if (prepared.journal) this.settleEnvironmentRequest(id, prepared.journal);
       const session = await this.requireLive(id);
       if (action !== "environment-consent" && action !== "environment-api" && action !== "environment-setup") {
         const environments = action === "environment-list" ? (result as { environments: CoreEnvironment[] }).environments.filter(e => e.context?.sessionId === id) : [result as CoreEnvironment];
-        const known = new Map((session.record.coreEnvironments ?? []).map(e => [e.id, e]));
-        for (const environment of environments) known.set(environment.id, environment);
-        session.record.coreEnvironments = [...known.values()];
+        this.observeEnvironments(session.record, environments, prepared.inventoryFrom);
         const operation = session.record.coreEnvironmentOperations?.find(o => o.input.requestId === prepared.input.requestId);
         if (operation) operation.state = "observed";
         await this.store.saveRecord(session.record);
@@ -1013,6 +1282,35 @@ export class SessionManager {
       }
       return result;
     });
+  }
+
+  private settleEnvironmentRequest(id: string, request: { requestId: string; creation: boolean }): void {
+    const requests = this.environmentRequests.get(id);
+    requests?.delete(request.requestId);
+    if (!requests?.size) this.environmentRequests.delete(id);
+    if (!request.creation) return;
+    const creations = this.environmentCreations.get(id);
+    if (!creations) return;
+    creations.active--;
+    creations.settled = ++this.environmentSequence;
+  }
+
+  /**
+   * Merges observed children into the record. A canonical user-wide inventory may
+   * also retire pending creations: Harness stamps the session on every creation it journals and Core
+   * persists that context before allocating anything. Core may capture its inventory before an
+   * overlapping creation persists, so only an empty inventory requested after this process's
+   * creations for the session settled (`inventoryFrom`) proves none of them was accepted. Legacy
+   * app-scoped inventories cannot establish absence of a child created through canonical MCP.
+   */
+  private observeEnvironments(record: SessionRecord, environments: CoreEnvironment[], inventoryFrom?: number): void {
+    const known = new Map((record.coreEnvironments ?? []).map(e => [e.id, e]));
+    for (const environment of environments) known.set(environment.id, environment);
+    record.coreEnvironments = [...known.values()];
+    const creations = this.environmentCreations.get(record.id);
+    if (inventoryFrom === undefined || environments.length || creations && (creations.active > 0 || creations.settled > inventoryFrom)) return;
+    for (const operation of record.coreEnvironmentOperations ?? [])
+      if (operation.action === "environment-create" && operation.state === "pending") operation.state = "rejected";
   }
 
   async prepareTaskWorkspace(id: string, dispatch: import("@hosty-sdk/app/providers").TaskDispatchRef, executionId: string, workspaceId: string, source?: import("@hosty-sdk/app/providers").TaskSourceReference): Promise<void> {
@@ -1852,6 +2150,12 @@ export class SessionManager {
       let snapshot = await this.retentionSnapshot(record);
       if (!snapshot.resourcesFinished && !snapshot.independentEnvironments)
         throw new AppContextError(409, "resource_retained", "Finish this session's sandbox resources before deleting its conversation.");
+      if (this.development?.available && record.coreEnvironmentOperations?.some(o => o.action === "environment-create" && o.state === "pending")) {
+        const inventoryFrom = this.environmentSequence;
+        const listed = await this.invokeCoreTool(id, "environment_list", {}) as { environments: CoreEnvironment[] };
+        this.observeEnvironments(record, listed.environments.filter(e => e.context?.sessionId === id), inventoryFrom);
+        await this.store.saveRecord(record);
+      }
       if (record.coreEnvironmentOperations?.some(o => o.state === "pending") || record.associationRequests?.some(o => o.state === "pending" && o.action !== "detach"))
         throw new AppContextError(409, "resource_operation_pending", "Recover outstanding operations before deleting this conversation.");
       if (snapshot.kind === "workspace" && snapshot.workflow?.state !== "deleted") {
@@ -1928,6 +2232,7 @@ export class SessionManager {
       }
       this.proxy?.unregister(id);
       this.developmentMcp.unregister(id);
+      this.environmentCreations.delete(id);
       if (record.skillExportId) await skillRequest(`/exports/${record.skillExportId}`, "DELETE");
       await this.decisions?.deleteSession(record.createdBy, id);
       await this.store.deleteSession(id);
@@ -2131,7 +2436,7 @@ export class SessionManager {
     });
   }
 
-  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { feedback?: FeedbackMessageReference; taskContinuation?: { id: string; generation: number; owner: string; snapshot: string }; decisionContinuation?: Pick<DecisionWait, "id" | "owner" | "snapshot" | "cancellationGeneration">; promptSuggestions?: boolean; taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
+  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { queueEntryId?: string; feedback?: FeedbackMessageReference; taskContinuation?: { id: string; generation: number; owner: string; snapshot: string }; decisionContinuation?: Pick<DecisionWait, "id" | "owner" | "snapshot" | "cancellationGeneration">; promptSuggestions?: boolean; taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
     const clientRequestId = context.clientRequestId === undefined ? undefined : this.messageRequest(context.clientRequestId);
     const actorUserId = clientRequestId ? this.messageActor(context.actorUserId) : undefined;
     if (context.feedback && (context.feedback.version !== 1 || typeof context.feedback.dispatchId !== "string"
@@ -2161,8 +2466,21 @@ export class SessionManager {
           return result;
         }
       }
+      this.store.assertWritable(id);
+      if (session.record.sourceAdmission) throw new AppContextError(409, "source_admission_recovery_required", "An earlier message has an unresolved admission. Review execution recovery before starting another turn.");
+      if (this.stopping) throw new AppContextError(503, "harness_stopping", "Harness is stopping; the saved message was not dispatched.");
       if (context.decisionContinuation) this.checkDecisionRecord(session.record, context.decisionContinuation);
       if (context.taskContinuation) this.checkTaskContinuation(session.record, context.taskContinuation);
+      const queue = session.record.messageQueue;
+      // A validated continuation finishes the current turn; future queued messages must wait
+      // for it rather than preventing the parked question or task checkpoint from resuming.
+      if (!context.decisionContinuation && !context.taskContinuation && queue?.entries.length) {
+        const head = queue.entries[0]!;
+        if (!context.queueEntryId || head.id !== context.queueEntryId || head.attempt?.clientRequestId !== clientRequestId || queue.paused)
+          throw new AppContextError(409, "queue_pending", "Use the conversation queue while accepted messages are waiting.");
+        if (head.attempt?.bindingKey && head.attempt.bindingKey !== this.queueBinding(session.record))
+          throw new AppContextError(409, "queue_settings_conflict", "Agent settings or workspace changed after this send was claimed. Review it before retrying.");
+      } else if (context.queueEntryId) throw new AppContextError(409, "queue_entry_missing", "The claimed message is no longer queued.");
       if (session.record.taskExecutionId && (!context.taskDispatch || clientRequestId !== session.record.taskExecutionId && !context.decisionContinuation && !context.taskContinuation))
         throw new AppContextError(409, "task_managed_session", "Use the task lifecycle to start a new attempt. This conversation belongs to one immutable task execution.");
       if (session.record.workerRecovery?.state === "pending")
@@ -2220,6 +2538,7 @@ export class SessionManager {
         const snapshot = await captureContext(this.providers, session.record.appIds ?? [], revision, context.withoutDetails === true);
         // Resolved before anything is written, so a name that is not a stored name fails the whole
         // message rather than leaving a user_message event that names a file the harness never got.
+        await this.messageQueues.retainAcceptedAttachments(session.record, attachments);
         const attached: Array<{ name: string; path: string }> = [];
         for (const name of attachments) {
           const file = this.store.attachmentPath(id, name);
@@ -2296,6 +2615,12 @@ export class SessionManager {
           }
           session.record.profileLocked = true;
         }
+        const admissionRunId = randomUUID();
+        session.record.sourceAdmission = { ...(clientRequestId ? { clientRequestId } : {}), runId: admissionRunId, state: "preparing" };
+        if (this.worker && !session.run) {
+          preparedWorker = true; session.persistedWorkerSequences = new Set();
+          session.record.workerRun = { id: admissionRunId, sequence: 0 };
+        }
         await this.store.saveRecord(session.record);
         if (clientRequestId) {
           // This boundary precedes transcript publication and provider start/send. A crash here is
@@ -2303,6 +2628,12 @@ export class SessionManager {
           const receipt: StoredMessageReceipt = { clientRequestId, actorUserId: actorUserId!, fingerprint: fingerprint!, state: "unknown" };
           await this.store.saveMessageReceipt(id, receipt);
           messageReceipt = receipt;
+        }
+        if (context.queueEntryId) {
+          for (const [index, file] of attached.entries()) {
+            const saved = session.record.messageQueue?.entries[0]?.attachments[index];
+            if (saved) await this.append(id, { type: "attachment_added", name: file.name, size: saved.size, displayName: saved.displayName ?? saved.name });
+          }
         }
         if (this.connections) session.record.providerLocked = true;
         const messageEventSeq = await this.append(id, {
@@ -2314,7 +2645,10 @@ export class SessionManager {
           // The native resume envelope is private coordinator input, not operator-facing prose.
           text: context.taskContinuation ? "Continue the task with its saved child results." : context.decisionContinuation ? "Continue with the saved answer." : text,
           appContext: snapshot,
-          ...(attached.length > 0 ? { attachments: attached.map((file) => file.name) } : {}),
+          ...(attached.length > 0 ? { attachments: attached.map((file) => file.name), attachmentDigests: Object.fromEntries(attached.map(file => [file.name,
+            session.record.sourceAttachments?.findLast(candidate => candidate.name === file.name)?.digest])) } : {}),
+          ...(context.queueEntryId && attached.length ? { attachmentDisplayNames: Object.fromEntries(attached.map((file, index) => [file.name,
+            session.record.messageQueue?.entries[0]?.attachments[index]?.displayName ?? session.record.messageQueue?.entries[0]?.attachments[index]?.name ?? file.name])) } : {}),
         });
         if (messageReceipt) messageReceipt.eventSeq = messageEventSeq;
         session.activityRunStarted = true;
@@ -2322,14 +2656,14 @@ export class SessionManager {
         this.setActivity(session, workingActivity());
         if (!session.run) {
           if (this.worker) {
+            // The source admission already reserved this immutable attempt before input publication.
             preparedWorker = true; session.persistedWorkerSequences = new Set();
-            session.record.workerRun = { id: randomUUID(), sequence: 0 };
             if (context.taskContinuation && session.record.taskBarrier) {
               if (session.record.taskBarrier.kind === "human_input" && clientRequestId)
-                (session.record.decisionRunIds ??= {})[clientRequestId] = session.record.workerRun.id;
+                (session.record.decisionRunIds ??= {})[clientRequestId] = session.record.workerRun!.id;
               session.record.taskBarrier.state = "resuming";
             }
-            if (context.decisionContinuation && clientRequestId) (session.record.decisionRunIds ??= {})[clientRequestId] = session.record.workerRun.id;
+            if (context.decisionContinuation && clientRequestId) (session.record.decisionRunIds ??= {})[clientRequestId] = session.record.workerRun!.id;
             await this.store.saveRecord(session.record);
           }
           // Read at start, not at every turn: the system prompt is the session's instruction set, so a
@@ -2380,6 +2714,10 @@ export class SessionManager {
           this.fanOut(session, this.suggestionEvent(session));
           session.record.agentRunId = await this.observations.begin(session.record);
           await this.store.saveRecord(session.record);
+          session.record.sourceAdmission!.state = "dispatching";
+          await this.store.saveRecord(session.record);
+          // Starting a native adapter may itself have effects, even if it throws before returning.
+          dispatched = true;
           session.run = this.observations.attach(session.record.agentRunId, selectedAdapter.start({
             requireNativeResume: !!context.decisionContinuation || !!context.taskContinuation,
             promptSuggestions: session.suggestionAllowed,
@@ -2410,6 +2748,9 @@ export class SessionManager {
         }
         this.scheduleMcpRefresh(id);
         const prompt = (selectedAdapter.name === "ollama" ? text + attachedText : withAttachedPaths(text, attached.map((file) => file.path))) + (this.development?.available ? "\n\n" + workspaceInstructions(await this.developmentMcp.project(session.record.developmentWorkspaces ?? []) as DevelopmentWorkspace[], this.mcpPolicy.canonicalCore ? { sessionId: id, leaseId: session.record.developmentLease } : undefined) : "");
+        if (session.record.sourceAdmission?.state !== "dispatching") {
+          session.record.sourceAdmission!.state = "dispatching"; await this.store.saveRecord(session.record);
+        }
         dispatched = true;
         session.run.send(snapshot.apps.length || snapshot.revision > 0 ? withAppContext(prompt, snapshot) : prompt);
         if (context.dispatchId && session.record.handoffDispatch) {
@@ -2421,8 +2762,10 @@ export class SessionManager {
           // Keep the persisted unknown receipt if this write fails after send; never claim acceptance
           // from an in-memory assignment or dispatch this UUID again after a lost response.
           await this.store.saveMessageReceipt(id, accepted);
+          delete session.record.sourceAdmission; await this.store.saveRecord(session.record);
           return this.publicMessageReceipt(accepted, actorUserId!);
         }
+        delete session.record.sourceAdmission; await this.store.saveRecord(session.record);
       } catch (error) {
         // A caught failure before send is definitive; a crash or failure during send remains unknown.
         if (messageReceipt && !dispatched) {
@@ -2439,6 +2782,13 @@ export class SessionManager {
             code: known ? error.code.slice(0, 80) : "message_dispatch_failed",
             message: known ? error.message.slice(0, 500) : "The message was not sent. Review the conversation and try again.",
           } });
+        }
+        if (!dispatched && session.record.sourceAdmission) {
+          // Only a known pre-effect failure may settle preparation; uncertain storage stays sealed.
+          this.store.assertWritable(id);
+          delete session.record.sourceAdmission;
+          if (preparedWorker) delete session.record.workerRun;
+          await this.store.saveRecord(session.record);
         }
         if ((preparedWorker || messageReceipt) && !dispatched) await this.setStatus(id, "failed");
         throw error;
@@ -2712,6 +3062,7 @@ export class SessionManager {
   ): Promise<boolean> {
     const session = await this.requireLive(id);
     if (actorId && session.record.createdBy !== actorId) throw new AppContextError(403, "approval_forbidden", "This approval belongs to another user.");
+    this.store.assertWritable(id);
     if (this.mcpPolicy.resolve(id, approvalId, decision === "allow")) return true;
     const toolName = session.pendingApprovals.get(approvalId);
     if (!session.run || toolName === undefined) {
@@ -2787,6 +3138,7 @@ export class SessionManager {
       }
     }
 
+    this.store.assertWritable(id);
     if (!await session.run.resolveQuestion(questionId, accepted)) {
       return false;
     }
@@ -2832,9 +3184,13 @@ export class SessionManager {
       const session = await this.requireLive(id);
       if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
       const pending = session.record.workerRecovery?.state === "pending" ? session.record.workerRecovery : undefined;
-      const runId = session.record.workerRun?.id ?? pending?.runId;
-      return runId ? { runId, run: session.run } : null;
+      const runId = session.record.workerRun?.id ?? pending?.runId ?? session.record.sourceAdmission?.runId;
+      return runId ? { runId, run: session.run, pending, sourceOnly: !worker && !!session.record.sourceAdmission } : null;
     });
+    if (snapshot?.sourceOnly && snapshot.run)
+      throw new AppContextError(409, "recovery_active", "Stop the retained native execution and confirm its exit before recovering this admission.");
+    if (snapshot?.sourceOnly) return { runId: snapshot.runId, generation: "source-admission", expectedRevision: 0, recoverable: true, sourceOnly: true,
+      pending: snapshot.pending && { ...snapshot.pending.input, runId: snapshot.pending.runId } };
     if (!worker || !snapshot) return null;
     // Network waits must leave Stop and coordinator callbacks free to use the queue.
     try { await snapshot.run?.waitForAdmission?.(); }
@@ -2854,7 +3210,7 @@ export class SessionManager {
       const session = await this.requireLive(id);
       if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
       const pending = session.record.workerRecovery?.state === "pending" ? session.record.workerRecovery : undefined;
-      const runId = session.record.workerRun?.id ?? pending?.runId;
+      const runId = session.record.workerRun?.id ?? pending?.runId ?? session.record.sourceAdmission?.runId;
       if (runId !== snapshot.runId) return null;
       if (!receipt) {
         if (!missingGeneration || !/^[A-Za-z0-9-]{1,100}$/.test(missingGeneration))
@@ -2863,6 +3219,10 @@ export class SessionManager {
           pending: pending && { ...pending.input, runId: pending.runId } };
       }
       if (receipt.conversationId !== id) throw new AppContextError(409, "recovery_mismatch", "The run does not belong to this conversation.");
+      if (receipt.exitConfirmed && session.record.sourceAdmission?.runId === runId) {
+        // A durable native-exit receipt settles the fence without resending input or rewriting its UUID disposition.
+        delete session.record.sourceAdmission; await this.store.saveRecord(session.record);
+      }
       const recoverable = receipt.state === "interrupted" && !receipt.exitConfirmed;
       if (!recoverable && !pending) return null;
       return { runId, generation: receipt.generation, expectedRevision: receipt.revision, recoverable,
@@ -2885,6 +3245,33 @@ export class SessionManager {
         // to the authenticated conversation rather than trusting a browser-supplied owner.
         ...(previous?.input.requestId === requestId && !previous.input.conversationId ? {} : { conversationId: id }) };
       const replay = previous?.input.requestId === requestId;
+      if (!this.worker && input.generation === "source-admission") {
+        if (replay && (previous.runId !== value.runId || JSON.stringify(previous.input) !== JSON.stringify(input)))
+          throw new AppContextError(409, "recovery_conflict", "Reuse the original recovery request.");
+        if (replay && previous.state === "completed") return;
+        if (input.expectedRevision !== 0 || session.record.sourceAdmission?.runId !== value.runId)
+          throw new AppContextError(409, "recovery_stale", "This retained admission changed. Refresh its recovery review.");
+        if (session.run)
+          throw new AppContextError(409, "recovery_active", "Stop the retained native execution and confirm its exit before recovering this admission.");
+        // Explicit operator attestation fences the old admission; it never changes its message UUID receipt.
+        session.record.workerRecovery = { runId: value.runId, input, state: "pending" };
+        if (session.record.developmentLease) session.record.developmentLeaseState = "stopped";
+        if (session.record.taskRun?.started) session.record.taskRun.exitConfirmed = true;
+        await this.store.saveRecord(session.record);
+        session.runEpoch = undefined;
+        if (session.record.agentRunId) await this.observations.change(state => {
+          const run = state.runs.find(candidate => candidate.id === session.record.agentRunId);
+          if (run && !run.stopConfirmed) {
+            run.stopConfirmed = true; run.generation = null; run.state = "cancelled";
+            run.revision = String(BigInt(run.revision) + 1n); run.observedAt = new Date().toISOString();
+          }
+        });
+        await this.cancelSessionLocked(id);
+        delete session.record.sourceAdmission;
+        session.record.workerRecovery = { runId: value.runId, input, state: "completed" };
+        await this.store.saveRecord(session.record);
+        this.audit.report("ai_execution_recovered", { sessionId: id, runId: value.runId, requestId, actorId }); return;
+      }
       if (replay && (previous.runId !== value.runId || JSON.stringify(previous.input) !== JSON.stringify(input)))
         throw new AppContextError(409, "recovery_conflict", "Reuse the original recovery request.");
       if (session.record.workerRun && session.record.workerRun.id !== value.runId)
@@ -2921,30 +3308,76 @@ export class SessionManager {
         throw new AppContextError(503, "exit_unconfirmed", "Recovery did not confirm this execution. Keep its source leases.");
       await this.cancelSessionLocked(id);
       session.record.workerRecovery = { runId: value.runId, input, state: "completed" };
+      if (session.record.sourceAdmission?.runId === value.runId) delete session.record.sourceAdmission;
       await this.store.saveRecord(session.record);
       this.audit.report("ai_execution_recovered", { sessionId: id, runId: value.runId, requestId, actorId });
     });
   }
 
   async cancelSession(id: string): Promise<void> {
-    const session = this.live.get(id);
-    if (session?.record.status === "suggesting") {
-      if (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued") this.mcpPolicy.cancel(id);
-      this.clearSuggestion(session); await this.endSuggestions(id); return;
+    try {
+      await this.serialize(id, async () => {
+        const session = await this.requireLive(id);
+        if (session.record.messageQueue?.entries.length) {
+          await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = "Response stopped. Resume the queue when ready."; });
+          this.publishMessageQueue(session);
+        }
+      });
+      const session = this.live.get(id);
+      if (session?.record.status === "suggesting") {
+        if (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued") this.mcpPolicy.cancel(id);
+        this.clearSuggestion(session); await this.endSuggestions(id); return;
+      }
+    } catch (error) {
+      if (error instanceof SessionStorageError) return this.stopAfterStorageFailure(id, error);
+      throw error;
     }
     await this.serialize(id, () => this.cancelSessionLocked(id));
   }
 
+  /** Stop retained execution even when its source mutation lane cannot record cancellation. */
+  private async stopAfterStorageFailure(id: string, error: SessionStorageError): Promise<never> {
+    const session = this.live.get(id), run = session?.run;
+    if (!session || !run) throw error;
+    // Revoke transient authority without inventing a saved status or releasing durable source claims.
+    session.runEpoch = undefined;
+    this.clearRefresh(session);
+    this.proxy?.unregister(id);
+    this.developmentMcp.unregister(id);
+    let confirmed = false;
+    try {
+      if (run.stopAndWait) { await run.stopAndWait(); confirmed = true; }
+      else await run.stop();
+    } catch { /* A failed stop retains the handle; this request never retries the native operation. */ }
+    if (confirmed && session.run === run) {
+      session.run = null;
+      session.pendingApprovals.clear(); session.pendingQuestions.clear();
+      this.setActivity(session, null);
+    }
+    // Persisted status, run identity, admission receipts and source leases remain unchanged.
+    throw new WorkerError(error.code, confirmed
+      ? "Native execution stopped, but cancellation could not be saved. Reopen and reconcile this conversation before continuing."
+      : "Source storage is unavailable and native exit is unconfirmed. Keep this execution fenced and retry Stop after inspection.", 503);
+  }
+
   private async cancelSessionLocked(id: string): Promise<void> {
-    const session = await this.requireLive(id);
-    session.record.decisionGeneration = (session.record.decisionGeneration ?? 0) + 1;
-    await this.store.saveRecord(session.record);
+    let session: LiveSession;
+    try {
+      session = await this.requireLive(id);
+      session.record.decisionGeneration = (session.record.decisionGeneration ?? 0) + 1;
+      await this.store.saveRecord(session.record);
+    } catch (error) {
+      if (error instanceof SessionStorageError) return this.stopAfterStorageFailure(id, error);
+      throw error;
+    }
     this.decisions?.kick();
     this.clearSuggestion(session);
     if (this.worker || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session);
     this.setActivity(session, null);
     if (session.run) {
       if (session.run.stopAndWait) await session.run.stopAndWait();
+      else if (!this.worker && session.record.sourceAdmission)
+        throw new WorkerError("exit_unconfirmed", "This uncertain native admission needs supported Stop with confirmed exit. Its retained handle remains fenced.", 503);
       else await session.run.stop().catch(() => undefined);
       session.run = null;
     }
@@ -2969,7 +3402,10 @@ export class SessionManager {
     listener: SessionListener,
   ): Promise<{ replay: StoredEvent[]; unsubscribe: () => void }> {
     const session = await this.requireLive(id);
-    await this.serialize(id, () => this.flushAppContextEvent(session));
+    await this.serialize(id, async () => {
+      await this.flushAppContextEvent(session);
+      if (session.record.suggestionHistoryVersion) await this.suggestionHistory.reconcile(session.record, this.suggestionSignature(session));
+    });
     // Attach BEFORE reading the replay and buffer until the read finishes: an event persisted
     // mid-read could otherwise miss both the file snapshot and the listener — for an approval
     // request that gap would strand the harness on a pause nobody can see. The buffered tail is
@@ -3004,7 +3440,7 @@ export class SessionManager {
     // Historical statuses still close old approval cards, but only the final snapshot describes
     // current controls and signals replay readiness. Keep the flag out of the durable journal.
     const history = [...replay, ...tail].map(event => event.type === "session_status" ? { ...event, historical: true } : event);
-    return { replay: [...history, this.activityEvent(session), this.suggestionEvent(session), status], unsubscribe: () => session.listeners.delete(wrapped) };
+    return { replay: [...history, this.activityEvent(session), this.suggestionEvent(session), this.queueEvent(session), status], unsubscribe: () => session.listeners.delete(wrapped) };
   }
 
   async shutdown(): Promise<void> {
@@ -3014,7 +3450,6 @@ export class SessionManager {
     // must not defer the deadline until after its own pending writes have completed.
     const draining = this.drainHarnessEvents();
     for (const session of this.live.values()) {
-      clearTimeout(session.suggestionTimer);
       if (session.workspaceActivityTimer) clearTimeout(session.workspaceActivityTimer);
       session.workspaceActivityTimer = undefined;
       if (!this.worker && (session.record.developmentLease || session.record.taskExecutionId) && session.run?.stopAndWait) {
@@ -3076,8 +3511,10 @@ export class SessionManager {
   }
 
   private runtimeProjection(record: SessionRecord): SessionRecord {
-    if (this.executionMode === undefined) return record;
-    return { ...record, executionMode: this.executionMode };
+    const issue = this.store.recoveryIssues().find(candidate => candidate.sessionId === record.id);
+    if (this.executionMode === undefined && !issue) return record;
+    return { ...record, ...(this.executionMode === undefined ? {} : { executionMode: this.executionMode }),
+      ...(issue ? { storageRecovery: { state: "required" as const, code: issue.code, message: issue.message } } : {}) };
   }
 
   private async reconcileRuntime(record: SessionRecord): Promise<void> {
@@ -3096,9 +3533,23 @@ export class SessionManager {
     if (changed) await this.store.saveRecord(record);
   }
 
+  private async reconcileSourceAdmission(record: SessionRecord): Promise<void> {
+    const admission = record.sourceAdmission;
+    if (!admission?.clientRequestId) return;
+    let receipt: StoredMessageReceipt | null;
+    try { receipt = await this.store.readMessageReceipt(record.id, admission.clientRequestId); }
+    catch { return; } // Keep the fence and allow read-only recovery/queue diagnostics.
+    if (receipt && receipt.state !== "unknown") {
+      // Settling source metadata cannot replay input; native exit remains governed by its run.
+      delete record.sourceAdmission; await this.store.saveRecord(record);
+    }
+  }
+
   private async requireLive(id: string): Promise<LiveSession> {
     const existing = this.live.get(id);
     if (existing) {
+      if (existing.record.storageRecovery) throw new SessionStorageError(id, existing.record.storageRecovery.code, existing.record.storageRecovery.message);
+      await this.reconcileSourceAdmission(existing.record);
       await this.reconcileRuntime(existing.record);
       return existing;
     }
@@ -3110,8 +3561,10 @@ export class SessionManager {
       throw new SessionNotFoundError(id);
     }
 
+    if (record.storageRecovery) throw new SessionStorageError(id, record.storageRecovery.code, record.storageRecovery.message);
     const loaded = this.live.get(id);
     if (loaded) return loaded;
+    await this.reconcileSourceAdmission(record);
     await this.reconcileRuntime(record);
 
     if (record.workspaceActivation?.state === "queued") {
@@ -3263,13 +3716,12 @@ export class SessionManager {
         if (!session.suggestionAllowed || session.record.status !== "suggesting"
           || session.suggestionContext !== this.suggestionSignature(session)) return;
         const text = suggestionText(event.text);
-        const expiresAt = Date.now() + SUGGESTION_TTL_MS;
         session.suggestion = { revision: (session.suggestion?.revision ?? 0) + 1, attemptId: event.workerRunId,
-          state: text ? "available" : "unavailable", ...(text ? { text, expiresAt } : { reason: event.reason ?? "unavailable" }) };
+          state: text ? "available" : "unavailable", ...(text ? { text } : { reason: event.reason ?? "unavailable" }) };
         session.suggestionAllowed = false;
         if (text) {
-          session.suggestionTimer = setTimeout(() => this.clearSuggestion(session), SUGGESTION_TTL_MS);
-          session.suggestionTimer.unref();
+          await this.suggestionHistory.create(session.record, { attemptId: event.workerRunId ?? session.record.workerRun?.id ?? session.runEpoch ?? randomUUID(), text,
+            contextKey: this.suggestionSignature(session) });
         }
         this.fanOut(session, this.suggestionEvent(session));
         return;
@@ -3356,7 +3808,7 @@ export class SessionManager {
           await this.store.saveRecord(session.record);
           // Registration is durable locally; the shared record appears only after its Core receipt.
           await this.append(id, { ...event, decisionWaitId: wait.id });
-          session.pendingQuestions.set(event.questionId, event.questions.map(q => q.id ?? q.question));
+          if (event.delivery !== "message") session.pendingQuestions.set(event.questionId, event.questions.map(q => q.id ?? q.question));
           if (event.blocking !== false) await this.setStatus(id, "awaiting_question");
           return;
         }
@@ -3416,10 +3868,17 @@ export class SessionManager {
    * reconnecting client rebuilds it and a session restored from a backup — which brings the
    * records back and not the cache — explains the file it no longer has.
    */
+  async acceptedAttachment(id: string, name: string): Promise<Buffer | null> {
+    const record = this.live.get(id)?.record ?? await this.store.readRecord(id);
+    return record ? this.messageQueues.acceptedAttachment(record, name) : null;
+  }
+
   async addAttachment(id: string, attachment: { name: string; size: number; path: string }): Promise<void> {
     await this.requireLive(id);
     await this.append(id, { type: "attachment_added", ...attachment });
   }
+
+  private readonly sourceAppends = new Map<string, Promise<number>>();
 
   private async append(id: string, payload: Record<string, unknown> & { type: string }): Promise<number | undefined> {
     const session = this.live.get(id);
@@ -3428,6 +3887,12 @@ export class SessionManager {
     }
 
     await this.flushAppContextEvent(session);
+
+    if (payload.type === "prompt_suggestion_created" && !session.record.suggestionHistoryVersion) {
+      session.record.suggestionHistoryVersion = 1; await this.store.saveRecord(session.record);
+    }
+    if (session.record.suggestionHistoryVersion && ["user_message", "app_context_changed", "model_selection_changed", "session_provider_changed", "session_profile_changed", "session_autonomy_changed", "workspace_changed"].includes(payload.type))
+      await this.suggestionHistory.invalidate(session.record);
 
     // Child setup is reviewed normally, but its password is not a transcript artifact.
     // The MCP policy retains the original in-memory call until dispatch.
@@ -3439,16 +3904,19 @@ export class SessionManager {
     if (["user_message", "app_context_changed", "model_selection_changed", "session_provider_changed", "session_profile_changed", "session_autonomy_changed", "attachment_added"].includes(payload.type))
       this.clearSuggestion(session);
     if (payload.type === "user_message") session.toolOutputCalls = undefined;
-    session.record.lastEventSeq += 1;
-    const event: StoredEvent = {
-      seq: session.record.lastEventSeq,
-      ts: new Date().toISOString(),
-      ...payload,
-    };
-    await this.store.appendEvent(id, event);
-    await this.store.saveRecord(session.record);
-    this.fanOut(session, event);
-    return event.seq;
+    const previous = this.sourceAppends.get(id) ?? Promise.resolve();
+    const committed = previous.catch(() => undefined).then(async () => {
+      const after = session.record.lastEventSeq;
+      const event: StoredEvent = { seq: after + 1, ts: new Date().toISOString(), ...payload };
+      await this.store.appendEvent(id, event, { after });
+      session.record.lastEventSeq = Math.max(session.record.lastEventSeq, event.seq);
+      await this.store.saveRecord(session.record);
+      this.fanOut(session, event);
+      return event.seq;
+    });
+    this.sourceAppends.set(id, committed);
+    try { return await committed; }
+    finally { if (this.sourceAppends.get(id) === committed) this.sourceAppends.delete(id); }
   }
 
   private fanOut(session: LiveSession, event: StoredEvent): void {
@@ -3577,10 +4045,16 @@ export class SessionManager {
       await this.finishExecution(session, session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued");
     if (status === "running" && session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: false };
     session.record.status = status;
+    if (["failed", "cancelled", "abandoned"].includes(status) && session.record.messageQueue?.entries.length) {
+      await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = "Execution stopped. Review the conversation and resume the queue."; });
+      this.publishMessageQueue(session);
+    }
     if (["running", "awaiting_approval", "awaiting_question"].includes(status)) this.scheduleWorkspaceActivity(session);
     if (!["running", "awaiting_approval", "awaiting_question"].includes(status)) this.setActivity(session, null);
     session.record.updatedAt = new Date().toISOString();
     await this.store.saveRecord(session.record);
+    // An answer saved during this turn continues the conversation as soon as it is free.
+    if (status === "idle" && session.record.decisionWaitIds?.length) this.decisions?.kick();
     if (["running", "awaiting_approval", "awaiting_question"].includes(status) && session.record.developmentLease && this.development?.available) {
       const credential = session.workspaceCredential ?? session.credential;
       if (credential || session.record.taskWorkspace) {
@@ -3649,6 +4123,7 @@ export class SessionManager {
       type: "session_status",
       status,
     });
+    if (status === "idle") this.wakeMessageQueue(id);
   }
 
   private activityEvent(session: LiveSession): StoredEvent {

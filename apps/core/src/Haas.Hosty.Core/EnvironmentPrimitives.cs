@@ -21,10 +21,13 @@ internal sealed record SandboxActor(string UserId, string? AppId = null, DateTim
     public string? DeletingWorkspace { get; init; }
     [System.Text.Json.Serialization.JsonIgnore]
     public WorkspaceOwner? DeletingOwner { get; init; }
-    internal bool CanDeleteResource(SandboxActor owner, SandboxContext? context)
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string[]? DeletingWorktreeIds { get; init; }
+    internal bool CanDeleteResource(SandboxActor owner, SandboxContext? context, string[]? worktreeIds = null)
         => DeletingWorkspace is { } id && DeletingOwner is { } allocation
             && DevelopmentWorkspaceService.WorkspaceIdFor(allocation) == id
-            && WorkspaceCleanupService.Belongs(owner, context, allocation, id);
+            && (WorkspaceCleanupService.Belongs(owner, context, allocation, id)
+                || worktreeIds?.Any(tree => DeletingWorktreeIds?.Contains(tree, StringComparer.Ordinal) == true) == true);
 
     [System.Text.Json.Serialization.JsonIgnore]
     public string Key => SandboxValidation.Hash(CoreJson.Text(this));

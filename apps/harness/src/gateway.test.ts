@@ -63,6 +63,63 @@ describe("gateway", () => {
   let origin: string;
   let restoreEnv: () => void;
 
+  it("persists owner-only queue commands and immutable uploads with exact replay", async () => {
+    const session = await manager.createSession({ createdBy: "user_admin" });
+    const base = `/api/sessions/${session.id}/message-queue`;
+    const initial = await call(base); expect(initial.status).toBe(200); expect(initial.headers.get("cache-control")).toBe("no-store");
+    const snapshot = await initial.json() as { revision: number; ownerId: string; installationId: string };
+    expect(snapshot.ownerId).toBe("user_admin"); expect(snapshot.installationId).toBeTruthy();
+    const uploadId = randomUUID(), uploadPath = `${base}/uploads/${uploadId}?name=${encodeURIComponent("image.txt")}`;
+    const uploaded = await call(uploadPath, { method: "PUT", body: "original bytes" }); expect(uploaded.status).toBe(201);
+    const file = (await uploaded.json() as { attachment: { id: string; name: string; size: number } }).attachment;
+    expect(await (await call(uploadPath, { method: "PUT", body: "original bytes" })).json()).toEqual({ attachment: expect.objectContaining(file) });
+    const payload = { requestId: randomUUID(), expectedRevision: snapshot.revision, command: { type: "enqueue", entryId: randomUUID(), text: "inspect", attachments: [file.name] } };
+    const first = await call(base + "/commands", { method: "POST", body: JSON.stringify(payload) }); expect(first.status).toBe(200);
+    const accepted = await first.json() as { result: unknown; queue: { entries: unknown[] } };
+    const replay = await call(base + "/commands", { method: "POST", body: JSON.stringify(payload) }); expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ result: accepted.result, queue: { entries: [expect.objectContaining({ text: "inspect" })] } });
+    const bytes = await call(`${base}/attachments/${file.id}`); expect(bytes.status).toBe(200); expect(await bytes.text()).toBe("original bytes");
+    expect((await call(base, {}, null)).status).toBe(401);
+    const other = mintToken("host.admin", "hosty.harness", "another-owner");
+    expect((await fetch(origin + base, { headers: { authorization: `Bearer ${other}` } })).status).toBe(404);
+    expect((await fetch(origin + base + "/commands", { method: "POST", headers: { authorization: `Bearer ${other}`, "content-type": "application/json" }, body: JSON.stringify(payload) })).status).toBe(404);
+    expect(JSON.stringify(accepted)).not.toContain("digest");
+  });
+
+  it("requires same-origin proof for app-session queue changes and prevents cross-site uploads", async () => {
+    const session = await manager.createSession({ createdBy: "user_admin" });
+    const core = createServer((request, response) => { request.resume(); response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" })); });
+    await new Promise<void>(resolve => core.listen(0, "127.0.0.1", resolve));
+    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
+    process.env.HOSTY_APP_SERVICE_TOKEN = "queue-origin-fixture";
+    const base = `/api/sessions/${session.id}/message-queue`, cookie = "hosty_harness_identity=queue-session-fixture";
+    const payload = JSON.stringify({ requestId: randomUUID(), expectedRevision: 0, command: { type: "pause" } });
+    try {
+      const blocked = await fetch(origin + base + "/commands", { method: "POST", headers: { cookie, "content-type": "application/json", origin: "https://foreign.example" }, body: payload });
+      expect(blocked.status).toBe(403); expect(await blocked.json()).toMatchObject({ code: "cross_site_request_blocked" });
+      const upload = await fetch(origin + base + `/uploads/${randomUUID()}?name=file.txt`, { method: "PUT", headers: { cookie, origin: "https://foreign.example" }, body: "bytes" });
+      expect(upload.status).toBe(403);
+      const accepted = await fetch(origin + base + "/commands", { method: "POST", headers: { cookie, "content-type": "application/json", origin }, body: payload });
+      expect(accepted.status).toBe(200); expect(await accepted.json()).toMatchObject({ queue: { paused: true } });
+      const suggestionId = randomUUID(), suggestionRoute = `/api/sessions/${session.id}/suggestions/${suggestionId}/actions`;
+      const choice = { requestId: randomUUID(), expectedRevision: 1, action: "selected-for-draft" };
+      expect((await call(suggestionRoute, { method: "POST", body: JSON.stringify(choice) })).status).toBe(403);
+      const invalid = await fetch(origin + suggestionRoute, { method: "POST", headers: { cookie, "content-type": "application/json", origin }, body: JSON.stringify({ ...choice, requestId: "invalid" }) });
+      expect(invalid.status).toBe(400); expect(await invalid.json()).toMatchObject({ code: "invalid_request_id" });
+      session.suggestionHistoryVersion = 1; session.lastEventSeq++;
+      await store.appendEvent(session.id, { seq: session.lastEventSeq, ts: new Date().toISOString(), type: "prompt_suggestion_created", suggestionId,
+        sessionId: session.id, userId: "user_admin", attemptId: randomUUID(), answerSeq: 0, text: "A next step", expiresAt: Date.now() + 60_000,
+        contextKey: JSON.stringify([session.connectionId, session.connectionRevision, session.selectionRevision, session.appContextRevision,
+          session.workspaceAssociation, session.developmentWorkspaces?.map(tree => [tree.id, tree.state, tree.observation?.head])]) });
+      await store.saveRecord(session);
+      const select = () => fetch(origin + suggestionRoute, { method: "POST", headers: { cookie, "content-type": "application/json", origin }, body: JSON.stringify(choice) });
+      expect(await (await select()).json()).toMatchObject({ suggestionId, state: "selected-for-draft", revision: 2 });
+      expect(await (await select()).json()).toMatchObject({ suggestionId, state: "selected-for-draft", revision: 2 });
+      expect((await store.readEvents(session.id)).filter(event => event.type === "user_message")).toHaveLength(0);
+    } finally { await new Promise<void>(resolve => core.close(() => resolve())); }
+  });
+
   it("recovers an admitted message through an actor-bound uncached receipt without resending", async () => {
     const session = await manager.createSession({ createdBy: "user_admin" });
     const clientRequestId = randomUUID();
@@ -168,6 +225,23 @@ describe("gateway", () => {
     return fetch(`${origin}${pathName}`, { ...init, headers });
   }
 
+  it("reports unavailable session storage to administrators without hiding healthy chats or exposing payloads", async () => {
+    const healthy = await manager.createSession({ createdBy: "user_admin", title: "Healthy" });
+    const damaged = await manager.createSession({ createdBy: "user_admin", title: "Never expose this private title" });
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(path.join(dataDir, "sessions", damaged.id, "record.json"), "\0".repeat(64));
+    expect((await call("/api/storage-recovery", {}, null)).status).toBe(401);
+    expect((await call("/api/storage-recovery", {}, "host.user")).status).toBe(401);
+    const response = await call("/api/storage-recovery"); expect(response.status).toBe(200);
+    const issue = await response.json();
+    expect(issue).toMatchObject({ issues: [expect.objectContaining({ sessionId: damaged.id, code: "session_storage_corrupt" })] });
+    expect(JSON.stringify(issue)).not.toContain("Never expose");
+    expect(JSON.stringify(issue)).not.toContain(dataDir);
+    const listed = await (await call("/api/sessions")).json() as { sessions: { id: string }[] };
+    expect(listed.sessions.map(item => item.id)).toContain(healthy.id);
+    expect((await call(`/api/sessions/${healthy.id}`)).status).toBe(200);
+  });
+
   it("limits execution recovery to the owning interactive operator with same-origin writes", async () => {
     const session = await manager.createSession({ createdBy: "user_admin" });
     const foreign = await manager.createSession({ createdBy: "someone_else" });
@@ -221,8 +295,11 @@ describe("gateway", () => {
   });
 
   it("serves health and ordinary APIs after a rejected startup sweep", async () => {
-    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const sweep = vi.spyOn(HandoffStore.prototype, "sweep").mockRejectedValueOnce(new Error("temporary storage outage"));
+    const runs = vi.spyOn(manager, "recoverWorkerRuns").mockResolvedValue();
+    const approvals = vi.spyOn(manager, "recoverMcpApprovals").mockResolvedValue();
+    const queue = vi.spyOn(manager, "recoverMessageQueues").mockResolvedValue();
     const recovering = createGatewayServer(manager, new FakeHarnessAdapter(), settings, directory);
     try {
       await new Promise<void>(resolve => recovering.listen(0, resolve));
@@ -230,7 +307,8 @@ describe("gateway", () => {
       const base = `http://127.0.0.1:${(recovering.address() as AddressInfo).port}`;
       expect((await fetch(base + "/healthz")).status).toBe(200);
       expect((await fetch(base + "/api/sessions", { headers: { authorization: `Bearer ${mintToken("host.admin")}` } })).status).toBe(200);
-      expect(log).toHaveBeenCalledWith("[handoff] startup recovery failed", expect.any(Error));
+      expect(log).toHaveBeenCalledWith("[recovery] Startup stage requires attention.", { stage: "handoffs", code: "unavailable" });
+      expect(runs).toHaveBeenCalled(); expect(approvals).toHaveBeenCalled(); expect(queue).toHaveBeenCalled();
     } finally {
       await new Promise(resolve => recovering.close(resolve)); sweep.mockRestore(); log.mockRestore();
     }
@@ -712,7 +790,7 @@ describe("gateway", () => {
     const seen: number[] = [];
     const { replay, unsubscribe } = await manager.subscribe(record.id, 1, (event) => seen.push(event.seq));
     expect(replay.length).toBeGreaterThan(0);
-    expect(replay.filter(event => !["session_activity", "session_suggestion"].includes(event.type)).every((event) => event.seq > 1)).toBe(true);
+    expect(replay.filter(event => !["session_activity", "session_suggestion", "session_message_queue"].includes(event.type)).every((event) => event.seq > 1)).toBe(true);
     unsubscribe();
   });
 

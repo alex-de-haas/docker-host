@@ -3,7 +3,7 @@ import { LOCAL_BPE_ESTIMATOR, type LocalContextSources } from "./context-sources
 import type { ContextUsage } from "./context-usage.js";
 import type { McpContextDetail } from "./context-mcp.js";
 
-import { readNativeQuestions, questionAnswers } from "./questions.js";
+import { readNativeQuestions, readAsyncQuestions, questionAnswers } from "./questions.js";
 import { UsageReader, absentUsage, codexUsage } from "./provider-usage.js";
 import { cleanAgentEnvironment } from "../connections/codex-login.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -428,6 +428,11 @@ class CodexRun implements HarnessRun {
     });
     this.predictionRuntime = codexPredictionSupport.key(resolveCodexCommand(), (initialized as { userAgent?: unknown })?.userAgent);
     this.notify(CODEX_METHODS.initialized, {});
+    if (this.options.nativeHome && this.options.skillExportId) {
+      // Windows native discovery uses the OS profile directory rather than HOME. Register the
+      // selected export for this process without changing shared CODEX_HOME/auth/history.
+      await this.request("skills/extraRoots/set", { extraRoots: [path.join(this.options.nativeHome, ".agents", "skills")] });
+    }
     void this.readUsage().then(usage => { if (!this.stopped) this.emit({ type: "provider_usage", usage }); });
     this.selectedModel = this.options.model ?? null;
     this.selectedEffort = this.options.reasoningEffort ?? null;
@@ -618,11 +623,15 @@ class CodexRun implements HarnessRun {
         const proposal = message.method === "item/fileChange/requestApproval" ? this.takeFileChangeProposal(params) : undefined;
         const { toolName, input } = describeApproval(message.method, proposal && !Array.isArray(params.changes)
           ? { ...params, changes: proposal } : params);
+        // A started command in this live turn already owns the identity its later tool_use carries.
+        const command = typeof params.itemId === "string" ? this.commandCalls.get(params.itemId) : undefined;
+        const toolUseId = command && params.threadId === this.threadId && params.turnId === command.turnId ? command.id : undefined;
         this.emit({
           type: "approval_request",
           approvalId,
           toolName,
           input,
+          ...(toolUseId ? { toolUseId } : {}),
           // Codex sends its own reason for needing to escalate; the card shows it where the Claude
           // side shows the SDK's decision reason.
           ...(typeof params.reason === "string" && params.reason ? { reason: params.reason } : {}),
@@ -758,8 +767,11 @@ class CodexRun implements HarnessRun {
         ? commandToolUseId(this.commandRun, this.commandTurn, item.id, params.turnId as string) : undefined;
       if (toolUseId) this.completedToolCalls.add(item.id as string);
       if (type === "agentMessage") {
+        const question = this.asyncQuestion(item, params);
         const text = readItemText(item);
-        if (text) {
+        // The message text is Codex's plain rendering of the same question; show it only as a fallback.
+        if (question) this.emit(question);
+        else if (text) {
           this.emit({ type: "assistant_text", text });
         }
       } else if (type === "mcpToolCall") {
@@ -998,6 +1010,20 @@ class CodexRun implements HarnessRun {
   private write(message: unknown): void {
     if (!this.child.stdin.destroyed) {
       this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    }
+  }
+
+  /** request_user_input_async returns at once; Codex publishes its questions on the agent message that follows. */
+  private asyncQuestion(item: Record<string, unknown>, params: Record<string, unknown>): HarnessEvent | null {
+    if (item.delivery !== "async" || item.questions == null) return null;
+    try {
+      if (typeof params.threadId !== "string" || params.threadId !== this.threadId || typeof params.turnId !== "string" || this.activityTurnId && params.turnId !== this.activityTurnId
+        || typeof item.id !== "string") throw new Error("The question does not belong to this live turn.");
+      return { type: "question_request", questionId: randomUUID(), questions: readAsyncQuestions(item), blocking: false, delivery: "message",
+        native: { threadId: params.threadId, turnId: params.turnId, itemId: item.id } };
+    } catch (error) {
+      this.emit({ type: "notice", message: "Codex question shown as text: " + (error instanceof Error ? error.message : "Unsupported question.") });
+      return null;
     }
   }
 

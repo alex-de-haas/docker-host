@@ -4,24 +4,37 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AssistantConversation } from "./assistant-conversation";
 import * as api from "@/lib/assistant-api";
+import * as queueApi from "@/lib/message-queue-api";
+import * as outboxApi from "@/lib/message-outbox";
+import type { OutboxEntry } from "@/lib/message-outbox";
 import { readPendingSend, rememberPendingSend, type PendingSend } from "@/lib/pending-send";
 
 const controls = vi.hoisted(() => ({ ui: { reportSurfaceState: vi.fn(), getNavigation: () => ({ entries: [] }), navigate: vi.fn() } }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => controls.ui }));
+vi.mock("@/lib/message-queue-api", async original => ({ ...await original<object>(), getMessageQueue: vi.fn(), commandMessageQueue: vi.fn(), uploadQueueAttachment: vi.fn() }));
+vi.mock("@/lib/message-outbox", async original => ({ ...await original<object>(), listOutbox: vi.fn(), stageOutbox: vi.fn(), saveOutbox: vi.fn(), removeOutbox: vi.fn(), readEditDraft: vi.fn(), recordOutboxAttempt: vi.fn() }));
 vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(),
-  listAppNames: vi.fn(), listAgentConnections: vi.fn(), streamEvents: vi.fn(), postMessage: vi.fn(), getMessageReceipt: vi.fn(), uploadAttachment: vi.fn() }));
+  listAppNames: vi.fn(), listAgentConnections: vi.fn(), streamEvents: vi.fn(), postMessage: vi.fn(), getMessageReceipt: vi.fn(), uploadAttachment: vi.fn(),
+  getStorageRecovery: vi.fn(), getExecutionRecovery: vi.fn(), recoverExecution: vi.fn(), stopSession: vi.fn() }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), useDevelopmentInventory: () => ({ workspaces: [], loading: false, error: "", refresh: vi.fn() }) }));
 vi.mock("./speech-input", () => ({ SpeechInput: () => null }));
 vi.mock("./session-credentials", () => ({ SessionCredentials: () => null }));
 vi.mock("./session-autonomy", () => ({ SessionAutonomy: () => null }));
 vi.mock("./app-context-picker", () => ({ AppContextPicker: () => null }));
-vi.mock("./ui/message-scroller", () => {
+vi.mock("./ui/message-scroller", async original => {
   const Wrap = ({ children }: { children: ReactNode }) => <div>{children}</div>;
-  return { ...Object.fromEntries(["MessageScroller", "MessageScrollerProvider", "MessageScrollerViewport", "MessageScrollerContent", "MessageScrollerItem"].map(name => [name, Wrap])), MessageScrollerButton: () => null };
+  return { ...await original<object>(), ...Object.fromEntries(["MessageScroller", "MessageScrollerProvider", "MessageScrollerViewport", "MessageScrollerContent", "MessageScrollerItem"].map(name => [name, Wrap])), MessageScrollerButton: () => null };
 });
 
 let root: Root, container: HTMLDivElement;
-const session: api.AssistantSession = { id: "session-one", title: "Conversation", status: "idle", createdAt: "", appContextRevision: 4, selectionRevision: 8 };
+const session: api.AssistantSession = { id: "session-one", title: "Conversation", status: "idle", createdAt: "", createdBy: "owner", appContextRevision: 4, selectionRevision: 8 };
+let localRows: OutboxEntry[], queue: queueApi.MessageQueue;
+const acceptCommand = async (_id: string, input: queueApi.QueueCommandInput): Promise<queueApi.QueueCommandReply> => {
+  const command = input.command;
+  queue = { ...queue, revision: queue.revision + 1, entries: command.type === "enqueue" ? [...queue.entries, { id: command.entryId, text: command.text,
+    attachments: command.attachments.map(name => ({ id: name, name, size: 13 })), state: "queued", createdAt: "" }] : queue.entries };
+  return { queue, result: { revision: queue.revision, ...(command.type === "enqueue" ? { entryId: command.entryId } : {}) } };
+};
 const draftKey = "hosty.assistant.draft.session-one", attachmentsKey = "hosty.assistant.attachments.session-one";
 const journalKey = "hosty.assistant.pending-send.session-one";
 const original: PendingSend = { version: 1, clientRequestId: "18b2e622-85f5-4c1a-a847-b3b88561bc45", sessionId: session.id,
@@ -37,6 +50,7 @@ const write = (value: string) => act(async () => {
 });
 const send = () => act(async () => { container.querySelector('form[aria-label="Message composer"]')!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
 const retry = () => act(async () => { button("Retry send").click(); });
+const retryQueued = () => act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Message saving to queue"] button')!.click(); });
 function seedPending() {
   localStorage.setItem(draftKey, original.draftText); localStorage.setItem(attachmentsKey, JSON.stringify(original.attachments)); rememberPendingSend(original);
 }
@@ -44,6 +58,20 @@ async function reload() { await act(async () => root.unmount()); root = createRo
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); localStorage.clear(); sessionStorage.clear(); vi.resetAllMocks();
+  delete session.storageRecovery; delete session.sourceAdmission; session.status = "idle";
+  vi.mocked(api.getStorageRecovery).mockResolvedValue({ issues: [] }); vi.mocked(api.getExecutionRecovery).mockResolvedValue(null);
+  vi.mocked(api.recoverExecution).mockResolvedValue();
+  vi.mocked(api.stopSession).mockResolvedValue();
+  localRows = []; queue = { version: 1, revision: 0, ownerId: "owner", installationId: "installation", entries: [], paused: false, updatedAt: "" };
+  vi.mocked(queueApi.getMessageQueue).mockImplementation(async () => queue);
+  vi.mocked(queueApi.commandMessageQueue).mockImplementation(acceptCommand);
+  vi.mocked(queueApi.uploadQueueAttachment).mockResolvedValue({ name: "stored-file.txt", displayName: "local-file.txt", size: 13 });
+  vi.mocked(outboxApi.listOutbox).mockImplementation(async scope => localRows.filter(row => row.scope === scope));
+  vi.mocked(outboxApi.stageOutbox).mockImplementation(async value => { const row = { ...value, sequence: localRows.length + 1 }; localRows.push(row); return row; });
+  vi.mocked(outboxApi.saveOutbox).mockImplementation(async value => { localRows = localRows.map(row => row.scope === value.scope && row.id === value.id ? value : row); });
+  vi.mocked(outboxApi.removeOutbox).mockImplementation(async (scope, id) => { localRows = localRows.filter(row => row.scope !== scope || row.id !== id); });
+  vi.mocked(outboxApi.readEditDraft).mockResolvedValue(undefined);
+  vi.mocked(outboxApi.recordOutboxAttempt).mockResolvedValue(true);
   vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("min-width: 1100px"), addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: true }); vi.mocked(api.listSessions).mockResolvedValue([session]);
@@ -55,33 +83,35 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-it("retains the exact draft and uploaded refs until the send is accepted", async () => {
-  let accepted!: (value: api.MessageReceipt) => void;
-  vi.mocked(api.postMessage).mockImplementation(() => new Promise(resolve => { accepted = resolve; }));
+it("moves the submitted snapshot to durable local staging and preserves a newer draft after acceptance", async () => {
+  let accepted!: (value: queueApi.QueueCommandReply) => void;
+  vi.mocked(queueApi.commandMessageQueue).mockImplementation(() => new Promise(resolve => { accepted = resolve; }));
   localStorage.setItem(attachmentsKey, JSON.stringify(original.attachments)); await mount(); await write(original.draftText); const field = message();
-  await send(); const pending = readPendingSend(session.id)!;
-  expect(pending).toMatchObject({ draftText: original.draftText, attachments: original.attachments });
-  expect(field.value).toBe(original.draftText); expect(field.disabled).toBe(true); expect(attachment()).not.toBeNull();
-  expect(localStorage.getItem(draftKey)).toBe(original.draftText);
-  await act(async () => accepted(receipt(pending, "accepted")));
-  expect(message()).toBe(field); expect(field.value).toBe(""); expect(attachment()).toBeNull();
-  expect(readPendingSend(session.id)).toBeNull(); expect(button("Retry send")).toBeUndefined(); expect(api.postMessage).toHaveBeenCalledOnce();
+  await send();
+  expect(localRows[0]).toMatchObject({ draftText: original.draftText, attachments: original.attachments });
+  expect(field.value).toBe(""); expect(field.disabled).toBe(false); expect(attachment()).toBeNull();
+  await write("New draft while saving");
+  const [id, request] = vi.mocked(queueApi.commandMessageQueue).mock.calls[0];
+  await act(async () => accepted(await acceptCommand(id, request)));
+  expect(message()).toBe(field); expect(field.value).toBe("New draft while saving");
+  expect(readPendingSend(session.id)).toBeNull(); expect(button("Retry send")).toBeUndefined(); expect(api.postMessage).not.toHaveBeenCalled();
 });
 
-it("restores a lost-ack send with newly uploaded attachments after reload and checks GET without a second POST", async () => {
-  vi.mocked(api.postMessage).mockRejectedValueOnce(new TypeError("Acknowledgement lost")); await mount(); await write(original.draftText);
+it("restores an uncertain enqueue with uploaded files and retries its exact UUID without uploading twice", async () => {
+  vi.mocked(queueApi.commandMessageQueue).mockRejectedValueOnce(new TypeError("Acknowledgement lost")); await mount(); await write(original.draftText);
   const file = new File(["uploaded data"], "local-file.txt", { type: "text/plain" });
   const chooser = container.querySelector<HTMLInputElement>('input[type="file"]')!;
   Object.defineProperty(chooser, "files", { configurable: true, value: [file] });
   await act(async () => chooser.dispatchEvent(new Event("change", { bubbles: true })));
-  await send(); const pending = readPendingSend(session.id)!;
-  expect(api.uploadAttachment).toHaveBeenCalledOnce(); expect(pending.attachments).toEqual(original.attachments); expect(attachment()).not.toBeNull();
-  await reload(); expect(message().value).toBe(original.draftText); expect(attachment()).not.toBeNull();
-  expect(api.postMessage).toHaveBeenCalledOnce(); expect(api.getMessageReceipt).not.toHaveBeenCalled();
-  vi.mocked(api.getMessageReceipt).mockResolvedValueOnce(receipt(pending, "accepted")); await retry();
-  expect(api.getMessageReceipt).toHaveBeenCalledExactlyOnceWith(session.id, pending.clientRequestId);
-  expect(api.postMessage).toHaveBeenCalledOnce(); expect(api.uploadAttachment).toHaveBeenCalledOnce();
-  expect(message().value).toBe(""); expect(attachment()).toBeNull(); expect(readPendingSend(session.id)).toBeNull();
+  await send();
+  expect(queueApi.uploadQueueAttachment).toHaveBeenCalledOnce(); expect(localRows[0].files[0].stored?.name).toBe("stored-file.txt");
+  const request = vi.mocked(queueApi.commandMessageQueue).mock.calls[0][1];
+  await reload(); expect(message().value).toBe(""); expect(container.querySelector('[aria-label="Message saving to queue"]')?.textContent).toContain(original.draftText);
+  expect(queueApi.commandMessageQueue).toHaveBeenCalledOnce(); expect(api.getMessageReceipt).not.toHaveBeenCalled();
+  await retryQueued();
+  expect(vi.mocked(queueApi.commandMessageQueue).mock.calls[1][1]).toEqual(request);
+  expect(queueApi.uploadQueueAttachment).toHaveBeenCalledOnce(); expect(api.postMessage).not.toHaveBeenCalled();
+  expect(localRows).toHaveLength(0); expect(readPendingSend(session.id)).toBeNull();
 });
 
 it.each([
@@ -89,7 +119,7 @@ it.each([
 ])("retains draft, refs and original receipt on a $status Retry refusal without replay", async ({ status, code }) => {
   seedPending(); await mount(); vi.mocked(api.getMessageReceipt).mockRejectedValueOnce(new api.AssistantApiError(code, "Access refused", status));
   await retry(); expect(message().value).toBe(original.draftText); expect(attachment()).not.toBeNull(); expect(readPendingSend(session.id)).toEqual(original);
-  expect(message().disabled).toBe(true); expect(api.postMessage).not.toHaveBeenCalled(); expect(container.textContent).toContain("Access refused");
+  expect(message().disabled).toBe(false); expect(container.querySelector<HTMLButtonElement>('[aria-label="Send"]')?.disabled).toBe(true); expect(api.postMessage).not.toHaveBeenCalled(); expect(container.textContent).toContain("Access refused");
   await act(async () => { window.dispatchEvent(new Event("focus")); window.dispatchEvent(new Event("hosty:app-session-restored")); });
   expect(api.getMessageReceipt).toHaveBeenCalledOnce(); expect(api.postMessage).not.toHaveBeenCalled();
 });
@@ -132,18 +162,16 @@ it("unlocks the retained editable draft only after an explicit rejected receipt"
 
 it("blocks a new send when the saved recovery journal is corrupt while keeping its draft", async () => {
   localStorage.setItem(draftKey, original.draftText); localStorage.setItem(journalKey, "{corrupt"); await mount();
-  expect(message().value).toBe(original.draftText); expect(message().disabled).toBe(true); expect(container.textContent).toContain("recovery details are unavailable");
+  expect(message().value).toBe(original.draftText); expect(message().disabled).toBe(false); expect(container.querySelector<HTMLButtonElement>('[aria-label="Send"]')?.disabled).toBe(true); expect(container.textContent).toContain("recovery details are unavailable");
   await send(); expect(api.postMessage).not.toHaveBeenCalled(); expect(localStorage.getItem(journalKey)).toBe("{corrupt");
 });
 
-it("does not POST when browser storage refuses the recovery journal", async () => {
+it("retains the editable draft if local staging is unavailable and the server has not accepted it", async () => {
   await mount(); await write(original.draftText);
-  const save = Storage.prototype.setItem;
-  vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
-    if (key === journalKey) throw new DOMException("Quota", "QuotaExceededError"); save.call(this, key, value);
-  });
+  vi.mocked(outboxApi.stageOutbox).mockRejectedValueOnce(new DOMException("Quota", "QuotaExceededError"));
+  vi.mocked(queueApi.commandMessageQueue).mockRejectedValueOnce(new Error("Queue connection lost"));
   await send(); expect(api.postMessage).not.toHaveBeenCalled(); expect(message().value).toBe(original.draftText); expect(message().disabled).toBe(false);
-  expect(container.textContent).toContain("message was not sent");
+  expect(container.textContent).toContain("Queue connection lost"); expect(container.querySelector<HTMLButtonElement>('[aria-label="Send"]')?.disabled).toBe(true);
 });
 
 it("settles exact missing-request replay's pre-admission refusal and keeps the editable draft", async () => {
@@ -157,18 +185,18 @@ it("settles exact missing-request replay's pre-admission refusal and keeps the e
 
 it("keeps an uncertain request locked when only the receipt GET reports a selection conflict", async () => {
   seedPending(); await mount(); vi.mocked(api.getMessageReceipt).mockRejectedValueOnce(new api.AssistantApiError("selection_conflict", "Could not inspect receipt", 409));
-  await retry(); expect(message().disabled).toBe(true); expect(readPendingSend(session.id)).toEqual(original);
+  await retry(); expect(message().disabled).toBe(false); expect(container.querySelector<HTMLButtonElement>('[aria-label="Send"]')?.disabled).toBe(true); expect(readPendingSend(session.id)).toEqual(original);
   expect(message().value).toBe(original.draftText); expect(attachment()).not.toBeNull(); expect(api.postMessage).not.toHaveBeenCalled();
 });
 
 it("observes a pending claim made by another mounted view and blocks a fresh Send", async () => {
   localStorage.setItem(draftKey, original.draftText); await mount(); expect(message().disabled).toBe(false);
   await act(async () => rememberPendingSend(original));
-  expect(message().disabled).toBe(true); expect(button("Retry send")).toBeDefined();
+  expect(message().disabled).toBe(false); expect(container.querySelector<HTMLButtonElement>('[aria-label="Send"]')?.disabled).toBe(true); expect(button("Retry send")).toBeDefined();
   await send(); expect(api.postMessage).not.toHaveBeenCalled(); expect(readPendingSend(session.id)).toEqual(original);
 });
 
-it("keeps uploaded refs in the current draft when persistence fails, without re-uploading on an intentional retry", async () => {
+it("preserves queue-owned uploads when incidental legacy draft attachment storage is unavailable", async () => {
   await mount(); await write(original.draftText);
   const file = new File(["uploaded data"], "local-file.txt", { type: "text/plain" });
   const chooser = container.querySelector<HTMLInputElement>('input[type="file"]')!;
@@ -178,11 +206,10 @@ it("keeps uploaded refs in the current draft when persistence fails, without re-
   const storage = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
     if (key === attachmentsKey) throw new DOMException("Quota", "QuotaExceededError"); save.call(this, key, value);
   });
-  await send(); expect(api.uploadAttachment).toHaveBeenCalledOnce(); expect(api.postMessage).not.toHaveBeenCalled();
-  expect(message().value).toBe(original.draftText); expect(attachment()).not.toBeNull(); expect(message().disabled).toBe(false);
-  storage.mockRestore(); vi.mocked(api.postMessage).mockImplementation(async (...args) => ({ clientRequestId: args[6]!, state: "accepted" }));
-  await send(); expect(api.uploadAttachment).toHaveBeenCalledOnce(); expect(api.postMessage).toHaveBeenCalledOnce();
-  expect(vi.mocked(api.postMessage).mock.calls[0][2]).toEqual(["stored-file.txt"]);
+  await send(); expect(queueApi.uploadQueueAttachment).toHaveBeenCalledOnce(); expect(api.postMessage).not.toHaveBeenCalled();
+  expect(queueApi.commandMessageQueue).toHaveBeenCalledOnce();
+  expect(vi.mocked(queueApi.commandMessageQueue).mock.calls[0][1].command).toMatchObject({ type: "enqueue", attachments: ["stored-file.txt"] });
+  storage.mockRestore();
   expect(message().value).toBe(""); expect(attachment()).toBeNull();
 });
 
@@ -195,35 +222,151 @@ it("does not let a late accepted receipt clear another view's newer UUID with id
   await act(async () => accepted(receipt(original, "accepted")));
   expect(readPendingSend(session.id)).toEqual(newer); expect(localStorage.getItem(draftKey)).toBe(original.draftText);
   expect(JSON.parse(localStorage.getItem(attachmentsKey)!)).toEqual(original.attachments);
-  expect(message().value).toBe(original.draftText); expect(attachment()).not.toBeNull(); expect(message().disabled).toBe(true);
+  expect(message().value).toBe(original.draftText); expect(attachment()).not.toBeNull(); expect(message().disabled).toBe(false); expect(container.querySelector<HTMLButtonElement>('[aria-label="Send"]')?.disabled).toBe(true);
   expect(button("Retry send")).toBeDefined(); expect(api.postMessage).not.toHaveBeenCalled();
 });
 
 
-it.each(["initial", "recovery"] as const)("settles a known workspace writer refusal during %s send and resumes the same chat without reload", async attempt => {
+it("settles a legacy replay's known workspace refusal and queues an intentional new message", async () => {
   const refusal = new api.AssistantApiError("workspace_in_use", "Return or recover the pending app transition before starting writers.", 409);
   localStorage.setItem(attachmentsKey, JSON.stringify(original.attachments));
-  if (attempt === "recovery") seedPending();
+  seedPending();
   await mount();
-  if (attempt === "initial") await write(original.draftText);
-  else vi.mocked(api.getMessageReceipt).mockRejectedValueOnce(new api.AssistantApiError("message_request_not_found", "Not admitted", 404));
+  vi.mocked(api.getMessageReceipt).mockRejectedValueOnce(new api.AssistantApiError("message_request_not_found", "Not admitted", 404));
   vi.mocked(api.postMessage).mockRejectedValueOnce(refusal);
-  if (attempt === "initial") await send(); else await retry();
+  await retry();
   const refusedId = vi.mocked(api.postMessage).mock.calls[0][6];
-  if (attempt === "recovery") expect(refusedId).toBe(original.clientRequestId);
+  expect(refusedId).toBe(original.clientRequestId);
   expect(readPendingSend(session.id)).toBeNull();
   expect(button("Retry send")).toBeUndefined();
   expect(message().disabled).toBe(false);
   expect(message().value).toBe(original.draftText);
   expect(attachment()).not.toBeNull();
   expect(container.textContent).toContain(refusal.message);
-  vi.mocked(api.postMessage).mockImplementationOnce(async (...args) => ({ clientRequestId: args[6]!, state: "accepted" }));
   // The operator has completed Return and intentionally sends the retained draft again.
   await send();
-  expect(api.postMessage).toHaveBeenCalledTimes(2);
-  expect(vi.mocked(api.postMessage).mock.calls[1][0]).toBe(session.id);
-  expect(vi.mocked(api.postMessage).mock.calls[1][6]).not.toBe(refusedId);
+  expect(api.postMessage).toHaveBeenCalledOnce();
+  expect(queueApi.commandMessageQueue).toHaveBeenCalledOnce();
+  expect(vi.mocked(queueApi.commandMessageQueue).mock.calls[0][1].requestId).not.toBe(refusedId);
   expect(api.uploadAttachment).not.toHaveBeenCalled();
   expect(message().value).toBe("");
   expect(attachment()).toBeNull();
+});
+
+it("retains a refused enqueue on its row and retries the identical command after workspace recovery", async () => {
+  const refusal = new api.AssistantApiError("workspace_in_use", "Recover the workspace before submitting this message.", 409);
+  localStorage.setItem(attachmentsKey, JSON.stringify(original.attachments));
+  await mount(); await write(original.draftText);
+  vi.mocked(queueApi.commandMessageQueue).mockRejectedValueOnce(refusal);
+  await send();
+  const request = vi.mocked(queueApi.commandMessageQueue).mock.calls[0][1];
+  expect(message().value).toBe(""); expect(message().disabled).toBe(false);
+  expect(container.querySelector('[aria-label="Message saving to queue"]')?.textContent).toContain(refusal.message);
+  expect(readPendingSend(session.id)).toBeNull();
+  await retryQueued();
+  expect(vi.mocked(queueApi.commandMessageQueue).mock.calls[1][1]).toEqual(request);
+  expect(api.postMessage).not.toHaveBeenCalled(); expect(queueApi.uploadQueueAttachment).not.toHaveBeenCalled();
+  expect(localRows).toHaveLength(0);
+});
+
+it("retains a visible draft and attachments while a source storage fence blocks submission across reload", async () => {
+  session.storageRecovery = { state: "required", code: "session_storage_unavailable", message: "This session needs storage recovery." };
+  localStorage.setItem(draftKey, original.draftText); localStorage.setItem(attachmentsKey, JSON.stringify(original.attachments));
+  await mount();
+  expect(message().value).toBe(original.draftText); expect(message().readOnly).toBe(true); expect(attachment()).not.toBeNull();
+  expect(container.querySelector('[aria-label="Session storage recovery"]')?.textContent).toContain("Your draft is preserved");
+  expect(container.querySelector<HTMLButtonElement>('[aria-label="Send"]')?.disabled).toBe(true);
+  await send(); await reload();
+  expect(message().value).toBe(original.draftText); expect(localStorage.getItem(draftKey)).toBe(original.draftText);
+  expect(queueApi.commandMessageQueue).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+  expect(api.recoverExecution).not.toHaveBeenCalled();
+});
+
+it("opens source-only recovery and preserves the draft after an explicitly confirmed recovery without sending it", async () => {
+  session.sourceAdmission = { state: "preparing", clientRequestId: original.clientRequestId, runId: "interrupted-run" };
+  vi.mocked(api.getExecutionRecovery).mockResolvedValue({ sourceOnly: true, recoverable: true, runId: "interrupted-run", generation: "worker", expectedRevision: 1 });
+  localStorage.setItem(draftKey, original.draftText); await mount();
+  const field = message(); expect(field.readOnly).toBe(true);
+  const panel = container.querySelector('[aria-label="Interrupted execution recovery"]')!;
+  expect(panel.textContent).toContain("before a Worker execution receipt was recorded");
+  expect(api.recoverExecution).not.toHaveBeenCalled();
+  vi.mocked(api.getSession).mockResolvedValue({ ...session, sourceAdmission: undefined });
+  await act(async () => panel.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+  await act(async () => panel.querySelector<HTMLButtonElement>("button")!.click());
+  expect(api.recoverExecution).toHaveBeenCalledExactlyOnceWith(session.id, expect.objectContaining({ runId: "interrupted-run", consumerExitConfirmed: true }));
+  expect(message()).toBe(field); expect(message().value).toBe(original.draftText); expect(message().readOnly).toBe(false);
+  expect(queueApi.commandMessageQueue).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+});
+
+it("keeps Stop available when a failed admission still needs native exit confirmation", async () => {
+  session.status = "failed";
+  session.sourceAdmission = { state: "dispatching", runId: "retained-native-run" };
+  vi.mocked(api.getExecutionRecovery).mockRejectedValue(new api.AssistantApiError("recovery_active", "Retry Stop before recovery.", 409));
+  localStorage.setItem(draftKey, original.draftText); await mount();
+  const stop = container.querySelector<HTMLButtonElement>('[aria-label="Stop"]');
+  expect(stop).not.toBeNull(); expect(stop!.disabled).toBe(false);
+  await act(async () => stop!.click());
+  expect(api.stopSession).toHaveBeenCalledExactlyOnceWith(session.id);
+  expect(message().value).toBe(original.draftText);
+  expect(api.recoverExecution).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+});
+
+
+it.each(["preparing", "dispatching"] as const)("refreshes a settled %s admission after a null recovery review without reopening the chat", async state => {
+  session.sourceAdmission = { state, clientRequestId: original.clientRequestId, runId: "normal-run" };
+  const initial = { ...session };
+  vi.mocked(api.getSession).mockResolvedValueOnce(initial).mockResolvedValue({ ...initial, sourceAdmission: undefined });
+  localStorage.setItem(draftKey, original.draftText);
+  await mount();
+  expect(api.getExecutionRecovery).toHaveBeenCalledWith(session.id);
+  expect(vi.mocked(api.getSession).mock.calls.length).toBeGreaterThan(1);
+  expect(message().value).toBe(original.draftText); expect(message().readOnly).toBe(false);
+  expect(container.querySelector('[aria-label="Session storage recovery"]')).toBeNull();
+  expect(localStorage.getItem(draftKey)).toBe(original.draftText);
+  expect(api.recoverExecution).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+  expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+});
+
+it("refreshes the admission fence on a live completion even when recovery review is still unavailable", async () => {
+  session.status = "running";
+  session.sourceAdmission = { state: "dispatching", runId: "normal-run" };
+  vi.mocked(api.getExecutionRecovery).mockRejectedValue(new api.AssistantApiError("recovery_active", "The execution is active.", 409));
+  localStorage.setItem(draftKey, original.draftText); await mount();
+  const field = message(); expect(field.readOnly).toBe(true);
+  const emit = vi.mocked(api.streamEvents).mock.calls.at(-1)![1];
+  const completed = { ...session, status: "idle", sourceAdmission: undefined, lastEventSeq: 4, updatedAt: "2026-11-12T12:00:00Z" };
+  vi.mocked(api.getSession).mockResolvedValue(completed);
+  await act(async () => emit({ type: "session_status", status: "idle", seq: 4, ts: completed.updatedAt }));
+  expect(message()).toBe(field); expect(field.value).toBe(original.draftText); expect(field.readOnly).toBe(false);
+  expect(container.querySelector('[aria-label="Session storage recovery"]')).toBeNull();
+  expect(api.recoverExecution).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
+  expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+});
+
+
+it("keeps the admission fence when the authoritative refresh still reports it", async () => {
+  session.sourceAdmission = { state: "preparing", runId: "unresolved-run" };
+  localStorage.setItem(draftKey, original.draftText); await mount();
+  expect(vi.mocked(api.getSession).mock.calls.length).toBeGreaterThan(1);
+  expect(message().readOnly).toBe(true); expect(message().value).toBe(original.draftText);
+  expect(container.querySelector('[aria-label="Session storage recovery"]')).not.toBeNull();
+  expect(api.recoverExecution).not.toHaveBeenCalled(); expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+});
+
+it("does not let a delayed null-review refresh roll back a newer live status", async () => {
+  session.sourceAdmission = { state: "preparing", runId: "normal-run" };
+  let finish!: (value: api.AssistantSession) => void;
+  const initial = { ...session };
+  vi.mocked(api.getSession).mockResolvedValueOnce(initial).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  localStorage.setItem(draftKey, original.draftText); await mount();
+  const current = { ...session, status: "running", sourceAdmission: undefined, lastEventSeq: 4, updatedAt: "2026-11-12T12:00:00Z" };
+  vi.mocked(api.getSession).mockResolvedValue(current);
+  const emit = vi.mocked(api.streamEvents).mock.calls.at(-1)![1];
+  await act(async () => {
+    emit({ type: "session_status", status: "running", seq: 4, ts: current.updatedAt });
+    finish({ ...initial, sourceAdmission: undefined, lastEventSeq: 2, updatedAt: "2026-11-12T11:59:00Z" });
+  });
+  expect(container.querySelector("header")?.textContent).toContain("running");
+  expect(message().value).toBe(original.draftText); expect(message().readOnly).toBe(false);
+  expect(api.recoverExecution).not.toHaveBeenCalled(); expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
 });

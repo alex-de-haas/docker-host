@@ -1,6 +1,6 @@
 ---
 created: 2026-08-09
-updated: 2026-10-28
+updated: 2026-11-11
 summary: Hosty Harness, the optional administrator assistant app hosting operator chat sessions on a host-resident agent harness.
 components: [apps/harness, apps/shell]
 ---
@@ -330,8 +330,8 @@ uses `bypassPermissions` with explicit SDK opt-in; Normal uses the behavior belo
 ## Shell Surface
 
 - The panel is a right-anchored dialog: streaming deltas with a typing indicator, the transcript
-  rebuilt from the event log, inline approval cards with Allow/Deny (resolved ones collapse to a
-  badge), a status chip, and a New-session reset.
+  rebuilt from the event log, inline approval cards with Allow/Deny (resolved ones fold into their call's
+  row or collapse to a one-line badge), a status chip, and a New-session reset.
 - Notices and inline errors wrap long unbroken identifiers within their cards, including MCP
   transport type names, so diagnostics do not introduce horizontal scrolling in the transcript.
 - **Approval cards are typed by what is being asked**, because an operator approves consequences,
@@ -372,7 +372,7 @@ uses `bypassPermissions` with explicit SDK opt-in; Normal uses the behavior belo
   model is told an Other option is supplied automatically, so it never lists one). An approval asks
   the operator to authorize something the agent wants to do; a question asks them to decide
   something the agent cannot. Making them look alike would train the reflex an approval gate must
-  not build. Answered cards collapse to the chosen values, and a pending one rebuilds from the event
+  not build. Answered or cancelled cards fold to one line with the chosen values, expandable to each question, and a pending one rebuilds from the event
   log on reconnect exactly as a pending approval does.
 - **Assistant prose is rendered as markdown**, both the finished message and the deltas still
   streaming — harnesses write markdown whether or not anything renders it, so the operator was

@@ -1,6 +1,6 @@
 ---
 created: 2026-09-18
-updated: 2026-10-26
+updated: 2026-11-10
 summary: Run Core from source in Debug, restart into isolated build generations and switch back to the installed release.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -295,6 +295,12 @@ request. Failed preparation exposes diagnostics and exact retry or explicit revi
 selection after source repair; resume and boundary pause reuse the retained operation. Actor/scope
 changes abort queued mutations and discard stale read results. Core's existing CLI/log recovery
 remains available when a returned older Core cannot serve these APIs.
+
+When an activation completed but a later factual Core launch differs from its recorded launch,
+Shell shows recovery instead of an indefinite readiness spinner. The operator can explicitly Return
+the retained activation; a Core already running its captured baseline completes Return without
+restarting. Initial observations of the pre-switch Core do not imply a later replacement, and
+uncertain requests keep their original identities.
 
 A successful Core Return to Release can be followed by a later workspace launch while a browser
 is closed or suspended. When Shell reads the successful Core-return receipt and a factual dev

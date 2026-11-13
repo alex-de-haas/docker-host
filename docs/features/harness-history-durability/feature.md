@@ -1,0 +1,229 @@
+---
+created: 2026-11-12
+updated: 2026-11-12
+summary: Per-conversation storage commits accepted Harness input before dispatch and isolates damaged history without replaying uncertain execution.
+components: [apps/harness]
+---
+
+# Harness History Durability
+
+## Source And Acceptance
+
+Canonical conversations remain in `sessions/<id>/record.json` and `events.ndjson`.
+Writes use unique temporary files, complete writes and file sync before atomic
+replacement. Appends are flushed before publication. Parent directories are
+flushed where Node supports it; Windows file sync precedes replacement and bounded
+sharing-violation retries. This relies on successful OS/filesystem/device flush
+semantics and does not recover a failed disk or an operating system that loses
+acknowledged flushes.
+
+Source message admission retains its original UUID, fingerprint and preparing or
+dispatching intent before native execution. Acknowledged inputs, queue changes,
+upload receipts and admitted immutable attachments have durable source evidence.
+An incomplete or uncertain admission keeps its execution fence; an idle process
+or a failed response does not prove that a model/tool call never started. A
+same-session UUID recovers its original receipt instead of creating another send.
+Accepted attachment receipts become claimed in the same source checkpoint as
+their immutable snapshot, so repeated direct sends do not consume pending-upload
+slots. Distinct retained bytes still respect the conversation's storage limits.
+Re-admitting an older immutable version makes it the latest filename lookup target
+without changing its identity or losing later historical versions. Input names
+are normalized before binding each admitted digest, including duplicate references.
+History metadata reconciliation reuses a bounded, payload-free integrity proof
+for an unchanged physical attachment generation. Initial verification and every
+actual content read check the full digest; file identity, size and nanosecond
+modification/change times invalidate the metadata proof after replacement or damage.
+Reconciliation passes its already-validated session snapshot to metadata checks,
+so historical attachment references do not each reread the transcript. Actual
+reads retain fresh source reconciliation, and final delivery refuses a source
+that becomes corrupt or missing after the original query.
+
+The source writer creates upload directory chains durably before acknowledgement
+and settles their persisted session boundary. A verified existing blob or upload
+receipt also re-enters the fenced writer and settles its publication before UUID
+replay succeeds, including after reopening an uncertain first upload. A sealed
+writer cannot acknowledge an upload through an existing-file fast path.
+
+The API and Worker each hold an OS-backed exclusive writer lock for their data
+role before startup recovery or mutation. The lock file contains no conversations.
+Process termination releases ownership; PID reuse or an old heartbeat never
+authorizes takeover. Ownership does not prove that detached native processes
+from the previous Worker have stopped.
+
+Settings, profiles and per-user suggestion preferences used during message admission
+use the same flushed replacement primitive, so their unsynced writes cannot leave
+a partial configuration file that blocks later messages.
+
+Source commits settle before derived observers run. A history projection failure
+is retained as a bounded diagnostic and retried on later reconciliation; it does
+not convert a committed message into a rejected save.
+
+## Per-Conversation Projection
+
+The fresh `conversation-history-v2` store uses immutable, hash-addressed files for
+individual conversation projections. `manifest.json` contains checksummed
+partition references, trusted owner/revision/ACL metadata, global share receipts
+and the monotonic change stream. It contains no transcript payloads. Changed
+partitions are flushed before one atomic manifest publication; healthy unchanged
+partitions are reused.
+
+Sharing receipts retain global `(principal, user, requestId)` identity across
+conversations. Share mutation, ACL metadata and its replay result publish in the
+same manifest. The change high-water mark and entry/conversation revisions remain
+monotonic within this store. A failed publication retains evidence and seals
+further mutations until reopening determines the committed view.
+
+The owner selected a fresh format after deleting the previous sessions. Harness
+does not import the old `conversation-history` directory. Cursor keys belong to
+the new store, so legacy continuations require rescan. Export grants whose old
+checkpoint exceeds the fresh store must be revoked, purged and replaced with a
+new owner-approved grant; a rescan cannot reset Core's retained checkpoint. There is no automatic
+authority migration or old-binary downgrade path.
+
+## Corruption And Restart
+
+Journal reads validate sequence identity and distinguish absent data from corrupt
+or inaccessible evidence. A complete last event without a newline remains valid.
+A proven incomplete terminal append is preserved as recovery evidence before
+repair; another append cannot concatenate with it. Interior damage or conflicting
+sequences require recovery instead of silently dropping messages. The next event
+uses reconciled durable high water even if the record checkpoint lagged behind
+the journal when the process stopped. Only one exactly identified pending context
+event may explain a checkpoint one sequence ahead of the journal; an outbox does
+not excuse missing earlier input.
+
+The single writer retains a bounded, payload-free cache of validated journal
+high water, byte count and physical generation. Clean append/checkpoint pairs
+reuse it after a generation check; confirmed appends advance it only after the
+flush and expected file identity/size checks. A changed or missing file, torn
+tail, corruption, uncertain write or deletion invalidates the proof. Actual
+history reads still parse and validate the complete retained transcript.
+
+Source deletion first commits an identity-only tombstone outside the removed
+conversation directory. A stale restored directory or delayed callback cannot
+recreate that retired identity. Unreadable deletion evidence requires recovery
+instead of being interpreted as either a confirmed deletion or a new conversation.
+
+An unavailable record is not deletion. Inventory and projection reconciliation
+retain its authority and do not create false tombstones or remove shares. A
+damaged partition is omitted from common enumeration with explicit partial
+coverage; authorized direct access reports recovery required. Corrupt global
+authority blocks common sharing/export, while private source sessions remain
+independent. Missing current authority never silently selects an older ACL,
+receipt or idle state.
+
+One bad Worker record retains its original run identity and blocks resubmission
+of that identity. Startup continues for healthy runs and independent recovery
+stages. An uncertain Worker publication cannot later report successful admission
+without reopening and reconciliation. Neither recovery path repeats accepted
+work automatically. Existing explicit native-exit confirmation remains necessary
+for interrupted execution.
+
+A provider-output write failure quarantines its live Worker run before asynchronous
+cleanup. Late events, prediction deadlines and usage sampling do not retry the
+sealed run or shut down healthy runs. Failed receipt finalization is contained;
+confirmed native exit releases only volatile capacity/connection ownership, while
+an unconfirmed stop retains both and its journal remains fenced. Native
+configuration changes are refused during quarantine. An explicit Stop still
+reaches the retained native handle through a storage-fenced preliminary receipt
+read, and returns the original storage error without inventing durable exit proof.
+
+The assistant shows bounded storage diagnostics to current administrators. A
+valid owned session with a storage/admission fence retains its visible draft and
+attachments while Send and mutation controls are blocked. Source-only admission
+recovery uses the same explicit operator confirmation and stable recovery UUID
+as interrupted-execution recovery; it preserves the transcript and original
+message receipt. A retained native handle blocks attestation until supported Stop
+confirms exit; Stop remains available for a failed admission. Live status changes
+and a settled admission review refresh the authoritative session snapshot, so a
+temporary admission fence does not permanently block a tab's preserved draft.
+If source storage cannot record cancellation, Stop still attempts to stop the
+retained native handle. Confirmed process exit clears only volatile execution;
+the durable admission, run and source leases remain fenced for reconciliation.
+The request reports the storage error instead of claiming a saved cancellation.
+An unconfirmed Stop retains its handle and is not automatically retried.
+
+Corrupt or expired paging snapshots invalidate their own continuation rather than
+unrelated queries. Cursor keys are created exclusively from flushed bytes. Deleted
+payloads are removed from active projections/snapshots and obsolete partition
+generations; rejected or uncertain writes retain bounded recovery evidence rather
+than becoming a second live source.
+
+## Verification On 2026-11-12
+
+Verified in a registered local Core workspace on macOS ARM64 with Node 24.18.0,
+.NET 10.0.402 and Docker 29.9.3:
+
+- `npm run harness:lint` passes backend/web TypeScript and ESLint.
+- `npm run harness:test` covers the complete backend and web suites. Four child-process
+  crash probes stop after preparation, input commit, native-effect simulation and
+  accepted-receipt commit; reopening never duplicates the synthetic effect.
+- `npm run harness:build-web` and
+  `npm run build:local --workspace @haas/hosty-harness` pass production web and
+  API/Worker bundle preparation.
+- `npm run test:integration -- worker` passes container lifecycle, identity and
+  native-contract fixtures without provider credentials or model inference.
+- `HOSTY_HISTORY_DURABILITY=1 HOSTY_SUGGESTIONS_BROWSER=1 npm run test:integration -- harness-local`
+  passes normal child Core password login and launch-code identity, compiled
+  assets, accepted paused input/attachment and UUID replay after real API/Worker
+  restart, isolated corrupt session/run records and the controlled Chrome UI
+  scenarios. Cold start is 56.911 s, warm restart 2.060 s and missing-output
+  recovery 32.501 s. Parent Finish confirms resource removal.
+- Version consistency, documentation links/index and whitespace checks pass.
+
+Standalone storage checks on Windows with Node 24.19.0 pass 11 scenarios plus a
+measured cold sharing-lock probe: real file sync/replacement, exclusive creation,
+append, terminal JSON/UTF-8 repair, checkpoint fencing, corruption isolation,
+deletion tombstones and writer-lock release after killing only the owned fixture.
+A real `EPERM` sharing violation succeeds after the temporary handle closes.
+The fixture processes exit and its private Windows temporary directory is removed.
+
+These are synthetic storage faults, process termination and isolated runtime
+restarts, not physical power-loss tests. Windows full-app/Core/browser deployment
+and live provider inference are not exercised. Node's unsupported Windows
+parent-directory sync is explicitly omitted. The optional heavyweight `tasks`
+integration suite is not selected. Core/CLI fixture builds retain the existing
+ILCompiler advisory/analyzer warnings and complete without errors.
+
+## Testing Expectations
+
+- Inject failed/delayed writes, sync, replacement and publication; check the
+  acknowledgement/dispatch boundary and the affected mutation fence.
+- Count full journal reads across repeated append/checkpoint pairs. Keep validated
+  high-water reuse bounded and payload-free; revalidate replaced, missing or
+  modified files, and keep torn tails uncached until their evidence is repaired.
+  Reject multi-event checkpoint gaps even when an outbox is present, while allowing
+  the exact one-ahead outbox to reopen and complete.
+- Kill an isolated writer and reopen its store. Preserve exact request identity,
+  committed journal high water, queue pause, attachment bytes and unknown effects.
+- Cover incomplete/NUL terminal appends, missing newline, interior corruption,
+  duplicate sequences, missing records and per-session/run failure isolation.
+- Verify lost manifest replies, revoked shares, global receipt UUID conflicts,
+  monotonic deletion of a damaged partition and bounded partial coverage.
+- Verify accepted attachment identity after cache loss or same-name replacement,
+  and repeated direct references without exhausting pending-upload capacity.
+  Cover A-to-B-to-A admissions and duplicate names, comparing actual native input,
+  transcript digests and retained bytes after reopening.
+- Count payload reads across repeated history metadata/streaming updates. Verify
+  actual content reads still hash bytes and physical-generation changes, exact
+  restored-mtime corruption and missing cached files require recovery. Bound
+  transcript reads independently of historical attachment-reference count.
+- Inject first-upload directory flush and post-publication blob/receipt flush
+  failures. Refuse same-process replay through a sealed writer, then settle the
+  original UUID after reopen without skipping leaf or session directory flushes.
+- Seal source storage during execution and verify Stop reaches the real native
+  child or Worker while retaining durable recovery evidence and source leases.
+- Attach during normal admission, settle it through authoritative refresh, and
+  preserve the draft and newer live status without automatic send or recovery.
+- Run real Worker subprocesses under strict unhandled-rejection handling with a
+  one-shot journal rename failure. Keep healthy runs alive, coalesce cleanup and
+  preserve occupancy for rejected, pending or unsupported exit confirmation.
+- Exercise the normal Worker client Stop path through real storage-fenced HTTP
+  reads; retain run/control identity, reject unrelated errors and never resend input.
+- Exercise real Windows sharing/replace behavior and writer death in a private
+  temporary fixture; separate this from physical power-loss evidence.
+- Run affected unit/HTTP/component suites, Harness lint and production builds,
+  `HOSTY_HISTORY_DURABILITY=1 npm run test:integration -- harness-local` with normal
+  child Core login and real API/Worker restart, and the Worker integration suite.
+  Finish the owned child and verify resource removal. No live provider credential
+  or production fault injection is required.

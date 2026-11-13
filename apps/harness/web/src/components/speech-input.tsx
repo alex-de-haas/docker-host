@@ -9,9 +9,10 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { call } from "@/lib/api";
 import { recordingWave } from "@/lib/speech-audio";
 import { startSpeechActivity, type SpeechActivityFrame } from "@/lib/speech-activity";
+import { chatSpeechLimits, speechDuration, type SpeechLimits } from "../../../shared/speech";
 
 type Roster = { granted: boolean; requestable?: boolean; reviewAvailable?: boolean; providers: ProviderDescriptor[] };
-type Recording = { controller: AbortController; stream?: MediaStream; recorder?: MediaRecorder; timer?: ReturnType<typeof setTimeout> };
+type Recording = { controller: AbortController; stream?: MediaStream; recorder?: MediaRecorder; timer?: ReturnType<typeof setTimeout>; clock?: ReturnType<typeof setInterval> };
 
 /** Remount per conversation; cleanup invalidates every pending microphone/recognition operation. */
 export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; onText: (text: string) => void; onStart?: () => void }) {
@@ -21,6 +22,8 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
   const [error, setError] = useState("");
   const [meterStream, setMeterStream] = useState<MediaStream>();
   const [rosterError, setRosterError] = useState("");
+  const [capabilities, setCapabilities] = useState<{ provider: ProviderDescriptor; limits?: SpeechLimits; error?: string }>();
+  const [elapsed, setElapsed] = useState(0);
   const active = useRef<Recording | null>(null);
   const onResult = useRef(onText);
   const blocked = useRef(disabled);
@@ -41,31 +44,45 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
   useEffect(() => { if (disabled) { dispose(active.current); active.current = null; } }, [disabled]);
   const choice = selected || (roster?.providers.length === 1 ? identity(roster.providers[0]!) : "");
   const provider = roster?.providers.find(p => identity(p) === choice);
+  const currentCapabilities = capabilities?.provider === provider ? capabilities : undefined;
+  const limits = currentCapabilities?.limits;
+  useEffect(() => {
+    if (!provider?.available || !roster?.granted) return;
+    const controller = new AbortController();
+    void call(`/speech/capabilities?appId=${encodeURIComponent(provider.appId)}&key=${encodeURIComponent(provider.key)}`, { signal: controller.signal })
+      .then(response => response.json()).then(value => {
+        const limits = chatSpeechLimits(value);
+        if (!controller.signal.aborted) setCapabilities({ provider, limits });
+      }).catch(cause => {
+        if (!controller.signal.aborted) setCapabilities({ provider, error: cause instanceof Error ? cause.message : "Recording limits are unavailable." });
+      });
+    return () => controller.abort();
+  }, [provider, roster?.granted]);
   // Every path that ends an operation (finish, cancel, disable) also returns the phase to idle.
   const busy = phase !== "idle";
   function cancel() { dispose(active.current); active.current = null; setMeterStream(undefined); setPhase("idle"); }
   async function start() {
-    if (!provider || !provider.available || blocked.current || active.current) return;
+    if (!provider || !provider.available || !limits || blocked.current || active.current) return;
     onStart?.();
     const operation: Recording = { controller: new AbortController() }; active.current = operation;
     const valid = () => active.current === operation && !operation.controller.signal.aborted && !blocked.current;
     setPhase("starting"); setError("");
     try {
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") throw new Error("Microphone recording requires HTTPS (or localhost) and a supported browser.");
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
       operation.stream = stream;
       if (!valid()) { dispose(operation); return; }
       const recorder = new MediaRecorder(stream); operation.recorder = recorder;
       const chunks: Blob[] = []; let size = 0;
-      recorder.ondataavailable = event => { if (event.data.size) { size += event.data.size; if (size > 32 * 1024 * 1024) { cancel(); setError("Recording is too large. Try a shorter recording."); } else chunks.push(event.data); } };
+      recorder.ondataavailable = event => { if (valid() && event.data.size) { size += event.data.size; if (size > 32 * 1024 * 1024) { cancel(); setError("Recording is too large. Try a shorter recording."); } else chunks.push(event.data); } };
       recorder.onerror = () => { if (valid()) { cancel(); setError("Microphone recording failed."); } };
       recorder.onstop = () => {
-        clearTimeout(operation.timer); stream.getTracks().forEach(track => track.stop());
+        clearTimeout(operation.timer); clearInterval(operation.clock); stream.getTracks().forEach(track => track.stop());
         if (!valid()) return;
         setMeterStream(undefined); setPhase("transcribing");
         void (async () => {
           try {
-            const wave = await recordingWave(new Blob(chunks, { type: recorder.mimeType }));
+            const wave = await recordingWave(new Blob(chunks, { type: recorder.mimeType }), limits);
             if (!valid()) return;
             const response = await call(`/speech/transcriptions?appId=${encodeURIComponent(provider.appId)}&key=${encodeURIComponent(provider.key)}`, {
               method: "POST", body: wave, headers: { "content-type": "audio/wav" }, signal: operation.controller.signal,
@@ -77,12 +94,14 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
         })();
       };
       recorder.start(1000); setMeterStream(stream); setPhase("recording");
-      operation.timer = setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, 119_000);
+      const startedAt = Date.now(); setElapsed(0);
+      operation.clock = setInterval(() => { if (valid()) setElapsed((Date.now() - startedAt) / 1000); }, 1000);
+      operation.timer = setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, Math.max(1, limits.maxDurationSeconds * 1000 - Math.min(1000, limits.maxDurationSeconds * 100)));
     } catch (cause) {
       if (valid()) { setError(cause instanceof Error ? cause.message : "Microphone access failed."); cancel(); }
     }
   }
-  const unavailable = disabled || !roster?.granted || !provider?.available;
+  const unavailable = disabled || !roster?.granted || !provider?.available || !limits;
   const hint = disabled ? "Dictation is unavailable while a message is being sent."
     : rosterError ? `Could not check speech providers: ${rosterError}`
     : !roster ? "Checking speech-to-text availability…"
@@ -96,7 +115,9 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
     : roster.providers.length === 0 ? "No speech providers were found. Check your speech-to-text apps in Dashboard."
     : !provider ? "Choose a speech provider to enable dictation."
     : !provider.available ? `${provider.displayName} is unavailable. Check the app's status in Dashboard.`
-    : "Dictate into your draft";
+    : currentCapabilities?.error ? `Could not check recording limits: ${currentCapabilities.error}`
+    : !limits ? "Checking recording limits…"
+    : `Dictate into your draft, up to ${speechDuration(limits.maxDurationSeconds)}`;
   return <div data-slot="speech-input" role="group" aria-label="Dictation" className="inline-flex max-w-64 shrink-0 flex-wrap items-center gap-1">
     {!busy && roster?.granted && roster.providers.length > 1 && <Select value={JSON.stringify(choice)} disabled={busy || disabled} onValueChange={value => setSelected(JSON.parse(value) as string)}>
       <SelectTrigger data-speech-provider size="sm" aria-label="Speech provider" title={provider?.displayName ?? "Choose a speech provider"} className="max-w-40"><SelectValue /></SelectTrigger>
@@ -110,6 +131,7 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
         {phase === "recording" ? <SpeechActivityMeter stream={meterStream} /> : <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" />}
         <span className="sr-only">{phase === "recording" ? "Recording dictation" : phase === "starting" ? "Opening microphone…" : "Transcribing…"}</span>
       </span>
+      {phase === "recording" && limits && <span role="timer" aria-live="off" aria-label={`Recording duration, limit ${speechDuration(limits.maxDurationSeconds)}`} className="text-xs tabular-nums text-muted-foreground">{speechDuration(elapsed)} / {speechDuration(limits.maxDurationSeconds)}</span>}
       {phase === "recording" && <Button data-speech-control type="button" size="icon-sm" variant="ghost" aria-label="Stop recording" title="Stop and transcribe" onClick={() => { const recorder = active.current?.recorder; if (recorder?.state === "recording") recorder.stop(); }}><Square /></Button>}
       <Button data-speech-control type="button" size="icon-sm" variant="ghost" aria-label="Cancel dictation" title="Discard dictation" onClick={cancel}><X /></Button>
     </> : <Tooltip.Provider delayDuration={150}><Tooltip.Root>
@@ -145,6 +167,7 @@ function identity(provider: ProviderDescriptor) { return JSON.stringify([provide
 function dispose(operation: Recording | null) {
   if (!operation) return;
   operation.controller.abort(); clearTimeout(operation.timer);
+  clearInterval(operation.clock);
   if (operation.recorder?.state === "recording") operation.recorder.stop();
   operation.stream?.getTracks().forEach(track => track.stop());
 }

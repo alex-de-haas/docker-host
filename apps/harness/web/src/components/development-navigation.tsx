@@ -13,7 +13,6 @@ import { HostyMark } from "../../../../../shared/web/hosty-mark";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogBody, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ContinueBuilding } from "@/components/continue-building";
 import { cn } from "@/lib/utils";
 
 const statusFilters = [
@@ -83,7 +82,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         <h1 className="text-sm font-semibold">{title} <span className="ml-1 font-mono text-xs font-normal tabular-nums text-muted-foreground">{items.length}</span></h1>
         <div className="flex shrink-0 items-center gap-1">
           {onClose && <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label={`Hide ${title.toLowerCase()}`} title={`Hide ${title.toLowerCase()}`} onClick={onClose}><PanelLeftClose aria-hidden /></Button>}
-          {createAppAction}<ContinueBuilding sessions={sessions} onPick={onPick} />
+          {createAppAction}
           <TooltipProvider delayDuration={250}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -106,7 +105,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-2">
       {visible.map(renderItem)}
       {!!items.length && !visible.length && <p className="p-3 text-sm text-muted-foreground">No sessions match this search and filter.</p>}
-      {!items.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">Start a new session, create an app or continue building.</p></div>}
+      {!items.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">Start a new session or create an app.</p></div>}
     </div>
     {deletingWorkspace && <WorkspaceDelete key={deletingWorkspace.workspace.id}
       workspaceId={deletingWorkspace.workspace.id} name={deletingWorkspace.workspace.name?.trim() || deletingWorkspace.workspace.owner.label?.trim() || "Workspace"}

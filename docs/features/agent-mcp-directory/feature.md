@@ -1,6 +1,6 @@
 ---
 created: 2026-09-26
-updated: 2026-10-26
+updated: 2026-11-12
 summary: Core enforces installation-bound assistant MCP access and tool exclusions; Harness owns invocation preferences and independent skill selections.
 components: [apps/core, apps/harness, apps/shell]
 ---
@@ -60,6 +60,11 @@ assistant IDs and credentials are omitted. `?revision=<current>` returns 304 for
 Policy, installation, fleet metadata, endpoints, and readiness changes invalidate the revision.
 The trusted local control endpoint exposes a credential-free administrative directory.
 
+MCP interface URLs use the registered service transport address, including its assigned port and
+declared interface path. Core catalog discovery and assistant backends dial that address directly;
+browser-only app origins and configured public ingress do not replace it. A missing transport URL
+makes the interface unavailable. Browser navigation keeps its separate app origin.
+
 Settings catalog discovery needs a current administrator app activity and the narrow request
 permission, but can preview a provider before access is granted. Core mediates initialize/tools-list,
 with a 30-second discovery-only credential that never reaches Harness. It cannot invoke tools or
@@ -85,6 +90,8 @@ a user or revoking a grant still blocks subsequent calls. Already dispatched wor
 
 ## Testing Expectations
 
+- Cover MCP discovery through IPv4, IPv6 and non-loopback service transport URLs, independently of
+  isolated browser origins and configured public ingress; a missing transport stays unavailable.
 - Check batch identity/revision/nonce/Origin authority, same-ID recovery, disabled direct mutation,
   cancellation, global offer defaults and preservation of other assistants' legacy bindings.
 - Check installation replacement, parent logout, per-tool denial on direct calls/introspection and
