@@ -2,6 +2,7 @@
 import http.server
 import json
 import pathlib
+import shutil
 import subprocess
 import threading
 import urllib.parse
@@ -13,15 +14,15 @@ def check(g):
     source.mkdir()
     run(['git', 'init', '-b', 'main'], source)
 
-    def package(relative, name, text='first'):
+    def package(relative, name, text='first', bom=False):
         directory = source / relative
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / 'SKILL.md').write_text(f'---\nname: {name}\ndescription: Fixture skill {name}.\n---\nRead references/value.txt.\n', encoding='utf-8')
+        (directory / 'SKILL.md').write_text(('\ufeff' if bom else '') + f'---\nname: {name}\ndescription: Fixture skill {name}.\n---\nRead references/value.txt.\n', encoding='utf-8')
         (directory / 'references').mkdir(exist_ok=True)
         (directory / 'references/value.txt').write_text(text, encoding='utf-8')
 
     for i in range(240):
-        package(f'skills/guide-{i}', f'guide-{i}')
+        package(f'skills/guide-{i}', f'guide-{i}', bom=i == 0)
     # Unselected packages can be invalid in their ancillary files without blocking selected imports.
     for i in range(513):
         (source / f'skills/guide-100/extra-{i}.txt').write_text('fixture', encoding='utf-8')
@@ -84,6 +85,20 @@ def check(g):
         assert code in result.stdout + result.stderr, result.stdout + result.stderr
         assert 'Installed ' not in result.stdout
 
+    def native_discovery(export_path, value):
+        node = shutil.which('node', path=g['env'].get('PATH'))
+        if not node:
+            say('SKIP: native Codex skill discovery (Node is unavailable; no installation attempted)')
+            return
+        probe = pathlib.Path(__file__).with_name('codex_skills_probe.mjs')
+        result = subprocess.run([node, str(probe), str(export_path), 'guide-0', value],
+                                env=g['env'], capture_output=True, text=True, timeout=70)
+        if result.returncode == 77:
+            say(result.stdout.strip())
+            return
+        assert result.returncode == 0, result.stdout + result.stderr
+        say(result.stdout.strip())
+
     export = None
     try:
         assert all(skill['sourceKind'] == 'core' for skill in request('/api/skills')['skills'])
@@ -93,10 +108,12 @@ def check(g):
         ids = [skill['id'] for skill in installed]
         assert len(json.loads(command('list', '--format', 'json'))['skills']) == 4
         assert 'guide-239' in command('list')
-        assert 'name: guide-0' in command('read', ids[0])
+        assert command('read', ids[0]).startswith('\ufeff---'), 'Raw Core content must preserve the source BOM'
         export = json.loads(command('export', '--context', 'skills-acceptance', '--skill', ids[0]))
         exported_value = pathlib.Path(export['path']) / 'guide-0/references/value.txt'
         assert exported_value.read_text() == 'first'
+        assert (pathlib.Path(export['path']) / 'guide-0/SKILL.md').read_bytes().startswith(b'---')
+        native_discovery(export['path'], 'first')
         assert len(request('/api/skills')['skills']) == 4
         say('PASS: large catalog add/list/read/export, duplicate selector normalization and shared administrator catalog')
 
@@ -112,7 +129,7 @@ def check(g):
         # Force a ref move between discovery and installation through the actual HTTP contract.
         git_source = {'repository': repository, 'ref': 'HEAD', 'path': ''}
         selection = request('/control/v1/skills/discover', {'source': git_source, 'names': ['guide-0']}, control=True)
-        package('skills/guide-0', 'guide-0', 'second')
+        package('skills/guide-0', 'guide-0', 'second', bom=True)
         second_commit = commit('Change selected package')
         try:
             request('/control/v1/skills/install', {'source': git_source, 'commit': selection['commit'], 'names': ['guide-0']}, control=True)
@@ -125,6 +142,9 @@ def check(g):
         assert 'Installed 1 skill(s).' in summary and 'guide-0' in summary
         current = next(skill for skill in json.loads(command('list', '--format', 'json'))['skills'] if skill['id'] == ids[0])
         assert current['commit'] == second_commit and exported_value.read_text() == 'second'
+        assert command('read', ids[0]).startswith('\ufeff---'), 'Refresh must preserve raw source content'
+        assert (pathlib.Path(export['path']) / 'guide-0/SKILL.md').read_bytes().startswith(b'---')
+        native_discovery(export['path'], 'second')
         assert any(path.endswith('/git-upload-pack') for _, path, _ in requests)
         command('release', export['id'])
         assert not pathlib.Path(export['path']).exists()

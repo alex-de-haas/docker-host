@@ -1,8 +1,8 @@
 ---
 created: 2026-10-21
-updated: 2026-11-11
+updated: 2026-11-12
 summary: Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid.
-components: [apps/core, apps/shell, apps/desktop, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/whisper, apps/demo-app, packages/app-sdk, shared/web]
+components: [apps/core, apps/shell, apps/desktop, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/demo-app, packages/app-sdk, shared/web]
 ---
 
 # Design System
@@ -50,10 +50,10 @@ Harness and Marketplace override the first chart series with their own identity 
 uses its purple identity as chart-1 and moves Blue to chart-2.
 
 Runtime app icons come from manifest/catalog metadata, without app-ID substitutions in Shell,
-Marketplace or Harness. Shell, Plans, Telemetry, Harness, Whisper, Marketplace and Demo App declare
+Marketplace or Harness. Shell, Plans, Telemetry, Harness, Marketplace and Demo App declare
 `assets/icon.svg` through `catalogMetadata.icon`; those SVGs contain each app's cell mark on an ink
-tile with its own accent. Whisper includes the same optional display declaration as the other apps.
-All seven retain `schemaVersion: app.0.1`.
+tile with its own accent.
+All six retain `schemaVersion: app.0.1`.
 Consumers use the supplied asset URL and retain image-error, named-icon or generic fallbacks.
 Harness uses already available app metadata, with a generic icon where that metadata is absent.
 The Core brand mark and each app's own empty-state artwork remain inline illustrations.

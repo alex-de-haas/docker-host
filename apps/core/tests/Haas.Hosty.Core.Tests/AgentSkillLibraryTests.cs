@@ -128,6 +128,74 @@ public sealed class AgentSkillLibraryTests : IDisposable
         Assert.Empty((await library.ExportAsync("app:consumer", new("session-a", [first]), default)).Skills);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task ExportsNormalizeOnlyLeadingInstructionBomsAndPreserveStoredPackageBytes(int bomCount)
+    {
+        var plain = Package("portable");
+        byte[] instructions = [.. plain.Files.Single(f => f.Path == "SKILL.md").Content,
+            .. Encoding.UTF8.GetBytes("Preserve the embedded \uFEFF marker and non-ASCII текст.\n")];
+        var instructionBytes = Encoding.UTF8.GetBytes(new string('\uFEFF', bomCount)).Concat(instructions).ToArray();
+        byte[] referenceBytes = [0xef, 0xbb, 0xbf, 0x00, 0xff];
+        var package = AgentSkillPackages.Validate([
+            .. plain.Files.Select(file => file.Path == "SKILL.md" ? file with { Content = instructionBytes } : file),
+            new("references/SKILL.md", referenceBytes)
+        ]);
+        await library.ReplaceAppAsync("independent.producer", "1", new Dictionary<string, AgentSkillPackage> { ["guide"] = package }, default);
+        var id = AgentSkillLibrary.Id("app", "independent.producer", "guide");
+
+        var export = await library.ExportAsync("app:consumer", new("portable", [id]), default);
+
+        foreach (var file in package.Files)
+        {
+            Assert.Equal(file.Content, (await library.ContentAsync(id, file.Path, default)).Content);
+            Assert.Equal(file.Path == "SKILL.md" ? instructions : file.Content,
+                await File.ReadAllBytesAsync(Path.Combine(export.Path, "portable", file.Path)));
+        }
+        Assert.Equal(instructionBytes, package.Files.Single(f => f.Path == "SKILL.md").Content);
+    }
+
+    [Fact]
+    public async Task RecoveryNormalizesExistingBomExportsWithoutChangingInstalledBytes()
+    {
+        var plain = Package("recovered");
+        var instructions = plain.Files.Single(f => f.Path == "SKILL.md").Content;
+        byte[] original = [0xef, 0xbb, 0xbf, .. instructions];
+        var package = AgentSkillPackages.Validate(plain.Files.Select(file => file.Path == "SKILL.md" ? file with { Content = original } : file).ToArray());
+        await library.ReplaceAppAsync("independent.producer", "1", new Dictionary<string, AgentSkillPackage> { ["guide"] = package }, default);
+        var id = AgentSkillLibrary.Id("app", "independent.producer", "guide");
+        var export = await library.ExportAsync("app:consumer", new("recovery", [id]), default);
+        var exportedPath = Path.Combine(export.Path, "recovered", "SKILL.md");
+        // Recreate an export produced before native instruction normalization.
+        await File.WriteAllBytesAsync(exportedPath, original);
+
+        await library.RecoverExportsAsync(default);
+
+        Assert.Equal(instructions, await File.ReadAllBytesAsync(exportedPath));
+        Assert.Equal(original, (await library.ContentAsync(id, "SKILL.md", default)).Content);
+        Assert.Equal("first", await File.ReadAllTextAsync(Path.Combine(export.Path, "recovered", "references/result.txt")));
+    }
+
+    [Fact]
+    public async Task PackageUpdatesNormalizeInstructionsInAlreadySelectedExports()
+    {
+        await library.ReplaceAppAsync("independent.producer", "1", new Dictionary<string, AgentSkillPackage> { ["guide"] = Package("updated") }, default);
+        var id = AgentSkillLibrary.Id("app", "independent.producer", "guide");
+        var export = await library.ExportAsync("app:consumer", new("updated", [id]), default);
+        var plain = Package("updated", "new reference");
+        var instructions = plain.Files.Single(f => f.Path == "SKILL.md").Content;
+        byte[] original = [0xef, 0xbb, 0xbf, .. instructions];
+        var package = AgentSkillPackages.Validate(plain.Files.Select(file => file.Path == "SKILL.md" ? file with { Content = original } : file).ToArray());
+
+        await library.ReplaceAppAsync("independent.producer", "2", new Dictionary<string, AgentSkillPackage> { ["guide"] = package }, default);
+
+        Assert.Equal(instructions, await File.ReadAllBytesAsync(Path.Combine(export.Path, "updated", "SKILL.md")));
+        Assert.Equal(original, (await library.ContentAsync(id, "SKILL.md", default)).Content);
+        Assert.Equal("new reference", await File.ReadAllTextAsync(Path.Combine(export.Path, "updated", "references/result.txt")));
+    }
+
     [Fact]
     public async Task NameCollisionDoesNotChangeExistingLibraryOrExports()
     {

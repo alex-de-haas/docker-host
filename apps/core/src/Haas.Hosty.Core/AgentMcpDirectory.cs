@@ -78,7 +78,10 @@ internal sealed class AgentMcpDirectory(
             [new("default", config.ListenUrl.TrimEnd('/') + "/api/mcp", null, "ready")], [], AssistantIds: Granted(corePolicy)));
         foreach (var app in installed.OrderBy(app => app.Id, StringComparer.Ordinal))
         {
-            if (app.Interfaces?.TryGetValue("mcp", out var declarations) != true || !records.TryGetValue(app.Id, out var record)) continue;
+            if (!records.TryGetValue(app.Id, out var record)) continue;
+            // MCP callers are backends; browser-only origins need not resolve on the host.
+            var interfaces = AppSummary.BuildInterfaceSummaries(record.Interfaces, record.Endpoints, useTransportUrls: true);
+            if (interfaces?.TryGetValue("mcp", out var declarations) != true) continue;
             policy.Targets.TryGetValue(app.Id, out var entry);
             if (entry?.InstalledAt != record.InstalledAt) entry = null;
             var skills = new List<AgentSkillStatus>();
@@ -86,7 +89,7 @@ internal sealed class AgentMcpDirectory(
                 declarations!.Select(declaration =>
                 {
                     var health = app.Health?.Services.FirstOrDefault(service => service.Service == declaration.Service);
-                    var readiness = health is null
+                    var readiness = declaration.Url is null ? "unavailable" : health is null
                         ? (app.RuntimeState == "running" ? "ready" : "unavailable")
                         : health.Status != "running" ? "unavailable" : health.Health == "healthy" || health.Health is null ? "ready" : health.Health;
                     return new AgentMcpInterface(declaration.Key, declaration.Url, declaration.Service, readiness);

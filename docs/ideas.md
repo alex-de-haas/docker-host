@@ -1,6 +1,6 @@
 ---
 created: 2026-10-23
-updated: 2026-11-07
+updated: 2026-11-12
 ---
 
 # Ideas
@@ -501,7 +501,7 @@ with selected examples rather than an unconditional recording archive for all us
 Whisper can be fine-tuned from paired audio and transcripts using a training stack such as
 Transformers. That is separate from loading a model for inference. Vocabulary prompting is another
 candidate: upstream Whisper accepts an initial prompt for names and specialized vocabulary. Whether
-and how to expose equivalent behavior in the installed Whisper.net path still needs evaluation.
+and how to expose equivalent behavior in the selected speech provider still needs evaluation.
 
 An initial experiment could compare vocabulary hints and conservative text cleanup before choosing
 training. Cleanup should preserve intent, numbers, negation and uncertainty, with the original and
@@ -509,15 +509,15 @@ edits available for inspection. A useful evaluation set would contain recordings
 training/examples, including names and ordinary speech. Recognition accuracy and editing quality
 need different evaluation criteria; no amount of data or improvement is promised here.
 
-**Current baseline:** Hosty's speech service uses Whisper.net/whisper.cpp on CPU and accepts pinned
-`tiny`, `base` or `small` models. It returns recognized text without a correction dataset or training
-pipeline. Custom model loading, training/export compatibility and the correction UI would require
-separate work. The present implementation does not become adaptive by saving transcripts alone.
+**Current baseline:** Speech replaces the retired repository-local Whisper application. Harness uses
+the generic speech provider contract and receives recognized text; it has no correction dataset or
+training pipeline. Model loading, training/export compatibility and any correction UI need evaluation
+in the selected provider's repository. Saving transcripts alone does not create acoustic adaptation.
 
 **Prior art and options:**
 
 - Vocabulary without training: Whisper.net's processor builder accepts an initial prompt
-  (`WithPrompt`), so a short list such as "Hosty, Harness, Core" works with the current engine.
+  (`WithPrompt`), a possible mechanism for a provider using that engine and a short vocabulary list.
 - Models stronger than `small` for Russian: GigaAM-v3 (Sber, Russian-specific) and
   Parakeet-TDT-0.6B-v3 (25 European languages including Russian, fast on CPU). sherpa-onnx runs
   both, has a C# API and supports hotword biasing for transducer models, which can fix names
@@ -1176,8 +1176,9 @@ itself can evolve and is not a frozen review of that commit.
 - [Durable Agent Jobs](features/durable-agent-jobs/plan.md) owns the former Bridge D11 scope of
   remaining durable jobs; [Core events](features/core-event-bus/feature.md) do not supply their
   persistence contract. This collection does not change either plan's scope or status.
-- [SpeechEngine](../apps/whisper/Hosty.Whisper/SpeechEngine.cs) and the
-  [speech endpoint](../apps/whisper/Hosty.Whisper/Program.cs) establish the recognition baseline.
+- [Provider consumption](features/provider-consumption/feature.md) describes the speech contract.
+  The former repository-local Whisper implementation is retired; evaluate engine-specific ideas
+  against the separately maintained Speech provider.
 
 ## Technical References
 

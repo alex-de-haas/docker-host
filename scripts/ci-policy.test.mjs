@@ -56,16 +56,14 @@ test("local integration fixtures select their bounded component checks", () => {
   assertSelection(["scripts/check-workspace-activation.py"], ["core", "cli"], []);
 });
 
-test("worker and speech inputs retain component tests without native acceptance", () => {
+test("worker and speech consumer inputs retain component tests without native acceptance", () => {
   assertSelection(["apps/harness/src/runtime/worker.ts"], ["harness"], []);
   assertSelection(["apps/harness/src/sessions/manager.ts"], ["harness"], []);
   assertSelection(["scripts/check-harness-worker.mjs"], ["harness"], []);
   assertSelection(["apps/harness/src/worker/engine.ts"], ["harness"], []);
   assertSelection(["apps/harness/test/worker-native-controls.mjs"], ["harness"], []);
   assertSelection(["apps/harness/worker/Dockerfile"], ["harness"], []);
-  assertSelection(["apps/whisper/Hosty.Whisper/SpeechEngine.cs"], ["whisper"], []);
-  assertSelection(["apps/whisper/Hosty.Whisper.Tests/Fixtures/russian.wav"], ["whisper"], []);
-  assertSelection(["apps/whisper/Hosty.Whisper.Tests/WaveAudioTests.cs"], ["whisper"]);
+  assertSelection(["apps/harness/src/speech.ts"], ["harness"], []);
 });
 
 test("OPUS source and native fixtures retain offline component checks", () => {
@@ -82,9 +80,9 @@ test("Node dependency changes fan out only to Node consumers", () => {
 
 test(".NET toolchain changes retain every .NET component and NativeAOT build", () => {
   for (const path of ["global.json", "Directory.Build.props", "Directory.Build.targets", "scripts/HostyBuildIdentity.cs"]) {
-    assertSelection([path], ["app-sdk-dotnet", "whisper", "core", "cli", "telemetry-backend"], ["core-aot"]);
+    assertSelection([path], ["app-sdk-dotnet", "core", "cli", "telemetry-backend"], ["core-aot"]);
   }
-  assertSelection(["packages/app-sdk-dotnet/HostySdk.App/Session.cs"], ["app-sdk-dotnet", "whisper"], []);
+  assertSelection(["packages/app-sdk-dotnet/HostySdk.App/Session.cs"], ["app-sdk-dotnet"], []);
 });
 
 test("workflow scheduling edits do not rebuild unrelated clients, artifact workflows retain their gate", () => {
@@ -106,7 +104,7 @@ test("all first-party component roots and joint telemetry manifests have explici
 });
 
 test("unknown, deleted, retired and invalid paths widen validation instead of being ignored", () => {
-  for (const path of ["new-toolchain.cfg", "apps/unknown/deleted.cs", "apps/workspaces/deleted.ts", "shared/future/contracts.cs", "../apps/shell/file", "/absolute/file", ""]) {
+  for (const path of ["new-toolchain.cfg", "apps/unknown/deleted.cs", "apps/workspaces/deleted.ts", "apps/whisper/manifest.json", "shared/future/contracts.cs", "../apps/shell/file", "/absolute/file", ""]) {
     assert.deepEqual(classifyPaths([path]).required, ALL_JOBS, path);
   }
   assert.deepEqual(classifyPaths(["scripts/ci-policy.mjs"]).required, ALL_JOBS);
@@ -304,7 +302,7 @@ test("CLI inspects actual props contents before applying the metadata exemption"
   writeFileSync(path, "<Project><PropertyGroup><Version>0.1.2</Version><Nullable>enable</Nullable></PropertyGroup></Project>\n");
   const config = classify(f.commit());
   assert.deepEqual(config.profiles, ["core-aot"]);
-  assert.ok(config.components.includes("whisper"));
+  assert.ok(config.components.includes("telemetry-backend"));
   assert.ok(config.components.includes("app-sdk-dotnet"));
 });
 

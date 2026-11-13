@@ -95,26 +95,6 @@
       ]
     },
     {
-      "id": "hosty.whisper",
-      "manifest": "apps/whisper/manifest.json",
-      "profiles": [
-        "local"
-      ],
-      "sourceInputs": [
-        "apps/whisper",
-        "packages/app-sdk-dotnet",
-        "apps/core/src/Haas.Hosty.Core/SharedDecisionContract.cs",
-        "apps/core/src/Haas.Hosty.Core/SharedTaskContract.cs",
-        "apps/core/src/Haas.Hosty.Core/SharedAgentSessionContract.cs",
-        "apps/core/src/Haas.Hosty.Core/SharedConversationHistoryContract.cs",
-        "Directory.Build.props",
-        "global.json",
-        "Directory.Build.targets"
-      ],
-      "sourceReusable": false,
-      "sourceReuseConstraint": "Host-side setup includes machine toolchains or network dependencies; qualify a new full source revision for each changed release."
-    },
-    {
       "id": "hosty.opus",
       "manifest": "apps/opus/manifest.json",
       "profiles": [
