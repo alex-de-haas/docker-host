@@ -19,7 +19,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "esbuild": "^0.28.2",
-    "jsdom": "^30.1.2",
+    "jsdom": "^31.0.0",
     "lucide-react": "^1.70.0",
     "mdast-util-from-markdown": "^2.1.0",
     "next": "16.4.5",
