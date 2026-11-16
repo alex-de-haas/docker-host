@@ -570,6 +570,93 @@ it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active de
 });
 
 const navigationTitles = () => [...container.querySelectorAll('nav[aria-label="Sessions"] button span.block[title]')].map(node => node.textContent);
+it("updates an untitled chat header from the first live message without reopening the conversation", async () => {
+  record = { ...record, title: null, lastEventSeq: 0, updatedAt: "2026-11-13T10:00:00Z" };
+  vi.mocked(api.listSessions).mockResolvedValue([record]);
+  await renderDeletion(); expect(container.querySelector("#workspace-chat h1")?.textContent).toBe("Untitled session");
+  const calls = vi.mocked(api.getSession).mock.calls.length;
+  vi.mocked(api.getSession).mockResolvedValue({ ...record, title: "List installed applications", lastEventSeq: 1, updatedAt: "2026-11-13T10:01:00Z" });
+  await act(async () => emit({ type: "user_message", text: "List installed applications", seq: 1, ts: "2026-11-13T10:01:00Z" }));
+  expect(container.querySelector("#workspace-chat h1")?.textContent).toBe("List installed applications");
+  expect(navigationTitles()).toContain("List installed applications");
+  expect(api.getSession).toHaveBeenCalledTimes(calls + 1); expect(api.streamEvents).toHaveBeenCalledOnce();
+  expect(input().value).toBe("My retained draft");
+});
+
+it("uses accepted inventory title metadata in the header without another detail request", async () => {
+  const visible = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  try {
+    record = { ...record, title: null, lastEventSeq: 1, updatedAt: "2026-11-13T10:00:00Z" };
+    vi.mocked(api.listSessions).mockResolvedValue([record]); await renderDeletion();
+    const calls = vi.mocked(api.getSession).mock.calls.length;
+    vi.mocked(api.listSessions).mockResolvedValue([{ ...record, title: "Named in another window", updatedAt: "2026-11-13T10:01:00Z" }]);
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(navigationTitles()).toContain("Named in another window");
+    expect(container.querySelector("#workspace-chat h1")?.textContent).toBe("Named in another window");
+    await act(async () => emit({ type: "session_status", status: "running", seq: 2, ts: "2026-11-13T10:02:00Z" }));
+    expect(container.querySelector("#workspace-chat h1")?.textContent).toBe("Named in another window");
+    expect(navigationTitles()).toContain("Named in another window");
+    expect(api.getSession).toHaveBeenCalledTimes(calls); expect(input().value).toBe("My retained draft");
+  } finally { visible.mockRestore(); }
+});
+
+it("keeps a manual title when an older first-message detail reply arrives at the same revision and timestamp", async () => {
+  record = { ...record, title: null, lastEventSeq: 0, updatedAt: "2026-11-13T10:00:00Z" };
+  vi.mocked(api.listSessions).mockResolvedValue([record]); await renderDeletion();
+  let oldReply!: (value: api.AssistantSession) => void;
+  vi.mocked(api.getSession).mockImplementationOnce(() => new Promise(resolve => { oldReply = resolve; }));
+  await act(async () => emit({ type: "user_message", text: "Generated name", seq: 1, ts: "2026-11-13T10:01:00Z" }));
+  const current = { ...record, lastEventSeq: 1, updatedAt: "2026-11-13T10:01:00Z" };
+  vi.mocked(api.renameSession).mockResolvedValue({ ...current, title: "My manual title" });
+  await act(async () => button("Rename session")!.click());
+  const title = container.querySelector<HTMLInputElement>('input[aria-label="Session title"]')!;
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(title, "My manual title"); title.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => title.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  expect(container.querySelector("#workspace-chat h1")?.textContent).toBe("My manual title");
+  await act(async () => oldReply({ ...current, title: "Generated name" }));
+  expect(container.querySelector("#workspace-chat h1")?.textContent).toBe("My manual title");
+  expect(navigationTitles()).toContain("My manual title");
+});
+
+it("does not apply a late title detail reply to a newly selected chat", async () => {
+  record = { ...record, title: null, lastEventSeq: 0, updatedAt: "2026-11-13T10:00:00Z" };
+  const other = { ...record, id: "other-chat", title: "Other conversation" };
+  vi.mocked(api.listSessions).mockResolvedValue([record, other]);
+  vi.mocked(api.getSession).mockImplementation(async id => id === other.id ? other : record);
+  await renderDeletion(); let oldReply!: (value: api.AssistantSession) => void;
+  vi.mocked(api.getSession).mockImplementationOnce(() => new Promise(resolve => { oldReply = resolve; }));
+  await act(async () => emit({ type: "user_message", text: "First chat name", seq: 1, ts: "2026-11-13T10:01:00Z" }));
+  await act(async () => [...container.querySelectorAll<HTMLButtonElement>('nav button')].find(item => item.textContent?.startsWith(other.title))!.click());
+  await act(async () => oldReply({ ...record, title: "First chat name", lastEventSeq: 1, updatedAt: "2026-11-13T10:01:00Z" }));
+  expect(container.querySelector("#workspace-chat h1")?.textContent).toBe("Other conversation");
+  expect(window.location.search).toBe("?session=other-chat");
+});
+
+it("preserves a newer inventory title against a delayed local rename and later status updates", async () => {
+  const visible = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  try {
+    record = { ...record, lastEventSeq: 1, updatedAt: "2026-11-13T10:00:00Z" };
+    vi.mocked(api.listSessions).mockResolvedValue([record]); await renderDeletion();
+    let renameReply!: (value: api.AssistantSession) => void;
+    vi.mocked(api.renameSession).mockImplementation(() => new Promise(resolve => { renameReply = resolve; }));
+    await act(async () => button("Rename session")!.click());
+    const title = container.querySelector<HTMLInputElement>('input[aria-label="Session title"]')!;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(title, "Delayed local name"); title.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => title.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    const external = { ...record, title: "Newer external name", updatedAt: "2026-11-13T10:02:00Z" };
+    vi.mocked(api.listSessions).mockResolvedValue([external]);
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(container.querySelector("#workspace-chat h1")?.textContent).toBe(external.title);
+    await act(async () => emit({ type: "session_status", status: "running", seq: 2, ts: "2026-11-13T10:03:00Z" }));
+    await act(async () => renameReply({ ...record, title: "Delayed local name", updatedAt: "2026-11-13T10:01:00Z" }));
+    expect(container.querySelector("#workspace-chat h1")?.textContent).toBe(external.title);
+    expect(navigationTitles()).toContain(external.title); expect(navigationTitles()).not.toContain("Delayed local name");
+    await act(async () => emit({ type: "session_status", status: "awaiting_question", seq: 3, ts: "2026-11-13T10:04:00Z" }));
+    expect(container.querySelector("#workspace-chat h1")?.textContent).toBe(external.title);
+    expect(input().value).toBe("My retained draft");
+  } finally { visible.mockRestore(); }
+});
+
 const renderActivityOrder = async () => {
   record = { ...record, appIds: ["one"], appContextRevision: 1, updatedAt: "2026-10-18T10:00:00Z" };
   const newer = { ...record, id: "newer", title: "Newer conversation", updatedAt: "2026-10-18T11:00:00Z" };
@@ -697,6 +784,7 @@ it("does not let a late rename response overwrite settings at the same timestamp
   vi.mocked(api.getSession).mockRejectedValue(new Error("Refresh unavailable"));
   await act(async () => emit({ type: "session_autonomy_changed", seq: 3, ts: "2026-10-18T12:00:00Z", autonomy: "autonomous" }));
   await act(async () => renameReply({ ...record, title: "Renamed", lastEventSeq: 2, updatedAt: "2026-10-18T12:00:00Z", autonomy: "normal" }));
+  expect(button("Rename Renamed")).not.toBeNull();
   await act(async () => button("Back to conversation")!.click());
   expect(button("Autonomy: Autonomous")).not.toBeNull();
   await act(async () => emit({ type: "session_autonomy_changed", seq: 2, ts: "2026-10-18T12:00:00Z", autonomy: "normal" }));

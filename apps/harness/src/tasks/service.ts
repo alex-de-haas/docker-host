@@ -11,10 +11,11 @@ import { delegationCredential } from "../session-delegation.js";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type ProviderInvocation } from "@hosty-sdk/app/providers";
 import { mediatedTaskRequest } from "./mediation.js";
+import { mediatedSessionWorkflow } from "./session-workflow-mediation.js";
 import { MediatedTaskExecutorClient, TaskExecutorClient } from "@hosty-sdk/app/tasks/server";
 import { taskReferenceKey, taskStatuses, type TaskAction, type TaskActor, type TaskAssignee, type TaskCreate, type TaskEdit,
   type TaskExecutionInput, type TaskProviderRef, type TaskRecord, type TaskStatus } from "@hosty-sdk/app/tasks";
-import { fingerprint, TaskStore, activeAttempt, taskError, providerRef } from "./store.js";
+import { fingerprint, TaskStore, activeAttempt, taskError, providerRef, uuid } from "./store.js";
 import { TaskPolicies, type TaskLimits } from "./policy.js";
 import { HarnessTaskExecutor, type ExecutionAuthority } from "./executor.js";
 
@@ -31,6 +32,7 @@ export class TaskService {
   private readonly current = new Map<string, Authority>();
   private closed = false;
   private readonly jobs = new Map<string, Promise<void>>();
+  private readonly workflowJobs = new Map<string, Promise<unknown>>();
   private readonly streams = new Set<() => void>();
   private readonly retries = new Map<string, { failures: number; after: number }>();
   private readonly timer: NodeJS.Timeout;
@@ -44,11 +46,9 @@ export class TaskService {
     this.attention = new TaskAttention(this.store, (owner, task, execution) => manager.notifyTask(owner, task, execution));
     this.orchestration = new TaskOrchestrator(this.store, manager, this.executor, this.policies);
     this.sources = new TaskSources(this.store, manager, this.orchestration);
-    this.sources.capacityAvailable = async () => {
-      if (!manager.worker) return true;
-      const runtime = await manager.worker.capabilities();
-      return (runtime.occupied ?? 0) < runtime.capacity;
-    };
+    // Each selected provider atomically owns its capacity at admission; the task root still
+    // reserves its own configured writer/concurrency budget before issuing an execution.
+    this.sources.capacityAvailable = async () => true;
     this.sources.admit = (state, taskId, executionId) => this.policies.reserveIn(state, taskId, executionId);
     this.controls = new TaskControls(this.store, manager, this.policies, this.orchestration);
     this.orchestration.beforeResume = id => this.sources.beforeResume(id);
@@ -81,7 +81,7 @@ export class TaskService {
     };
     this.executor.receiptChanged = async (input, receipt) => { await this.policies.observe(input.taskRef.id, receipt.executionId, receipt); await this.sources.writers.observe(receipt.executionId, receipt); };
     manager.taskUsage = async (record, runId, usage) => {
-      if (record.taskExecutionId && record.taskContext && record.workerRun?.id === runId)
+      if (record.taskExecutionId && record.taskContext && (record.providerExecution?.runId ?? record.workerRun?.id) === runId)
         await this.policies.segmentUsage(record.taskContext.taskRef.id, record.taskExecutionId, runId, usage);
     };
     this.timer = setInterval(() => { void this.tick(); }, 2000); this.timer.unref();
@@ -94,7 +94,7 @@ export class TaskService {
     clearInterval(this.timer); this.unsubscribe(); this.manager.taskAction = undefined; this.manager.taskUsage = undefined; this.manager.beforeTaskDecisionResume = undefined;
     for (const stop of this.streams) stop();
     this.streams.clear();
-    return Promise.all([...this.jobs.values()]).then(() => {});
+    return Promise.allSettled([...this.jobs.values(), ...this.workflowJobs.values()]).then(() => {});
   }
   async subscribeEvents(validate: () => Promise<void>, write: (frame: string) => void, end: () => void): Promise<() => void> {
     await validate();
@@ -373,6 +373,38 @@ export class TaskService {
     const executions = url.pathname === "/api/task-executor/v1" || url.pathname.startsWith("/api/task-executor/v1/");
     if (!tasks && !executions) return false;
     if (this.closed) return taskError("tasks_stopping", "Task dispatch is stopping.", 503);
+    const workflow = executions ? await mediatedSessionWorkflow(request, url, this.provider.key) : null;
+    if (workflow) {
+      const input = await workflow.read(), hash = fingerprint(input), requestId = input.input.requestId;
+      const key = requestId === undefined ? undefined : `agent-workflow:${fingerprint([workflow.sessionId, workflow.invocation.userId, workflow.invocation.principalId, input.agent])}:${uuid(requestId)}`;
+      const invoke = async () => {
+        const receipt = key ? await this.store.readJournal<{ hash: string; completed?: boolean; result?: unknown }>(key) : undefined;
+        if (receipt && receipt.hash !== hash) return taskError("request_conflict", "Recover the original workflow action and exact input.");
+        return this.manager.providerWorkflow(workflow.sessionId, input, workflow.invocation, workflow.validate, {
+          retained: !!receipt, dispatch: async guard => {
+            if (receipt?.completed) return structuredClone(receipt.result);
+            await guard();
+            if (key && !receipt) await this.store.writeJournal(key, { hash });
+            const result = await this.manager.workspaceAction(workflow.sessionId, input.action as import("../sessions/development.js").DevelopmentAction,
+              input.input, undefined, workflow.invocation.userId, guard);
+            if (key) await this.store.writeJournal(key, { hash, completed: true, result });
+            return result;
+          },
+        });
+      };
+      let result: unknown;
+      if (key) {
+        const pending = this.workflowJobs.get(key);
+        if (pending) { await pending.catch(() => {}); result = await invoke(); }
+        else {
+          const operation = invoke(); this.workflowJobs.set(key, operation);
+          try { result = await operation; } finally { if (this.workflowJobs.get(key) === operation) this.workflowJobs.delete(key); }
+        }
+      } else result = await invoke();
+      await workflow.validate();
+      response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); response.end(JSON.stringify(result));
+      return true;
+    }
     const kind = tasks ? "tasks" : "task-executor", method = request.method ?? "GET";
     const bearer = request.headers.authorization?.replace(/^Bearer /i, "");
     const mediated = await mediatedTaskRequest(request, url, kind, this.provider.key);

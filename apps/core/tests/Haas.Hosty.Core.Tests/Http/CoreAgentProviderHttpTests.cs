@@ -1,0 +1,201 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text.Json;
+using Haas.Hosty.Core;
+using HostySdk.App;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Haas.Hosty.Core.Tests.Http;
+
+public sealed class CoreAgentProviderHttpTests
+{
+    [Fact]
+    public async Task ExactAgentAdmissionIsInstallationBoundRetainedWithoutConsumerAndLiveRevocable()
+    {
+        var clock = new TestClock(DateTimeOffset.UtcNow);
+        await using var host = await CoreHttpHarness.StartAsync(clock);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var now = clock.UtcNow;
+        await host.Services.GetRequiredService<UserDirectoryStore>().WriteAsync(new(1,
+            [new("owner", "owner@example.test", "Owner", "host.admin", false, now, now)], [], [], []));
+        var consumer = Record("unrelated.consumer", now) with { GrantedCorePermissions = [CoreAppPermissions.AgentProviders, CoreAppPermissions.ReadSkills, CoreAppPermissions.ReadCore, CoreAppPermissions.Sources] };
+        var provider = Record("independent.provider", now) with { RuntimeState = "running", ConfirmedRoles = ["agent"],
+            GrantedCorePermissions = [],
+            Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v1", 1, [])] } };
+        await apps.UpsertAppAsync(consumer); await apps.UpsertAppAsync(provider);
+        var discovery = await host.Services.GetRequiredService<ProviderAccessService>().ListAsync(consumer, "agent", default);
+        Assert.Equal(PanelIdentity.Installation(provider), Assert.Single(discovery.Providers).InstallationId);
+        Assert.Contains("agent", PlatformCapabilities.RequestedRoles(["agent"]));
+        var credential = await BrowserAuthorityFixture.Grant(host, consumer.Id, "owner");
+        var service = host.Services.GetRequiredService<CoreAgentExecution>();
+        await host.Services.GetRequiredService<AgentPolicyStore>().ChangeAsync(AgentMcpDirectory.CoreId,
+            new(null, true, new Dictionary<string, string>(), new Dictionary<string, AssistantTargetGrant> { [consumer.Id] = new(consumer.InstalledAt, "reviewed") }));
+        var session = Guid.NewGuid().ToString(); var run = Guid.NewGuid().ToString();
+        var input = new CoreAgentAuthorizeRequest(new(provider.Id, PanelIdentity.Installation(provider), "native"),
+            "runs.start", "PUT", $"/sessions/{session}/runs/{run}", Convert.ToHexStringLower(SHA256.HashData("exact bytes"u8)), SessionId: session, RunId: run, ConfigurationDigest: new string('b', 64),
+            Ceiling: JsonSerializer.SerializeToElement(new { mcp = new { targets = new[] { new { target = new { kind = "core" }, tools = new[] { "get_host_status", "get_core_development" }, policy = new { @default = "ask", autoAllowReadOnly = true,
+                tools = new Dictionary<string, object> { ["get_host_status"] = new { mode = "run", definition = new string('a', 64) }, ["get_core_development"] = new { mode = "disabled" } } } } } } }));
+        using var http = host.CreateClient();
+        http.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(consumer.Id));
+        http.DefaultRequestHeaders.Add("X-Hosty-User-Token", credential.AccessToken);
+        var response = await http.PostAsJsonAsync($"/api/internal/apps/{consumer.Id}/agent/authorize", input);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var binding = (await response.Content.ReadFromJsonAsync<JsonElement>()).Deserialize(CoreJson.TypeInfo<CoreAgentBinding>())!;
+        var actor = await service.Introspect(provider, new(binding.Token, input.Operation, input.Method, input.Path, input.BodyHash), default);
+        Assert.Equal(consumer.Id, actor.CallerAppId); Assert.Equal("owner", actor.UserId);
+        Assert.Equal(input.ConfigurationDigest, actor.ConfigurationDigest);
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.Introspect(provider, new(binding.Token, input.Operation, input.Method, input.Path, new string('0', 64)), default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.Renew(provider, binding.AdmissionRef, default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.Introspect(provider with { Id = "other.provider" }, new(binding.Token, input.Operation, input.Method, input.Path, input.BodyHash), default));
+        var sessionAuthorization = await service.Authorize(consumer, credential.AccessToken, input with {
+            Operation = "sessions.create", Path = "/sessions/" + session, RunId = null, Ceiling = null }, default);
+        var snapshot = await service.Skills(provider, new(sessionAuthorization.AdmissionRef, Guid.NewGuid().ToString(), [new(CoreAgentSkills.PlatformId)]), default);
+        Assert.Single(snapshot.Skills);
+        await apps.UpsertAppAsync(consumer with { GrantedCorePermissions = [CoreAppPermissions.AgentProviders, CoreAppPermissions.ReadCore] });
+        var skillDenied = await Assert.ThrowsAsync<AppIdentityException>(() => service.Skills(provider, new(sessionAuthorization.AdmissionRef, Guid.NewGuid().ToString(), [new(CoreAgentSkills.PlatformId)]), default));
+        Assert.Equal("app_permission_required", skillDenied.Code);
+        await apps.UpsertAppAsync(consumer);
+        await service.Admit(provider, binding.AdmissionRef, default);
+        var contextDenied = await Assert.ThrowsAsync<AppIdentityException>(() => service.Workspace(provider,
+            new(binding.AdmissionRef, "resolve", new("another-worktree")), default));
+        Assert.Contains("declared worktree context", contextDenied.Message);
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.McpToken(provider, new(binding.AdmissionRef, new("core"), ["list_apps"]), default));
+        var mcp = await service.McpToken(provider, new(binding.AdmissionRef, new("core"), ["get_host_status"]), default);
+        var mcpActor = await host.Services.GetRequiredService<AssistantMcpAccess>().ValidateAsync(mcp.Token, AgentMcpDirectory.CoreId, default);
+        Assert.NotNull(mcpActor); Assert.Contains(CoreAppPermissions.ReadCore, mcpActor.EffectivePermissions!);
+        Assert.DoesNotContain(CoreAppPermissions.ReadCore, provider.GrantedCorePermissions!);
+        var policyToken = await service.McpToken(provider, new(binding.AdmissionRef, new("core"), ["get_core_development"]), default);
+        var policyActor = await host.Services.GetRequiredService<AssistantMcpAccess>().ValidateAsync(policyToken.Token, AgentMcpDirectory.CoreId, default);
+        Assert.Contains("get_core_development", policyActor!.AllowedTools!); Assert.Contains("get_core_development", policyActor.DeniedTools!);
+        using var toolClient = host.CreateClient(); toolClient.DefaultRequestHeaders.Authorization = new("Bearer", mcp.Token);
+        var forbiddenTool = await toolClient.PostAsJsonAsync("/api/mcp", new { jsonrpc = "2.0", id = 1, method = "tools/call", @params = new { name = "get_core_development", arguments = new { } } });
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenTool.StatusCode);
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext(); context.Request.Path = "/api/mcp";
+        context.Request.Headers.Authorization = "Bearer " + mcp.Token;
+        var delegated = await host.Services.GetRequiredService<CoreCapabilityAuthorization>().RequireAsync(context.Request,
+            [AccessTokenScopes.McpRead], [CoreAppPermissions.ReadCore], default);
+        Assert.Equal(provider.Id, delegated.App!.Id);
+        await Assert.ThrowsAsync<AppIdentityException>(() => host.Services.GetRequiredService<CoreCapabilityAuthorization>().RequireAsync(context.Request,
+            [AccessTokenScopes.McpRead], [CoreAppPermissions.AppLifecycle], default));
+        await apps.UpsertAppAsync(consumer with { RuntimeState = "stopped" });
+        clock.UtcNow = now.AddMinutes(3); // The request bearer expires; admitted authority has its original lifetime.
+        var expired = await Assert.ThrowsAsync<AppIdentityException>(() => service.Introspect(provider,
+            new(binding.Token, input.Operation, input.Method, input.Path, input.BodyHash), default));
+        Assert.Equal("token_invalid", expired.Code);
+        var renewed = await service.Renew(provider, binding.AdmissionRef, default);
+        Assert.Equal(run, renewed.RunId); Assert.Equal(input.ConfigurationDigest, renewed.ConfigurationDigest);
+        Assert.Equal(binding.AuthorityExpiresAt, renewed.ExpiresAt);
+        var renewedMcp = await service.McpToken(provider, new(binding.AdmissionRef, new("core"), ["get_host_status"]), default);
+        Assert.True(renewedMcp.ExpiresAt > mcp.ExpiresAt);
+        var retainedActor = await host.Services.GetRequiredService<AssistantMcpAccess>().ValidateAsync(renewedMcp.Token, AgentMcpDirectory.CoreId, default);
+        Assert.NotNull(retainedActor); Assert.Contains(CoreAppPermissions.ReadCore, retainedActor.EffectivePermissions!);
+        context.Request.Headers.Authorization = "Bearer " + renewedMcp.Token;
+        Assert.Equal(provider.Id, (await host.Services.GetRequiredService<CoreCapabilityAuthorization>().RequireAsync(context.Request,
+            [AccessTokenScopes.McpRead], [CoreAppPermissions.ReadCore], default)).App!.Id);
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.Renew(provider with { InstalledAt = now.AddSeconds(1) }, binding.AdmissionRef, default));
+        await apps.UpsertAppAsync(consumer with { PermissionRevision = "revoked", GrantedCorePermissions = [] });
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.Renew(provider, binding.AdmissionRef, default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.McpToken(provider, new(binding.AdmissionRef, new("core"), ["get_host_status"]), default));
+        Assert.Null(await host.Services.GetRequiredService<AssistantMcpAccess>().ValidateAsync(renewedMcp.Token, AgentMcpDirectory.CoreId, default));
+    }
+
+    [Fact]
+    public async Task MetadataCannotRelayPromptsAndNativeExecutionRequiresCurrentAdministrator()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var service = host.Services.GetRequiredService<CoreAgentExecution>();
+        var now = DateTimeOffset.UtcNow; var caller = Record("unrelated.consumer", now);
+        var provider = new HostyProviderRef("unrelated.provider", now.ToString("O"), "native");
+        var invalid = new CoreAgentAuthorizeRequest(provider, "capabilities", "GET", "/capabilities", new string('0', 64),
+            Ceiling: JsonSerializer.SerializeToElement(new { prompt = "content must stay with provider" }));
+        var error = await Assert.ThrowsAsync<CoreProviderException>(() => service.Authorize(caller, "", invalid, default));
+        Assert.Equal("invalid_input", error.Error.Code);
+        foreach (var digest in new[] { "prompt content", new string('A', 64), new string('a', 65) })
+        {
+            var digestError = await Assert.ThrowsAsync<CoreProviderException>(() => service.Authorize(caller, "",
+                invalid with { Ceiling = null, ConfigurationDigest = digest }, default));
+            Assert.Equal("invalid_input", digestError.Error.Code);
+        }
+        await Assert.ThrowsAsync<CoreProviderException>(() => service.Authorize(caller, "", invalid with { Ceiling = null, Operation = "runs.start" }, default));
+    }
+
+    [Theory]
+    [InlineData("cancelled")]
+    [InlineData("failed")]
+    [InlineData("completed")]
+    public async Task ExpiredExecutionCanSettleOwnDecisionMetadataWithoutAdmittingNewEffects(string terminalState)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>(); var now = DateTimeOffset.UtcNow;
+        var user = new HostUserRecord("owner", "owner@example.test", "Owner", "host.admin", false, now, now);
+        await host.Services.GetRequiredService<UserDirectoryStore>().WriteAsync(new(1, [user], [], [], []));
+        var consumer = Record("other.consumer", now) with { GrantedCorePermissions = [CoreAppPermissions.AgentProviders] };
+        var provider = Record("other.provider", now) with { RuntimeState = "running", ConfirmedRoles = ["agent"],
+            GrantedCorePermissions = [CoreAppPermissions.DecisionsRead, CoreAppPermissions.DecisionsRequest, CoreAppPermissions.DecisionsRespond],
+            Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v1", 1, [])] } };
+        await apps.UpsertAppAsync(consumer); await apps.UpsertAppAsync(provider);
+        var credential = await BrowserAuthorityFixture.Grant(host, consumer.Id, user.Id);
+        var agent = host.Services.GetRequiredService<CoreAgentExecution>();
+        var sessionId = Guid.NewGuid().ToString(); var runId = Guid.NewGuid().ToString();
+        var request = new CoreAgentAuthorizeRequest(new(provider.Id, PanelIdentity.Installation(provider), "native"), "runs.start", "PUT",
+            $"/sessions/{sessionId}/runs/{runId}", new string('d', 64), SessionId: sessionId, RunId: runId);
+        var binding = await agent.Authorize(consumer, credential.AccessToken, request, default);
+        await agent.Admit(provider, binding.AdmissionRef, default);
+        var decisions = host.Services.GetRequiredService<CoreDecisionService>();
+        var decisionInput = new HostyDecisionCreate(Guid.NewGuid().ToString(), new("original-question", "Input required", [new("q", "Continue?")]));
+        var created = await decisions.CreateAsync(await agent.DecisionCaller(provider, binding.AdmissionRef, default), decisionInput);
+        var other = await decisions.CreateAsync(new(user, "another-source", provider, null), decisionInput with { RequestId = Guid.NewGuid().ToString(), Input = decisionInput.Input with { CorrelationKey = "another-question" } });
+        var source = await agent.DecisionCaller(provider, binding.AdmissionRef, default);
+        var running = await decisions.CreateAsync(source, decisionInput with { RequestId = Guid.NewGuid().ToString(), Input = decisionInput.Input with { CorrelationKey = "running-question" } });
+        running = await decisions.ResolveAsync(new(user, "operator", null, null, true), running.Id,
+            new(Guid.NewGuid().ToString(), running.Revision, new Dictionary<string, HostyDecisionAnswer> { ["q"] = new(Text: "Yes") }));
+        running = await decisions.AckAsync(source, running.Id, new(Guid.NewGuid().ToString(), running.Resolution!.Revision));
+        var continuation = Guid.NewGuid().ToString();
+        running = await decisions.ContinueAsync(source, running.Id, new(Guid.NewGuid().ToString(), continuation, running.Continuation!.Revision, "admitted"));
+        running = await decisions.ContinueAsync(source, running.Id, new(Guid.NewGuid().ToString(), continuation, running.Continuation!.Revision, "running"));
+        await host.Services.GetRequiredService<CoreAgentAuthorizationStore>().Change(binding.AdmissionRef, row => row with { ExpiresAt = now.AddMinutes(-1) }, default);
+        var retained = await agent.DecisionCaller(provider, binding.AdmissionRef, default, metadataOnly: true);
+        Assert.Equal(created.Id, (await decisions.GetAsync(retained, created.Id)).Id);
+        await Assert.ThrowsAsync<CoreProviderException>(() => decisions.GetAsync(retained, other.Id));
+        await Assert.ThrowsAsync<AppIdentityException>(() => decisions.CreateAsync(retained, decisionInput));
+        await Assert.ThrowsAsync<AppIdentityException>(() => agent.DecisionCaller(provider, binding.AdmissionRef, default));
+        using var http = host.CreateClient();
+        http.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(provider.Id));
+        http.DefaultRequestHeaders.Add(CoreAgentExecution.ExecutionHeader, binding.AdmissionRef);
+        var root = $"/api/internal/apps/{provider.Id}/decisions/v1";
+        Assert.Equal(HttpStatusCode.OK, (await http.GetAsync(root + "/requests/" + created.Id)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await http.PostAsJsonAsync(root + "/requests", decisionInput)).StatusCode);
+        var resolved = await decisions.ResolveAsync(new(user, "operator", null, null, true), created.Id,
+            new(Guid.NewGuid().ToString(), created.Revision, new Dictionary<string, HostyDecisionAnswer> { ["q"] = new(Text: "Yes") }));
+        var ack = await http.PostAsJsonAsync(root + "/responses/" + created.Id + "/ack", new HostyDecisionAck(Guid.NewGuid().ToString(), resolved.Resolution!.Revision));
+        Assert.Equal(HttpStatusCode.OK, ack.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await http.PostAsJsonAsync(root + "/requests/" + created.Id + "/resolve",
+            new HostyDecisionResolve(Guid.NewGuid().ToString(), resolved.Revision, new Dictionary<string, HostyDecisionAnswer> { ["q"] = new(Text: "Again") }))).StatusCode);
+        var late = new HostyDecisionContinue(Guid.NewGuid().ToString(), continuation, running.Continuation!.Revision, terminalState,
+            terminalState == "cancelled" ? "cancelled" : terminalState == "failed" ? "provider_failed" : null);
+        var reportRoute = root + "/requests/" + running.Id + "/continuation";
+        var report = await http.PostAsJsonAsync(reportRoute, late);
+        Assert.Equal(HttpStatusCode.OK, report.StatusCode);
+        var reportedJson = await report.Content.ReadAsStringAsync();
+        var settled = JsonSerializer.Deserialize(reportedJson, CoreJson.TypeInfo<HostyDecisionRecord>());
+        Assert.Equal(terminalState, settled!.Continuation!.State);
+        Assert.Equal(reportedJson, await (await http.PostAsJsonAsync(reportRoute, late)).Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.NotFound, (await http.PostAsJsonAsync(root + "/requests/" + other.Id + "/continuation", late)).StatusCode);
+        await Assert.ThrowsAsync<AppIdentityException>(() => agent.DecisionCaller(provider with { Id = "different.provider" }, binding.AdmissionRef, default, metadataOnly: true));
+        await Assert.ThrowsAsync<AppIdentityException>(() => agent.DecisionCaller(provider with { InstalledAt = now.AddSeconds(1) }, binding.AdmissionRef, default, metadataOnly: true));
+        await Assert.ThrowsAsync<AppIdentityException>(() => agent.Admit(provider, binding.AdmissionRef, default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => agent.Renew(provider, binding.AdmissionRef, default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => agent.McpToken(provider, new(binding.AdmissionRef, new("core")), default));
+    }
+
+    private sealed class TestClock(DateTimeOffset now) : IClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = now;
+    }
+
+    private static AppRecord Record(string id, DateTimeOffset now) => new(id, id, null, "0.1.0", "runtime", false, "installed", null, null,
+        "local", "installed", "stopped", null, null, [], new Dictionary<string, AppSettingValue>(), [], [], [], now, now);
+}

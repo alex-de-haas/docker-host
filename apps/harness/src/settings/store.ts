@@ -5,8 +5,6 @@ import { validRules, validDefaults, type ToolRule, type ProviderDefault } from "
 import { validCoreMigration, type CorePolicyMigration } from "../mcp/core-migration.js";
 import { DEFAULT_WORKFLOW_PROMPT } from "./workflow.js";
 import { CORE_PROVIDER_ID } from "./providers.js";
-import type { ConnectionBinding } from "../connections/registry.js";
-import { isTranslationModel } from "../translation/models.js";
 
 // Harness owns invocation preferences and reviewed instructions. Core owns MCP access.
 export interface SkillAcceptance { identity: string; digest: string }
@@ -30,8 +28,6 @@ export interface AssistantSettings {
   workflowPrompt?: string;
   retention?: RetentionSettings;
   executionMode?: "native" | "docker";
-  translationConnections?: Partial<Record<"codex" | "claude", ConnectionBinding | null>>;
-  translationModels?: Partial<Record<"codex" | "claude", string | null>>;
   mcpToolRules?: Record<string, ToolRule>;
   mcpPolicyMigrated?: string[];
   mcpCoreMigration?: CorePolicyMigration;
@@ -115,6 +111,8 @@ export class SettingsStore {
    */
   private queue: Promise<unknown> = Promise.resolve();
   private cached: AssistantSettings | null = null;
+  // Retired selections remain inert on disk; unrelated settings saves never migrate or erase them.
+  private retiredSettings: Record<string, unknown> = {};
 
   constructor(private readonly dataDir: string, private readonly legacyRetentionDays = 30) {}
 
@@ -129,13 +127,14 @@ export class SettingsStore {
 
     try {
       const parsed = JSON.parse(await readFile(this.file, "utf8")) as Partial<AssistantSettings>;
+      const raw = parsed as Record<string, unknown>;
+      this.retiredSettings = Object.fromEntries(["translationConnections", "translationModels"]
+        .filter(key => Object.hasOwn(raw, key)).map(key => [key, raw[key]]));
       this.cached = withCoreDefaults({
         skillIds: Array.isArray(parsed.skillIds) && parsed.skillIds.every((id: unknown) => typeof id === "string" && /^[a-f0-9]{64}$/.test(id)) ? parsed.skillIds : undefined,
         workflowPrompt: typeof parsed.workflowPrompt === "string" ? parsed.workflowPrompt : DEFAULT_WORKFLOW_PROMPT,
         retention: validRetention(parsed.retention) ? parsed.retention : { ordinaryDays: parsed.retention === undefined ? this.legacyRetentionDays : null, completedWorkspaceDays: null },
         executionMode: parsed.executionMode === "docker" ? "docker" : "native",
-        translationConnections: validTranslationConnections(parsed.translationConnections) ? parsed.translationConnections : {},
-        translationModels: validTranslationModels(parsed.translationModels) ? parsed.translationModels : {},
         immediateHandoffs: parsed.immediateHandoffs === true,
         mcpDefaults: validDefaults(parsed.mcpDefaults) ? parsed.mcpDefaults : {},
         mcpSkillApprovals: validSkillAcceptances(parsed.mcpSkillApprovals) ? parsed.mcpSkillApprovals : {},
@@ -200,8 +199,6 @@ export class SettingsStore {
       workflowPrompt: (patch.workflowPrompt ?? current.workflowPrompt ?? DEFAULT_WORKFLOW_PROMPT).slice(0, MAX_SYSTEM_PROMPT_CHARS),
       retention: patch.retention ?? current.retention ?? { ordinaryDays: this.legacyRetentionDays, completedWorkspaceDays: null },
       executionMode: patch.executionMode ?? current.executionMode ?? "native",
-      translationConnections: patch.translationConnections ?? current.translationConnections ?? {},
-      translationModels: patch.translationModels ?? current.translationModels ?? {},
       mcpDefaults: patch.mcpDefaults ?? current.mcpDefaults ?? {},
       mcpSkillApprovals: patch.mcpSkillApprovals ?? current.mcpSkillApprovals ?? {},
       mcpSkillsMigrated: patch.mcpSkillsMigrated ?? current.mcpSkillsMigrated ?? false,
@@ -218,7 +215,7 @@ export class SettingsStore {
     };
 
     await durableMkdir(this.dataDir);
-    try { await durableWriteFile(this.file, JSON.stringify(next, null, 2)); }
+    try { await durableWriteFile(this.file, JSON.stringify({ ...this.retiredSettings, ...next }, null, 2)); }
     catch (error) { if (isUncertainWrite(error)) this.cached = null; throw error; }
     this.cached = withCoreDefaults(next);
     return this.cached;
@@ -251,19 +248,6 @@ export class SettingsStore {
     }
     return this.update({ mcpProviders: kept, mcpAutoAllow: keptAutoAllow });
   }
-}
-
-function validTranslationModels(value: unknown): value is NonNullable<AssistantSettings["translationModels"]> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value)
-    && Object.entries(value).every(([kind, model]) => ["codex", "claude"].includes(kind) && isTranslationModel(model)));
-}
-
-function validTranslationConnections(value: unknown): value is NonNullable<AssistantSettings["translationConnections"]> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value)
-    && Object.entries(value).every(([kind, binding]) => ["codex", "claude"].includes(kind)
-      && (binding === null || (typeof binding === "object" && typeof binding.connectionId === "string"
-        && Number.isSafeInteger(binding.connectionRevision) && binding.connectionRevision > 0 && binding.harnessKind === kind
-        && (binding.connectionIdentity === undefined || typeof binding.connectionIdentity === "string")))));
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {

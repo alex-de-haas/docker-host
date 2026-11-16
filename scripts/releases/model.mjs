@@ -14,6 +14,7 @@ export function validatePublisher(config) {
   for (const app of config.apps ?? []) {
     if (!/^[a-z0-9][a-z0-9._-]{0,62}$/.test(app.id ?? '') || apps.has(app.id)) throw new Error('Invalid or duplicate app target.');
     apps.add(app.id); relativePath(app.manifest);
+    if (app.sourceIgnoreOptionalPeers !== undefined && typeof app.sourceIgnoreOptionalPeers !== 'boolean') throw new Error('Source optional-peer projection must be boolean.');
     if (!app.profiles?.length) throw new Error('Every app needs production profiles.');
   }
   const images = new Set();

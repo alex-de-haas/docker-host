@@ -187,21 +187,18 @@ describe("durable message admission", () => {
     await expect(manager.postMessage(session.id, "text", undefined, [], original)).rejects.toThrow();
     expect(sent).toEqual(["text"]);
   });
-  it("fences a distinct request after an uncertain adapter start and only explicit recovery clears it", async () => {
+  it("keeps uncertain legacy input fenced without client-attested execution recovery", async () => {
     const session = await manager.createSession({ createdBy: "admin" }), original = request();
     vi.spyOn(adapter, "start").mockImplementationOnce(() => { throw new Error("start may already have spawned native work"); });
     await expect(manager.postMessage(session.id, "original", undefined, [], original)).rejects.toThrow("may already have spawned");
     expect(await manager.messageReceipt(session.id, original.clientRequestId, "admin")).toMatchObject({ state: "unknown" });
     await manager.shutdown(); store = new SessionStore(dir, path.join(dir, "cache")); manager = build();
     await expect(manager.postMessage(session.id, "new", undefined, [], request())).rejects.toMatchObject({ code: "source_admission_recovery_required" });
-    const review = await manager.executionRecovery(session.id, "admin");
-    expect(review).toMatchObject({ sourceOnly: true, generation: "source-admission", expectedRevision: 0 });
-    const input = { ...review!, requestId: randomUUID(), consumerExitConfirmed: true };
-    await manager.recoverExecution(session.id, "admin", input);
-    await manager.recoverExecution(session.id, "admin", input);
+    await expect(manager.executionRecovery(session.id, "admin")).rejects.toMatchObject({ code: "provider_cutover_required" });
+    await expect(manager.recoverExecution(session.id, "admin", { requestId: randomUUID(), consumerExitConfirmed: true })).rejects.toMatchObject({ code: "provider_cutover_required" });
+    expect((await manager.getSession(session.id))!.sourceAdmission).toBeDefined();
+    expect(sent).toEqual([]);
     expect(await manager.messageReceipt(session.id, original.clientRequestId, "admin")).toMatchObject({ state: "unknown" });
-    await manager.postMessage(session.id, "new", undefined, [], request());
-    expect(sent).toEqual(["new"]);
   });
 
   it("preserves immutable accepted attachment versions when mutable cache files disappear", async () => {
@@ -250,19 +247,20 @@ describe("durable message admission", () => {
     await expect(manager.postMessage(session.id, "original", undefined, [], original)).rejects.toThrow("acted before losing");
     const admission = (await manager.getSession(session.id))!.sourceAdmission!;
     const input = { requestId: randomUUID(), runId: admission.runId, generation: "source-admission", expectedRevision: 0, consumerExitConfirmed: true };
-    await expect(manager.executionRecovery(session.id, "admin")).rejects.toMatchObject({ code: "recovery_active" });
-    await expect(manager.recoverExecution(session.id, "admin", input)).rejects.toMatchObject({ code: "recovery_active" });
+    await expect(manager.executionRecovery(session.id, "admin")).rejects.toMatchObject({ code: "provider_cutover_required" });
+    await expect(manager.recoverExecution(session.id, "admin", input)).rejects.toMatchObject({ code: "provider_cutover_required" });
     await expect(manager.postMessage(session.id, "overlap", undefined, [], request())).rejects.toMatchObject({ code: "source_admission_recovery_required" });
     await expect(manager.cancelSession(session.id)).rejects.toThrow("exit remains unconfirmed");
-    await expect(manager.executionRecovery(session.id, "admin")).rejects.toMatchObject({ code: "recovery_active" });
-    await expect(manager.recoverExecution(session.id, "admin", input)).rejects.toMatchObject({ code: "recovery_active" });
+    await expect(manager.executionRecovery(session.id, "admin")).rejects.toMatchObject({ code: "provider_cutover_required" });
+    await expect(manager.recoverExecution(session.id, "admin", input)).rejects.toMatchObject({ code: "provider_cutover_required" });
     expect((await manager.getSession(session.id))!.sourceAdmission).toEqual(admission);
     expect(await manager.messageReceipt(session.id, original.clientRequestId, "admin")).toMatchObject({ state: "unknown" });
     expect(writers).toBe(1);
     await manager.cancelSession(session.id); expect(writers).toBe(0);
-    expect(await manager.executionRecovery(session.id, "admin")).toMatchObject({ sourceOnly: true, runId: admission.runId });
-    await manager.recoverExecution(session.id, "admin", input);
-    await manager.postMessage(session.id, "next", undefined, [], request());
+    await expect(manager.executionRecovery(session.id, "admin")).rejects.toMatchObject({ code: "provider_cutover_required" });
+    await expect(manager.recoverExecution(session.id, "admin", input)).rejects.toMatchObject({ code: "provider_cutover_required" });
+    const fresh = await manager.createSession({ createdBy: "admin" });
+    await manager.postMessage(fresh.id, "next", undefined, [], request());
     expect(sent).toEqual(["original", "next"]); expect(maximumWriters).toBe(1);
     expect(await manager.messageReceipt(session.id, original.clientRequestId, "admin")).toMatchObject({ state: "unknown" });
   });

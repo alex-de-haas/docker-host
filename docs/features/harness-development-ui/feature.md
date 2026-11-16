@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-11
+updated: 2026-11-13
 summary: Harness combines conversations and workspace groups in Sessions, with shared navigation, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -136,7 +136,9 @@ app context; a matching accessible chat title selects that chat. Both full-page 
 conversation/workspace selection, with explicit URL selection taking precedence and legacy path
 selection imported when no shared selection exists. The assistant panel retains its existing history.
 Sessionless workspaces offer explicit creation; selecting a row never
-creates a conversation automatically. Rename remains in the conversation header. Desktop navigation
+creates a conversation automatically. Rename remains in the conversation header. Automatic titles
+from the first message update the active header and sidebar without a reload. Metadata recovery
+preserves newer manual renames and cannot update a different selected conversation. Desktop navigation
 and workspace columns default to 264/344 px. Their boundaries support pointer dragging, arrow keys,
 Home/End for minimum/maximum width and double-click to reset. Preferred widths persist in local
 browser storage. Navigation ranges from 220 to 480 px and details from 280 to 560 px, constrained by
@@ -1037,6 +1039,11 @@ and documentation validation pass. [Local runtime acceptance](../harness-local-r
 records the startup/recovery measurements; Linux and Windows lifecycle checks are not run locally.
 
 ## Testing Expectations
+
+- Verify first-message and inventory-only title propagation without a reload, newer manual and
+  cross-window renames against delayed metadata/rename replies, session-switch isolation and draft
+  preservation. Embedded settings align with Shell without a duplicate heading or tab overflow;
+  standalone settings keep their own page heading and spacing.
 
 - Refuse a turn on the second repository before provider dispatch, recover its runtime fence and
   resume the same session without coordinator restart or duplicate messages. Preserve the draft

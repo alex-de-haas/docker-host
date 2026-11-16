@@ -58,6 +58,55 @@ public sealed class HostyProviderClientTests
         Assert.Equal("idle", response.GetProperty("state").GetString());
         Assert.Contains("action-id", handler.Body); Assert.Contains("lease-id", handler.Body); Assert.DoesNotContain("executor-service", handler.Body);
     }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SessionWorkflowRequiresAnExactNativeExecution(bool includeExecution)
+    {
+        using var handler = new WorkflowHandler(includeExecution); using var http = new HttpClient(handler);
+        var client = new HostyProviderClient(http, new() { AppId = "coordinator", CoreOrigin = "http://core.test", ServiceToken = "private-service" });
+        var input = new HostyMediatedProviderRequest("session.workflow", "POST", "/sessions/" + Guid.NewGuid() + "/workflow", Encoding.UTF8.GetBytes("{\"action\":\"task-result\"}"));
+        if (includeExecution)
+        {
+            var result = await client.ValidateMediatedAsync("hosty_provider.2.test", "task-executor", input);
+            Assert.Equal("native", result.AgentExecution!.Provider.AppId);
+        }
+        else Assert.Equal("token_invalid", (await Assert.ThrowsAsync<HostyProviderException>(() =>
+            client.ValidateMediatedAsync("hosty_provider.2.test", "task-executor", input))).Code);
+    }
+    [Fact]
+    public async Task AgentTaskBusinessCommandUsesOnlyProviderServiceAndAdmittedReference()
+    {
+        using var handler = new BusinessWorkflowHandler(); using var http = new HttpClient(handler);
+        var client = new HostyProviderClient(http, new() { AppId = "native", CoreOrigin = "http://core.test", ServiceToken = "private-service" });
+        var result = await client.AgentWorkflowAsync(new("admission", "task-result", System.Text.Json.JsonSerializer.SerializeToElement(new { requestId = Guid.NewGuid().ToString(), completed = true })));
+        Assert.True(result.GetProperty("recorded").GetBoolean());
+    }
+    private sealed class BusinessWorkflowHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Assert.Equal("http://core.test/api/internal/apps/native/agent/workflow", request.RequestUri!.AbsoluteUri);
+            Assert.Equal("Bearer private-service", request.Headers.Authorization!.ToString());
+            Assert.False(request.Headers.Contains("X-Hosty-User-Token"));
+            using var body = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            Assert.Equal("admission", body.RootElement.GetProperty("admissionRef").GetString());
+            Assert.Equal("task-result", body.RootElement.GetProperty("action").GetString());
+            Assert.True(body.RootElement.GetProperty("input").GetProperty("completed").GetBoolean());
+            return new(HttpStatusCode.OK) { Content = new StringContent("{\"recorded\":true}", Encoding.UTF8, "application/json") };
+        }
+    }
+
+    private sealed class WorkflowHandler(bool includeExecution) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var agent = includeExecution ? ",\"agentExecution\":{\"provider\":{\"appId\":\"native\",\"installationId\":\"install\",\"key\":\"default\"},\"sessionId\":\"" + Guid.NewGuid() + "\",\"runId\":\"" + Guid.NewGuid() + "\"}" : "";
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
+                "{\"version\":2,\"userId\":\"owner\",\"hostRole\":\"host.admin\",\"principalId\":\"original\",\"kind\":\"task-executor\",\"key\":\"default\",\"operation\":\"session.workflow\",\"resourceIds\":[]" + agent + "}", Encoding.UTF8, "application/json") });
+        }
+    }
+
     private sealed class WorkspaceHandler : HttpMessageHandler
     {
         internal string Body = "";

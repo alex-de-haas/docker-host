@@ -1,38 +1,47 @@
-"""Decisions through real Core/Harness/Worker with an explicitly scripted provider."""
+"""Decisions through real Core, Harness and an independently scripted Local provider."""
 import uuid
 import json
+from agent_provider_acceptance import execution_stopped
 
 def check(c):
     try: _check(c)
     except Exception:
-        for file in (c['root']/'apps'/'hosty.harness').glob('**/decision-waits/*.json'):
+        app = c.get('harnessAppId') or json.loads((c['workspace']/'apps/harness/manifest.json').read_text())['id']
+        for file in (c['root']/'apps'/app).glob('**/task-decision-waits-v2/*.json'):
             data=json.loads(file.read_text())
             c['say']('Wait diagnosis: '+json.dumps({k:data.get(k) for k in ['state','error','reason','control','native','core','inbox']}))
-        for file in (c['root']/'apps'/'hosty.harness').glob('**/events.ndjson'):
+        for file in (c['root']/'apps'/app).glob('**/events.ndjson'):
             for line in file.read_text().splitlines()[-8:]:
                 data=json.loads(line); c['say']('Event diagnosis: '+json.dumps({k:data.get(k) for k in ['type','message','text','error','status','questionId']}))
         raise
 
 def _check(c):
     h, wait, say = c['h'], c['wait_for'], c['say']
-    # Authenticate both the private source coordinator and the independent operator client.
+    app = c.get('harnessAppId') or json.loads((c['workspace']/'apps/harness/manifest.json').read_text())['id']
+    # The operator sees both provider-owned native questions and Harness-owned task input.
     h('/decisions')
     session = h('/sessions', {'title':'Decision live acceptance', 'profileId':c['profile']['id']})
     h('/sessions/'+session['id']+'/messages', {'text':'DECISIONS_ACCEPTANCE:LIVE', 'clientRequestId':str(uuid.uuid4())}, expected=202)
-    def find(sid):
-        return next((row for row in h('/decisions')['items'] if (row.get('input') or {}).get('subject',{}).get('id')==sid), None)
+    def find(sid, kind='agent-run'):
+        run_id = (h('/sessions/'+sid).get('providerExecution') or {}).get('runId')
+        subject_id = run_id if kind == 'agent-run' else sid
+        return next((row for row in h('/decisions')['items']
+            if (row.get('input') or {}).get('subject', {}).get('kind') == kind
+            and (row.get('input') or {}).get('subject', {}).get('id') == subject_id), None)
     try: wait(lambda: find(session['id']), 60)
     except Exception:
         observed = h('/sessions/'+session['id'])
         say('Decision session: '+json.dumps({k:observed.get(k) for k in ['id','status','harnessKind','harnessSessionId','lastError']}))
-        for file in (c['root']/'apps'/'hosty.harness').glob('**/decision-waits/*.json'):
+        for file in (c['root']/'apps'/app).glob('**/task-decision-waits-v2/*.json'):
             data=json.loads(file.read_text()); say('Decision wait: '+json.dumps({k:data.get(k) for k in ['state','error','reason','native','snapshot']}))
-        for file in (c['root']/'apps'/'hosty.harness').glob('**/events.ndjson'):
+        for file in (c['root']/'apps'/app).glob('**/events.ndjson'):
             for line in file.read_text().splitlines()[-12:]:
                 data=json.loads(line)
                 say('Decision event: '+json.dumps({k:data.get(k) for k in ['type','message','text','error','status','questionId']}))
         raise
     row = find(session['id'])
+    assert row['input']['subject']['kind'] == 'agent-run'
+    assert row['input']['subject']['id'] == h('/sessions/'+session['id'])['providerExecution']['runId']
     first, second = row['input']['questions']
     assert first['id'] != second['id'] and first['question'] == second['question']
     assert first['options'][0]['id'] != first['options'][1]['id']
@@ -43,15 +52,16 @@ def _check(c):
     assert c['call'](c['origin'], route, command) == result
     h('/decisions/'+row['id']+'/resolve', {**command, 'requestId':str(uuid.uuid4())}, expected=409)
     wait(lambda: (h('/decisions/'+row['id']).get('continuation') or {}).get('state')=='completed', 60)
+    wait(lambda: execution_stopped(h('/sessions/'+session['id'])), 60)
     answers = h('/decisions/'+row['id'])['resolution']['answers']
     assert answers[first['id']]['optionIds']==command['answers'][first['id']]['optionIds']
     assert answers[second['id']]['text']==command['answers'][second['id']]['text']
-    say('PASS: ordinary native question, duplicate IDs/labels, independent Core response, immutable replay and one live continuation')
+    say('PASS: provider-owned native question, duplicate IDs/labels, independent Core response, immutable replay and one live continuation')
 
     required = c['action'](c['create']('Required setup task', c['assignee'], markdown='TASK_ACCEPTANCE:REQUIRED'), 'ready')
     wait(lambda: c['read'](required)['attempts'] and c['read'](required)['attempts'][0].get('receipt',{}).get('state')=='awaiting_input', 60)
     required = c['read'](required); attempt = required['attempts'][0]; sid = attempt['receipt']['sessionRef']['id']
-    wait(lambda: find(sid), 60); question = find(sid)
+    wait(lambda: find(sid, 'conversation'), 60); question = find(sid, 'conversation')
     assert required['status']=='Blocked' and question['input']['title'].startswith(required['number'])
     assert question['input']['reason']=='The isolated setup prerequisite is missing.'
     assert question['notificationPending'] is False
@@ -76,15 +86,19 @@ def _check(c):
     wait(waiting, 60)
     task = c['read'](task); attempt = task['attempts'][0]; execution = attempt['executionId']
     sid = attempt['receipt']['sessionRef']['id']
-    wait(lambda: find(sid), 60); row = find(sid)
+    wait(lambda: find(sid, 'conversation'), 60); row = find(sid, 'conversation')
     local = '/decisions/waits/'+row['input']['waitReference']
     # The production deadline is exercised; no test-only shorter parking policy.
     wait(lambda: h(local)['state']=='parked', 360)
     task = c['read'](task)
     assert task['attempts'][0]['receipt']['state']=='awaiting_input' and not task['attempts'][0]['receipt']['stopConfirmed']
     wait(lambda: c['read'](task)['attempts'][0]['receipt'].get('nativeStopConfirmed') is True, 30)
-    c['run']([c['cli'],'--data-root',c['root'],'apps','restart','hosty.harness'])
-    wait(lambda: c['request']('/api/apps/hosty.harness/health')['status']=='healthy',180)
+    provider = c['agentProviders'].entries['codex']
+    provider_pid_file = c['root']/'apps'/provider['appId']/'run/api.json'
+    provider_pid = json.loads(provider_pid_file.read_text())['pid']
+    c['run']([c['cli'],'--data-root',c['root'],'apps','restart',app])
+    wait(lambda: c['request']('/api/apps/'+app+'/health')['status']=='healthy',180)
+    assert json.loads(provider_pid_file.read_text())['pid'] == provider_pid
     c['login_app'](); h('/decisions')
     assert h(local)['state']=='parked'
     first, second = row['input']['questions']
@@ -95,4 +109,4 @@ def _check(c):
     assert len(completed['attempts'])==1 and completed['attempts'][0]['executionId']==execution
     assert completed['result'] and completed['attempts'][0]['receipt']['stopConfirmed']
     wait(lambda: h('/decisions/'+row['id'])['continuation']['state']=='completed',60)
-    say('PASS: five-minute parking, API/Worker restart, durable answer and same task attempt with explicit result')
+    say('PASS: five-minute parking, independent consumer restart, durable answer and same task attempt with explicit result')

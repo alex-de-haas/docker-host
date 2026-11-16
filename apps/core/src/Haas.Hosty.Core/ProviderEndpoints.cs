@@ -33,6 +33,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
         "task-executor" => CoreAppPermissions.TaskExecutors,
         "conversation-history" => CoreAppPermissions.HistoryProviders,
         "agent-sessions" => CoreAppPermissions.AgentSessionProviders,
+        "agent" => CoreAppPermissions.AgentProviders,
         _ => throw new AppIdentityException("provider_kind_invalid", "Unknown provider category."),
     };
 
@@ -86,7 +87,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
         string? userCredential, CancellationToken ct)
     {
         RequireGrant(caller, kind);
-        if (kind is "conversation-history" or "agent-sessions")
+        if (kind is "conversation-history" or "agent-sessions" or "agent")
             throw new AppIdentityException("version_unsupported", "Use the canonical Core API with operation-bound mediated provider credentials.");
         if (string.IsNullOrWhiteSpace(input.ProviderAppId) || string.IsNullOrWhiteSpace(input.Key))
             throw new AppIdentityException("provider_selection_invalid", "Select a provider and interface key.");
@@ -127,7 +128,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
 
     internal async Task<ProviderInvocation> ValidateAsync(AppRecord provider, ProviderIntrospectionRequest input, CancellationToken ct)
     {
-        if (input.Kind is "conversation-history" or "agent-sessions")
+        if (input.Kind is "conversation-history" or "agent-sessions" or "agent")
             throw new AppIdentityException("version_unsupported", "This interface requires version-two mediated introspection.");
         ProviderTokenClaims? claims;
         try

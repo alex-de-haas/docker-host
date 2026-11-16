@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-11
+updated: 2026-11-13
 summary: Responsive composer controls with a durable message stack, transcript suggestions, shared agent settings and capability-aware dictation.
 components: [apps/harness]
 ---
@@ -59,18 +59,22 @@ beneath the action row.
 
 ## Remembered Manual Choices
 
-The browser remembers the last successfully saved manual model and reasoning pair per provider
-connection, plus the last explicitly saved autonomy mode. Preferences belong to the current
+The browser remembers the last successfully saved manual provider choice, model and reasoning
+pair per provider connection, plus the last explicitly saved autonomy mode. Preferences belong to the current
 Harness origin and authenticated user. They contain no profile selection, conversation identifier
 or credentials. Merely opening a chat, receiving its updates or reading a profile does not change
-them. A deliberate model override on a profiled chat is a manual choice and can be remembered
+them. Automatic provider-default adoption does not overwrite the last manual provider choice.
+A deliberate model override on a profiled chat is a manual choice and can be remembered
 for later chats without a profile.
 
 New ordinary, workspace and building chats send these optional browser defaults with their creation
-request. New feedback-chat review displays the remembered choices before Send. The server selects
-the profile and provider first, then validates an applicable remembered model/effort against that
-provider's current catalog. A selected/default profile wins over remembered model settings; explicit
-creation settings win over either remembered value. Unsupported pairs and unavailable catalogs
+request. New feedback-chat review displays remembered model and autonomy choices before Send.
+The server resolves a selected/default profile or explicit provider first. An unprofiled chat with
+no explicit provider can then use the current owner's remembered opaque connection ID, verified
+against fresh discovery and its exact installation/account revision, before the ordinary server
+default. Stale, unavailable or foreign-owner hints are ignored. The server then validates an
+applicable remembered model/effort against that provider's current catalog. A selected/default
+profile wins over browser hints; explicit creation settings win over remembered values. Unsupported pairs and unavailable catalogs
 leave the usual defaults available. Admitted task settings stay fixed.
 
 Creation stores the resulting settings atomically. A repeated creation request returns its original

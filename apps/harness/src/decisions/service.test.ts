@@ -1,152 +1,106 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 import { DecisionClient, DecisionError, type DecisionCreate, type DecisionRecord } from "@hosty-sdk/app/decisions";
 import { DecisionsService } from "./service.js";
-import { newWait } from "./waits.js";
+import { DecisionWaitStore, newWait } from "./waits.js";
 import type { SessionManager } from "../sessions/manager.js";
 import type { SessionRecord } from "../sessions/store.js";
+import type { AgentRunSnapshot } from "@hosty-sdk/app/agent";
 
-const cleanup: (() => Promise<unknown>)[] = [];
+const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const action of cleanup.splice(0).reverse()) await action(); });
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "decision-coordinator-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "task-decision-coordinator-"));
   cleanup.push(() => rm(root, { recursive: true, force: true }));
-  const record = { id: "chat", createdBy: "alice", title: "A question", harnessKind: "codex", harnessSessionId: "native", connectionId: "account",
-    status: "awaiting_question", workerRun: { id: "original", sequence: 1 } } as SessionRecord;
+  const record = { id: "chat", createdBy: "alice", title: "Required task input", harnessKind: "agent",
+    harnessSessionId: "public-session", taskExecutionId: randomUUID(), status: "awaiting_question",
+    workerRun: { id: "original", sequence: 1 } } as SessionRecord;
+  const questionId = randomUUID();
+  const wait = newWait(record, { type: "question_request", questionId, blocking: true,
+    questions: [{ id: "setup", header: "Setup", question: "Is setup ready?", options: [], allowText: true, multiSelect: false }] });
+  wait.taskInput = { requestHash: "same-input", barrierId: questionId, reason: "Setup required" };
+  record.decisionWaitIds = [wait.id];
+  record.taskBarrier = { id: questionId, kind: "human_input", state: "parked", commandId: wait.commandId } as SessionRecord["taskBarrier"];
   let row: DecisionRecord | undefined;
-  let outcome = "missing", run = { state: "awaiting_input", revision: 1, exitConfirmed: false, pending: [{ sequence: 1, event: { type: "question_request", questionId: "question" } }] };
+  let run = { ref: { id: "resumed", provider: { appId: "other.agent", installationId: "opaque", key: "default" } },
+    state: "running", phase: "executing", freshness: "current", stopConfirmed: false, pending: [] } as unknown as AgentRunSnapshot;
   const calls: string[] = [];
   const client = new DecisionClient(async () => { throw new Error("Unexpected transport"); });
-  client.create = vi.fn(async (input: DecisionCreate) => {
-    calls.push("create");
-    return row ??= { id: "d", userId: "alice", revision: 1, sequence: 1, input: input.input, state: "pending", sourceAppId: "app", sourceInstallation: "install",
-      sourcePrincipal: "app", correlationHash: "hash", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), resolution: null, delivery: null, continuation: null };
-  });
-  client.get = vi.fn(async () => { if (!row) throw new Error("Missing"); return structuredClone(row); });
+  client.create = vi.fn(async (input: DecisionCreate) => row ??= { id: "d", userId: "alice", revision: 1, sequence: 1,
+    input: input.input, state: "pending", sourceAppId: "app", sourceInstallation: "install", sourcePrincipal: "app", correlationHash: "hash",
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), resolution: null, delivery: null, continuation: null });
+  client.get = vi.fn(async () => structuredClone(row!));
   client.responses = vi.fn(async () => ({ items: row?.resolution && !row.delivery?.receivedAt ? [structuredClone(row)] : [], pendingCount: 0, cursor: null }));
   client.acknowledge = vi.fn(async () => {
-    calls.push("ack");
-    expect((await service.waits.read(wait.id))?.inbox).toBeDefined();
-    row = { ...row!, delivery: { resolutionRevision: 2, receivedAt: new Date().toISOString() }, continuation: { revision: 1, commandId: null, state: "received", updatedAt: new Date().toISOString() } };
+    expect((await service.waits.read(wait.id))?.inbox).toBeDefined(); calls.push("ack");
+    row = { ...row!, delivery: { resolutionRevision: 2, receivedAt: new Date().toISOString() },
+      continuation: { revision: 1, commandId: null, state: "received", updatedAt: new Date().toISOString() } };
     return structuredClone(row);
   });
   client.continuation = vi.fn(async (_, input) => {
     if (input.expectedRevision !== row!.continuation!.revision) throw new DecisionError("decision_conflict", "Revision moved", 409);
-    row = { ...row!, continuation: { ...row!.continuation!, revision: input.expectedRevision + 1, commandId: input.commandId, state: input.state, reason: input.reason ?? null } };
-    calls.push(input.state); return structuredClone(row);
+    calls.push(input.state); row = { ...row!, continuation: { ...row!.continuation!, revision: input.expectedRevision + 1,
+      commandId: input.commandId, state: input.state, reason: input.reason ?? null } }; return structuredClone(row);
   });
-  client.withdraw = vi.fn(async (_, input) => {
-    if (input.expectedRevision !== row!.revision) throw new DecisionError("decision_conflict", "Revision moved", 409);
-    row = { ...row!, state: "withdrawn", revision: row!.revision + 1 }; calls.push("withdraw"); return structuredClone(row);
-  });
-  client.invalidate = vi.fn(async (id, input) => {
-    const closed = await client.withdraw(id, input); row = { ...closed, state: "stale" }; return structuredClone(row);
-  });
-  const manager = {
-    store: { dataDir: root }, getSession: vi.fn(async () => record), checkDecision: vi.fn(async () => {}),
-    stopDecisionExecution: vi.fn(async () => {}), recordDecisionAnswer: vi.fn(async () => {}), finishDecision: vi.fn(async () => {}),
-    deliverDecision: vi.fn(async () => { outcome = "applied"; run.state = "running"; }),
-    parkDecision: vi.fn(async () => { run = { ...run, state: "parked", exitConfirmed: true }; }),
-    messageReceipt: vi.fn(async () => { throw new DecisionError("message_request_not_found", "Absent", 404); }),
-    resumeDecision: vi.fn(async () => { record.decisionRunIds = { [wait.commandId]: "resumed" }; run.state = "running"; run.exitConfirmed = false; return true; }),
-    worker: { request: vi.fn(async (url: string) => url.includes("/controls/") ? { state: outcome } : structuredClone(run)) },
-  };
+  client.withdraw = vi.fn(async () => { row = { ...row!, state: "withdrawn", revision: row!.revision + 1 }; return structuredClone(row); });
+  client.invalidate = vi.fn(async () => { row = { ...row!, state: "stale", revision: row!.revision + 1 }; return structuredClone(row); });
+  const manager = { store: { dataDir: root }, getSession: vi.fn(async () => record), checkDecision: vi.fn(async () => {}),
+    recordDecisionAnswer: vi.fn(async () => {}), advanceTaskBarrier: vi.fn(async () => {}),
+    resumeTaskBarrier: vi.fn(async () => { record.decisionRunIds = { [wait.commandId]: "resumed" }; }),
+    messageReceipt: vi.fn(async () => ({ state: "accepted" })), taskCheckpoint: vi.fn(async () => run),
+    finishDecision: vi.fn(async () => {}), stopDecisionExecution: vi.fn(async () => {}),
+    decisionProjections: vi.fn(async () => ({ items: [] })) };
   const service = new DecisionsService(manager as unknown as SessionManager, () => client);
-  // Drive reconciliation deterministically; production uses the same tick through its timer.
   vi.spyOn(service, "kick").mockImplementation(() => {});
-  cleanup.push(() => service.close()); service.authorize("alice", "current-credential");
-  const wait = newWait(record, { type: "question_request", questionId: "question", blocking: true,
-    questions: [{ id: "q", question: "Which?", header: "Choice", options: [{ id: "a", label: "A", description: "" }], multiSelect: false }], workerRunId: "original" });
-  record.decisionWaitIds = [wait.id]; await service.waits.update(wait.id, () => wait);
-  const answer = () => { row = { ...row!, revision: 2, state: "answered", resolution: { revision: 2, userId: "alice", principalId: "alice", answers: { q: { optionIds: ["a"] } }, answeredAt: new Date().toISOString() }, delivery: { resolutionRevision: 2, receivedAt: null }, continuation: { revision: 0, state: "pending", commandId: null, updatedAt: new Date().toISOString() } }; };
-  return { service, wait, manager, client, record, calls, answer, row: () => row!, run: (patch: Partial<typeof run>) => { run = { ...run, ...patch }; }, outcome: (value: string) => { outcome = value; } };
+  await service.waits.update(wait.id, () => wait); service.authorize("alice", "volatile-authority");
+  cleanup.push(() => service.close());
+  return { root, service, manager, client, record, wait, calls, row: () => row!,
+    answer: () => { row = { ...row!, state: "answered", revision: 2,
+      resolution: { revision: 2, userId: "alice", principalId: "alice", answeredAt: new Date().toISOString(), answers: { setup: { text: "Ready" } } },
+      delivery: { resolutionRevision: 2, receivedAt: null } } as DecisionRecord; },
+    run: (patch: Partial<AgentRunSnapshot>) => { run = { ...run, ...patch }; } };
 }
-it("persists inbox before acknowledgement and delivers one native control across repeated outbox reconciliation", async () => {
+
+it("persists the answer before acknowledgement and resumes the same task command once", async () => {
   const f = await fixture(); await f.service.tick(); f.answer(); await f.service.tick(); await f.service.tick();
   expect(f.calls.indexOf("ack")).toBeLessThan(f.calls.indexOf("admitted"));
-  expect(f.manager.deliverDecision).toHaveBeenCalledTimes(1);
-  expect((await f.service.local("alice", f.wait.id)).state).toBe("running");
-  f.run({ state: "completed", exitConfirmed: true }); await f.service.tick();
-  expect(f.row().continuation?.state).toBe("completed"); expect(f.manager.finishDecision).toHaveBeenCalledTimes(1);
-});
-it("retains answer when acknowledgement fails and retries the same acknowledgement identity", async () => {
-  const f = await fixture(); await f.service.tick(); f.answer();
-  vi.mocked(f.client.acknowledge).mockRejectedValueOnce(new Error("Lost response"));
-  await f.service.tick(); expect((await f.service.local("alice", f.wait.id)).inbox).toBeDefined(); expect(f.manager.deliverDecision).not.toHaveBeenCalled();
-  await f.service.tick(); expect(f.manager.deliverDecision).toHaveBeenCalledTimes(1);
-  expect(vi.mocked(f.client.acknowledge).mock.calls.map(c => c[1].requestId)).toEqual([f.wait.acknowledgementId, f.wait.acknowledgementId]);
-});
-it("does not repeat a native answer after uncertain acceptance or a dead original callback", async () => {
-  const f = await fixture(); await f.service.tick(); f.answer();
-  f.manager.deliverDecision.mockImplementationOnce(async () => { f.outcome("unknown"); throw new Error("Connection lost after send"); });
-  await f.service.tick(); f.run({ state: "parked", exitConfirmed: true }); await f.service.tick(); await f.service.tick();
-  expect(f.manager.deliverDecision).toHaveBeenCalledTimes(1); expect(f.manager.resumeDecision).not.toHaveBeenCalled();
-  expect((await f.service.local("alice", f.wait.id)).reason).toBe("unknown_admission");
-});
-it("does not confuse a failed receipt read with absence of admission", async () => {
-  const f = await fixture(); await f.service.tick(); f.answer();
-  await f.service.waits.update(f.wait.id, w => ({ ...w!, state: "admitted", resumeRequested: true }));
-  f.run({ state: "parked", exitConfirmed: true });
-  f.manager.messageReceipt.mockRejectedValue(new Error("Disk unavailable"));
-  await f.service.tick(); await f.service.tick();
-  expect(f.manager.resumeDecision).not.toHaveBeenCalled();
-});
-it("recovers a parked continuation through the original stable message and observes only its recorded segment", async () => {
-  const f = await fixture(); await f.service.tick(); f.answer();
-  await f.service.waits.update(f.wait.id, w => ({ ...w!, state: "admitted", resumeRequested: true }));
-  f.run({ state: "parked", exitConfirmed: true }); await f.service.tick(); await f.service.tick();
-  expect(f.manager.resumeDecision).toHaveBeenCalledTimes(1);
+  expect(f.manager.resumeTaskBarrier).toHaveBeenCalledTimes(1);
   expect((await f.service.local("alice", f.wait.id)).resumedRunId).toBe("resumed");
 });
-it("retains answers after changed input and never admits an unknown exit", async () => {
+it("retries a lost acknowledgement with its original identity before admitting task continuation", async () => {
   const f = await fixture(); await f.service.tick(); f.answer();
-  f.manager.checkDecision.mockRejectedValue(new DecisionError("stale_input", "Provider changed", 409));
-  await f.service.tick(); expect((await f.service.local("alice", f.wait.id)).reason).toBe("stale_input");
-  expect(f.row().state).toBe("stale"); expect(f.manager.resumeDecision).not.toHaveBeenCalled();
-  const g = await fixture(); await g.service.tick(); g.answer(); g.run({ state: "interrupted", exitConfirmed: false }); await g.service.tick();
-  expect((await g.service.local("alice", g.wait.id)).reason).toBe("unknown_stop"); expect(g.manager.resumeDecision).not.toHaveBeenCalled();
+  vi.mocked(f.client.acknowledge).mockRejectedValueOnce(new Error("Lost acknowledgement"));
+  await f.service.tick(); expect((await f.service.local("alice", f.wait.id)).inbox).toBeDefined();
+  expect(f.manager.resumeTaskBarrier).not.toHaveBeenCalled(); await f.service.tick();
+  expect(f.manager.resumeTaskBarrier).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(f.client.acknowledge).mock.calls.map(call => call[1].requestId)).toEqual([f.wait.acknowledgementId, f.wait.acknowledgementId]);
 });
-it("reconciles an uncertain registration before cancellation and preserves its source fence", async () => {
-  const f = await fixture(); const create = f.client.create;
-  vi.spyOn(f.client, "create").mockImplementationOnce(async input => { await create(input); throw new Error("Lost create response"); });
-  await f.service.tick(); f.record.decisionGeneration = 1;
-  await f.service.tick(); await f.service.tick();
-  expect(f.row().state).toBe("withdrawn"); expect((await f.service.local("alice", f.wait.id)).cancellationSettled).toBe(true);
-  expect(f.manager.deliverDecision).not.toHaveBeenCalled();
-});
-it("withdraws at the current revision after cancellation races with an answer", async () => {
-  const f = await fixture(); await f.service.tick(); f.answer(); f.record.decisionGeneration = 1;
-  await f.service.tick(); expect(f.row().state).toBe("withdrawn"); expect(f.manager.resumeDecision).not.toHaveBeenCalled();
-});
-it("parks only blocking waits and does not treat the resource deadline as an answer", async () => {
-  const f = await fixture(); await f.service.tick();
-  await f.service.waits.update(f.wait.id, w => ({ ...w!, createdAt: "2000-01-01T00:00:00Z" }));
-  await f.service.tick(); expect(f.manager.parkDecision).toHaveBeenCalledTimes(1); expect(f.row().state).toBe("pending");
-  const g = await fixture(); await g.service.waits.update(g.wait.id, w => ({ ...w!, event: { ...w!.event, blocking: false }, createdAt: "2000-01-01T00:00:00Z" }));
-  await g.service.tick(); expect(g.manager.parkDecision).not.toHaveBeenCalled();
-});
-it("hides private waits from another administrator", async () => {
-  const f = await fixture(); await expect(f.service.local("bob", f.wait.id)).rejects.toMatchObject({ status: 404 });
-});
-
-it("does not re-admit running work when Core serializes its absent reason as null", async () => {
+it("observes provider stop confirmation before completing a continuation", async () => {
   const f = await fixture(); await f.service.tick(); f.answer(); await f.service.tick();
-  expect(f.row().continuation).toMatchObject({ state: "running", reason: null });
-  f.run({ state: "completed", exitConfirmed: true });
-  await f.service.tick(); await f.service.tick();
-  expect(f.calls.filter(call => call === "running")).toHaveLength(1);
-  expect((await f.service.waits.read(f.wait.id))?.state).toBe("completed");
-  expect(f.row().continuation?.state).toBe("completed");
+  f.run({ state: "succeeded", stopConfirmed: false }); await f.service.tick();
+  expect(f.manager.finishDecision).not.toHaveBeenCalled();
+  f.run({ stopConfirmed: true }); await f.service.tick(); await f.service.tick();
+  expect(f.row().continuation?.state).toBe("completed"); expect(f.manager.finishDecision).toHaveBeenCalledTimes(1);
 });
-
-it("releases its reconciliation lock after a transient wait read failure", async () => {
-  const f = await fixture();
-  const read = f.service.waits.read.bind(f.service.waits);
-  vi.spyOn(f.service.waits, "read").mockImplementationOnce(read).mockRejectedValueOnce(new Error("Temporary read failure"));
-  await f.service.retry("alice", f.wait.id).catch(() => {});
-  await f.service.tick();
-  expect(f.client.create).toHaveBeenCalledTimes(1);
-  expect((await f.service.local("alice", f.wait.id)).core?.id).toBe("d");
+it("never substitutes another run or resubmits after an uncertain provider observation", async () => {
+  const f = await fixture(); await f.service.tick(); f.answer(); await f.service.tick();
+  f.manager.taskCheckpoint.mockRejectedValueOnce(new Error("Provider unavailable")); await f.service.tick();
+  f.run({ ref: { id: "another-run", provider: { appId: "other.agent", installationId: "opaque", key: "default" } } });
+  await f.service.tick(); expect((await f.service.local("alice", f.wait.id)).reason).toBe("unknown_admission");
+  expect(f.manager.resumeTaskBarrier).toHaveBeenCalledTimes(1); expect(f.manager.finishDecision).not.toHaveBeenCalled();
+});
+it("withdraws a cancelled task question without reviving execution and isolates private waits", async () => {
+  const f = await fixture(); await f.service.tick(); f.record.decisionGeneration = 1; await f.service.tick();
+  expect(f.row().state).toBe("withdrawn"); expect((await f.service.local("alice", f.wait.id)).cancellationSettled).toBe(true);
+  expect(f.manager.resumeTaskBarrier).not.toHaveBeenCalled();
+  await expect(f.service.local("bob", f.wait.id)).rejects.toMatchObject({ status: 404 });
+});
+it("does not import old native-question waits and rejects native registration", async () => {
+  const f = await fixture(); await mkdir(path.join(f.root, "decision-waits"), { recursive: true });
+  await writeFile(path.join(f.root, "decision-waits", "a".repeat(64) + ".json"), JSON.stringify({ version: 1, id: "a".repeat(64) }));
+  expect((await new DecisionWaitStore(f.root).list()).map(row => row.id)).toEqual([f.wait.id]);
+  await expect(f.service.register(f.record, f.wait.event)).rejects.toMatchObject({ code: "provider_owned_decision" });
 });

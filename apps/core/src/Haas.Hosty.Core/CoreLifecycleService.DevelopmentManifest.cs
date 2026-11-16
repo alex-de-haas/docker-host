@@ -21,13 +21,9 @@ internal sealed partial class CoreLifecycleService
         // The installed package is a comparison/authority baseline, never the
         // execution candidate. Its retired permissions must not block a valid
         // workspace that has already removed them.
-        var installed = await manifests.LoadAsync(app.ManifestPath!, runtime, ct, forceRead: true);
+        var installed = await LoadDevelopmentBaselineAsync(app, runtime, ct);
         await ValidateDevSourceAuthorityAsync(app, installed, actor, ct);
-        await new HostPathAuthority(paths, apps).OverrideAsync(app, sourcePath, ct);
-        var candidate = await manifests.LoadAsync(CombineManifestSubpath(sourcePath, app.SourceState?.ManifestSubpath),
-            runtime, ct, validateAllProfiles: true, forceRead: true);
-        if (!candidate.RuntimeProfile.Development || candidate.Services.Any(s => s.Runtime.Type is not ("docker" or "localCommand")))
-            throw DevError("profile_unsupported", "The selected workspace needs a supported source development recipe.");
+        var candidate = await LoadWorkspaceDevelopmentRecipeAsync(app, sourcePath, runtime, ct);
         var operation = await AppDevStore.ReadAsync(paths, app, ct);
         var grants = DevelopmentBaseGrants(app, operation);
         var roles = DevelopmentBaseRoles(app, operation);
@@ -59,6 +55,26 @@ internal sealed partial class CoreLifecycleService
             candidate.ManifestDigest, stamp, digest, actor.UserId, actor.Via, classification.AdditionalAccess,
             candidate.Manifest.CorePermissions.ToArray(), candidate.Manifest.OptionalCorePermissions.ToArray(), grants, roles);
         return new(candidate, sourcePath, stamp, classification, review, actor, effectiveGrants, effectiveRoles);
+    }
+
+    private async Task<RuntimeAppManifestSelection> LoadDevelopmentBaselineAsync(AppRecord app, string? runtime, CancellationToken ct)
+    {
+        var profiles = await manifests.ReadRuntimeProfilesAsync(app.ManifestPath!, ct);
+        var baseline = profiles.Any(profile => profile.Key == runtime) ? runtime : await PackageRuntimeAsync(app, ct);
+        return await manifests.LoadAsync(app.ManifestPath!, baseline, ct, forceRead: true);
+    }
+
+    private async Task<RuntimeAppManifestSelection> LoadWorkspaceDevelopmentRecipeAsync(AppRecord app, string sourcePath,
+        string? runtime, CancellationToken ct)
+    {
+        await new HostPathAuthority(paths, apps).OverrideAsync(app, sourcePath, ct);
+        var candidate = await manifests.LoadAsync(CombineManifestSubpath(sourcePath, app.SourceState?.ManifestSubpath),
+            runtime, ct, validateAllProfiles: true, forceRead: true);
+        if (candidate.Manifest.Id != app.Id)
+            throw DevError("manifest_identity_changed", "The workspace manifest must describe the installed application.");
+        if (!candidate.RuntimeProfile.Development || candidate.Services.Any(s => s.Runtime.Type is not ("docker" or "localCommand")))
+            throw DevError("profile_unsupported", "The selected workspace needs a supported source development recipe.");
+        return candidate;
     }
 
     private async Task<(AppDevelopmentConsent Consent, RuntimeAppManifestSelection Selection)?> ReadAdmittedExecutionConsentAsync(

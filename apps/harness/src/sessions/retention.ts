@@ -11,6 +11,7 @@ export interface RetentionStatus {
   observedAt: string;
 }
 export function retentionBusy(record: SessionRecord): boolean {
+  if (record.providerExecution?.runId && !record.providerExecution.run?.stopConfirmed) return true;
   return !!record.sourceAdmission || !!record.storageRecovery || !!record.messageQueue?.entries.length || !!record.decisionWaitIds?.length || !!record.associationRequests?.some(r => r.state === "pending") || ["running", "suggesting", "awaiting_approval", "awaiting_question"].includes(record.status)
     || record.workspaceActivation?.state === "queued" || record.workflowCompletion?.state === "queued" || !!record.handoffPending || !!record.handoffDraft
     || ["queued", "running", "unknown"].includes(record.handoffDispatch?.state ?? "")

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogBody, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { listAgentConnections } from "@/lib/assistant-api";
 import { listProfiles, profileSkills, saveProfile, deleteProfile, defaultProfile, type AgentProfileConfig, type AgentProfile, type ProfileDirectory, type ProfileSkill } from "@/lib/profiles-api";
-import type { AgentConnection } from "./agent-providers";
+import type { AgentConnection } from "@/lib/agent-connection";
 const empty = (): AgentProfileConfig => ({ name: "", description: "", instructions: "", connectionId: null, model: null, reasoningEffort: null, skillIds: [] });
 function config(p: AgentProfile): AgentProfileConfig {
   return { name: p.name, description: p.description, instructions: p.instructions, connectionId: p.connectionId, model: p.model, reasoningEffort: p.reasoningEffort, skillIds: [...p.skillIds] };

@@ -19,7 +19,8 @@ internal sealed partial class AgentSkillLibrary(CoreDataPaths paths, IAgentSkill
         var stored = await JsonStorage.ReadAsync<AgentSkillLibraryState>(StatePath, ct) ?? AgentSkillLibraryState.Empty;
         // The executable is authoritative for Core packages, including after an upgrade or rollback.
         // Keep legacy same-name user packages intact; only conflicting export selections are refused.
-        return stored with { Skills = stored.Skills.Where(s => s.Info.SourceKind != "core").Concat(CoreAgentSkills.Entries).ToArray() };
+        var state = stored with { Skills = stored.Skills.Where(s => s.Info.SourceKind != "core").Concat(CoreAgentSkills.Entries).ToArray() };
+        CacheAvailability(state); return state;
     }
 
     private static AgentSkillLibraryState Stored(AgentSkillLibraryState state) =>
@@ -282,7 +283,10 @@ internal sealed partial class AgentSkillLibrary(CoreDataPaths paths, IAgentSkill
             var state = await ReadAsync(ct) ?? AgentSkillLibraryState.Empty;
             var export = state.Exports.FirstOrDefault(e => e.Id == id && e.Owner == owner);
             if (export is null) return;
-            await JsonStorage.WriteAsync(StatePath, Stored(state) with { Exports = state.Exports.Where(e => e.Id != id).ToArray() }, restrictToOwner: true, ct);
+            InvalidateAvailability();
+            var next = state with { Exports = state.Exports.Where(e => e.Id != id).ToArray() };
+            await JsonStorage.WriteAsync(StatePath, Stored(next), restrictToOwner: true, ct);
+            CacheAvailability(next);
             if (Directory.Exists(ExportPath(export))) Directory.Delete(ExportPath(export), true);
         }
         finally { gate.Release(); }
@@ -330,6 +334,7 @@ internal sealed partial class AgentSkillLibrary(CoreDataPaths paths, IAgentSkill
         Func<Task>? commitApp = null, AgentSkillExport[]? exports = null)
     {
         ValidateState(state);
+        InvalidateAvailability();
         var prepared = new List<(AgentSkillExport Export, string Stage)>();
         var stateStage = Path.Combine(Root, "staging", Guid.NewGuid().ToString("N") + ".json");
         try
@@ -342,6 +347,7 @@ internal sealed partial class AgentSkillLibrary(CoreDataPaths paths, IAgentSkill
             // Once committed, finish publication even if the requesting client disconnects. The
             // current-state document is the recovery authority after a process or rename failure.
             File.Move(stateStage, StatePath, overwrite: true);
+            CacheAvailability(state);
             foreach (var item in prepared) PublishExport(state, item.Export, item.Stage);
         }
         finally

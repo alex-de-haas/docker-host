@@ -70,8 +70,7 @@
       "id": "hosty.harness",
       "manifest": "apps/harness/manifest.json",
       "profiles": [
-        "docker",
-        "local"
+        "docker"
       ],
       "sourceInputs": [
         "apps/harness",
@@ -79,10 +78,12 @@
         "shared/web",
         "package.json",
         "package-lock.json",
-        "Directory.Build.targets"
+        "scripts/npm-workspace.mjs"
       ],
-      "sourceReusable": false,
-      "sourceReuseConstraint": "Host-side setup includes machine toolchains or network dependencies; qualify a new full source revision for each changed release."
+      "sourceWorkspaces": [
+        "apps/harness",
+        "apps/harness/web"
+      ]
     },
     {
       "id": "hosty.telemetry",
@@ -128,7 +129,79 @@
         "Directory.Build.targets"
       ],
       "sourceReusable": false,
-      "sourceReuseConstraint": "Host-side setup includes machine toolchains or network dependencies; qualify a new full source revision for each changed release."
+      "sourceReuseConstraint": "Host-side setup includes machine toolchains or network dependencies; qualify a new full source revision for each changed release.",
+      "sourceWorkspaces": [
+        "apps/opus"
+      ]
+    },
+    {
+      "id": "hosty.codex-provider",
+      "manifest": "apps/codex-provider/manifest.json",
+      "profiles": [
+        "local"
+      ],
+      "sourceInputs": [
+        "apps/codex-provider",
+        "packages/agent-provider-runtime",
+        "packages/app-sdk",
+        "package.json",
+        "package-lock.json",
+        "scripts/npm-workspace.mjs",
+        "shared/web/hosty-theme.css",
+        "shared/web/fonts"
+      ],
+      "sourceReusable": false,
+      "sourceReuseConstraint": "Local setup installs native provider dependencies; qualify a new full source revision for each changed release.",
+      "sourceWorkspaces": [
+        "apps/codex-provider"
+      ],
+      "sourceIgnoreOptionalPeers": true
+    },
+    {
+      "id": "hosty.claude-code-provider",
+      "manifest": "apps/claude-code-provider/manifest.json",
+      "profiles": [
+        "local"
+      ],
+      "sourceInputs": [
+        "apps/claude-code-provider",
+        "packages/agent-provider-runtime",
+        "packages/app-sdk",
+        "package.json",
+        "package-lock.json",
+        "scripts/npm-workspace.mjs",
+        "shared/web/hosty-theme.css",
+        "shared/web/fonts"
+      ],
+      "sourceReusable": false,
+      "sourceReuseConstraint": "Local setup installs native provider dependencies; qualify a new full source revision for each changed release.",
+      "sourceWorkspaces": [
+        "apps/claude-code-provider"
+      ],
+      "sourceIgnoreOptionalPeers": true
+    },
+    {
+      "id": "hosty.ollama-provider",
+      "manifest": "apps/ollama-provider/manifest.json",
+      "profiles": [
+        "local"
+      ],
+      "sourceInputs": [
+        "apps/ollama-provider",
+        "packages/agent-provider-runtime",
+        "packages/app-sdk",
+        "package.json",
+        "package-lock.json",
+        "scripts/npm-workspace.mjs",
+        "shared/web/hosty-theme.css",
+        "shared/web/fonts"
+      ],
+      "sourceReusable": false,
+      "sourceReuseConstraint": "Local setup installs native provider dependencies; qualify a new full source revision for each changed release.",
+      "sourceWorkspaces": [
+        "apps/ollama-provider"
+      ],
+      "sourceIgnoreOptionalPeers": true
     }
   ],
   "images": [
@@ -280,34 +353,8 @@
       "dockerfile": "apps/harness/Dockerfile",
       "inputs": [
         "apps/harness",
-        "shared/web"
-      ],
-      "workspaces": [
-        "apps/harness",
-        "packages/app-sdk",
-        "apps/harness/web"
-      ],
-      "platforms": [
-        "linux/amd64",
-        "linux/arm64"
-      ],
-      "reusable": false,
-      "toolchain": {
-        "buildkit": "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
-        "contextFormat": "hosty-build-inputs.0.1"
-      },
-      "reuseConstraint": "Conservative rebuild until all operating-system/package inputs are pinned."
-    },
-    {
-      "id": "hosty-harness-worker",
-      "appId": "hosty.harness",
-      "services": [
-        "worker"
-      ],
-      "repository": "ghcr.io/alex-de-haas/hosty-harness-worker",
-      "dockerfile": "apps/harness/worker/Dockerfile",
-      "inputs": [
-        "apps/harness"
+        "shared/web",
+        "scripts/npm-workspace.mjs"
       ],
       "workspaces": [
         "apps/harness",

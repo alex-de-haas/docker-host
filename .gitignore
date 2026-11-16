@@ -93,3 +93,9 @@ apps/*/CLAUDE.md
 /native-cli/
 /native-core/
 /scripts/__pycache__/
+/apps/harness/test/__pycache__/
+
+# Independently built Local agent provider bundles
+/apps/codex-provider/dist/
+/apps/claude-code-provider/dist/
+/apps/ollama-provider/dist/

@@ -11,22 +11,28 @@ internal sealed class WorkspaceActivationAccess(UserDirectoryStore users, OAuthS
         if (!state.Users.Any(u => u.Id == actor.UserId && !u.Disabled && AppAccessPolicy.IsAdmin(u))) throw Denied();
         if (actor.AppId is { } appId)
         {
+            IReadOnlyList<string>? effective = null;
             if (actor.Mcp is { } origin)
             {
                 if (assistants is null || actor.Installation is null) throw Denied();
                 var current = await assistants.ValidateClaimsAsync(new(appId, AgentMcpDirectory.CoreId, actor.UserId,
                     origin.GrantHash, actor.Installation.Value, null, origin.GrantRevision, origin.Expires,
-                    origin.SessionId, origin.LeaseRevision), AgentMcpDirectory.CoreId, ct, retainedOperation: true);
+                    origin.SessionId, origin.LeaseRevision, AgentAdmissionRef: origin.AgentAdmissionRef,
+                    AgentTargetKey: origin.AgentTargetKey, AgentAllowedTools: origin.AgentAllowedTools), AgentMcpDirectory.CoreId, ct, retainedOperation: true);
                 if (current is null || current.DiscoveryOnly || current.DeniedTools?.Contains(origin.Tool) == true ||
                     current.AllowedTools is { } allowed && !allowed.Contains(origin.Tool) ||
-                    !McpEndpoints.HasAppToolPermission(current.Caller, origin.Tool)) throw Denied();
+                    (current.EffectivePermissions is { } selected
+                        ? CoreMcpCatalog.AppPermission(origin.Tool) is not { } permission || !selected.Contains(permission)
+                        : !McpEndpoints.HasAppToolPermission(current.Caller, origin.Tool))) throw Denied();
+                effective = current.EffectivePermissions;
             }
             else if (actor.AppIdentityHash is null || (await identity.RequireActivityHashAsync(actor.AppIdentityHash, appId, ct)).UserId != actor.UserId) throw Denied();
             var app = await apps.GetAppAsync(appId, ct);
+            bool Has(string permission) => effective is not null ? effective.Contains(permission)
+                : app is not null && AppManagementAuthorization.HasPermission(app, permission);
             if (app is null || app.InstalledAt != actor.Installation ||
-                sourceRequired && !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.Sources) ||
-                !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.AppLifecycle) ||
-                core && !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.WorkspaceCore)) throw Denied();
+                sourceRequired && !Has(CoreAppPermissions.Sources) || !Has(CoreAppPermissions.AppLifecycle) ||
+                core && !Has(CoreAppPermissions.WorkspaceCore)) throw Denied();
         }
         else if (actor.Principal is { } principal)
         {

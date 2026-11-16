@@ -3,7 +3,7 @@ import { globSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { prepareDocument, restoreDocument } from '../src/markdown.js';
-import { validateMarkdownTranslation } from '../../harness/src/translation/markdown.js';
+import { validateMarkdownTranslation } from './markdown-structure.js';
 
 const source = '---\nstatus: Draft\nsummary: Keep &amp; metadata.\n---\n\n# A &amp; B\n\n- [ ] D1. Keep **bold** and `code` with [a link](https://example.test/a?q=1#x).\n  Continue \\*literal\\* prose.\n- [x] D2. Done.\n\n> Quoted text\n> on a second line.\n\n| A | B |\n| :--- | ---: |\n| One | Two |\n\n```js\nconst x = "original";\n```\n\n![keep alt](cover.png)\n\n<!-- keep -->\n';
 
@@ -16,7 +16,7 @@ test('decoded entities, escapes and continuations preserve protected Markdown un
   for (const protectedText of ['status: Draft', '[ ] D1', '[x] D2', '`code`', 'https://example.test/a?q=1#x', 'const x = "original";', '![keep alt](cover.png)', '<!-- keep -->']) assert.ok(result.includes(protectedText), protectedText);
 });
 
-test('all repository plans survive prose replacement with the unchanged production validator', () => {
+test('all repository plans survive prose replacement with an independent structural oracle', () => {
   const root = resolve('../..');
   const files = globSync('docs/features/*/plan.md', { cwd: root });
   assert.ok(files.length > 20);

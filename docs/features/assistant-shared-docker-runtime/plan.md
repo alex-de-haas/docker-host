@@ -1,8 +1,8 @@
 ---
 status: In Progress
 created: 2026-10-20
-updated: 2026-10-27
-summary: Make worker an ordinary Harness service with a direct API, native Windows support and shared Core-owned worktrees, without workspace migration or cleanup restarts.
+updated: 2026-11-12
+summary: Track remaining worker-service acceptance and reconcile its retirement into independently installed local agent providers.
 components: [apps/core, apps/harness, apps/shell]
 ---
 
@@ -24,6 +24,27 @@ documentation update. [feature.md](feature.md) continues to describe the shipped
 Planning baseline: `ad9368ecbd6d48c6bfb03a8a8dea05e0eabedd4f`, Core 0.146.0 / Harness 0.62.0.
 Reconcile the implementation branch with the then-current code before making changes; these are
 baseline versions, not frozen release targets.
+
+## Local Provider Extraction Coordination (2026-11-12)
+
+The owner now selects independent local agent-provider applications while the remaining Harness
+stays in Docker. The [Agent Provider plan](../agent-provider-interface/plan.md) owns the public
+contract, Codex/Claude Code/Ollama app extraction, Docker-to-host connectivity, host-tool diagnostics
+and the accepted clean-slate cutover with fresh provider connections and no active legacy work. It supersedes the earlier embedded Docker-worker
+packaging target for the replacement architecture; this document's checked implementation records
+describe the earlier service implementation; [feature.md](feature.md) describes the replacement runtime boundary in this change.
+
+Do not mark D25 or D26 complete because the worker image is removed. D25 remains unchecked until
+acceptance is explicitly reconciled against the verified replacement and retained platform/provider
+coverage. D26 consumes the provider plan's verified result to update current reality and remove
+obsolete embedded-worker expectations. Do not duplicate that plan's extraction deliverables here
+or silently drop open acceptance. The owner declines legacy account/session/history migration;
+that retired scope is recorded in the provider plan. Existing Core workspaces and unrelated data
+remain intact. This reset is specific to the transition; subsequent provider updates retain new state.
+
+Retiring only the worker image does not retire the Harness API image, other applications' Docker
+profiles or Core's generic container/sandbox capability. No ordinary-runtime switch, provider
+installation or production-data migration is authorized by this predecessor plan.
 
 ## Resource Policy Scope Correction
 

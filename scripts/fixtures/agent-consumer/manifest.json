@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "example.independent-agent-consumer",
+  "name": "Independent agent acceptance consumer",
+  "description": "Disposable public-SDK consumer installed before Harness in integration checks.",
+  "version": "0.1.0",
+  "source": { "type": "git", "repository": "https://github.com/alex-de-haas/docker-host.git", "branch": "main", "paths": ["scripts/fixtures/agent-consumer"] },
+  "runtimeProfiles": [{ "key": "local", "type": "localCommand", "default": true }],
+  "defaultRuntime": "local",
+  "services": [{ "key": "api", "runtimes": { "local": {
+    "type": "localCommand", "workingDirectory": ".", "command": "node scripts/fixtures/agent-consumer/main.mjs",
+    "ports": [{ "key": "http", "containerPort": 3528, "protocol": "http", "public": true }],
+    "healthcheck": { "type": "http", "port": 3528, "path": "/healthz", "timeoutSeconds": 5 }
+  } } }],
+  "endpoints": [{ "key": "http", "service": "api", "port": "http", "protocol": "http", "public": true }],
+  "ui": { "entrypoint": { "endpoint": "http", "path": "/" } },
+  "corePermissions": ["providers.agent"]
+}

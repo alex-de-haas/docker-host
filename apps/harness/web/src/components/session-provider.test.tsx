@@ -7,6 +7,8 @@ import type { AssistantSession } from "../lib/assistant-api";
 import { APP_SESSION_RESTORED } from "@hosty-sdk/app/browser-auth";
 const api = vi.hoisted(() => ({ listAgentConnections: vi.fn(), setSessionProvider: vi.fn() }));
 vi.mock("@/lib/assistant-api", () => api);
+const memory = vi.hoisted(() => ({ rememberManualProvider: vi.fn() }));
+vi.mock("@/lib/browser-agent-preferences", () => memory);
 const providers = [
   { id: "first", name: "Codex", kind: "codex", available: true, revision: 1 },
   { id: "second", name: "Claude", kind: "claude", available: true, revision: 1 },
@@ -38,11 +40,13 @@ it("applies dropdown changes immediately without a Select button", async () => {
   await render(); await select("second");
   expect(api.setSessionProvider).toHaveBeenCalledWith("chat", "second", false);
   expect(change).toHaveBeenCalledWith(expect.objectContaining({ connectionId: "second" }));
+  expect(memory.rememberManualProvider).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ connectionId: "second" }));
   expect([...container.querySelectorAll("button")].some(button => button.textContent === "Select")).toBe(false);
 });
 it("adopts the default for an unbound empty chat", async () => {
   await render(chat({ connectionId: undefined }));
   expect(api.setSessionProvider).toHaveBeenCalledExactlyOnceWith("chat", "first", false);
+  expect(memory.rememberManualProvider).not.toHaveBeenCalled();
 });
 it("does not substitute another account when the default is unavailable", async () => {
   api.listAgentConnections.mockResolvedValue({ connections: [{ ...providers[0], available: false }, providers[1]], defaultId: "first" });
@@ -61,6 +65,7 @@ it("restores the confirmed selection and exposes a failed save", async () => {
   expect(trigger().textContent).toContain("Codex");
   expect(container.querySelector('[role="alert"]')?.textContent).toBe("Could not save");
   expect(change).not.toHaveBeenCalled();
+  expect(memory.rememberManualProvider).not.toHaveBeenCalled();
   expect(saving.mock.calls.map(args => args[0])).toEqual([true, false]);
 });
 it("disables selection and reports pending persistence to the composer", async () => {
@@ -69,26 +74,17 @@ it("disables selection and reports pending persistence to the composer", async (
   await render(); await select("second");
   expect(trigger().disabled).toBe(true);
   expect(saving).toHaveBeenLastCalledWith(true);
+  expect(memory.rememberManualProvider).not.toHaveBeenCalled();
   await act(async () => resolve(chat({ connectionId: "second" })));
   expect(saving).toHaveBeenLastCalledWith(false);
+  expect(memory.rememberManualProvider).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ connectionId: "second" }));
 });
-it("requires explicit account confirmation for an older unbound chat", async () => {
+it("refuses to attach a provider to legacy conversation history", async () => {
   await render(chat({ connectionId: undefined, providerLocked: true }));
-  await select("second");
+  expect(trigger().disabled).toBe(true);
+  expect(container.textContent).toContain("Legacy conversations cannot be resumed.");
+  expect(container.querySelector('[role="checkbox"]')).toBeNull();
   expect(api.setSessionProvider).not.toHaveBeenCalled();
-  expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Confirm original provider")?.disabled).toBe(true);
-  const confirmation = container.querySelector<HTMLButtonElement>('[role="checkbox"]')!;
-  const label = container.querySelector<HTMLLabelElement>(`label[for="${confirmation.id}"]`)!;
-  expect(label.textContent).toContain("This older chat used the selected provider and account.");
-  await act(async () => label.click());
-  expect(confirmation.getAttribute("aria-checked")).toBe("true");
-  await select("first");
-  expect(confirmation.getAttribute("aria-checked")).toBe("false");
-  expect([...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Confirm original provider")?.disabled).toBe(true);
-  await select("second");
-  await act(async () => label.click());
-  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Confirm original provider")!.click());
-  expect(api.setSessionProvider).toHaveBeenCalledWith("chat", "second", true);
 });
 
 it("rebinds the selected provider when credentials advance before the first message", async () => {
@@ -118,7 +114,7 @@ it.each(["focus", APP_SESSION_RESTORED])("clears a stale provider read error aft
 it("offers explicit provider-read Retry instead of claiming a failed roster is empty", async () => {
   api.listAgentConnections.mockRejectedValueOnce(new TypeError("Failed to fetch")); await render();
   await act(async () => trigger().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
-  expect(document.body.textContent).not.toContain("Add a provider in Hosty Harness settings.");
+  expect(document.body.textContent).not.toContain("Install and configure a provider application in Shell Settings.");
   expect(retryRead()).toBeDefined();
   await act(async () => retryRead()!.click());
   expect(api.listAgentConnections).toHaveBeenCalledTimes(2); expect(container.querySelector('[role="alert"]')).toBeNull();
@@ -130,6 +126,7 @@ it.each(["focus", APP_SESSION_RESTORED])("does not auto-save a newly available d
   expect(api.setSessionProvider).not.toHaveBeenCalled();
   await refresh(event); expect(api.listAgentConnections).toHaveBeenCalledTimes(2);
   expect(api.setSessionProvider).not.toHaveBeenCalled(); expect(change).not.toHaveBeenCalled(); expect(saving).not.toHaveBeenCalled();
+  expect(memory.rememberManualProvider).not.toHaveBeenCalled();
   expect(trigger().textContent).toContain("Choose provider");
 });
 

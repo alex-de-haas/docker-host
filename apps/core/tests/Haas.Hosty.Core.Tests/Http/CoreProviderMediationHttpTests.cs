@@ -490,6 +490,139 @@ public sealed class CoreProviderMediationHttpTests
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync(route, new CoreTaskMcpRequest(binding, target.Id))).StatusCode);
     }
 
+    [Fact]
+    public async Task AgentTaskChainReusesOriginalPrincipalAndRevokesOnTaskCancellation()
+    {
+        using var transport = new ProviderTransport(); await using var host = await Start(transport);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var source = (await AddProvider(host, "unrelated.tasks", "tasks", [])) with { GrantedCorePermissions = [CoreAppPermissions.TaskExecutors] };
+        var consumer = (await AddProvider(host, "unrelated.executor", "task-executor", ["session-workflow"])) with { GrantedCorePermissions = [CoreAppPermissions.AgentProviders, CoreAppPermissions.ReadSkills, CoreAppPermissions.TaskExecutors] };
+        await apps.UpsertAppAsync(source); await apps.UpsertAppAsync(consumer);
+        var native = await AddProvider(host, "thirdparty.native", "agent", []);
+        var executorRef = new HostyTaskProviderRef(consumer.Id, PanelIdentity.Installation(consumer), "custom");
+        transport.Provider = source; transport.Executor = consumer; transport.Services = host.Services; transport.ActionOperation = "execute";
+        var task = Task(new(source.Id, PanelIdentity.Installation(source), "custom")) with { Assignee = new("app", Executor: executorRef) };
+        transport.Reply = JsonSerializer.SerializeToElement(task, JsonSerializerOptions.Web);
+        using var client = host.CreateClient();
+        var token = await Issue(host, [AccessTokenScopes.McpRead, AccessTokenScopes.McpTasksRead, AccessTokenScopes.McpTasksWrite, AccessTokenScopes.McpTasksExecute]);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", token);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/tasks/v1/action", new CoreTaskAction(task.Ref, new(Guid.NewGuid().ToString(), 1, "ready")))).StatusCode);
+        var dispatch = transport.Invocation!.TaskDispatch!; var executionId = Guid.NewGuid().ToString();
+        var input = new HostyTaskExecutionInput(1, task.Ref, 1, new(task.Title, task.Markdown, [], new("none")), new(task.RootTaskRef, null, 1), []);
+        task = task with { Status = "InProgress", Coordination = new(1, 1, executionId), Attempts = [new(executionId, executorRef, input, false, "now")] };
+        transport.Reply = JsonSerializer.SerializeToElement(task, JsonSerializerOptions.Web);
+        await host.Services.GetRequiredService<CoreProviderMediation>().DispatchTaskAsync(source, new(dispatch, executorRef, "accept", executionId, input), default);
+        var agent = host.Services.GetRequiredService<CoreAgentExecution>(); var sessionId = Guid.NewGuid().ToString(); var runId = Guid.NewGuid().ToString();
+        var request = new CoreAgentAuthorizeRequest(new(native.Id, PanelIdentity.Installation(native), "custom"), "runs.start", "PUT",
+            $"/sessions/{sessionId}/runs/{runId}", new string('a', 64), SessionId: sessionId, RunId: runId, Authority: new("task", dispatch, executionId),
+            Ceiling: JsonSerializer.SerializeToElement(new {
+                workflow = new { executor = executorRef, sessionId = Guid.NewGuid().ToString(), tools = new[] { "task_result", "task_execution_get", "task_fail" },
+                    policy = new { @default = "ask", tools = new { task_fail = new { mode = "disabled" } } } },
+                mcp = new { targets = new[] { new { target = new { kind = "core" }, tools = new[] { "task_result" } } } }
+            }, JsonSerializerOptions.Web));
+        var grant = await agent.Authorize(consumer, "", request, default);
+        var admitted = await agent.Admit(native, grant.AdmissionRef, default);
+        Assert.Equal(dispatch.UserId, admitted.UserId); Assert.Equal(dispatch.PrincipalId, admitted.PrincipalId);
+        Assert.Equal(consumer.Id, admitted.CallerAppId);
+        // A task business command uses exact retained dispatch authority with no Core MCP grant.
+        using var nativeClient = host.CreateClient();
+        nativeClient.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(native.Id));
+        var workflowRoute = $"/api/internal/apps/{native.Id}/agent/workflow";
+        var command = new CoreAgentWorkflowRequest(grant.AdmissionRef, "task-result", JsonSerializer.SerializeToElement(new { requestId = Guid.NewGuid().ToString(), completed = true,
+            result = new { markdown = "Verified task evidence", resources = Array.Empty<object>() } }), new(source.Id, PanelIdentity.Installation(source), "custom"));
+        Assert.Equal(HttpStatusCode.OK, (await nativeClient.PostAsJsonAsync(workflowRoute, command)).StatusCode);
+        using var otherProvider = host.CreateClient();
+        otherProvider.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(consumer.Id));
+        Assert.Equal(HttpStatusCode.Forbidden, (await otherProvider.PostAsJsonAsync($"/api/internal/apps/{consumer.Id}/agent/workflow", command)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await otherProvider.PostAsJsonAsync(workflowRoute, command)).StatusCode);
+        Assert.Equal(dispatch.PrincipalId, transport.Invocation!.PrincipalId);
+        Assert.Equal(native.Id, transport.Invocation.AgentExecution!.Provider.AppId);
+        Assert.Equal(consumer.Id, transport.Invocation.CallerAppId);
+        Assert.Equal("mcp_origin_unsupported", (await Assert.ThrowsAsync<CoreProviderException>(() => agent.McpToken(native, new(grant.AdmissionRef, new("core")), default))).Error.Code);
+        var workflowCalls = transport.Operations.Count(o => o == "session.workflow");
+        Assert.Equal(HttpStatusCode.BadRequest, (await nativeClient.PostAsJsonAsync(workflowRoute, command with { Action = "get-host-status" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await nativeClient.PostAsJsonAsync(workflowRoute, command with { Action = "task-fail" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await nativeClient.PostAsJsonAsync(workflowRoute, command with { Action = "task-plan" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await nativeClient.PostAsJsonAsync(workflowRoute, command with { Source = command.Source! with { Key = "other-source" } })).StatusCode);
+        transport.Reply = JsonSerializer.SerializeToElement(task with { Owner = task.Owner with { UserId = "different-owner" } }, JsonSerializerOptions.Web);
+        Assert.Equal(HttpStatusCode.Forbidden, (await nativeClient.PostAsJsonAsync(workflowRoute, command)).StatusCode);
+        transport.Reply = JsonSerializer.SerializeToElement(task with { Attempts = [task.Attempts[0] with { ExecutionId = Guid.NewGuid().ToString() }] }, JsonSerializerOptions.Web);
+        Assert.Equal(HttpStatusCode.Forbidden, (await nativeClient.PostAsJsonAsync(workflowRoute, command)).StatusCode);
+        Assert.Equal(workflowCalls, transport.Operations.Count(o => o == "session.workflow"));
+        transport.Reply = JsonSerializer.SerializeToElement(task, JsonSerializerOptions.Web);
+        // The original direct task credential has tasks scopes, not a nonexistent skills scope.
+        var pinned = await agent.Skills(native, new(grant.AdmissionRef, Guid.NewGuid().ToString(), [new(CoreAgentSkills.PlatformId)]), default);
+        Assert.Single(pinned.Skills);
+        await apps.UpsertAppAsync(consumer with { GrantedCorePermissions = [CoreAppPermissions.AgentProviders, CoreAppPermissions.TaskExecutors] });
+        var missingSkills = await Assert.ThrowsAsync<AppIdentityException>(() => agent.Skills(native, new(grant.AdmissionRef, Guid.NewGuid().ToString(), [new(CoreAgentSkills.PlatformId)]), default));
+        Assert.Contains("skill library", missingSkills.Message);
+        await apps.UpsertAppAsync(consumer);
+        await Assert.ThrowsAsync<AppIdentityException>(() => agent.Authorize(consumer, "", request with { Authority = request.Authority! with { ExecutionId = Guid.NewGuid().ToString() } }, default));
+        var cancelled = task with { CancelRequested = true, Attempts = [task.Attempts[0] with { CancelRequested = true }] };
+        transport.Reply = JsonSerializer.SerializeToElement(cancelled, JsonSerializerOptions.Web);
+        await Assert.ThrowsAsync<AppIdentityException>(() => agent.Renew(native, grant.AdmissionRef, default));
+        // Source/executor dispatch authority must remain usable for Stop after cancellation.
+        var mediator = host.Services.GetRequiredService<CoreProviderMediation>();
+        await mediator.TaskDispatchAuthorityAsync(consumer, dispatch, default);
+        var taskCancel = new CoreTaskDispatchRequest(dispatch, executorRef, "cancel", executionId, RequestId: Guid.NewGuid().ToString());
+        await mediator.DispatchTaskAsync(source, taskCancel, default);
+        Assert.Equal("dispatch.cancel", transport.Invocation!.Operation);
+        using var consumerClient = host.CreateClient();
+        consumerClient.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(consumer.Id));
+        var authorizeRoute = $"/api/internal/apps/{consumer.Id}/agent/authorize";
+        var pendingRun = Guid.NewGuid().ToString(); // No native admission is needed to fence these exact retained start bytes.
+        var cancelBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { requestId = Guid.NewGuid().ToString(),
+            fenceIfNotAdmitted = new { sessionId, startDigest = request.BodyHash } }));
+        var stop = request with { Operation = "runs.cancel", Method = "POST", Path = $"/runs/{pendingRun}/cancel", RunId = pendingRun,
+            BodyHash = CoreProviderMediation.Hash(cancelBytes), Ceiling = null };
+        CoreAgentBinding? lastStop = null;
+        foreach (var current in new[] { cancelled, cancelled with { Status = "Cancelled", Attempts = [cancelled.Attempts[0] with {
+            Receipt = new(executionId, 2, "cancelled", true, "now", "now") }] } })
+        {
+            transport.Reply = JsonSerializer.SerializeToElement(current, JsonSerializerOptions.Web);
+            foreach (var operation in new[] { stop,
+                stop with { Operation = "runs.read", Method = "GET", Path = $"/runs/{pendingRun}", SessionId = null, BodyHash = CoreProviderMediation.Hash([]) },
+                stop with { Operation = "runs.events", Method = "GET", Path = $"/runs/{pendingRun}/events", SessionId = null, BodyHash = CoreProviderMediation.Hash([]) },
+                stop with { Operation = "runs.controls.read", Method = "GET", Path = $"/runs/{pendingRun}/controls/" + Guid.NewGuid(), SessionId = null, BodyHash = CoreProviderMediation.Hash([]) } })
+            {
+                using var authorized = await consumerClient.PostAsJsonAsync(authorizeRoute, operation);
+                Assert.Equal(HttpStatusCode.OK, authorized.StatusCode);
+                var binding = (await authorized.Content.ReadFromJsonAsync<JsonElement>()).Deserialize(CoreJson.TypeInfo<CoreAgentBinding>())!;
+                var checkedActor = await agent.Introspect(native, new(binding.Token, operation.Operation, operation.Method, operation.Path, operation.BodyHash), default);
+                Assert.Equal(dispatch.PrincipalId, checkedActor.PrincipalId); Assert.Equal(consumer.Id, checkedActor.CallerAppId);
+                Assert.Equal(pendingRun, checkedActor.RunId);
+                if (operation.Operation == "runs.cancel")
+                {
+                    lastStop = binding;
+                    await Assert.ThrowsAsync<CoreProviderException>(() => agent.Admit(native, binding.AdmissionRef, default));
+                    await Assert.ThrowsAsync<AppIdentityException>(() => agent.McpToken(native, new(binding.AdmissionRef, new("core")), default));
+                    await Assert.ThrowsAsync<CoreProviderException>(() => agent.Skills(native, new(binding.AdmissionRef, Guid.NewGuid().ToString(), []), default));
+                }
+            }
+            foreach (var denied in new[] { request,
+                stop with { Operation = "runs.respond", Path = $"/runs/{pendingRun}/responses" },
+                stop with { Operation = "runs.control", Path = $"/runs/{pendingRun}/controls" },
+                stop with { Operation = "sessions.create", Method = "PUT", Path = "/sessions/" + sessionId, RunId = null } })
+                Assert.Equal(HttpStatusCode.Forbidden, (await consumerClient.PostAsJsonAsync(authorizeRoute, denied)).StatusCode);
+            await Assert.ThrowsAsync<AppIdentityException>(() => agent.Admit(native, grant.AdmissionRef, default));
+        }
+        // Stop is not a replacement grant: all actor, installation, latest-attempt and root fences remain live.
+        foreach (var stale in new[] {
+            task with { Owner = task.Owner with { UserId = "another-user" } },
+            task with { Attempts = [task.Attempts[0] with { ExecutionId = Guid.NewGuid().ToString() }] },
+            task with { Attempts = [task.Attempts[0] with { Invalidated = true }] },
+            task with { Attempts = [task.Attempts[0] with { Executor = executorRef with { InstallationId = "replaced" } }] },
+            task with { Coordination = task.Coordination! with { RootGeneration = 2 } } })
+        {
+            transport.Reply = JsonSerializer.SerializeToElement(stale, JsonSerializerOptions.Web);
+            Assert.Equal(HttpStatusCode.Forbidden, (await consumerClient.PostAsJsonAsync(authorizeRoute, stop)).StatusCode);
+            await Assert.ThrowsAsync<AppIdentityException>(() => agent.Introspect(native,
+                new(lastStop!.Token, stop.Operation, stop.Method, stop.Path, stop.BodyHash), default));
+        }
+        transport.Reply = JsonSerializer.SerializeToElement(cancelled, JsonSerializerOptions.Web);
+        await Assert.ThrowsAsync<AppIdentityException>(() => agent.Authorize(consumer with { InstalledAt = consumer.InstalledAt.AddSeconds(1) }, "", stop, default));
+    }
+
     private static HostyTaskRecord Task(HostyTaskProviderRef provider)
     {
         var reference = new HostyTaskRef(provider.AppId, provider.InstallationId, provider.Key, Guid.NewGuid().ToString());
@@ -542,8 +675,9 @@ public sealed class CoreProviderMediationHttpTests
             var body = request.Content is null ? [] : await request.Content.ReadAsByteArrayAsync(ct);
             var operation = route == "/capabilities" ? "options" : route.StartsWith("/tasks?", StringComparison.Ordinal) ? "list"
                 : route == "/tasks" ? "create" : route.EndsWith("/actions", StringComparison.Ordinal) ? ActionOperation : request.Method.Method == "PATCH" ? "edit" : "get";
-            var child = route.StartsWith("/executions/", StringComparison.Ordinal) || route == "/options";
-            if (child) operation = route == "/options" ? PublicOptions ? "options" : "dispatch.options" : route.EndsWith("/cancel", StringComparison.Ordinal) ? "dispatch.cancel" : request.Method.Method == "PUT" ? "dispatch.accept" : "dispatch.get";
+            var workflow = route.StartsWith("/sessions/", StringComparison.Ordinal) && route.EndsWith("/workflow", StringComparison.Ordinal);
+            var child = workflow || route.StartsWith("/executions/", StringComparison.Ordinal) || route == "/options";
+            if (child) operation = workflow ? "session.workflow" : route == "/options" ? PublicOptions ? "options" : "dispatch.options" : route.EndsWith("/cancel", StringComparison.Ordinal) ? "dispatch.cancel" : request.Method.Method == "PUT" ? "dispatch.accept" : "dispatch.get";
             Invocation = await Services.GetRequiredService<CoreProviderMediation>().IntrospectAsync(child ? Executor! : Provider,
                 new(request.Headers.Authorization!.Parameter!, child ? "task-executor" : "tasks", "custom", operation, request.Method.Method, route, CoreProviderMediation.Hash(body)), ct);
             Operations.Add(operation);
@@ -553,6 +687,7 @@ public sealed class CoreProviderMediationHttpTests
                 if (route.EndsWith("/actions", StringComparison.Ordinal)) LastAction = doc.RootElement.Clone();
                 if (doc.RootElement.TryGetProperty("requestId", out var id)) { Assert.True(Guid.TryParseExact(id.GetString(), "D", out _)); RequestIds.Add(id.GetString()!); }
             }
+            if (workflow) return new(HttpStatusCode.OK) { Content = JsonContent.Create(new { recorded = true }) };
             if (route == "/options") return new(HttpStatusCode.OK) { Content = JsonContent.Create(new HostyTaskExecutorOptions(1, 2, [new("opaque-default", 7, "Independent executor", "Opaque option", ["markdown"], new("available"))], "opaque-default")) };
             return new(HttpStatusCode.OK) { Content = child
                 ? JsonContent.Create(new HostyTaskExecutionReceipt(route.Split('/')[2], 1, "accepted", false, "now", "now"))

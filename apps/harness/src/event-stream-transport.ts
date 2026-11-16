@@ -2,7 +2,7 @@ import { pullRequestEvents } from "./pull-requests-proxy.js";
 import type { TaskService } from "./tasks/service.js";
 import type { ConnectionService } from "./connections/service.js";
 import { UsageSubscriptions } from "./connections/usage-subscriptions.js";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
@@ -10,6 +10,9 @@ import { validateDelegatedToken } from "@hosty-sdk/app/delegated";
 import type { AdminActor } from "./auth.js";
 import { readAppCredential, resolveAppSession } from "./app-session.js";
 import { AppContextError } from "./sessions/app-context.js";
+import { AgentApiError } from "@hosty-sdk/app/agent";
+import { ConnectionError } from "./connections/errors.js";
+import { withAgentAuthority } from "./agent-providers/context.js";
 import type { SessionManager } from "./sessions/manager.js";
 import type { StoredEvent } from "./sessions/store.js";
 
@@ -21,6 +24,7 @@ const QUEUE_LIMIT = 1_048_576;
 type Target = { kind: "usage"; connectionId: string } | { kind: "session"; sessionId: string; after: number } | { kind: "decisions" } | { kind: "tasks" } | { kind: "workspaces" } | { kind: "pullRequests"; subscriptionId: string };
 type Ticket = { actor: AdminActor; credential: string; origin: string; target: Target; expires: number; deadline: number };
 const failure = (status: number, code: string, message: string): never => { throw new AppContextError(status, code, message); };
+const upgradeStatus = (error: unknown) => error instanceof AppContextError || error instanceof AgentApiError || error instanceof ConnectionError ? error.status : 503;
 
 /** One-use, actor-bound admission; cookies on a WebSocket upgrade never establish authority. */
 export class EventStreamTransport {
@@ -97,7 +101,7 @@ export class EventStreamTransport {
       : request.headers.authorization?.toLowerCase().startsWith("bearer ") ? request.headers.authorization.slice(7).trim() : null;
     if (!credential) failure(401, "unauthorized", "An event stream credential is required.");
     const deadline = await this.validate(actor, credential!, AbortSignal.timeout(5_000));
-    await this.admitted(target, actor);
+    await withAgentAuthority(async () => credential!, () => this.admitted(target, actor));
     if (this.closed) failure(503, "event_stream_unavailable", "Event streams are shutting down.");
     if (deadline <= this.now()) failure(401, "reauth_required", "Renew Hosty access before opening event streams.");
     this.prune();
@@ -113,7 +117,7 @@ export class EventStreamTransport {
       // Upgraded sockets no longer have HTTP's error handler, including during early refusals.
       const failed = () => socket.destroy();
       socket.on("error", failed); socket.once("close", () => socket.off("error", failed));
-      void this.upgrade(request, socket, head).catch(error => this.reject(socket, error instanceof AppContextError ? error.status : 503));
+      void this.upgrade(request, socket, head).catch(error => this.reject(socket, upgradeStatus(error)));
     });
   }
   private reject(socket: Duplex, status: number) {
@@ -134,15 +138,19 @@ export class EventStreamTransport {
     const timeout = setTimeout(() => { abort.abort(); socket.destroy(); }, 5_000);
     try {
       const deadline = await this.validate(ticket.actor, ticket.credential, abort.signal);
-      await this.admitted(ticket.target, ticket.actor);
-      if (abort.signal.aborted || this.closed || socket.destroyed || ticket.expires <= this.now() || Math.min(ticket.deadline, deadline) <= this.now()) {
-        this.reject(socket, 401); return;
-      }
-      this.websocket.handleUpgrade(request, socket, head, connection => {
-        this.sockets.add(connection);
-        void this.stream(connection, ticket, Math.min(ticket.deadline, deadline));
+      // Upgrade events have no HTTP request scope. Keep the already revalidated one-use
+      // ticket's actor for provider admission and every asynchronous metadata sample.
+      await withAgentAuthority(async () => ticket.credential, async () => {
+        await this.admitted(ticket.target, ticket.actor);
+        if (abort.signal.aborted || this.closed || socket.destroyed || ticket.expires <= this.now() || Math.min(ticket.deadline, deadline) <= this.now()) {
+          this.reject(socket, 401); return;
+        }
+        this.websocket.handleUpgrade(request, socket, head, connection => {
+          this.sockets.add(connection);
+          void this.stream(connection, ticket, Math.min(ticket.deadline, deadline));
+        });
       });
-    } catch (error) { if (!socket.destroyed) this.reject(socket, error instanceof AppContextError ? error.status : 503); }
+    } catch (error) { if (!socket.destroyed) this.reject(socket, upgradeStatus(error)); }
     finally {
       clearTimeout(timeout); this.pending.delete(socket); socket.off("close", cancel); socket.off("end", cancel); socket.off("error", cancel);
     }
@@ -178,7 +186,14 @@ export class EventStreamTransport {
     expiry = setTimeout(() => finish(), Math.max(0, deadline - this.now()));
     try {
       if (ticket.target.kind === "usage") {
-        unsubscribe = this.usageStreams!.subscribe(ticket.target.connectionId, usage => { void send(`data: ${JSON.stringify(usage)}\n\n`); });
+        const scope = createHash("sha256").update(JSON.stringify([ticket.actor.userId, ticket.credential])).digest("hex");
+        const id = ticket.target.connectionId;
+        unsubscribe = this.usageStreams!.subscribe(id, usage => { void send(`data: ${JSON.stringify(usage)}\n\n`); }, scope,
+          () => withAgentAuthority(async () => ticket.credential, async () => {
+            if (this.now() >= ticket.deadline) failure(401, "reauth_required", "Renew Hosty access before reading provider usage.");
+            await this.validate(ticket.actor, ticket.credential, AbortSignal.timeout(5_000));
+            return this.connections!.usage(id, false);
+          }));
       } else if (ticket.target.kind === "tasks") {
         const release = await this.tasks!.subscribeEvents(async () => { await this.validate(ticket.actor, ticket.credential, abort.signal); },
           frame => { void send(frame); }, () => finish());

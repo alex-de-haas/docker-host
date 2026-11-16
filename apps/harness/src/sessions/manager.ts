@@ -1,12 +1,11 @@
 import { taskReferenceKey } from "@hosty-sdk/app/tasks";
-import { TASK_ORCHESTRATION_GUIDE } from "../tasks/tools.js";
+import { TASK_ORCHESTRATION_GUIDE, taskActions } from "../tasks/tools.js";
 import { decisionSnapshot, continuationInput, type DecisionWait } from "../decisions/waits.js";
 import type { DecisionsService } from "../decisions/service.js";
 import { ProviderClient as CoreProviderClient } from "@hosty-sdk/app/providers/server";
 import { canonicalAlias } from "../mcp/core-aliases.js";
 import { coreAliases } from "../mcp/core-migration.js";
 import { AgentObservations } from "../agent-sessions/observations.js";
-import { ollamaAttachments } from "../harness/ollama/attachments.js";
 import { suggestionText } from "../harness/prompt-suggestion.js";
 import { SuggestionPreferences } from "./suggestion-preferences.js";
 import { SuggestionHistory, legacyCompatibleSuggestion } from "./suggestion-history.js";
@@ -14,28 +13,25 @@ import { MessageQueue, type QueueAttempt, type QueueSnapshot } from "./message-q
 import type { Readable } from "node:stream";
 import { profileConfig, type ProfileStore } from "../profiles/store.js";
 import type { AgentProfileConfig } from "../profiles/types.js";
-import { prepareSkills, skillRequest, validSkillIds } from "../skills.js";
+import { prepareSkills, platformSkillContext, skillRequest, validSkillIds } from "../skills.js";
 import { resolveAppSession } from "../app-session.js";
 import { contextActions, contextEvent, contextMetadataNotice, searchContext, validateContextInput, type ContextAction, type ContextReceipt } from "./app-context-tools.js";
 import { harnessEnvironmentActions } from "./environment-tools.js";
-import { projectWorktreePaths } from "../worker/resources.js";
 import { transcriptFileEdits } from "./transcript-edits.js";
 import type { ConnectionService } from "../connections/service.js";
 import { hasWorkspaceHistory, hasResourceHistory, reconcileRetentionSnapshot, retentionBusy, retentionStatus, type RetentionStatus } from "./retention.js";
 import type { RetentionSnapshot } from "./development.js";
 import { DEFAULT_WORKFLOW_PROMPT } from "../settings/workflow.js";
 import { WorkerError } from "../runtime/errors.js";
-import { WorkerApiError, type WorkerReceipt, type WorkerRecovery } from "../worker/contracts.js";
-import type { WorkerClient } from "../worker/client.js";
 import { McpToolPolicy } from "../mcp/policy.js";
 import { type CoreEnvironmentAction, type CoreEnvironment } from "@hosty-sdk/app/sandbox/server";
 import { DevelopmentClient, DevelopmentMcp, developmentTools, workspaceInstructions, type DevelopmentAction, type DevelopmentWorkspace } from "./development.js";
 import { ConnectionError } from "../connections/errors.js";
-import type { AgentConnections, ConnectionBinding } from "../connections/registry.js";
+import type { ConnectionBinding } from "../connections/types.js";
 import { AppContextError, parseAppIds, validateSelection, captureContext, withAppContext } from "./app-context.js";
 import { mkdir, stat } from "node:fs/promises";
 import { isWaitingStatus, WaitingNotifier } from "../notifications.js";
-import { HOST_SYSTEM_PROMPT, DOCKER_SYSTEM_PROMPT } from "./host-prompt.js";
+import { HOST_SYSTEM_PROMPT, DOCKER_SYSTEM_PROMPT, PROVIDER_SYSTEM_PROMPT } from "./host-prompt.js";
 import { createHash, randomUUID } from "node:crypto";
 import { deriveTitleFromMessage, normalizeTitle } from "./title.js";
 import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapter.js";
@@ -49,6 +45,17 @@ import type { SettingsStore } from "../settings/store.js";
 import { CORE_PROVIDER_ID, type McpProvider, type ProviderDirectory } from "../settings/providers.js";
 import { TokenExchange, toMcpServerConfig, serverName, TOKEN_REFRESH_MARGIN_MS } from "../mcp/exchange.js";
 import { readOnlyToolNames } from "../mcp/readonly.js";
+import { AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentAttachment, type AgentMcpSelection, type AgentPendingDecision, type AgentRunSnapshot, type AgentRunControlInput, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest, type AgentWatchItem } from "@hosty-sdk/app/agent";
+import type { MediatedProviderInvocation } from "@hosty-sdk/app/providers";
+import { CoreAgentBackend } from "../agent-providers/core.js";
+import { agentSelectionId } from "../agent-providers/directory.js";
+import type { AgentConnectionSelection } from "../agent-providers/types.js";
+import { withAgentAuthority } from "../agent-providers/context.js";
+import { ProviderHarnessRun, type ProviderRunContext } from "../agent-providers/run.js";
+import { providerDecisionCard, providerDecisionCardId, type QuestionAnswers } from "../agent-providers/decision-identity.js";
+import { createAgentRunProjection, reduceAgentRunProjection, type AgentRunProjection } from "../agent-providers/projection.js";
+import { ProviderExecution, type ProviderExecutionState } from "../agent-providers/execution.js";
+import { readFile } from "node:fs/promises";
 import type { McpProxy, MintedToken } from "../mcp/proxy.js";
 
 /**
@@ -66,17 +73,20 @@ function isWorktreeBinding(value: unknown): value is DevelopmentWorkspace {
 }
 
 /** Browser hints are optional defaults, never an instruction to replace a profile or saved chat. */
-function browserSessionDefaults(input: unknown, ownerId: string): { autonomy?: "normal" | "autonomous"; models?: Record<string, unknown> } {
+function browserSessionDefaults(input: unknown, ownerId: string): { connectionId?: string; autonomy?: "normal" | "autonomous"; models?: Record<string, unknown> } {
   if (!input || typeof input !== "object" || Array.isArray(input)) return {};
   const value = input as Record<string, unknown>;
   // Identity can change between the browser's preference lookup and this creation request.
   if (value.ownerId !== ownerId) return {};
   const models = value.models && typeof value.models === "object" && !Array.isArray(value.models)
     && Object.keys(value.models).length <= 100 ? value.models as Record<string, unknown> : undefined;
-  return { models, ...(value.autonomy === "normal" || value.autonomy === "autonomous" ? { autonomy: value.autonomy } : {}) };
+  const connectionId = typeof value.connectionId === "string" && value.connectionId.trim().length > 0 && value.connectionId.length <= 512
+    ? value.connectionId : undefined;
+  return { models, ...(connectionId ? { connectionId } : {}),
+    ...(value.autonomy === "normal" || value.autonomy === "autonomous" ? { autonomy: value.autonomy } : {}) };
 }
 
-function browserModelDefault(models: Record<string, unknown> | undefined, connectionId: string): import("../worker/contracts.js").ExecutionSelection | undefined {
+function browserModelDefault(models: Record<string, unknown> | undefined, connectionId: string): import("../agent-providers/compatibility.js").ExecutionSelection | undefined {
   if (!models || !Object.hasOwn(models, connectionId)) return;
   const value = models[connectionId];
   if (!value || typeof value !== "object" || Array.isArray(value)) return;
@@ -101,13 +111,11 @@ interface LiveSession {
   activityRunStarted?: boolean;
   toolOutputCalls?: Map<string, string | null>;
   runEpoch?: string;
-  persistedWorkerSequences?: Set<number>;
   activity: SessionActivity;
   mcpSignature?: string;
   mcpTargetSignature?: string;
   mcpNoticeSignature?: string;
   mcpAuthorizationNotice?: boolean;
-  workerObservationNotice?: string;
   record: SessionRecord;
   run: HarnessRun | null;
   listeners: Set<SessionListener>;
@@ -143,7 +151,7 @@ interface LiveSession {
 export class SessionManager {
   feedbackAction?: (sessionId: string, action: string, input: Record<string, unknown>, credential?: string) => Promise<unknown>;
   taskModeChanged?: (record: SessionRecord) => Promise<void>;
-  taskUsage?: (record: SessionRecord, runId: string, usage: NonNullable<import("../worker/contracts.js").WorkerReceipt["usage"]>) => Promise<void>;
+  taskUsage?: (record: SessionRecord, runId: string, usage: NonNullable<import("../agent-providers/compatibility.js").WorkerReceipt["usage"]>) => Promise<void>;
   taskDecisionProjections?: (owner: string) => Promise<Array<{ id: string; kind: "task_mode" | "recovery"; sessionId: string; taskId?: string; title: string; createdAt: string; revision?: number; available: boolean; error?: string }>>;
   taskAction?: (sessionId: string, action: string, input: Record<string, unknown>, credential?: string, dispatchGuard?: () => Promise<void>) => Promise<unknown>;
   readonly mcpPolicy: McpToolPolicy;
@@ -238,6 +246,10 @@ export class SessionManager {
   private readonly live = new Map<string, LiveSession>();
   private readonly suggestionEpoch = randomUUID();
   private readonly suggestionPreferenceGenerations = new Map<string, number>();
+  private readonly providerProjections = new Map<string, AgentRunProjection>();
+  private readonly providerStates = new Map<string, ProviderExecutionState>();
+  private readonly providerFiles = new Map<string, Array<{ name: string; path: string }>>();
+  private readonly providerProjectedIds = new Map<string, Set<string>>();
   private readonly operations = new Map<string, Promise<unknown>>();
   private readonly actorCredentialRefreshes = new Map<string, { credential: string }>();
   private readonly queuePumps = new Map<string, Promise<void>>();
@@ -327,9 +339,10 @@ export class SessionManager {
     private readonly notifier: WaitingNotifier | null = null,
     private readonly connections: ConnectionService | null = null,
     private readonly development: DevelopmentClient | null = null,
-    readonly worker: WorkerClient | null = null,
+    _legacyExecution: unknown = null,
     private readonly executionMode?: "native" | "docker",
     readonly profiles: ProfileStore | null = null,
+    private readonly agentBackend: CoreAgentBackend | null = null,
   ) {
     this.messageQueues = new MessageQueue(store);
     this.suggestionHistory = new SuggestionHistory(store, (id, payload) => this.append(id, payload));
@@ -357,11 +370,8 @@ export class SessionManager {
       const session = this.live.get(id), credential = session?.workspaceCredential ?? session?.credential;
       if (credential && this.exchange && this.providers) await this.discoverMcpTools(credential);
     };
-    this.developmentMcp.allowRemoteWorker = Boolean(worker);
-    this.developmentMcp.project = async value => {
-      const trees = (await this.worker?.capabilities())?.resources?.trees;
-      return trees ? projectWorktreePaths(value, trees) : value;
-    };
+    this.developmentMcp.allowRemoteWorker = false;
+    this.developmentMcp.project = async value => value;
     if (proxy) {
       proxy.policy = this.mcpPolicy;
       proxy.beforeDispatch = async id => {
@@ -382,6 +392,408 @@ export class SessionManager {
         return p.policyIdentity;
       };
     }
+  }
+
+  /** Public provider adapter: credentials/renewal/processes never become Harness callbacks. */
+  providerAdapter(selection: AgentConnectionSelection, capabilities: import("../harness/adapter.js").HarnessCapabilities, name: string): HarnessAdapter {
+    if (!this.agentBackend) throw new ConnectionError(503, "providers_unavailable", "Agent provider access is unavailable.");
+    return { name, capabilities, probe: async () => ({ available: true }),
+      start: options => new ProviderHarnessRun(() => this.providerContext(selection, options), options) };
+  }
+
+  private async providerContext(selection: AgentConnectionSelection, options: import("../harness/adapter.js").HarnessStartOptions): Promise<ProviderRunContext> {
+    const session = await this.requireLive(options.sessionId), backend = this.agentBackend!;
+    const retained = this.providerStates.get(options.sessionId) ?? await this.store.readProviderExecution(options.sessionId) ?? session.record.providerExecution;
+    if (retained && agentSelectionId(retained.selection) !== agentSelectionId(selection))
+      throw new ConnectionError(409, "provider_connection_changed", "This conversation is bound to another provider installation or account.");
+    const state: ProviderExecutionState = retained ?? { version: 1, selection: structuredClone(selection), sessionId: randomUUID() };
+    this.providerStates.set(options.sessionId, state);
+    const authority = async () => {
+      const current = this.live.get(options.sessionId);
+      if (current?.record.taskDispatch && current.record.taskExecutionId) return { kind: "task" as const,
+        dispatch: current.record.taskDispatch, executionId: current.record.taskExecutionId };
+      const credential = current?.workspaceCredential ?? current?.credential;
+      if (!credential) throw new AppContextError(401, "provider_credentials_required", "Refresh Hosty sign-in to observe or control this provider execution.");
+      return credential;
+    };
+    const client = backend.client(selection.provider, authority);
+    const workflow = await this.providerWorkflowBinding(options.sessionId);
+    if (session.record.taskExecutionId && !workflow)
+      throw new AppContextError(409, "task_workflow_setup_required", "Approve Harness's optional task-executor provider permission in Core before running this task. General Core MCP access is separate.");
+    if (session.record.taskExecutionId && (!workflow!.tools?.includes("task_result") || workflow!.policy?.tools?.task_result?.mode === "disabled"))
+      throw new AppContextError(409, "task_workflow_setup_required", "Enable the task_result workflow tool before running this task; its explicit completion report is required.");
+    // Reattached control/observer handles have no start options. Their next send must keep
+    // the acknowledged standing instructions instead of configuring an empty instruction set.
+    const acknowledged = options.instructionSources === undefined && options.systemPrompt === undefined
+      ? structuredClone(state.appliedConfiguration?.value) : undefined;
+    if (acknowledged?.instructions) acknowledged.instructions = acknowledged.instructions.map(block => block.text.startsWith(PROVIDER_SYSTEM_PROMPT)
+      ? { ...block, text: PROVIDER_SYSTEM_PROMPT + (workflow ? "\n\n" + TASK_ORCHESTRATION_GUIDE : "") } : block);
+    return { client, state, ...(workflow ? { workflow } : {}),
+      configuration: acknowledged ? { ...structuredClone(acknowledged), connection: selection.connection,
+        approvalMode: session.record.autonomy ?? acknowledged.approvalMode ?? "normal" } : { connection: selection.connection,
+        instructions: (options.instructionSources ?? []).map((block, index) => ({ id: `harness-${index + 1}`, text: block.text })),
+        ...(options.instructionSources?.length || !options.systemPrompt ? {} : { systemPrompt: { mode: "append" as const, text: options.systemPrompt } }),
+        skills: [...new Set([...(session.record.skillIds ?? []), ...(session.record.providerPlatformContext ? [session.record.providerPlatformContext.skillId] : [])])].map(skillId => ({ skillId })),
+        approvalMode: options.autonomy ?? "normal", predictions: { enabled: options.promptSuggestions === true } },
+      refreshResources: previous => this.providerWorktreeResources(session, previous ?? []),
+      persistence: {
+        save: async value => {
+          await this.store.saveProviderExecution(options.sessionId, value);
+          session.record.providerExecution = structuredClone(value);
+          session.record.harnessSessionId = value.sessionId;
+        },
+        observe: (item, value) => this.receiveProviderItem(session, item, value),
+      },
+      input: async text => {
+        const attachments: AgentAttachment[] = [];
+        for (const file of this.providerFiles.get(options.sessionId) ?? []) {
+          const bytes = await this.acceptedAttachment(options.sessionId, file.name) ?? await readFile(file.path);
+          if (bytes.length > 25 * 1024 * 1024) throw new AppContextError(413, "attachment_too_large", "Attachments may contain at most 25 MiB.");
+          const digest = createHash("sha256").update(bytes).digest("hex");
+          // The persisted random public session and immutable admitted bytes determine the same
+          // upload UUID after a lost chunk response; admission never waits on this manager's queue.
+          const key = createHash("sha256").update(JSON.stringify(["attachment", state.sessionId, file.name, digest])).digest("hex");
+          const upload = `${key.slice(0, 8)}-${key.slice(8, 12)}-${key.slice(12, 16)}-${key.slice(16, 20)}-${key.slice(20, 32)}`;
+          const mediaType = /\.png$/i.test(file.name) ? "image/png" : /\.jpe?g$/i.test(file.name) ? "image/jpeg"
+            : /\.webp$/i.test(file.name) ? "image/webp" : /\.gif$/i.test(file.name) ? "image/gif" : "application/octet-stream";
+          attachments.push(await client.uploadAttachment(upload, bytes, { name: file.name, mediaType }));
+        }
+        const currentMcp = await this.providerMcpSelection();
+        return { input: { text, ...(attachments.length ? { attachments } : {}) },
+          selection: { model: session.record.executionSelection?.model ?? null, reasoningEffort: session.record.executionSelection?.reasoningEffort ?? null },
+          resources: await this.providerWorktreeResources(session),
+          mcp: currentMcp, limits: { maxDurationMs: 24 * 60 * 60 * 1000 } };
+      },
+      unavailable: error => this.serialize(options.sessionId, async () => {
+        await this.append(options.sessionId, { type: "notice", message: error instanceof Error ? error.message : "Provider observation is unavailable. Reconnect to reconcile this run." });
+        // Losing observation is not execution failure, cancellation or permission to release a lease.
+      }),
+    };
+  }
+
+  /** Capture current source authority only while preparing a new immutable provider turn. */
+  private async providerWorktreeResources(session: LiveSession, previous?: ReadonlyArray<{ kind: string; id: string }>): Promise<Array<{ kind: "worktree"; id: string; revision: string }>> {
+    const selected = (session.record.developmentWorkspaces ?? []).filter(tree => tree.state === "active")
+      .map(tree => ({ id: tree.id, workspaceId: tree.workspaceId }));
+    if (selected.some(tree => !/^[a-f0-9]{64}$/.test(tree.id) || tree.workspaceId !== undefined && !/^[a-f0-9]{64}$/.test(tree.workspaceId)))
+      throw new AppContextError(409, "workspace_source_changed", "Refresh the selected Core worktree identities before admitting source execution.");
+    if (previous && JSON.stringify(previous.map(value => [value.kind, value.id]).sort()) !== JSON.stringify(selected.map(value => ["worktree", value.id]).sort()))
+      throw new AppContextError(409, "workspace_source_changed", "A decision continuation must retain its original selected worktrees.");
+    if (!selected.length) return [];
+    if ((session.record.taskDispatch || session.record.taskExecutionId) && !session.record.taskWorkspace)
+      throw new AppContextError(403, "task_workspace_missing", "The task's original workspace authority is required before admitting source execution.");
+    if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Refresh Core workspace access before admitting source execution.");
+    const revisions = new Map<string, number>();
+    const remember = (workspaceId: string, participation: { id: string; revision: number } | null) => {
+      if (!participation || participation.id !== workspaceId || !Number.isSafeInteger(participation.revision) || participation.revision < 0)
+        throw new AppContextError(409, "workspace_participation_changed", "Refresh the selected workspace participation before admitting source execution.");
+      revisions.set(workspaceId, participation.revision);
+    };
+    let sources: DevelopmentWorkspace[];
+    let token: string | undefined;
+    if (session.record.taskWorkspace) {
+      // A retained task attempt supplies its own original actor chain, never an app/user fallback.
+      const observed = await this.taskWorkspaceCall(session, { kind: "observe" }) as {
+        association: { workspace: { id: string; revision: number } | null }; sources: { workspaces: DevelopmentWorkspace[] };
+      };
+      remember(session.record.taskWorkspace.workspaceId, observed.association.workspace);
+      sources = observed.sources.workspaces;
+    } else {
+      token = session.workspaceCredential ?? session.credential ?? undefined;
+      if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh current source authority before admitting source execution.");
+      sources = (await this.development.call(session.record.id, token, "list", {}) as { workspaces: DevelopmentWorkspace[] }).workspaces;
+    }
+    const worktrees = selected.map(selection => {
+      const matches = sources.filter(tree => tree.id === selection.id && tree.state === "active");
+      const tree = matches[0];
+      if (matches.length !== 1 || !tree?.workspaceId || !/^[a-f0-9]{64}$/.test(tree.workspaceId) || selection.workspaceId && selection.workspaceId !== tree.workspaceId
+        || session.record.taskWorkspace && tree.workspaceId !== session.record.taskWorkspace.workspaceId)
+        throw new AppContextError(409, "workspace_source_changed", "The selected worktree is no longer available in its original workspace.");
+      return { id: tree.id, workspaceId: tree.workspaceId };
+    });
+    if (token) await Promise.all([...new Set(worktrees.map(tree => tree.workspaceId))].map(async workspaceId => {
+      const participation = await this.development!.inspection(token!, `/${encodeURIComponent(workspaceId)}/participants`) as { id: string; revision: number };
+      remember(workspaceId, participation);
+    }));
+    const ordered = previous ? previous.map(value => worktrees.find(tree => tree.id === value.id)!) : worktrees;
+    return ordered.map(tree => ({ kind: "worktree", id: tree.id, revision: String(revisions.get(tree.workspaceId)!) }));
+  }
+
+  private async providerMcpSelection(): Promise<AgentMcpSelection> {
+    const settings = await this.settings?.read(), directory = await this.providers?.read();
+    const targets: NonNullable<AgentMcpSelection["targets"]> = [];
+    if (settings && directory && this.providers) for (const provider of [this.providers.core(), ...directory.providers]) {
+      if (!provider?.offered || settings.mcpProviders[provider.appId] !== true) continue;
+      const tools: NonNullable<NonNullable<AgentMcpSelection["targets"]>[number]["policy"]>["tools"] = {};
+      for (const [key, rule] of Object.entries(settings.mcpToolRules ?? {})) {
+        let pair: unknown; try { pair = JSON.parse(key); } catch { continue; }
+        if (!Array.isArray(pair) || pair[0] !== provider.appId || typeof pair[1] !== "string") continue;
+        const current = rule.identity === provider.policyIdentity;
+        const mode = rule.mode === "disabled" ? "disabled" : current && rule.definition ? rule.mode : "ask";
+        tools[pair[1]] = { mode, ...(mode === "run" ? { definition: rule.definition! } : {}) };
+      }
+      const defaults = settings.mcpDefaults?.[provider.appId];
+      const policy = { default: defaults && defaults.identity === provider.policyIdentity ? defaults.mode : "ask" as const,
+        autoAllowReadOnly: settings.mcpAutoAllow[provider.appId] === true, tools };
+      if (provider.appId === CORE_PROVIDER_ID) targets.push({ target: { kind: "core" }, policy });
+      else {
+        const key = provider.interfaces[0]?.key ?? provider.declarations?.[0];
+        if (!provider.installationId || !key) throw new AppContextError(409, "mcp_target_unavailable", "Refresh the selected MCP application's current installation and interface.");
+        targets.push({ target: { kind: "app", appId: provider.appId, installationId: provider.installationId, key }, policy });
+      }
+    }
+    return { targets };
+  }
+
+  private async providerWorkflowBinding(id: string): Promise<AgentSessionWorkflowBinding | undefined> {
+    const appId = process.env.HOSTY_APP_ID, installationId = process.env.HOSTY_APP_INSTALLATION_ID;
+    if (!this.taskAction || !appId || !installationId) return;
+    try {
+      if (!(await new CoreProviderClient().permissions()).granted.includes("providers.task-executor")) return;
+    } catch { return; } // Optional task setup must not prevent an ordinary conversation.
+    const settings = await this.settings?.read(), core = this.providers?.core();
+    const tools: NonNullable<AgentSessionWorkflowBinding["policy"]>["tools"] = {};
+    for (const [key, rule] of Object.entries(settings?.mcpToolRules ?? {})) {
+      let pair: unknown; try { pair = JSON.parse(key); } catch { continue; }
+      if (!Array.isArray(pair) || ![CORE_PROVIDER_ID, "hosty:development"].includes(pair[0]) || !(AGENT_SESSION_WORKFLOW_TOOLS as readonly string[]).includes(pair[1])) continue;
+      const current = pair[0] === CORE_PROVIDER_ID ? !!core && rule.identity === core.policyIdentity : rule.identity === this.mcpPolicy.localIdentity;
+      if (tools[pair[1]]?.mode === "disabled" || tools[pair[1]]?.mode === "ask" && rule.mode !== "disabled") continue;
+      const mode = rule.mode === "disabled" ? "disabled" : current && rule.definition ? rule.mode : "ask";
+      tools[pair[1]] = { mode, ...(mode === "run" ? { definition: rule.definition! } : {}) };
+    }
+    return { executor: { appId, installationId, key: "default" }, sessionId: id, tools: [...AGENT_SESSION_WORKFLOW_TOOLS], policy: { default: "ask", tools } };
+  }
+
+  async providerWorkflow(id: string, input: AgentSessionWorkflowRequest, invocation: MediatedProviderInvocation,
+    revalidate: () => Promise<MediatedProviderInvocation>, recovery?: { retained: boolean; dispatch: (guard: () => Promise<void>) => Promise<unknown> }): Promise<unknown> {
+    const guard = async () => {
+      const current = await revalidate(), record = await this.store.readRecord(id), state = await this.store.readProviderExecution(id);
+      const agent = input.agent, signed = current.agentExecution, binding = state?.lastRunInput?.workflow;
+      if (current.operation !== "session.workflow" || current.kind !== "task-executor" || current.key !== "default"
+        || current.userId !== invocation.userId || current.principalId !== invocation.principalId || current.hostRole !== "host.admin"
+        || !record || record.createdBy !== current.userId || record.storageRecovery || !state || !signed
+        || signed.sessionId !== agent.sessionId || signed.runId !== agent.runId
+        || signed.provider.appId !== agent.provider.appId || signed.provider.installationId !== agent.provider.installationId || signed.provider.key !== agent.provider.key
+        || state.sessionId !== agent.sessionId || state.runId !== agent.runId || state.lastRunInput?.runId !== agent.runId
+        || agentSelectionId({ provider: agent.provider, connection: state.selection.connection }) !== agentSelectionId(state.selection)
+        || !binding || binding.sessionId !== id || binding.executor.appId !== process.env.HOSTY_APP_ID
+        || binding.executor.installationId !== process.env.HOSTY_APP_INSTALLATION_ID || binding.executor.key !== "default")
+        throw new AppContextError(403, "workflow_binding_mismatch", "The workflow does not belong to this consumer's current admitted execution.");
+      const source = record.taskContext?.taskRef ?? { appId: process.env.HOSTY_APP_ID, installationId: process.env.HOSTY_APP_INSTALLATION_ID, key: "default" };
+      if (input.source && (input.source.appId !== source.appId || input.source.installationId !== source.installationId || input.source.key !== source.key))
+        throw new AppContextError(403, "workflow_source_mismatch", "Use the exact task provider and interface bound to this session.");
+      if (!(taskActions as readonly string[]).includes(input.action) || input.action.startsWith("task-legacy-"))
+        throw new AppContextError(403, "workflow_action_unavailable", "This action is outside the admitted task workflow.");
+      if (!recovery?.retained && (state.run?.stopConfirmed || !["running", "awaiting_approval", "awaiting_question", "suggesting"].includes(record.status)))
+        throw new AppContextError(409, "workflow_run_inactive", "This provider execution is no longer active.");
+    };
+    await guard();
+    if (recovery) return recovery.dispatch(guard);
+    return this.workspaceAction(id, input.action as DevelopmentAction, input.input, undefined, invocation.userId, guard);
+  }
+
+  private async publicExecution(session: LiveSession) {
+    if (!session.record.selection || !this.agentBackend) throw new AppContextError(409, "provider_cutover_required", "Create a fresh conversation with a current provider connection after completing the documented cutover.");
+    const context = await this.providerContext(session.record.selection, { sessionId: session.record.id, cwd: this.workDir, onEvent: () => {} });
+    return { context, execution: new ProviderExecution(context.client, context.state, context.persistence) };
+  }
+
+  private async ensureProviderRun(session: LiveSession): Promise<ProviderHarnessRun> {
+    if (session.run instanceof ProviderHarnessRun) return session.run;
+    if (!session.record.selection) throw new AppContextError(409, "provider_cutover_required", "Choose a current provider for a new conversation.");
+    const options = { sessionId: session.record.id, cwd: this.workDir, onEvent: () => {} };
+    const run = new ProviderHarnessRun(() => this.providerContext(session.record.selection!, options), options);
+    session.run = run;
+    await run.attach();
+    return run;
+  }
+
+  /** Read proof without projecting into this manager's queue; control callers already hold it. */
+  async taskCheckpoint(id: string): Promise<AgentRunSnapshot | null> {
+    const session = await this.requireLive(id);
+    if (!session.record.providerExecution?.runId) return null;
+    const { execution } = await this.publicExecution(session);
+    return execution.read(false);
+  }
+
+  private async applyPublicControl(session: LiveSession, input: AgentRunControlInput) {
+    const { context, execution } = await this.publicExecution(session);
+    const retained = Object.values(context.state.mutations ?? {}).find(request => request.operation === "runs.control"
+      && (JSON.parse(request.body) as AgentRunControlInput).requestId === input.requestId);
+    const receipt = retained ? await execution.reconcileMutation(retained) as import("@hosty-sdk/app/agent").AgentControlReceipt : await execution.control(input);
+    if (["rejected", "superseded", "unknown"].includes(receipt.state)) throw new AppContextError(409,
+      receipt.error?.code ?? "control_unknown", receipt.error?.message ?? "Reconcile the original provider control before continuing.");
+    return execution.read(false);
+  }
+
+  private receiveProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState): Promise<void> {
+    const handled = this.serialize(session.record.id, () => this.projectProviderItem(session, item, value));
+    this.inFlightEvents.add(handled);
+    void handled.then(() => this.inFlightEvents.delete(handled), () => this.inFlightEvents.delete(handled));
+    return handled;
+  }
+
+  /** The caller holds the session lane; Stop projects its final snapshot before its turn boundary. */
+  private async projectProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState, projectStatus = true): Promise<void> {
+      if (this.stopping) return;
+      const id = session.record.id;
+      let previous = this.providerProjections.get(id);
+      if (previous?.snapshot.ref.id !== value.runId) previous = undefined;
+      if (previous && item.kind === "event" && BigInt(item.event.sequence) <= BigInt(previous.snapshot.lastSequence)) return;
+      if (previous && item.kind === "snapshot" && item.snapshot.generation === previous.snapshot.generation
+        && BigInt(item.snapshot.lastSequence) <= BigInt(previous.snapshot.lastSequence)
+        && BigInt(item.snapshot.revision) <= BigInt(previous.snapshot.revision)) return;
+      const projection = previous ? reduceAgentRunProjection(previous, item)
+        : item.kind === "snapshot" ? createAgentRunProjection(item.snapshot) : undefined;
+      if (!projection) throw new AppContextError(409, "resync_required", "Read the provider run snapshot before following its events.");
+      const next = { ...value, run: projection.snapshot, cursor: projection.cursor };
+      session.record.providerExecution = next;
+      session.record.harnessSessionId = next.sessionId;
+      if (session.record.providerObservedRunId !== projection.snapshot.ref.id) {
+        session.record.agentRunId = await this.observations.begin(session.record);
+        session.record.providerObservedRunId = projection.snapshot.ref.id;
+      }
+      if (session.record.taskBarrier?.state === "resuming" && session.record.taskBarrier.runId !== next.runId && next.runId)
+        (session.record.decisionRunIds ??= {})[session.record.taskBarrier.commandId] = next.runId;
+      const seen = this.providerProjectedIds.get(id) ?? new Set((await this.store.readEvents(id))
+        .map(event => event.providerEventId).filter((key): key is string => typeof key === "string"));
+      this.providerProjectedIds.set(id, seen);
+      const stoppedSnapshotOutputs = !projectStatus && item.kind === "snapshot" && projection.snapshot.stopConfirmed
+        && projection.snapshot.ref.id === value.runId && projection.snapshot.sessionId === value.sessionId
+        && agentSelectionId({ provider: projection.snapshot.ref.provider, connection: value.selection.connection }) === agentSelectionId(value.selection);
+      const append = async (key: string, event: HarnessEvent, snapshotToolName?: string) => {
+        const identity = `${projection.snapshot.ref.id}:${key}`;
+        if (seen.has(identity)) return;
+        const output = event.type === "tool_result" || event.type === "command_result";
+        if (output && !stoppedSnapshotOutputs && !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
+        if (output && stoppedSnapshotOutputs && snapshotToolName) {
+          // Only this validated same-run stopped snapshot may recover its known tool's
+          // facts after an observation failure. Ordinary callbacks keep their live guard.
+          const result = event.type === "tool_result" ? sanitizeToolResult(event) : sanitizeCommandResult(event);
+          if (result && (event.type !== "tool_result" || shouldRetainToolOutput(snapshotToolName)))
+            await this.append(id, { ...result, providerEventId: identity, providerGeneration: projection.snapshot.generation });
+        } else await this.applyHarnessEvent(id, { ...event, providerEventId: identity, providerGeneration: projection.snapshot.generation });
+        seen.add(identity);
+      };
+      try {
+        for (const message of projection.messages) if (message.role === "assistant" && message.state === "complete")
+          await append(`message:${message.source?.agentId ?? "root"}:${message.id}`, { type: "assistant_text", text: message.text });
+        for (const tool of projection.tools) {
+          const barrier = session.record.taskBarrier;
+          if (barrier?.state === "armed" && barrier.runId === projection.snapshot.ref.id && tool.state === "completed"
+            && tool.output?.includes(`hosty_task_barrier:${barrier.id}:${barrier.generation}`))
+            barrier.acknowledgedSequence ??= item.kind === "event" ? item.event.sequence : projection.snapshot.lastSequence;
+          const toolUseId = `provider-${createHash("sha256").update(JSON.stringify([projection.snapshot.ref.id, tool.source?.agentId, tool.id])).digest("hex")}`;
+          await append(`tool:${tool.source?.agentId ?? "root"}:${tool.id}`, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input });
+          if (tool.state !== "running" && tool.output !== undefined) await append(`output:${tool.source?.agentId ?? "root"}:${tool.id}:${tool.state}`,
+            { type: "tool_result", toolUseId, status: tool.state, output: tool.output, ...(tool.truncated ? { truncated: true as const } : {}) }, tool.name);
+          if (tool.command) await append(`command:${tool.source?.agentId ?? "root"}:${tool.id}:${tool.command.status}`,
+            { type: "command_result", toolUseId, ...tool.command }, tool.name);
+        }
+        session.pendingApprovals.clear(); session.pendingQuestions.clear();
+        for (const decision of projection.pending) {
+          const cardId = providerDecisionCardId(projection.snapshot.ref.id, decision.id);
+          if (decision.kind === "approval") {
+            session.pendingApprovals.set(cardId, decision.toolName ?? "Agent action");
+            await append(`decision:${decision.id}:${decision.revision}`, { type: "approval_request", approvalId: cardId,
+              toolName: decision.toolName ?? "Agent action", input: decision.input, ...(decision.title ? { title: decision.title } : {}),
+              ...(decision.toolCallId ? { toolUseId: `provider-${createHash("sha256").update(JSON.stringify([projection.snapshot.ref.id, decision.source?.agentId, decision.toolCallId])).digest("hex")}` } : {}) });
+          } else {
+            const questions = this.providerQuestions(decision);
+            session.pendingQuestions.set(cardId, questions.map(question => question.id!));
+            await append(`decision:${decision.id}:${decision.revision}`, { type: "question_request", questionId: cardId, questions,
+              ...(decision.delivery === "next_turn" ? { blocking: false, delivery: "message" as const } : {}) });
+          }
+        }
+        for (const entry of projection.snapshot.decisions ?? []) {
+          const decision = entry.decision;
+          const cardId = providerDecisionCardId(projection.snapshot.ref.id, decision.id);
+          if (entry.state !== "resolved" || !entry.response) continue;
+          if (decision.kind === "approval" && entry.response.kind === "approval") {
+            await append(`decision:${decision.id}:${decision.revision}`, { type: "approval_request", approvalId: cardId,
+              toolName: decision.toolName ?? "Agent action", input: decision.input, ...(decision.title ? { title: decision.title } : {}) });
+            const key = `${projection.snapshot.ref.id}:resolved:${decision.id}`;
+            if (!seen.has(key)) { await this.append(id, { type: "approval_decision", approvalId: cardId,
+              toolName: decision.toolName ?? "Agent action", decision: entry.response.decision,
+              ...(entry.response.message ? { message: entry.response.message } : {}), providerEventId: key }); seen.add(key); }
+          } else if (decision.kind === "question" && entry.response.kind === "question") {
+            await append(`decision:${decision.id}:${decision.revision}`, { type: "question_request", questionId: cardId, questions: this.providerQuestions(decision),
+              ...(decision.delivery === "next_turn" ? { blocking: false, delivery: "message" as const } : {}) });
+            const key = `${projection.snapshot.ref.id}:resolved:${decision.id}`;
+            if (!seen.has(key)) { await this.append(id, { type: "question_answered", questionId: cardId,
+              answers: structuredClone(entry.response.answers), providerEventId: key }); seen.add(key); }
+          }
+        }
+        if (item.kind === "event" && item.event.type === "message.delta") this.fanOut(session,
+          { seq: session.record.lastEventSeq, ts: item.event.occurredAt, type: "assistant_delta", text: String(item.event.data.text ?? "") });
+        if (item.kind === "event") {
+          const event = item.event, data = event.data;
+          if (event.type === "warning" && typeof data.message === "string") await append(`warning:${event.sequence}`, { type: "notice", message: data.message });
+          if (event.type === "extension" && data.namespace === "hosty.agent.answer" && data.name === "answer.complete")
+            await append(`extension:${event.sequence}`, { type: "answer_complete" });
+          if (event.type === "extension" && data.namespace === "hosty.agent.predictions" && data.name === "predictions")
+            await append(`extension:${event.sequence}`, { type: "prompt_suggestion", ...(typeof data.text === "string" ? { text: data.text } : {}),
+              ...(typeof data.reason === "string" ? { reason: data.reason } : {}), workerRunId: projection.snapshot.ref.id } as HarnessEvent);
+          if (event.type === "extension" && data.namespace === "hosty.agent.activity" && data.name === "activity" && data.activity && typeof data.activity === "object") {
+            const activity = data.activity as import("../harness/activity.js").HarnessActivity;
+            if (["working", "thinking", "responding"].includes(activity.phase) && Number.isSafeInteger(activity.toolCount) && activity.toolCount >= 0)
+              await this.applyHarnessEvent(id, { type: "activity", activity });
+          }
+        }
+        const context = projection.snapshot.latestContext;
+        if (context) await append(`context:${context.sequence}`, { type: "context_usage",
+          usage: context.usage as import("../harness/context-usage.js").ContextUsage | null });
+        if (projection.snapshot.executionUsage) {
+          const usage = projection.snapshot.executionUsage, sequence = Number(usage.sequence);
+          if (!Number.isSafeInteger(sequence)) throw new AppContextError(502, "provider_usage_invalid", "The provider execution usage exceeds the supported accounting range.");
+          await this.taskUsage?.(session.record, projection.snapshot.ref.id, { ...usage, sequence });
+        }
+        if (projection.snapshot.coverage && [projection.snapshot.coverage.messages, projection.snapshot.coverage.tools].includes("truncated"))
+          await append("coverage", { type: "notice", message: "The provider's retained snapshot is incomplete. Some native observations are unavailable; this conversation contains only the received history." });
+        if (projection.snapshot.selection) await append(`selection:${createHash("sha256").update(JSON.stringify(projection.snapshot.selection)).digest("hex")}`,
+          { type: "execution_model", requested: projection.snapshot.selection.requested, reported: projection.snapshot.selection.effective });
+        if (projectStatus && !projection.snapshot.stopConfirmed && ["queued", "running"].includes(projection.snapshot.state)
+          && projection.snapshot.freshness === "current" && !projection.pending.length && session.record.status !== "suggesting") await this.setStatus(id, "running");
+        if (projectStatus && !projection.snapshot.stopConfirmed && (projection.snapshot.state === "unknown" || projection.snapshot.freshness !== "current")) {
+          const key = `${projection.snapshot.ref.id}:observation-unavailable`;
+          session.record.status = "failed";
+          if (!seen.has(key)) {
+            await this.append(id, { type: "notice", message: "The provider's execution state is unavailable or interrupted. Native exit is unconfirmed; reconnect or inspect the original provider execution before continuing.", providerEventId: key });
+            await this.append(id, { type: "session_status", status: "failed", providerState: projection.snapshot.state,
+              providerObservation: { runId: projection.snapshot.ref.id, generation: projection.snapshot.generation, stopConfirmed: false } });
+            seen.add(key);
+          }
+        }
+        if (projectStatus && projection.snapshot.stopConfirmed) {
+          if (session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: true };
+          if (projection.snapshot.phase === "parked" && session.record.taskBarrier?.runId === projection.snapshot.ref.id) {
+            session.record.taskBarrier.state = "parked";
+            session.record.taskBarrier.checkpointSessionId = projection.snapshot.sessionId;
+            await session.run?.detach?.();
+            session.run = null; session.runEpoch = undefined;
+            await this.setStatus(id, session.record.taskBarrier.kind === "human_input" ? "awaiting_question" : "idle");
+          }
+          if (["succeeded", "failed", "cancelled"].includes(projection.snapshot.state)) {
+            if (projection.snapshot.state === "succeeded") { await append("terminal", { type: "result", status: "success" }); await this.setStatus(id, "idle"); }
+            else if (projection.snapshot.state === "failed") { await append("terminal", { type: "error", message: projection.result?.error?.message ?? "Provider execution failed." }); await this.setStatus(id, "failed"); }
+            else await this.setStatus(id, "cancelled");
+          }
+        }
+        await this.store.saveRecord(session.record);
+        session.record.providerExecution = await this.store.commitProviderObservation(id, next);
+        const current = this.providerStates.get(id);
+        if (current && current.runId === next.runId) {
+          current.run = structuredClone(projection.snapshot); current.cursor = projection.cursor;
+        }
+        this.providerProjections.set(id, projection);
+      } catch (error) { this.providerProjectedIds.delete(id); throw error; }
+  }
+
+  private providerQuestions(decision: AgentPendingDecision): import("../harness/adapter.js").HarnessQuestion[] {
+    return (decision.questions ?? []).map(question => ({ id: question.id, question: question.text,
+      header: question.header ?? "Question", allowText: question.allowText !== false, multiSelect: question.multiple === true,
+      options: (question.options ?? []).map(option => ({ id: option.id, label: option.label,
+        description: option.description ?? "", ...(option.preview ? { preview: option.preview } : {}) })) }));
   }
 
   async bindTaskDecisionReference(sessionId: string, executionId: string, owner: string, reference: import("@hosty-sdk/app/decisions").DecisionReference): Promise<void> {
@@ -413,61 +825,15 @@ export class SessionManager {
         decisionId: wait.core!.id, resolutionRevision: wait.core!.resolution!.revision });
     });
   }
-  async deliverDecision(wait: DecisionWait): Promise<void> {
-    await this.serialize(wait.sessionId, async () => {
-      const session = await this.requireLive(wait.sessionId); this.checkDecisionRecord(session.record, wait);
-      if (!this.worker || !wait.control || session.record.workerRun?.id !== wait.native.workerRunId)
-        throw new AppContextError(409, "unknown_admission", "The original native question is unavailable.");
-      const receipt = await this.worker.request<import("../worker/contracts.js").WorkerReceipt>(`/v1/runs/${wait.native.workerRunId}/responses`, "POST", wait.control, true);
-      session.pendingQuestions.delete(wait.questionId);
-      await this.setStatus(wait.sessionId, receipt.state === "awaiting_input" ? session.pendingApprovals.size ? "awaiting_approval" : "awaiting_question" : "running");
-    });
-  }
-  async parkDecision(wait: DecisionWait): Promise<void> {
-    await this.serialize(wait.sessionId, async () => {
-      const session = await this.requireLive(wait.sessionId);
-      if (session.record.createdBy !== wait.owner) throw new AppContextError(403, "session_forbidden", "This execution belongs to another user.");
-      if (!this.worker || !wait.park || session.record.workerRun?.id !== wait.native.workerRunId)
-        throw new AppContextError(409, "unknown_stop", "The original execution cannot be parked from this session.");
-      await this.worker.request(`/v1/runs/${wait.native.workerRunId}/park`, "POST", wait.park, true);
-    });
-  }
-  /** A message-delivered answer waits for the conversation's current turn instead of interrupting it. */
-  async decisionTurnAvailable(wait: DecisionWait): Promise<boolean> {
-    const session = await this.getSession(wait.sessionId);
-    return !!session && !session.workerRun && !["running", "awaiting_approval", "awaiting_question"].includes(session.status);
-  }
-  /** Returns false only while a message-delivered answer waits for the current turn. */
-  async resumeDecision(wait: DecisionWait, credential: string): Promise<boolean> {
-    await this.checkDecision(wait);
-    const session = await this.getSession(wait.sessionId), message = wait.event.delivery === "message";
-    if (message && !wait.native.sessionId) throw new AppContextError(409, "unsupported_resume", "This question has no saved native thread to continue. The answer is retained.");
-    if (!session || !message && (session.parkedQuestionRun?.id !== wait.native.workerRunId || session.workerRun || !wait.native.sessionId))
-      throw new AppContextError(409, "unknown_stop", "Wait for confirmed parking and source release before resuming.");
-    if (message && !await this.decisionTurnAvailable(wait)) return false;
-    try {
-      await this.postMessage(wait.sessionId, continuationInput(wait), credential, [], {
-        clientRequestId: wait.commandId, actorUserId: wait.owner, taskDispatch: !!session.taskExecutionId,
-        expectedRevision: session.appContextRevision ?? 0, selectionRevision: session.selectionRevision ?? 0,
-        decisionContinuation: { id: wait.id, owner: wait.owner, snapshot: wait.snapshot, cancellationGeneration: wait.cancellationGeneration },
-      });
-    } catch (error) {
-      // Another turn started after the availability check; the same command retries after it.
-      if (message && error instanceof SessionBusyError) return false;
-      throw error;
-    }
-    return true;
-  }
   async stopDecisionExecution(wait: DecisionWait): Promise<void> {
     if (wait.event.blocking === false) return;
     await this.serialize(wait.sessionId, async () => {
-      const record = await this.store.readRecord(wait.sessionId);
-      if (!record || record.createdBy !== wait.owner) return;
-      // A decision may stop only its original segment or its one recorded continuation.
-      const owned = record.workerRun?.id && [wait.native.workerRunId, wait.resumedRunId].includes(record.workerRun.id);
-      const parked = !record.workerRun && (record.parkedQuestionRun?.id === wait.native.workerRunId
-        || record.taskBarrier?.kind === "human_input" && record.taskBarrier.id === wait.taskInput?.barrierId && record.taskBarrier.state === "parked");
-      if (owned || parked) await this.cancelSessionLocked(wait.sessionId);
+      const session = await this.requireLive(wait.sessionId), record = session.record;
+      if (record.createdBy !== wait.owner || !wait.taskInput) return;
+      const runId = record.providerExecution?.runId;
+      const original = record.taskBarrier?.id === wait.taskInput.barrierId && record.taskBarrier.runId === runId;
+      const continuation = wait.resumedRunId === runId || record.decisionRunIds?.[wait.commandId] === runId;
+      if (original || continuation) await this.cancelSessionLocked(wait.sessionId);
     });
   }
   async finishDecision(wait: DecisionWait): Promise<void> {
@@ -503,7 +869,7 @@ export class SessionManager {
       if (!this.decisions) throw new AppContextError(503, "decisions_unavailable", "Decisions is unavailable; the task cannot complete without required input.");
       if (!record.taskExecutionId || record.taskCancellationRequested || ["cancelled", "abandoned"].includes(record.status))
         throw new AppContextError(409, "task_binding_required", "Request input only for this active task.");
-      if (!this.worker || !record.workerRun || !["codex", "claude"].includes(record.harnessKind ?? this.adapter.name))
+      if (!record.providerExecution?.runId)
         throw new AppContextError(422, "unsupported_resume", "Required input needs a supported durable task connection.");
       if (record.taskBarrier && record.taskBarrier.state !== "resuming" && record.taskBarrier.id !== input.requestId)
         throw new AppContextError(409, "barrier_pending", "Recover the existing task wait first.");
@@ -514,7 +880,7 @@ export class SessionManager {
       record.decisionWaitIds = [...new Set([...(record.decisionWaitIds ?? []), wait.id])];
       if (record.taskBarrier?.id !== wait.taskInput!.barrierId) record.taskBarrier = {
         id: wait.taskInput!.barrierId, kind: "human_input", generation: 1, owner: record.createdBy,
-        snapshot: decisionSnapshot(record), runId: record.workerRun.id, state: "armed", commandId: wait.commandId,
+        snapshot: decisionSnapshot(record), runId: record.providerExecution.runId, state: "armed", commandId: wait.commandId,
         sourceBefore: structuredClone(record.taskWorkspace),
       };
       await this.store.saveRecord(record);
@@ -539,16 +905,16 @@ export class SessionManager {
     if (record?.status === "awaiting_question") return { reference: id, message: "Answer the required question before completing this task." };
   }
 
-  async armTaskBarrier(id: string, owner: string, barrierId: string, kind: import("../worker/contracts.js").WorkerBarrier["kind"], generation = 1, origin?: "coordinator"): Promise<string> {
+  async armTaskBarrier(id: string, owner: string, barrierId: string, kind: import("../agent-providers/compatibility.js").WorkerBarrier["kind"], generation = 1, origin?: "coordinator"): Promise<string> {
     return this.serialize(id, async () => {
       const session = await this.requireLive(id), record = session.record;
       if (record.createdBy !== owner) throw new AppContextError(403, "session_forbidden", "This execution belongs to another owner.");
       if (record.taskBarrier?.id === barrierId && record.taskBarrier.generation === generation)
         return `hosty_task_barrier:${barrierId}:${generation}`;
       if (record.taskBarrier && record.taskBarrier.state !== "resuming") throw new AppContextError(409, "barrier_pending", "Finish the current continuation before registering another wait.");
-      if (!this.worker || !record.workerRun || !["codex", "claude"].includes(record.harnessKind ?? this.adapter.name))
+      if (!record.providerExecution?.runId)
         throw new AppContextError(422, "unsupported_resume", "This connection does not support a durable same-context task barrier.");
-      record.taskBarrier = { id: barrierId, kind, generation, owner, snapshot: decisionSnapshot(record), runId: record.workerRun.id,
+      record.taskBarrier = { id: barrierId, kind, generation, owner, snapshot: decisionSnapshot(record), runId: record.providerExecution.runId,
         state: "armed", origin, commandId: randomUUID(), sourceBefore: structuredClone(record.taskWorkspace) };
       await this.store.saveRecord(record);
       return `hosty_task_barrier:${barrierId}:${generation}`;
@@ -559,36 +925,35 @@ export class SessionManager {
   async advanceTaskBarrier(id: string): Promise<void> {
     await this.serialize(id, async () => {
       const session = await this.requireLive(id), barrier = session.record.taskBarrier;
-      if (!barrier || barrier.state !== "armed" || !this.worker || !barrier.acknowledgedSequence && barrier.origin !== "coordinator") return;
-      const receipt = await this.worker.request<import("../worker/contracts.js").WorkerReceipt>(`/v1/runs/${barrier.runId}`);
-      if (!barrier.control) {
-        barrier.control = { controlId: randomUUID(), expectedRevision: receipt.revision, kind: barrier.kind,
-          barrierId: barrier.id, generation: barrier.generation, acknowledgedSequence: barrier.acknowledgedSequence ?? 0, origin: barrier.origin };
+      if (!barrier || barrier.state !== "armed" || !barrier.acknowledgedSequence && barrier.origin !== "coordinator") return;
+      const receipt = await this.taskCheckpoint(id);
+      if (!receipt || receipt.ref.id !== barrier.runId) throw new AppContextError(409, "checkpoint_unavailable", "The original provider execution is unavailable.");
+      if (!barrier.providerControl) {
+        barrier.providerControl = { requestId: randomUUID(), expectedGeneration: receipt.generation, expectedRevision: receipt.revision,
+          command: "barrier", kind: barrier.kind, barrierId: barrier.id, generation: String(barrier.generation),
+          acknowledgedSequence: String(barrier.acknowledgedSequence ?? 0), snapshot: barrier.snapshot };
         await this.store.saveRecord(session.record);
       }
-      try {
-        const parked = await this.worker.request<import("../worker/contracts.js").WorkerReceipt>(`/v1/runs/${barrier.runId}/barrier`, "POST", barrier.control, true);
-        if (parked.state !== "parked" || !parked.exitConfirmed || !parked.snapshot?.nativeSessionId)
-          throw new AppContextError(409, "unknown_stop", "The original native checkpoint is not confirmed parked.");
-        if (!session.record.workerRun) {
-          // The ordinary turn may have finished before this acknowledged barrier reached Worker.
-          barrier.state = "parked"; barrier.nativeSessionId = parked.snapshot.nativeSessionId;
-          await this.store.saveRecord(session.record);
-        }
-      } catch (error) {
-        if ((error as { code?: string }).code === "barrier_pending") {
-          const outcome = await this.worker.request<{ state: string }>(`/v1/runs/${barrier.runId}/controls/${barrier.control.controlId}`);
-          if (outcome.state === "missing") { delete barrier.control; await this.store.saveRecord(session.record); }
-        }
-        throw error;
+      const parked = receipt.stopConfirmed && receipt.phase === "parked" ? receipt : await this.applyPublicControl(session, barrier.providerControl);
+      if (parked.stopConfirmed && parked.phase === "parked") {
+        barrier.state = "parked"; barrier.checkpointSessionId = parked.sessionId;
+        session.record.taskRun = { started: true, exitConfirmed: true };
+        session.record.providerStopProof = { runId: parked.ref.id, generation: parked.generation, revision: parked.revision, observedAt: parked.observedAt };
+        await this.store.saveRecord(session.record);
       }
     });
   }
 
   async resumeTaskBarrier(id: string, owner: string, text: string, credential?: string): Promise<void> {
+    const live = await this.requireLive(id);
+    if (credential) { live.credential = credential; live.workspaceCredential = credential; }
+    if (live.record.selection && live.record.providerExecution?.runId) {
+      const { context, execution } = await this.publicExecution(live), snapshot = await execution.read(false);
+      await this.receiveProviderItem(live, { kind: "snapshot", snapshot }, { ...context.state, run: snapshot, cursor: snapshot.cursor });
+    }
     const record = await this.getSession(id), barrier = record?.taskBarrier;
     if (!record || !barrier || barrier.owner !== owner || !["parked", "resuming"].includes(barrier.state)
-      || record.workerRun && barrier.state !== "resuming" || !barrier.nativeSessionId)
+      || !(barrier.checkpointSessionId ?? barrier.nativeSessionId))
       throw new AppContextError(409, "unknown_stop", "Resume only the retained checkpoint after confirmed parking.");
     await this.postMessage(id, text, credential, [], { taskDispatch: !!record.taskExecutionId, clientRequestId: barrier.commandId,
       actorUserId: owner, expectedRevision: record.appContextRevision ?? 0, selectionRevision: record.selectionRevision ?? 0,
@@ -598,8 +963,8 @@ export class SessionManager {
   private checkTaskContinuation(record: SessionRecord, command: { id: string; generation: number; owner: string; snapshot: string }): void {
     const barrier = record.taskBarrier;
     if (record.taskCancellationRequested || !barrier || barrier.id !== command.id || barrier.generation !== command.generation || barrier.owner !== command.owner
-      || record.createdBy !== command.owner || barrier.state !== "parked" || !barrier.nativeSessionId
-      || record.harnessSessionId !== barrier.nativeSessionId || command.snapshot !== barrier.snapshot
+      || record.createdBy !== command.owner || barrier.state !== "parked" || !(barrier.checkpointSessionId ?? barrier.nativeSessionId)
+      || record.harnessSessionId !== (barrier.checkpointSessionId ?? barrier.nativeSessionId) || command.snapshot !== barrier.snapshot
       || decisionSnapshot(record) !== command.snapshot || ["cancelled", "abandoned"].includes(record.status))
       throw new AppContextError(409, "stale_input", "The task continuation's original configuration or native checkpoint changed.");
   }
@@ -632,9 +997,12 @@ export class SessionManager {
     return { items, warnings };
   }
 
-  async recoverWorkerRuns(): Promise<void> {
-    for (const record of await this.store.listRecords()) if (record.workerRun && !record.storageRecovery) {
-      try { await this.requireLive(record.id); } catch { /* The affected source/run remains fenced; continue healthy recovery. */ }
+  async recoverProviderRuns(): Promise<void> {
+    for (const record of await this.store.listRecords()) if (record.selection && record.taskDispatch && record.taskExecutionId && !record.storageRecovery) {
+      try {
+        const session = await this.requireLive(record.id);
+        if (session.record.providerExecution?.runId) await this.ensureProviderRun(session);
+      } catch { /* The provider keeps authority/leases; one unavailable task cannot block healthy recovery. */ }
     }
   }
 
@@ -865,7 +1233,15 @@ export class SessionManager {
       session.credential = credential;
       session.workspaceCredential = credential;
       session.credentialRefreshPending = true;
-      if (session.run) {
+      if (this.connections?.remote && !session.run && session.record.selection) {
+        const retained = await this.store.readProviderExecution(id);
+        if (retained?.runId) {
+          const run = new ProviderHarnessRun(() => this.providerContext(session.record.selection!, {
+            sessionId: id, cwd: this.workDir, onEvent: () => {} }), { sessionId: id, cwd: this.workDir, onEvent: () => {} });
+          session.run = run;
+          await run.attach();
+        }
+      } else if (session.run && !this.connections?.remote) {
         await this.refreshMcpServers(session);
         if (!this.stopping) this.scheduleMcpRefresh(id);
       }
@@ -901,7 +1277,8 @@ export class SessionManager {
 
   /** Refresh every already-live conversation owned by this actor; never starts or replays a turn. */
   async refreshActorCredentials(userId: string, credential: string): Promise<void> {
-    for (const record of await this.store.listRecords()) if (record.createdBy === userId && record.messageQueue?.entries.length) await this.requireLive(record.id);
+    for (const record of await this.store.listRecords()) if (record.createdBy === userId
+      && (record.messageQueue?.entries.length || record.selection && (record.providerExecution?.runId || await this.store.readProviderExecution(record.id)))) await this.requireLive(record.id);
     const results = await Promise.allSettled([...this.live.values()]
       .filter(s => s.record.createdBy === userId && (s.credential !== credential || s.workspaceCredential !== credential || s.credentialRefreshPending || s.record.messageQueue?.waiting))
       .map(s => this.refreshSessionCredentials(s.record.id, userId, credential)));
@@ -977,7 +1354,7 @@ export class SessionManager {
       };
       if (binding.sessionId === lockedSessionId) await stop(); else await this.serialize(binding.sessionId, stop);
     }
-    if (failures.length) throw new AppContextError(503, "workspace_stop_unconfirmed", "One or more execution stops or lease releases could not be confirmed. Source and request IDs are retained. Restore the owning session's authorization or worker access, then retry.");
+    if (failures.length) throw new AppContextError(503, "workspace_stop_unconfirmed", "One or more execution stops or lease releases could not be confirmed. Source and request IDs are retained. Restore the owning session's authorization or provider access, then retry.");
   }
 
   async workspaceAction(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string, dispatchGuard?: () => Promise<void>): Promise<unknown> {
@@ -1369,7 +1746,8 @@ export class SessionManager {
     await this.serialize(id, async () => {
       const record = (await this.requireLive(id)).record, barrier = record.taskBarrier;
       if (!barrier || barrier.id !== commandId || barrier.owner !== owner || !record.taskWorkspace
-        || !["parked", "resuming"].includes(barrier.state) || !barrier.nativeSessionId || record.harnessSessionId !== barrier.nativeSessionId)
+        || !["parked", "resuming"].includes(barrier.state) || !(barrier.checkpointSessionId ?? barrier.nativeSessionId)
+        || record.harnessSessionId !== (barrier.checkpointSessionId ?? barrier.nativeSessionId))
         throw new AppContextError(409, "source_boundary_required", "Recover this source transition's original native checkpoint.");
       const after = decisionSnapshot(record);
       const before = decisionSnapshot({ ...record, taskWorkspace: barrier.sourceBefore });
@@ -1386,6 +1764,7 @@ export class SessionManager {
   }
 
   private async leaseWorkspaces(session: LiveSession, acquire: boolean, outcome = session.record.status): Promise<void> {
+    if (this.connections?.remote) return; // The admitted provider owns exact execution leases/activity.
     if (!this.development || !session.record.developmentLease) return;
     const credential = session.workspaceCredential ?? session.credential;
     if (session.record.taskWorkspace) {
@@ -1441,6 +1820,7 @@ export class SessionManager {
   }
 
   private scheduleWorkspaceActivity(session: LiveSession): void {
+    if (this.connections?.remote) return;
     if (session.workspaceActivityTimer || !this.development?.available || !session.record.developmentLease || this.stopping) return;
     session.workspaceActivityTimer = setTimeout(() => {
       session.workspaceActivityTimer = undefined;
@@ -1557,7 +1937,7 @@ export class SessionManager {
       if (input.skillIds !== undefined && !validSkillIds(input.skillIds)) throw new AppContextError(400, "skills_invalid", "Choose stable skill IDs from the Core catalog.");
       if (input.autonomy !== undefined && input.autonomy !== "normal" && input.autonomy !== "autonomous")
         throw new AppContextError(400, "autonomy_invalid", "Choose Normal or Autonomous.");
-      let executionSelection: import("../worker/contracts.js").ExecutionSelection | undefined;
+      let executionSelection: import("../agent-providers/compatibility.js").ExecutionSelection | undefined;
       if (input.executionSelection !== undefined) {
         const proposed = input.executionSelection;
         if (!proposed || typeof proposed !== "object" || Array.isArray(proposed) || Object.keys(proposed).some(key => !["model", "reasoningEffort"].includes(key)))
@@ -1589,7 +1969,17 @@ export class SessionManager {
       const selectedProfile = input.taskConfiguration?.profile ?? (this.profiles ? await this.profiles.select(input.profileId === undefined && (input.connectionId !== undefined || input.skillIds !== undefined || executionSelection !== undefined) ? null : input.profileId, input.profileRevision) : null);
       if (selectedProfile && (input.skillIds !== undefined || input.connectionId !== undefined || executionSelection !== undefined))
         throw new AppContextError(400, "profile_overrides", "Select a profile or supply manual provider, model and skill settings.");
-      const binding = await this.connections?.binding(selectedProfile?.connectionId ?? input.connectionId);
+      const browserDefaults = input.taskExecutionId ? {} : browserSessionDefaults(input.browserDefaults, input.createdBy);
+      let rememberedBinding: ConnectionBinding | null = null;
+      if (!selectedProfile && input.connectionId === undefined && browserDefaults.connectionId && this.connections) {
+        try {
+          // The opaque ID pins installation/account revision. A stale hint never selects its
+          // replacement, and current discovery still applies the caller's Core authority.
+          const current = (await this.connections.list()).connections.find(connection => connection.id === browserDefaults.connectionId && connection.available);
+          if (current) rememberedBinding = await this.connections.binding(current.id);
+        } catch { /* Optional browser convenience cannot prevent ordinary profile/default resolution. */ }
+      }
+      const binding = rememberedBinding ?? await this.connections?.binding(selectedProfile?.connectionId ?? input.connectionId);
       if (input.taskConfiguration) {
         const expected = input.taskConfiguration.binding;
         if (binding?.connectionId !== expected.connectionId || binding?.connectionRevision !== expected.connectionRevision
@@ -1599,17 +1989,16 @@ export class SessionManager {
       await this.validateProfileSelection(selectedProfile, binding?.connectionId);
       if (executionSelection && (executionSelection.model || executionSelection.reasoningEffort)) {
         if (!binding?.connectionId || !this.connections) throw new ConnectionError(409, "provider_required", "Choose a provider for this model selection.");
-        const { validateSelection } = await import("../worker/models.js");
+        const { validateSelection } = await import("../agent-providers/models.js");
         validateSelection(executionSelection, await this.connections.models(binding.connectionId));
       }
-      // Resolve normal profiles and provider defaults first. Hints cannot select a different role,
-      // and changed browser/server defaults never rewrite an accepted creation on replay.
-      const browserDefaults = input.taskExecutionId ? {} : browserSessionDefaults(input.browserDefaults, input.createdBy);
+      // Resolve the profile and exact provider before model hints. Changed browser/server
+      // defaults never rewrite an accepted creation on replay.
       if (!selectedProfile && executionSelection === undefined && binding?.connectionId && this.connections) {
         const remembered = browserModelDefault(browserDefaults.models, binding.connectionId);
         if (remembered) {
           try {
-            const { validateSelection } = await import("../worker/models.js");
+            const { validateSelection } = await import("../agent-providers/models.js");
             if (remembered.model || remembered.reasoningEffort) validateSelection(remembered, await this.connections.models(binding.connectionId));
             executionSelection = remembered;
           } catch { /* Optional browser defaults cannot prevent creating a chat when a catalog changes. */ }
@@ -1619,6 +2008,7 @@ export class SessionManager {
       const now = new Date().toISOString();
       const title = normalizeTitle(input.title);
       const record: SessionRecord = {
+        ...(this.connections?.remote ? { agentConsumerVersion: 1 as const } : {}),
         ...(this.profiles || input.taskConfiguration ? { agentProfile: selectedProfile, profileLocked: !!input.taskExecutionId } : {}),
         ...(input.taskConfiguration ? { taskConfiguration: { id: input.taskConfiguration.selection.id, revision: input.taskConfiguration.selection.revision, rationale: input.taskConfiguration.rationale } } : {}),
         ...(selectedProfile ? { executionSelection: { model: selectedProfile.model, reasoningEffort: selectedProfile.reasoningEffort } } : executionSelection ? { executionSelection } : {}),
@@ -1679,7 +2069,7 @@ export class SessionManager {
       if (!barrier || barrier.id !== intent.id || barrier.kind !== "task_adoption")
         throw new AppContextError(409, "barrier_missing", "Recover the original adoption boundary.");
       if (barrier.state !== "parked" || record.workerRun) return false;
-      if (!barrier.nativeSessionId || record.harnessSessionId !== barrier.nativeSessionId || record.taskExecutionId
+      if (!(barrier.checkpointSessionId ?? barrier.nativeSessionId) || record.harnessSessionId !== (barrier.checkpointSessionId ?? barrier.nativeSessionId) || record.taskExecutionId
         || decisionSnapshot({ ...record, autonomy: "normal" }) !== intent.configurationSnapshot
         || (record.decisionGeneration ?? 0) !== intent.cancellationGeneration
         || (record.autonomyRevision ?? 0) !== intent.autonomyRevision && !(record.autonomy === "autonomous" && (record.autonomyRevision ?? 0) === intent.autonomyRevision + 1))
@@ -1727,6 +2117,9 @@ export class SessionManager {
   /** Catalog availability is advisory; admission revalidates the current binding and model. */
   async taskExecutorAvailability(profile: AgentProfileConfig): Promise<import("@hosty-sdk/app/tasks").TaskExecutorAvailability> {
     if (!this.connections) return { state: "unknown" };
+    // Profile metadata can be listed before an execution authority exists. The selected
+    // provider revalidates its account/model at task admission, under that task's authority.
+    if (this.connections.remote) return { state: "unknown" };
     try {
       const binding = await this.connections.binding(profile.connectionId ?? undefined);
       return binding ? { state: "unknown" } : { state: "unavailable", reason: "No provider connection is selected." };
@@ -1819,7 +2212,8 @@ export class SessionManager {
 
   private bindingFor(record: SessionRecord): ConnectionBinding | null {
     return record.connectionId && record.connectionRevision && record.harnessKind
-      ? { connectionId: record.connectionId, connectionRevision: record.connectionRevision, harnessKind: record.harnessKind, connectionIdentity: record.connectionIdentity } : null;
+      ? { connectionId: record.connectionId, connectionRevision: record.connectionRevision, harnessKind: record.harnessKind,
+        connectionIdentity: record.connectionIdentity, ...(record.selection ? { selection: record.selection } : {}) } : null;
   }
 
   async sessionHealth(id: string) {
@@ -1844,7 +2238,7 @@ export class SessionManager {
   private async validateProfileSelection(config: AgentProfileConfig | null, connectionId?: string): Promise<void> {
     if (!config || !config.model && !config.reasoningEffort) return;
     if (!connectionId || !this.connections) throw new ConnectionError(409, "provider_required", "Choose a provider for this profile's model.");
-    const { validateSelection } = await import("../worker/models.js");
+    const { validateSelection } = await import("../agent-providers/models.js");
     validateSelection({ model: config.model, reasoningEffort: config.reasoningEffort }, await this.connections.models(connectionId));
   }
 
@@ -1872,6 +2266,7 @@ export class SessionManager {
         skillIds: profile?.skillIds ?? [], executionSelection: { model: profile?.model ?? null, reasoningEffort: profile?.reasoningEffort ?? null },
         selectionRevision: (session.record.selectionRevision ?? 0) + 1, updatedAt: new Date().toISOString() };
       delete next.connectionId; delete next.connectionRevision; delete next.connectionIdentity; delete next.harnessKind;
+      delete next.selection;
       delete next.instructionSnapshot;
       if (binding) Object.assign(next, binding);
       await this.store.saveRecord(next); session.record = next;
@@ -1890,11 +2285,11 @@ export class SessionManager {
       const proposed = input.selection;
       if (!proposed || typeof proposed !== "object" || Array.isArray(proposed) || Object.keys(proposed).some(key => !["model", "reasoningEffort"].includes(key)))
         throw new AppContextError(400, "invalid_selection", "Choose a model and reasoning effort.");
-      const selection = { model: null, reasoningEffort: null, ...session.record.executionSelection, ...proposed } as import("../worker/contracts.js").ExecutionSelection;
+      const selection = { model: null, reasoningEffort: null, ...session.record.executionSelection, ...proposed } as import("../agent-providers/compatibility.js").ExecutionSelection;
       if (!selection || ![selection.model, selection.reasoningEffort].every(value => value === null || typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$/.test(value)))
         throw new AppContextError(400, "invalid_selection", "Choose a model and reasoning effort.");
       if (selection.model || selection.reasoningEffort) {
-        const { validateSelection } = await import("../worker/models.js");
+        const { validateSelection } = await import("../agent-providers/models.js");
         validateSelection(selection, await this.modelCatalog(id));
       }
       const modelChanged = (session.record.executionSelection?.model ?? null) !== selection.model;
@@ -1917,6 +2312,8 @@ export class SessionManager {
       const session = await this.requireLive(id);
       if (session.record.taskExecutionId) throw new AppContextError(409, "task_managed_session", "An accepted task keeps its provider. Start a new task attempt to change it.");
       const locked = await this.sessionProviderLocked(session.record);
+      if (this.connections.remote && locked && !session.record.selection)
+        throw new ConnectionError(409, "provider_cutover_required", "Legacy conversations cannot be rebound or resumed. Complete the documented clean cutover and start a new conversation.");
       if (session.record.agentProfile?.connectionId && connectionId !== session.record.connectionId)
         throw new ConnectionError(409, "profile_provider", "Choose another profile or no profile before starting to change the provider.");
       if (session.run || (locked && session.record.connectionId)) throw new ConnectionError(409, "provider_locked", "A started chat keeps its provider. Start a new chat to switch.");
@@ -2107,8 +2504,10 @@ export class SessionManager {
   async toolActivitySnapshot(): Promise<import("../tool-activity.js").SessionToolActivity[]> {
     return (await this.listSessions()).map(record => {
       const live = this.live.get(record.id);
-      // A native process cannot survive a Harness restart. Do not renew an orphan's presence.
-      const orphan = !live?.run && !live?.activityRunStarted && !record.workerRun && ["running", "awaiting_approval", "awaiting_question"].includes(record.status);
+      // Provider processes outlive the consumer. A retained public run stays present until its
+      // authoritative snapshot confirms exit, including while this consumer reconnects.
+      const retained = record.providerExecution?.runId && !record.providerExecution.run?.stopConfirmed;
+      const orphan = !retained && !live?.run && !live?.activityRunStarted && !record.workerRun && ["running", "awaiting_approval", "awaiting_question"].includes(record.status);
       return { userId: record.createdBy, status: orphan ? "failed" : record.status,
         pending: live ? live.pendingApprovals.size + live.pendingQuestions.size : record.mcpPendingApprovals?.length ?? 0 };
     });
@@ -2120,6 +2519,12 @@ export class SessionManager {
 
   async getSession(id: string): Promise<SessionRecord | null> {
     const record = this.live.get(id)?.record ?? await this.store.readRecord(id);
+    if (record?.selection) {
+      const retained = this.providerStates.get(id) ?? await this.store.readProviderExecution(id);
+      if (retained) record.providerExecution = retained;
+      if (record.taskBarrier?.state === "resuming" && retained?.runId && retained.runId !== record.taskBarrier.runId)
+        (record.decisionRunIds ??= {})[record.taskBarrier.commandId] = retained.runId;
+    }
     return record ? this.runtimeProjection(record) : null;
   }
 
@@ -2210,7 +2615,7 @@ export class SessionManager {
   private async removeSessionRecord(record: SessionRecord, deletedBy: string): Promise<boolean> {
       const id = record.id;
       const session = this.live.get(id);
-      if (this.worker) await this.finishExecution(await this.requireLive(id));
+      if (this.connections?.remote) await this.finishExecution(await this.requireLive(id));
       if (session) {
         if (session.run) {
           await session.run.stop();
@@ -2347,9 +2752,7 @@ export class SessionManager {
   }
 
   async runtimeStatus(): Promise<unknown> {
-    const health = await this.worker?.capabilities().then(value => ({ available: true, ...value }))
-      .catch(() => ({ available: false, reason: "Worker service is unavailable. Check its normal service status in Core." }));
-    return { defaultMode: this.executionMode ?? "native", managed: this.executionMode !== undefined, worker: health ?? null };
+    return { defaultMode: this.executionMode ?? "docker", managed: this.executionMode !== undefined, providers: "independent" };
   }
 
   async setExecutionMode(_value: unknown): Promise<void> {
@@ -2369,8 +2772,32 @@ export class SessionManager {
   }
 
   private async finishExecution(session: LiveSession, retainActivationReview = false, preserveWorkerRun = false, outcome = session.record.status): Promise<void> {
-    if (!this.worker && !session.record.developmentLease && !session.record.taskExecutionId) return;
-    if (!session.run && !this.worker && session.record.developmentLease && session.record.developmentLeaseState !== "stopped") {
+    if (this.connections?.remote) {
+      let snapshot = session.record.providerExecution?.run;
+      const cancelling = outcome === "cancelled" || outcome === "abandoned";
+      if ((!snapshot?.stopConfirmed || cancelling) && session.record.providerExecution?.runId && !session.run) await this.ensureProviderRun(session);
+      if ((!snapshot?.stopConfirmed || cancelling) && session.run) {
+        if (!session.run.stopAndWait) throw new WorkerError("exit_unconfirmed", "The provider cannot confirm native exit.", 503);
+        await session.run.stopAndWait();
+        if (session.run instanceof ProviderHarnessRun) snapshot = session.run.stopProof ?? snapshot;
+      }
+      if (session.record.providerExecution?.runId && !snapshot?.stopConfirmed)
+        throw new WorkerError("exit_unconfirmed", "Provider execution is unconfirmed. Its resources remain owned by the provider.", 503);
+      if (snapshot?.stopConfirmed) {
+        if (cancelling && session.record.providerExecution) await this.projectProviderItem(session,
+          { kind: "snapshot", snapshot }, { ...session.record.providerExecution, run: snapshot, cursor: snapshot.cursor }, false);
+        session.record.providerStopProof = { runId: snapshot.ref.id, generation: snapshot.generation,
+          revision: snapshot.revision, observedAt: snapshot.observedAt };
+        if (session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: true };
+        if (session.record.agentRunId) await this.observations.confirmStopped(session.record.agentRunId);
+      }
+      if (!preserveWorkerRun) { session.run = null; session.runEpoch = undefined; }
+      this.clearRefresh(session);
+      await this.store.saveRecord(session.record);
+      return;
+    }
+    if (!this.connections?.remote && !session.record.developmentLease && !session.record.taskExecutionId) return;
+    if (!session.run && !this.connections?.remote && session.record.developmentLease && session.record.developmentLeaseState !== "stopped") {
       const credential = session.workspaceCredential ?? session.credential;
       if (!credential || !this.development) throw new WorkerError("exit_unconfirmed", "The previous native execution cannot be verified. Source leases remain held.", 503);
       const current = await this.development.call(session.record.id, credential, "list", {}) as { workspaces: DevelopmentWorkspace[] };
@@ -2384,7 +2811,7 @@ export class SessionManager {
       session.record.developmentLeaseState = "stopped";
       await this.store.saveRecord(session.record);
     }
-    if (session.record.taskRun?.started && !session.record.taskRun.exitConfirmed && !session.run && !this.worker)
+    if (session.record.taskRun?.started && !session.record.taskRun.exitConfirmed && !session.run && !this.connections?.remote)
       throw new WorkerError("exit_unconfirmed", "The previous task execution has no confirmed native exit.", 503);
     if (session.run) {
       if (!session.run.stopAndWait) throw new WorkerError("exit_unconfirmed", "Execution exit cannot be confirmed. Source leases remain held.", 503);
@@ -2451,7 +2878,8 @@ export class SessionManager {
       withoutAppDetails: context.withoutDetails === true, selectionRevision: context.selectionRevision ?? 0,
     })).digest("hex") : undefined;
     if (this.live.get(id)?.record.status === "suggesting" && (!clientRequestId || !await this.store.readMessageReceipt(id, clientRequestId))) await this.endSuggestions(id);
-    return this.serialize(id, async () => {
+    const admission: { current?: { promise: Promise<void>; receipt?: StoredMessageReceipt; sourceId: string } } = {};
+    const result = await this.serialize(id, async () => {
       const session = await this.requireLive(id);
       if (clientRequestId) {
         const receipt = await this.store.readMessageReceipt(id, clientRequestId);
@@ -2469,6 +2897,17 @@ export class SessionManager {
       this.store.assertWritable(id);
       if (session.record.sourceAdmission) throw new AppContextError(409, "source_admission_recovery_required", "An earlier message has an unresolved admission. Review execution recovery before starting another turn.");
       if (this.stopping) throw new AppContextError(503, "harness_stopping", "Harness is stopping; the saved message was not dispatched.");
+      if (this.connections?.remote && session.record.providerExecution?.runId && !session.record.providerExecution.run?.stopConfirmed)
+        throw new AppContextError(409, "stop_unconfirmed", "The original provider execution has not confirmed native exit. Reconcile or stop it before sending another turn.");
+      if (this.connections?.remote && Object.values(session.record.providerExecution?.mutations ?? {}).some(request => ["runs.respond", "runs.cancel", "runs.control"].includes(request.operation))) {
+        if (credential && actorUserId === session.record.createdBy) {
+          session.credential = credential; session.workspaceCredential = context.workspaceCredential ?? credential;
+        }
+        const { execution } = await this.publicExecution(session);
+        await execution.refreshControls();
+      }
+      if (this.connections?.remote && Object.values(session.record.providerExecution?.mutations ?? {}).some(request => !["sessions.create", "sessions.configure"].includes(request.operation)))
+        throw new AppContextError(409, "provider_request_unresolved", "Reconcile the retained provider request before sending another turn.");
       if (context.decisionContinuation) this.checkDecisionRecord(session.record, context.decisionContinuation);
       if (context.taskContinuation) this.checkTaskContinuation(session.record, context.taskContinuation);
       const queue = session.record.messageQueue;
@@ -2520,7 +2959,7 @@ export class SessionManager {
         throw new WorkerError("worker_recovery_required", "Recover the previous worker before resuming this conversation in the selected application runtime.");
       if ((context.selectionRevision ?? 0) !== (session.record.selectionRevision ?? 0)) throw new AppContextError(409, "selection_conflict", "Model selection changed. Review it before sending.");
       const docker = session.record.executionMode === "docker";
-      let preparedWorker = false, dispatched = false;
+      let dispatched = false;
       let messageReceipt: StoredMessageReceipt | undefined;
       let release: (() => void) | undefined;
       try {
@@ -2528,8 +2967,12 @@ export class SessionManager {
         if (this.connections) {
           const binding = this.bindingFor(session.record);
           if (!binding) throw new ConnectionError(409, "provider_required", "Choose the provider for this chat before sending a message.");
-          release = await this.connections.reserve(binding);
-          selectedAdapter = await this.connections.adapter(binding, docker);
+          await withAgentAuthority(async () => session.record.taskDispatch && session.record.taskExecutionId
+            ? { kind: "task", dispatch: session.record.taskDispatch, executionId: session.record.taskExecutionId }
+            : workspaceCredential ?? session.credential ?? "", async () => {
+            release = await this.connections!.reserve(binding);
+            selectedAdapter = await this.connections!.adapter(binding, docker);
+          });
           const health = await selectedAdapter.probe();
           if (!health.available) throw new ConnectionError(503, "provider_unavailable", health.reason ?? "This provider is unavailable.");
         }
@@ -2552,12 +2995,7 @@ export class SessionManager {
           if (info === null || !info.isFile()) {
             throw new Error(`attachment not found: ${name}`);
           }
-          attached.push({ name, path: this.worker && selectedAdapter.name !== "ollama" ? await this.worker.upload(id, name, file) : file });
-        }
-        let attachedText = "";
-        if (selectedAdapter.name === "ollama") {
-          try { attachedText = await ollamaAttachments(attached); }
-          catch (error) { throw new AppContextError(400, "attachment_unsupported", (error as Error).message); }
+          attached.push({ name, path: file });
         }
         if (context.workspaceCredential !== undefined) {
           session.workspaceCredential = context.workspaceCredential;
@@ -2579,12 +3017,12 @@ export class SessionManager {
           session.credential = credential;
           session.mcpAuthorizationNotice = false;
         }
-        if (!session.record.developmentLease && (session.record.developmentWorkspaces?.length || session.record.workspaceAssociation)) {
+        if (!this.connections?.remote && !session.record.developmentLease && (session.record.developmentWorkspaces?.length || session.record.workspaceAssociation)) {
           session.record.developmentLease = randomUUID();
           await this.store.saveRecord(session.record);
         }
         await this.leaseWorkspaces(session, true);
-        if (session.run) await this.refreshMcpServers(session);
+        if (session.run && !this.connections?.remote) await this.refreshMcpServers(session);
         // Named from the first message that says anything, not from every message: the opening ask is
         // what the operator will recognise the session by later, and re-deriving on each turn would
         // rename a session out from under someone mid-conversation.
@@ -2615,12 +3053,10 @@ export class SessionManager {
           }
           session.record.profileLocked = true;
         }
+        if (this.connections?.remote && !session.record.providerPlatformContext)
+          session.record.providerPlatformContext = await platformSkillContext();
         const admissionRunId = randomUUID();
         session.record.sourceAdmission = { ...(clientRequestId ? { clientRequestId } : {}), runId: admissionRunId, state: "preparing" };
-        if (this.worker && !session.run) {
-          preparedWorker = true; session.persistedWorkerSequences = new Set();
-          session.record.workerRun = { id: admissionRunId, sequence: 0 };
-        }
         await this.store.saveRecord(session.record);
         if (clientRequestId) {
           // This boundary precedes transcript publication and provider start/send. A crash here is
@@ -2655,15 +3091,8 @@ export class SessionManager {
         await this.setStatus(id, "running");
         this.setActivity(session, workingActivity());
         if (!session.run) {
-          if (this.worker) {
-            // The source admission already reserved this immutable attempt before input publication.
-            preparedWorker = true; session.persistedWorkerSequences = new Set();
-            if (context.taskContinuation && session.record.taskBarrier) {
-              if (session.record.taskBarrier.kind === "human_input" && clientRequestId)
-                (session.record.decisionRunIds ??= {})[clientRequestId] = session.record.workerRun!.id;
-              session.record.taskBarrier.state = "resuming";
-            }
-            if (context.decisionContinuation && clientRequestId) (session.record.decisionRunIds ??= {})[clientRequestId] = session.record.workerRun!.id;
+          if (context.taskContinuation && session.record.taskBarrier) {
+            session.record.taskBarrier.state = "resuming";
             await this.store.saveRecord(session.record);
           }
           // Read at start, not at every turn: the system prompt is the session's instruction set, so a
@@ -2674,10 +3103,11 @@ export class SessionManager {
           const mcpServers = await this.buildMcpServers(session);
           session.mcpSignature = JSON.stringify([mcpServers ?? {}, session.mcpTargetSignature]);
           // Standing instructions are prompt text; selected skill packages use native discovery.
-          const skillExport = this.settings && this.providers ? await prepareSkills(id, this.settings, session.record.skillIds) : undefined;
+          const skillExport = !this.connections?.remote && this.settings && this.providers ? await prepareSkills(id, this.settings, session.record.skillIds) : undefined;
+          const taskGuide = !this.connections?.remote || await this.providerWorkflowBinding(id) ? TASK_ORCHESTRATION_GUIDE : "";
           const instructionSources: import("../harness/context-sources.js").InstructionText[] = [
-            { source: "platform" as const, text: skillExport?.platformIntroduction?.text.trim() ?? "" },
-            { source: "runtime" as const, text: (docker ? DOCKER_SYSTEM_PROMPT : HOST_SYSTEM_PROMPT) + "\n\n" + TASK_ORCHESTRATION_GUIDE },
+            { source: "platform" as const, text: session.record.providerPlatformContext?.text ?? skillExport?.platformIntroduction?.text.trim() ?? "" },
+            { source: "runtime" as const, text: (this.connections?.remote ? PROVIDER_SYSTEM_PROMPT : docker ? DOCKER_SYSTEM_PROMPT : HOST_SYSTEM_PROMPT) + (taskGuide ? "\n\n" + taskGuide : "") },
             { source: "operator" as const, text: operatorPrompt?.trim() ?? "" },
           ].filter(block => Boolean(block.text));
           const systemPrompt = instructionSources.map(block => block.text).join("\n\n");
@@ -2703,35 +3133,28 @@ export class SessionManager {
           this.mcpPolicy.cancel(id); // A new native client starts a fresh JSON-RPC request namespace.
           const runEpoch = session.runEpoch = randomUUID();
           const preferenceGeneration = this.suggestionPreferenceGenerations.get(session.record.createdBy) ?? 0;
-          session.suggestionAllowed = !!this.worker && context.promptSuggestions === true && !context.taskDispatch
+          session.suggestionAllowed = context.promptSuggestions === true && !context.taskDispatch
             && !context.dispatchId && !session.record.taskExecutionId && (await this.suggestionPreference(session.record.createdBy)).enabled
             && preferenceGeneration === (this.suggestionPreferenceGenerations.get(session.record.createdBy) ?? 0);
           session.suggestionContext = this.suggestionSignature(session);
           const unsupported = session.suggestionAllowed && selectedAdapter.capabilities.promptSuggestions === false;
           if (unsupported) session.suggestionAllowed = false;
           session.suggestion = { revision: (session.suggestion?.revision ?? 0) + 1, state: unsupported ? "unavailable" : "empty",
-            ...(unsupported ? { reason: "unsupported" } : {}), attemptId: session.record.workerRun?.id };
+            ...(unsupported ? { reason: "unsupported" } : {}), attemptId: admissionRunId };
           this.fanOut(session, this.suggestionEvent(session));
-          session.record.agentRunId = await this.observations.begin(session.record);
+          if (!this.connections?.remote) session.record.agentRunId = await this.observations.begin(session.record);
           await this.store.saveRecord(session.record);
           session.record.sourceAdmission!.state = "dispatching";
           await this.store.saveRecord(session.record);
           // Starting a native adapter may itself have effects, even if it throws before returning.
           dispatched = true;
-          session.run = this.observations.attach(session.record.agentRunId, selectedAdapter.start({
+          const handle = selectedAdapter.start({
             requireNativeResume: !!context.decisionContinuation || !!context.taskContinuation,
             promptSuggestions: session.suggestionAllowed,
             operation: session.record.taskExecutionId ? "task" : "chat",
             skillExportId: skillExport?.id,
-            workerRunId: session.record.workerRun?.id,
-            onWorkerUsage: (runId, usage) => this.taskUsage?.(session.record, runId, usage),
-        onWorkerEvent: frame => this.receiveWorkerEvent(session, frame, runEpoch),
             sessionId: id,
             ...session.record.executionSelection,
-            ...(this.worker && session.record.developmentWorkspaces?.find(w => w.state === "active") ? { resource: {
-              kind: "worktree" as const, id: session.record.developmentWorkspaces.find(w => w.state === "active")!.id,
-              revision: session.record.developmentWorkspaces.find(w => w.state === "active")!.observation?.head ?? "unknown",
-            } } : {}),
             autonomy: session.record.autonomy ?? "normal",
             cwd: workspace ?? this.workDir,
             systemPrompt,
@@ -2744,10 +3167,12 @@ export class SessionManager {
             // session when one was captured, per the reattach/resume decision in the plan.
             resumeHarnessSessionId: session.record.harnessSessionId ?? undefined,
             onEvent: (event) => this.dispatchHarnessEvent(id, event, runEpoch),
-          }));
+          });
+          session.run = this.connections?.remote ? handle : this.observations.attach(session.record.agentRunId!, handle);
         }
         this.scheduleMcpRefresh(id);
-        const prompt = (selectedAdapter.name === "ollama" ? text + attachedText : withAttachedPaths(text, attached.map((file) => file.path))) + (this.development?.available ? "\n\n" + workspaceInstructions(await this.developmentMcp.project(session.record.developmentWorkspaces ?? []) as DevelopmentWorkspace[], this.mcpPolicy.canonicalCore ? { sessionId: id, leaseId: session.record.developmentLease } : undefined) : "");
+        if (this.connections?.remote) this.providerFiles.set(id, attached);
+        const prompt = (this.connections?.remote ? text : withAttachedPaths(text, attached.map((file) => file.path))) + (this.development?.available && !this.connections?.remote ? "\n\n" + workspaceInstructions(await this.developmentMcp.project(session.record.developmentWorkspaces ?? []) as DevelopmentWorkspace[], this.mcpPolicy.canonicalCore ? { sessionId: id, leaseId: session.record.developmentLease } : undefined) : "");
         if (session.record.sourceAdmission?.state !== "dispatching") {
           session.record.sourceAdmission!.state = "dispatching"; await this.store.saveRecord(session.record);
         }
@@ -2756,6 +3181,11 @@ export class SessionManager {
         if (context.dispatchId && session.record.handoffDispatch) {
           if (session.record.handoffDispatch.state === "unknown") session.record.handoffDispatch.state = "running";
           await this.store.saveRecord(session.record);
+        }
+        if (this.connections?.remote) {
+          admission.current = { promise: session.run.waitForAdmission?.() ?? Promise.resolve(), receipt: messageReceipt,
+            sourceId: session.record.sourceAdmission!.runId };
+          return;
         }
         if (messageReceipt) {
           const accepted: StoredMessageReceipt = { ...messageReceipt, state: "accepted" };
@@ -2769,7 +3199,7 @@ export class SessionManager {
       } catch (error) {
         // A caught failure before send is definitive; a crash or failure during send remains unknown.
         if (messageReceipt && !dispatched) {
-          if (session.record.taskExecutionId && !this.worker && !session.run) {
+          if (session.record.taskExecutionId && !this.connections?.remote && !session.run) {
             // Running records dispatch intent before setup. A caught local failure without a
             // returned run handle admits no native execution; persist that proof before rejection.
             // Crashes and failures after send keep their existing uncertain admission marker.
@@ -2787,12 +3217,28 @@ export class SessionManager {
           // Only a known pre-effect failure may settle preparation; uncertain storage stays sealed.
           this.store.assertWritable(id);
           delete session.record.sourceAdmission;
-          if (preparedWorker) delete session.record.workerRun;
           await this.store.saveRecord(session.record);
         }
-        if ((preparedWorker || messageReceipt) && !dispatched) await this.setStatus(id, "failed");
+        if (messageReceipt && !dispatched) await this.setStatus(id, "failed");
         throw error;
       } finally { release?.(); }
+    });
+    if (!admission.current) return result;
+    // Admission can upload/authorize over the network. Leave the conversation lane free for Stop;
+    // projection has its own replay transaction and cannot block this acknowledgement.
+    await admission.current.promise;
+    const admitted = admission.current;
+    return this.serialize(id, async () => {
+      const session = await this.requireLive(id);
+      if (admitted.receipt) {
+        const accepted: StoredMessageReceipt = { ...admitted.receipt, state: "accepted" };
+        await this.store.saveMessageReceipt(id, accepted);
+        if (session.record.sourceAdmission?.runId === admitted.sourceId) delete session.record.sourceAdmission;
+        await this.store.saveRecord(session.record);
+        return this.publicMessageReceipt(accepted, actorUserId!);
+      }
+      if (session.record.sourceAdmission?.runId === admitted.sourceId) delete session.record.sourceAdmission;
+      await this.store.saveRecord(session.record);
     });
   }
 
@@ -2805,10 +3251,11 @@ export class SessionManager {
    * use: a provider whose exchange is refused stays absent. The proxy mints again per call.
    */
   private async buildMcpServers(session: LiveSession, knownCandidates?: McpProvider[]): Promise<Record<string, unknown> | undefined> {
+    if (this.connections?.remote) return undefined;
     const raw = await this.buildAppMcpServers(session, knownCandidates);
     const appServers = raw && Object.fromEntries(Object.entries(raw).map(([key, server]) => [key, { ...(server as object), hostyPolicy: true }]));
     const servers = !this.proxyBaseUrl || !session.record.taskExecutionId && (!this.development?.available || !(session.workspaceCredential ?? session.credential))
-      ? appServers : { ...appServers, ...this.developmentMcp.config(session.record.id, this.proxyBaseUrl, session.record.workerRun && this.worker?.callbackKey(session.record.workerRun.id, "workspaces")) };
+      ? appServers : { ...appServers, ...this.developmentMcp.config(session.record.id, this.proxyBaseUrl, undefined) };
     return servers;
   }
 
@@ -2851,7 +3298,7 @@ export class SessionManager {
     const key = this.proxy.register(
       session.record.id,
       servers.map((server) => ({ appId: server.appId, url: server.url })),
-      session.record.workerRun && this.worker?.callbackKey(session.record.workerRun.id, "apps"),
+      undefined,
     );
     // Proxy URLs are stable, so retain the selected upstream URLs in the reconfiguration signature.
     // Unrelated fleet metadata and skill approvals do not change a running harness server set.
@@ -2947,6 +3394,11 @@ export class SessionManager {
    * session without app MCP rather than pretending it still has it.
    */
   private async refreshMcpServers(session: LiveSession): Promise<boolean> {
+    if (this.connections?.remote) {
+      if (!(session.run instanceof ProviderHarnessRun)) return false;
+      await session.run.configureMcp(await this.providerMcpSelection());
+      return true;
+    }
     if (!session.run || !session.credential || !this.exchange?.available) {
       return false;
     }
@@ -2991,7 +3443,7 @@ export class SessionManager {
     // Independent app authority survives an expired cross-app delegation. Core revalidates the
     // app grant, apps.sources.full and the current user on every workspace operation.
     const ownServers = this.development?.available && this.proxyBaseUrl && session.workspaceCredential
-      ? this.developmentMcp.config(session.record.id, this.proxyBaseUrl, session.record.workerRun && this.worker?.callbackKey(session.record.workerRun.id, "workspaces")) : {};
+      ? this.developmentMcp.config(session.record.id, this.proxyBaseUrl, undefined) : {};
     if (!session.workspaceCredential) this.developmentMcp.unregister(session.record.id);
     if (!["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) {
       this.mcpPolicy.cancel(session.record.id); // An idle replacement starts a fresh RPC namespace.
@@ -3008,6 +3460,7 @@ export class SessionManager {
    * connection for nothing.
    */
   private scheduleMcpRefresh(id: string): void {
+    if (this.connections?.remote) return;
     const session = this.live.get(id);
     // No credential means nothing to refresh, so no timer: an idle interval waking every three
     // minutes to return immediately is pure noise for a session that may never use app MCP.
@@ -3063,6 +3516,18 @@ export class SessionManager {
     const session = await this.requireLive(id);
     if (actorId && session.record.createdBy !== actorId) throw new AppContextError(403, "approval_forbidden", "This approval belongs to another user.");
     this.store.assertWritable(id);
+    if (this.connections?.remote) {
+      const run = await this.ensureProviderRun(session);
+      const card = providerDecisionCard(approvalId); if (!card) return false;
+      const reason = decision === "deny" && message ? message.replace(/\s+/g, " ").trim() || undefined : undefined;
+      const toolName = session.pendingApprovals.get(approvalId) ?? "Agent action";
+      if (!await run.respondToCard(approvalId, { kind: "approval", decision, ...(reason ? { message: `Denied by the operator in Hosty: ${reason}` } : {}) })) return false;
+      session.pendingApprovals.delete(approvalId);
+      await this.appendProviderResolution(id, { type: "approval_decision", approvalId, toolName, decision, ...(reason ? { message: reason } : {}),
+        providerEventId: `${card.runId}:resolved:${card.decisionId}` });
+      await this.setStatus(id, "running");
+      return true;
+    }
     if (this.mcpPolicy.resolve(id, approvalId, decision === "allow")) return true;
     const toolName = session.pendingApprovals.get(approvalId);
     if (!session.run || toolName === undefined) {
@@ -3117,9 +3582,19 @@ export class SessionManager {
   async resolveQuestion(
     id: string,
     questionId: string,
-    answers: Record<string, string>,
+    answers: QuestionAnswers,
   ): Promise<boolean> {
     const session = await this.requireLive(id);
+    if (this.connections?.remote) {
+      const run = await this.ensureProviderRun(session);
+      const card = providerDecisionCard(questionId); if (!card) return false;
+      if (!await run.respondToCard(questionId, { kind: "question", answers })) return false;
+      session.pendingQuestions.delete(questionId);
+      await this.appendProviderResolution(id, { type: "question_answered", questionId, answers,
+        providerEventId: `${card.runId}:resolved:${card.decisionId}` });
+      await this.setStatus(id, "running");
+      return true;
+    }
     if (this.decisions && await this.decisions.waits.read((await import("../decisions/waits.js")).waitId(id, questionId)))
       throw new AppContextError(409, "shared_decision_required", "Answer this question through its shared Decisions record.");
     const questions = session.pendingQuestions.get(questionId);
@@ -3149,6 +3624,14 @@ export class SessionManager {
     return true;
   }
 
+  private async appendProviderResolution(id: string, event: Record<string, unknown> & { type: string; providerEventId: string }): Promise<void> {
+    await this.serialize(id, async () => {
+      const seen = this.providerProjectedIds.get(id);
+      if (seen?.has(event.providerEventId) || (await this.store.readEvents(id)).some(item => item.providerEventId === event.providerEventId)) return;
+      await this.append(id, event); seen?.add(event.providerEventId);
+    });
+  }
+
   /**
    * Pushes a provider-policy change into every live session. The settings page tells the operator a
    * toggle "applied to running sessions" when the harness supports it, and that has to be true the
@@ -3156,11 +3639,14 @@ export class SessionManager {
    * refresh timer happens to come round.
    */
   async applyProviderPolicy(): Promise<void> {
-    await Promise.all(
+    const results = await Promise.allSettled(
       [...this.live.values()]
-        .filter((session) => session.run && session.credential)
-        .map((session) => this.refreshMcpServers(session).catch(() => false)),
+        .filter((session) => session.run && (session.credential || session.record.taskDispatch))
+        .map((session) => this.refreshMcpServers(session)),
     );
+    if (this.connections?.remote && results.some(result => result.status === "rejected"
+      && !["unsupported_capability", "unsupported_control"].includes(String((result.reason as { code?: string })?.code))))
+      throw new WorkerError("provider_policy_unconfirmed", "Preferences were saved, but a running provider policy update could not be confirmed. Retry the update or stop the original execution before relying on it.", 503);
   }
 
   /** Cancel only the explicitly observed attempt; a replacement run cannot inherit an old command. */
@@ -3178,137 +3664,60 @@ export class SessionManager {
   }
 
   async executionRecovery(id: string, actorId: string) {
-    const worker = this.worker;
-    const snapshot = await this.serialize(id, async () => {
-      // Setup publishes workerRun before send; cross its queue before capturing the attempt.
-      const session = await this.requireLive(id);
-      if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
-      const pending = session.record.workerRecovery?.state === "pending" ? session.record.workerRecovery : undefined;
-      const runId = session.record.workerRun?.id ?? pending?.runId ?? session.record.sourceAdmission?.runId;
-      return runId ? { runId, run: session.run, pending, sourceOnly: !worker && !!session.record.sourceAdmission } : null;
-    });
-    if (snapshot?.sourceOnly && snapshot.run)
-      throw new AppContextError(409, "recovery_active", "Stop the retained native execution and confirm its exit before recovering this admission.");
-    if (snapshot?.sourceOnly) return { runId: snapshot.runId, generation: "source-admission", expectedRevision: 0, recoverable: true, sourceOnly: true,
-      pending: snapshot.pending && { ...snapshot.pending.input, runId: snapshot.pending.runId } };
-    if (!worker || !snapshot) return null;
-    // Network waits must leave Stop and coordinator callbacks free to use the queue.
-    try { await snapshot.run?.waitForAdmission?.(); }
-    catch (error) {
-      // A definite refusal remains visible. An uncertain transport failure needs the same
-      // authoritative receipt lookup as a retained run after coordinator restart.
-      if (error instanceof WorkerApiError && (error.status < 500 || error.code === "worker_stopping")) throw error;
-    }
-    const receipt = await worker.request<WorkerReceipt>(`/v1/runs/${snapshot.runId}`).catch(error => {
-      if (error instanceof WorkerApiError && error.code === "run_not_found") return null;
-      throw error;
-    });
-    // A missing receipt is not exit evidence. Bind its explicit operator attestation to the
-    // current worker generation; recovery creates a tombstone before normal source cleanup.
-    const missingGeneration = receipt ? undefined : (await worker.capabilities()).generation;
-    return this.serialize(id, async () => {
-      const session = await this.requireLive(id);
-      if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
-      const pending = session.record.workerRecovery?.state === "pending" ? session.record.workerRecovery : undefined;
-      const runId = session.record.workerRun?.id ?? pending?.runId ?? session.record.sourceAdmission?.runId;
-      if (runId !== snapshot.runId) return null;
-      if (!receipt) {
-        if (!missingGeneration || !/^[A-Za-z0-9-]{1,100}$/.test(missingGeneration))
-          throw new AppContextError(503, "recovery_unavailable", "The worker cannot review this missing execution. Check its service status.");
-        return { runId, generation: missingGeneration, expectedRevision: 0, recoverable: true,
-          pending: pending && { ...pending.input, runId: pending.runId } };
-      }
-      if (receipt.conversationId !== id) throw new AppContextError(409, "recovery_mismatch", "The run does not belong to this conversation.");
-      if (receipt.exitConfirmed && session.record.sourceAdmission?.runId === runId) {
-        // A durable native-exit receipt settles the fence without resending input or rewriting its UUID disposition.
-        delete session.record.sourceAdmission; await this.store.saveRecord(session.record);
-      }
-      const recoverable = receipt.state === "interrupted" && !receipt.exitConfirmed;
-      if (!recoverable && !pending) return null;
-      return { runId, generation: receipt.generation, expectedRevision: receipt.revision, recoverable,
-        pending: pending && { ...pending.input, runId: pending.runId } };
-    });
+    const session = await this.requireLive(id);
+    if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
+    if (!session.record.selection) throw new AppContextError(409, "provider_cutover_required", "Legacy sessions require the documented clean cutover; they cannot be imported or resumed.");
+    // Preparation/admission has its own durable request. Waiting here never occupies the
+    // conversation lane, so Stop can fence that exact request while this review is pending.
+    await session.run?.waitForAdmission?.().catch(() => undefined);
+    const retained = await this.store.readProviderExecution(id);
+    if (!retained?.runId) return null;
+    const { execution } = await this.publicExecution(session);
+    const snapshot = await execution.read(false);
+    const pending = session.record.providerRecovery?.state === "pending" ? session.record.providerRecovery : undefined;
+    if (snapshot.stopConfirmed && !pending) return null;
+    const capabilities = await (await this.publicExecution(session)).context.client.capabilities();
+    return { runId: snapshot.ref.id, generation: snapshot.generation, expectedRevision: snapshot.revision,
+      recoverable: capabilities.capabilities.includes("runs.reconcile") && snapshot.state === "unknown" && !snapshot.stopConfirmed,
+      pending: pending && { requestId: pending.input.requestId, runId: pending.runId,
+        generation: pending.input.expectedGeneration, expectedRevision: pending.input.expectedRevision, consumerExitConfirmed: true as const } };
   }
 
   async recoverExecution(id: string, actorId: string, value: Record<string, unknown>, credential?: string): Promise<void> {
     await this.serialize(id, async () => {
       const session = await this.requireLive(id);
       if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
+      if (!session.record.selection) throw new AppContextError(409, "provider_cutover_required", "Legacy executions cannot be imported or recovered through a provider. Complete the documented clean cutover.");
+      if (credential) { session.credential = credential; session.workspaceCredential = credential; }
       const requestId = this.messageRequest(value.requestId);
-      if (value.consumerExitConfirmed !== true || typeof value.runId !== "string" || !/^[A-Za-z0-9-]{1,100}$/.test(value.runId)
-        || typeof value.generation !== "string" || !/^[A-Za-z0-9-]{1,100}$/.test(value.generation)
-        || !Number.isSafeInteger(value.expectedRevision) || Number(value.expectedRevision) < 0)
-        throw new AppContextError(400, "recovery_invalid", "Review this run and confirm that its agent and commands have stopped.");
-      const previous = session.record.workerRecovery;
-      const input: WorkerRecovery = { requestId, generation: value.generation, expectedRevision: Number(value.expectedRevision), consumerExitConfirmed: true, actorId,
-        // Preserve pre-upgrade pending inputs exactly; new requests bind any missing tombstone
-        // to the authenticated conversation rather than trusting a browser-supplied owner.
-        ...(previous?.input.requestId === requestId && !previous.input.conversationId ? {} : { conversationId: id }) };
-      const replay = previous?.input.requestId === requestId;
-      if (!this.worker && input.generation === "source-admission") {
-        if (replay && (previous.runId !== value.runId || JSON.stringify(previous.input) !== JSON.stringify(input)))
-          throw new AppContextError(409, "recovery_conflict", "Reuse the original recovery request.");
-        if (replay && previous.state === "completed") return;
-        if (input.expectedRevision !== 0 || session.record.sourceAdmission?.runId !== value.runId)
-          throw new AppContextError(409, "recovery_stale", "This retained admission changed. Refresh its recovery review.");
-        if (session.run)
-          throw new AppContextError(409, "recovery_active", "Stop the retained native execution and confirm its exit before recovering this admission.");
-        // Explicit operator attestation fences the old admission; it never changes its message UUID receipt.
-        session.record.workerRecovery = { runId: value.runId, input, state: "pending" };
-        if (session.record.developmentLease) session.record.developmentLeaseState = "stopped";
-        if (session.record.taskRun?.started) session.record.taskRun.exitConfirmed = true;
-        await this.store.saveRecord(session.record);
-        session.runEpoch = undefined;
-        if (session.record.agentRunId) await this.observations.change(state => {
-          const run = state.runs.find(candidate => candidate.id === session.record.agentRunId);
-          if (run && !run.stopConfirmed) {
-            run.stopConfirmed = true; run.generation = null; run.state = "cancelled";
-            run.revision = String(BigInt(run.revision) + 1n); run.observedAt = new Date().toISOString();
-          }
-        });
-        await this.cancelSessionLocked(id);
-        delete session.record.sourceAdmission;
-        session.record.workerRecovery = { runId: value.runId, input, state: "completed" };
-        await this.store.saveRecord(session.record);
-        this.audit.report("ai_execution_recovered", { sessionId: id, runId: value.runId, requestId, actorId }); return;
-      }
-      if (replay && (previous.runId !== value.runId || JSON.stringify(previous.input) !== JSON.stringify(input)))
-        throw new AppContextError(409, "recovery_conflict", "Reuse the original recovery request.");
-      if (session.record.workerRun && session.record.workerRun.id !== value.runId)
-        throw new AppContextError(409, "recovery_stale", "This conversation has another execution. Refresh its state.");
-      if (replay && previous.state === "completed") return;
-      if (!this.worker || !replay && session.record.workerRun?.id !== value.runId)
-        throw new AppContextError(409, "recovery_stale", "This conversation has no matching interrupted execution.");
-      if (previous?.state === "pending" && !replay)
-        throw new AppContextError(409, "recovery_pending", "Retry the retained recovery request first.");
-      // Read before retaining a new request: a stale review must not poison future recovery.
-      if (!replay) {
-        const receipt = await this.worker.request<WorkerReceipt>(`/v1/runs/${value.runId}`).catch(error => {
-          if (error instanceof WorkerApiError && error.code === "run_not_found") return null;
-          throw error;
-        });
-        if (receipt ? receipt.conversationId !== id || receipt.generation !== input.generation || receipt.revision !== input.expectedRevision
-          || receipt.state !== "interrupted" || receipt.exitConfirmed
-          : input.expectedRevision !== 0 || (await this.worker.capabilities()).generation !== input.generation)
-          throw new AppContextError(409, "recovery_stale", "The execution changed. Refresh its recovery review.");
-        session.record.workerRecovery = { runId: value.runId, input, state: "pending" };
+      if (value.consumerExitConfirmed !== true || typeof value.runId !== "string" || typeof value.generation !== "string"
+        || typeof value.expectedRevision !== "string" || !/^(0|[1-9][0-9]{0,19})$/.test(value.expectedRevision))
+        throw new AppContextError(400, "recovery_invalid", "Review this provider execution and confirm that its agent and commands have stopped.");
+      const input: AgentRunControlInput = { requestId, expectedGeneration: value.generation, expectedRevision: value.expectedRevision,
+        command: "reconcile", stopped: true, evidence: "The authenticated conversation owner explicitly confirmed native process and command exit." };
+      const previous = session.record.providerRecovery;
+      if (previous?.input.requestId === requestId) {
+        if (previous.runId !== value.runId || JSON.stringify(previous.input) !== JSON.stringify(input))
+          throw new AppContextError(409, "recovery_conflict", "Reuse the original recovery request and reviewed execution revision.");
+        if (previous.state === "completed") { await this.store.saveRecord(session.record); return; }
+      } else {
+        if (previous?.state === "pending") throw new AppContextError(409, "recovery_pending", "Retry the retained recovery request first.");
+        const snapshot = await this.taskCheckpoint(id);
+        if (!snapshot || snapshot.ref.id !== value.runId || snapshot.generation !== input.expectedGeneration
+          || snapshot.revision !== input.expectedRevision || snapshot.state !== "unknown" || snapshot.stopConfirmed)
+          throw new AppContextError(409, "recovery_stale", "The provider execution changed. Refresh its recovery review.");
+        session.record.providerRecovery = { runId: value.runId, input, state: "pending" };
         await this.store.saveRecord(session.record);
       }
-      if (credential) session.workspaceCredential = credential;
-      let receipt: WorkerReceipt;
-      try { receipt = await this.worker.request<WorkerReceipt>(`/v1/runs/${value.runId}/recover`, "POST", input, true); }
-      catch (error) {
-        if (error instanceof WorkerApiError && ["recovery_active", "recovery_stale", "recovery_invalid"].includes(error.code)) {
-          delete session.record.workerRecovery;
-          await this.store.saveRecord(session.record);
-        }
-        throw error;
-      }
-      if (receipt.conversationId !== id || !receipt.exitConfirmed || receipt.recovery?.requestId !== requestId)
-        throw new AppContextError(503, "exit_unconfirmed", "Recovery did not confirm this execution. Keep its source leases.");
+      const proof = await this.applyPublicControl(session, input);
+      if (!proof.stopConfirmed) throw new AppContextError(503, "exit_unconfirmed", "The provider has not confirmed exit; its resources remain reserved.");
+      session.record.providerStopProof = { runId: proof.ref.id, generation: proof.generation, revision: proof.revision, observedAt: proof.observedAt };
+      // The control proves exit without advancing the transcript's replay cursor.
+      if (session.record.providerExecution?.run) session.record.providerExecution.run.stopConfirmed = true;
+      if (session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: true };
       await this.cancelSessionLocked(id);
-      session.record.workerRecovery = { runId: value.runId, input, state: "completed" };
-      if (session.record.sourceAdmission?.runId === value.runId) delete session.record.sourceAdmission;
+      session.record.providerRecovery = { runId: value.runId, input, state: "completed" };
+      delete session.record.sourceAdmission;
       await this.store.saveRecord(session.record);
       this.audit.report("ai_execution_recovered", { sessionId: id, runId: value.runId, requestId, actorId });
     });
@@ -3372,11 +3781,11 @@ export class SessionManager {
     }
     this.decisions?.kick();
     this.clearSuggestion(session);
-    if (this.worker || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session);
+    if (this.connections?.remote || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session, false, false, "cancelled");
     this.setActivity(session, null);
     if (session.run) {
       if (session.run.stopAndWait) await session.run.stopAndWait();
-      else if (!this.worker && session.record.sourceAdmission)
+      else if (!this.connections?.remote && session.record.sourceAdmission)
         throw new WorkerError("exit_unconfirmed", "This uncertain native admission needs supported Stop with confirmed exit. Its retained handle remains fenced.", 503);
       else await session.run.stop().catch(() => undefined);
       session.run = null;
@@ -3392,6 +3801,10 @@ export class SessionManager {
     this.proxy?.unregister(id);
     this.developmentMcp.unregister(id);
     await this.setStatus(id, "cancelled");
+    if (this.connections?.remote && session.record.sourceAdmission) {
+      delete session.record.sourceAdmission;
+      await this.store.saveRecord(session.record);
+    }
     this.audit.report("ai_session_cancelled", { sessionId: id });
   }
 
@@ -3452,11 +3865,11 @@ export class SessionManager {
     for (const session of this.live.values()) {
       if (session.workspaceActivityTimer) clearTimeout(session.workspaceActivityTimer);
       session.workspaceActivityTimer = undefined;
-      if (!this.worker && (session.record.developmentLease || session.record.taskExecutionId) && session.run?.stopAndWait) {
+      if (!this.connections?.remote && (session.record.developmentLease || session.record.taskExecutionId) && session.run?.stopAndWait) {
         try { await this.finishExecution(session); }
         catch { /* Preserve the exact lease and stopped/unknown evidence for recovery. */ }
       }
-      if (this.worker && session.run?.detach) {
+      if ((this.connections?.remote) && session.run?.detach) {
         await session.run.detach(); session.run = null;
         // Coordinator restart keeps the persisted run and specific source leases for reattachment.
       }
@@ -3549,8 +3962,11 @@ export class SessionManager {
     const existing = this.live.get(id);
     if (existing) {
       if (existing.record.storageRecovery) throw new SessionStorageError(id, existing.record.storageRecovery.code, existing.record.storageRecovery.message);
+      if (this.connections?.remote && existing.record.agentConsumerVersion !== 1)
+        throw new ConnectionError(409, "provider_cutover_required", "Legacy conversation history cannot be imported or resumed. Complete the documented clean provider cutover.");
       await this.reconcileSourceAdmission(existing.record);
       await this.reconcileRuntime(existing.record);
+      await this.hydrateProviderState(existing.record);
       return existing;
     }
 
@@ -3562,6 +3978,9 @@ export class SessionManager {
     }
 
     if (record.storageRecovery) throw new SessionStorageError(id, record.storageRecovery.code, record.storageRecovery.message);
+    if (this.connections?.remote && record.agentConsumerVersion !== 1)
+      throw new ConnectionError(409, "provider_cutover_required", "Legacy conversation history cannot be imported or resumed. Complete the documented clean provider cutover.");
+    await this.hydrateProviderState(record);
     const loaded = this.live.get(id);
     if (loaded) return loaded;
     await this.reconcileSourceAdmission(record);
@@ -3589,66 +4008,17 @@ export class SessionManager {
       autoAllowed: new Set(),
     };
     this.live.set(id, session);
-    if (this.worker && record.workerRun) {
-      const epoch = session.runEpoch = randomUUID();
-      if (!record.agentRunId) { record.agentRunId = await this.observations.begin(record, true); await this.store.saveRecord(record); }
-      session.run = this.observations.attach(record.agentRunId, this.worker.attach(record.workerRun.id, {
-        sessionId: id, cwd: this.workDir,
-        onEvent: event => this.dispatchHarnessEvent(id, event, epoch),
-        onWorkerUsage: (runId, usage) => this.taskUsage?.(session.record, runId, usage),
-        onWorkerEvent: frame => this.receiveWorkerEvent(session, frame, epoch),
-        onWorkerPending: async frames => {
-          session.pendingApprovals.clear(); session.pendingQuestions.clear();
-          for (const { event } of frames) {
-            if (event.type === "approval_request") session.pendingApprovals.set(event.approvalId, event.toolName);
-            if (event.type === "question_request") session.pendingQuestions.set(event.questionId, event.questions.map(q => q.id ?? q.question));
-          }
-          this.notifyToolActivity();
-        },
-      }));
-    }
     return session;
   }
 
-  private receiveWorkerEvent(session: LiveSession, frame: import("../worker/contracts.js").WorkerEvent, epoch: string): Promise<void> {
-    const handled = this.serialize(session.record.id, async () => {
-      const run = session.record.workerRun;
-      if (this.stopping || session.runEpoch !== epoch || !run || run.id !== frame.runId || frame.sequence <= run.sequence) return;
-      if (session.record.agentRunId) await this.observations.markCurrent(session.record.agentRunId);
-      if (run.generation && run.generation !== frame.generation) throw new Error("Worker generation changed.");
-      const terminal = frame.event.type === "result" || frame.event.type === "error" || frame.event.type === "execution_parked";
-      try {
-        // Transcript IDs recover append-before-cursor crashes, including terminal events.
-        session.persistedWorkerSequences ??= new Set((await this.store.readEvents(session.record.id))
-          .filter(event => event.workerRunId === run.id && typeof event.workerSequence === "number")
-          .map(event => event.workerSequence as number));
-        const persisted = session.persistedWorkerSequences.has(frame.sequence);
-        const barrier = session.record.taskBarrier;
-        if (barrier?.state === "armed" && barrier.runId === run.id && frame.event.type === "tool_result"
-          && frame.event.status === "completed" && frame.event.output.includes(`hosty_task_barrier:${barrier.id}:${barrier.generation}`))
-          barrier.acknowledgedSequence ??= frame.sequence;
-        if (!persisted || terminal) await this.applyHarnessEvent(session.record.id,
-          { ...frame.event, workerRunId: run.id, workerSequence: frame.sequence }, persisted);
-        if (terminal) {
-          // Publish terminal status and receipt removal together, after exit/lease cleanup.
-          // Keep the in-memory receipt/epoch until the write succeeds so delivery can retry.
-          await this.store.saveRecord({ ...session.record, workerRun: undefined });
-          delete session.record.workerRun; session.runEpoch = undefined; session.run = null;
-        } else {
-          const next = { ...run, sequence: frame.sequence, generation: frame.generation };
-          await this.store.saveRecord({ ...session.record, workerRun: next });
-          session.record.workerRun = next;
-        }
-        session.persistedWorkerSequences.add(frame.sequence);
-      } catch (error) {
-        // An append can have succeeded before a subsequent record write failed.
-        session.persistedWorkerSequences = undefined;
-        throw error;
-      }
-    });
-    this.inFlightEvents.add(handled);
-    void handled.then(() => this.inFlightEvents.delete(handled), () => this.inFlightEvents.delete(handled));
-    return handled;
+  private async hydrateProviderState(record: SessionRecord): Promise<void> {
+    if (!record.selection) return;
+    const state = this.providerStates.get(record.id) ?? await this.store.readProviderExecution(record.id);
+    if (!state) return;
+    if (agentSelectionId(state.selection) !== agentSelectionId(record.selection))
+      throw new ConnectionError(409, "provider_connection_changed", "The retained execution belongs to a different provider installation or account.");
+    this.providerStates.set(record.id, state);
+    record.providerExecution = state; record.harnessSessionId = state.sessionId;
   }
 
   /** Starts an event handler and keeps it, so `shutdown` can wait for it. */
@@ -3691,7 +4061,7 @@ export class SessionManager {
     return calls;
   }
 
-  private async applyHarnessEvent(id: string, event: HarnessEvent & { workerRunId?: string; workerSequence?: number }, persisted = false): Promise<void> {
+  private async applyHarnessEvent(id: string, event: HarnessEvent & { workerRunId?: string; workerSequence?: number; providerEventId?: string; providerGeneration?: string }, persisted = false): Promise<void> {
     const session = this.live.get(id);
     if (!session) {
       return;
@@ -3744,10 +4114,6 @@ export class SessionManager {
         // Bind once while the executing session still owns the descriptor. Replay keeps this fact;
         // a later app/workspace selection must never reinterpret a historical relative filename.
         let trees = session.record.developmentWorkspaces ?? [];
-        if (this.worker && ["Edit", "Write", "MultiEdit", "NotebookEdit", "FileChange"].includes(event.toolName)) {
-          const root = (await this.worker.capabilities().catch(() => null))?.resources?.trees;
-          trees = root ? projectWorktreePaths(trees, root) as typeof trees : [];
-        }
         const fileEdits = transcriptFileEdits(event.toolName, event.input, id, trees, event.cwd);
         const calls = await this.outputCalls(session);
         try { await this.append(id, { ...event, ...(fileEdits.length ? { fileEdits } : {}) }); }
@@ -3763,6 +4129,8 @@ export class SessionManager {
         const toolName = (await this.outputCalls(session)).get(result.toolUseId);
         if (!toolName || !shouldRetainToolOutput(toolName)) return;
         await this.append(id, { ...result,
+          ...(event.providerEventId ? { providerEventId: event.providerEventId } : {}),
+          ...(event.providerGeneration ? { providerGeneration: event.providerGeneration } : {}),
           ...(event.workerRunId !== undefined ? { workerRunId: event.workerRunId, workerSequence: event.workerSequence } : {}),
         });
         return;
@@ -3774,6 +4142,8 @@ export class SessionManager {
         const result = sanitizeCommandResult(event);
         if (!result) return;
         await this.append(id, { ...result,
+          ...(event.providerEventId ? { providerEventId: event.providerEventId } : {}),
+          ...(event.providerGeneration ? { providerGeneration: event.providerGeneration } : {}),
           ...(event.workerRunId !== undefined ? { workerRunId: event.workerRunId, workerSequence: event.workerSequence } : {}),
         });
         return;
@@ -3800,7 +4170,7 @@ export class SessionManager {
         await this.setStatus(id, "awaiting_question");
         return;
       case "question_request":
-        if (this.decisions) {
+        if (this.decisions && !this.connections?.remote) {
           const wait = await this.decisions.register(session.record, event);
           if (event.blocking !== false && !session.record.decisionWaitIds?.includes(wait.id))
             session.record.taskInputGeneration = (session.record.taskInputGeneration ?? 0) + 1;
@@ -3831,7 +4201,7 @@ export class SessionManager {
         if (!persisted) await this.append(id, { ...event });
         // An error frame is not native-exit evidence. Await the executor's stop proof when
         // available; keep a failed termination handle so explicit cancellation can recover it.
-        if (this.worker || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session, false, event.workerRunId !== undefined, "failed");
+        if (this.connections?.remote || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session, false, event.workerRunId !== undefined, "failed");
         const failedRun = session.run;
         session.pendingApprovals.clear();
         session.pendingQuestions.clear();
@@ -3950,7 +4320,8 @@ export class SessionManager {
     // nobody reopened would never be swept and would sit in the list — and in the attention count —
     // as permanently blocked.
     for (const record of await this.store.listRecords()) {
-      if (!isWaitingStatus(record.status) || this.live.has(record.id) || record.decisionWaitIds?.length || record.taskBarrier) {
+      if (!isWaitingStatus(record.status) || this.live.has(record.id) || record.decisionWaitIds?.length || record.taskBarrier
+        || this.connections?.remote && record.providerExecution?.runId && !record.providerExecution.run?.stopConfirmed) {
         continue;
       }
 
@@ -4008,7 +4379,7 @@ export class SessionManager {
       return;
     }
 
-    if ((this.worker || session.record.taskExecutionId) && !["running", "suggesting", "awaiting_approval", "awaiting_question"].includes(status)) {
+    if ((this.connections?.remote || session.record.taskExecutionId) && !["running", "suggesting", "awaiting_approval", "awaiting_question"].includes(status)) {
       try { await this.finishExecution(session, status === "idle" && (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued"), preserveWorkerRun, status); }
       catch (error) {
         if (session.record.taskExecutionId) {
@@ -4017,7 +4388,7 @@ export class SessionManager {
             error: error instanceof Error ? error.message : "Execution cleanup is unconfirmed." };
           await this.store.saveRecord(session.record);
         }
-        await this.append(id, { type: "notice", message: "Execution exit or worktree lease release is unconfirmed. Keep source leases and retry Stop after checking the worker service." });
+        await this.append(id, { type: "notice", message: "Execution exit or worktree lease release is unconfirmed. Keep source leases and retry Stop after checking the original provider application." });
         throw error;
       }
     }
@@ -4041,7 +4412,7 @@ export class SessionManager {
         return; // Retain the running state and activity lease until explicit recovery confirms exit.
       }
     }
-    if (status === "idle" && session.record.developmentLease && !this.worker && !session.record.taskExecutionId)
+    if (status === "idle" && session.record.developmentLease && !this.connections?.remote && !session.record.taskExecutionId)
       await this.finishExecution(session, session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued");
     if (status === "running" && session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: false };
     session.record.status = status;

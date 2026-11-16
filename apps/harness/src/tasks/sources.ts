@@ -181,7 +181,7 @@ export class TaskSources {
         if (!id || id === operation.sessionId) continue;
         const record = await this.manager.getSession(id);
         if (!record || record.createdBy !== operation.owner) { ready = false; continue; }
-        if (!record.workerRun) {
+        if (!record.workerRun && !(record.providerExecution?.runId && !record.taskRun?.exitConfirmed)) {
           if (record.taskRun?.started && !record.taskRun.exitConfirmed) ready = false;
           continue;
         }

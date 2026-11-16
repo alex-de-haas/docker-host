@@ -90,6 +90,23 @@ html[data-hosty-navigation="hide"] [data-hosty-navigation-boundary] {
   display: none;
 }
 
+html[data-hosty-launch="embedded"] .harness-settings-heading,
+html[data-hosty-launch="native"] .harness-settings-heading {
+  display: none;
+}
+
+html[data-hosty-launch="embedded"] .harness-settings,
+html[data-hosty-launch="native"] .harness-settings {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+html[data-hosty-launch="embedded"] .harness-settings-tabs,
+html[data-hosty-launch="native"] .harness-settings-tabs {
+  margin: 0;
+}
+
 @source "../../../../../shared/web";
 
 :root { --chart-1: #C2410C; --chart-4: #1C68FF; }

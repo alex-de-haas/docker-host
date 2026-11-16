@@ -58,9 +58,10 @@ internal sealed partial class CoreCapabilityAuthorization
             var app = origin.AppId is null ? null : await registry.GetAppAsync(origin.AppId, ct);
             if (app is null || app.InstalledAt != origin.Installation || app.PermissionRevision != origin.PermissionRevision)
                 throw new AppIdentityException("permission_denied", "The originating installation or its reviewed grants changed.");
+            AssistantMcpActor? currentAssistant = null;
             if (origin.Kind == "assistant")
             {
-                var actor = origin.Mcp is null ? null : await assistants.ValidateClaimsAsync(origin.Mcp, AgentMcpDirectory.CoreId, ct, retainedOperation: retainedTask || origin.TaskWorkflow is not null);
+                var actor = currentAssistant = origin.Mcp is null ? null : await assistants.ValidateClaimsAsync(origin.Mcp, AgentMcpDirectory.CoreId, ct, retainedOperation: retainedTask || origin.TaskWorkflow is not null);
                 var authorizedTool = origin.InvokedTool ?? toolName;
                 if (actor is null || actor.DiscoveryOnly || actor.UserId != user.Id || actor.DeniedTools?.Contains(authorizedTool) == true
                     || actor.AllowedTools is { } allowed && !allowed.Contains(authorizedTool))
@@ -73,7 +74,7 @@ internal sealed partial class CoreCapabilityAuthorization
                     scope => scope.Kind == "provider" && scope.TargetAppId == providerAppId && scope.ProviderKind == kind && scope.Key == key, ct, requireActivity: !retainedTask && origin.TaskWorkflow is null);
                 if (actor.UserId != user.Id) throw new AppIdentityException("permission_denied", "The originating user changed.");
             }
-            caller = new(user, AppPrincipal(app), app, null) { Authority = origin };
+            caller = new(user, AppPrincipal(app), app, null) { Authority = origin, EffectivePermissions = currentAssistant?.EffectivePermissions, AgentExecution = currentAssistant?.AgentExecution };
         }
         else
         {

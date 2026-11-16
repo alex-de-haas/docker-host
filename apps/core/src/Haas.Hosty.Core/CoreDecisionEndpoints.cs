@@ -59,6 +59,17 @@ internal static class CoreDecisionEndpoints
             if (ctx.Request.Cookies.ContainsKey(CoreSessionAuthorization.SessionCookieName))
                 throw new AppIdentityException("app_credential_mixed", "Do not combine Core cookies and application credentials.");
             var app = await services.GetRequiredService<ProviderAccessService>().AuthenticateAsync(appId, ctx.Request, ctx.RequestAborted);
+            var execution = ctx.Request.Headers[CoreAgentExecution.ExecutionHeader].ToString();
+            if (!string.IsNullOrEmpty(execution))
+            {
+                var path = ctx.Request.Path.Value ?? "";
+                var metadataOnly = HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsPost(ctx.Request.Method)
+                    && (path.EndsWith("/ack", StringComparison.Ordinal) || path.EndsWith("/withdraw", StringComparison.Ordinal)
+                        || path.EndsWith("/invalidate", StringComparison.Ordinal) || path.EndsWith("/continuation", StringComparison.Ordinal));
+                var delegated = await services.GetRequiredService<CoreAgentExecution>().DecisionCaller(app, execution, ctx.RequestAborted, metadataOnly);
+                delegated.Require(AccessTokenScopes.McpDecisions, permission);
+                return delegated;
+            }
             var identity = services.GetRequiredService<AppIdentityService>();
             var token = ctx.Request.Headers["X-Hosty-User-Token"].ToString();
             // No background credential fallback: unsupported unattended authority remains blocked.

@@ -23,7 +23,10 @@ internal sealed partial class LocalCommandRuntimeAdapter
             using var log = new LocalCommandLogWriter(new StreamWriter(SecureFileSystem.CreatePrivateFile(
                 Path.Combine(context.AppDataPath, service.Key + ".prepare.log"), FileMode.Append, FileShare.Read, FileOptions.None)) { AutoFlush = true });
             await RunSetupAsync(context with { PreparationOnly = true }, service, ResolveServicePorts(context), directory, log, ct);
-            prepared.Add(service.Key);
+            // Scratch data/cache validate setup without initializing the runtime's app storage.
+            // Only source-only preparation can suppress setup against the eventual live roots.
+            if (RuntimeServiceStorage.Resolve(context.Manifest, service).Count == 0)
+                prepared.Add(service.Key);
         }
         return new(locks, prepared.ToArray());
     }
@@ -61,7 +64,10 @@ internal sealed partial class DockerRuntimeAdapter
                 }
                 finally { await runner.RunAsync(["rm", "-f", name], null, CancellationToken.None); }
             }
-            setup.Add(service.Key);
+            // Source cache volumes are retained, but scratch app data/cache are not promoted.
+            // A storage-bound setup must run in the actual container as well.
+            if (RuntimeServiceStorage.Resolve(context.Manifest, service).Count == 0)
+                setup.Add(service.Key);
         }
         return new(locks, setup.ToArray());
     }

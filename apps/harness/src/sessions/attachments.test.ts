@@ -83,7 +83,7 @@ describe("session attachments", () => {
   });
 
 
-  it("delivers Ollama text attachments as turn data and refuses images before dispatch", async () => {
+  it("leaves attachment interpretation to the selected provider instead of guessing from its display name", async () => {
     Object.defineProperty(adapter, "name", { value: "ollama" });
     const id = await session();
     await upload(id, "notes.txt", "Ollama attachment content");
@@ -94,17 +94,17 @@ describe("session attachments", () => {
     expect(sent.status).toBe(202);
     await vi.waitFor(async()=>expect((await store.readEvents(id)).some(e=>e.type==="assistant_text")).toBe(true));
     const events=await store.readEvents(id), echoed=String(events.find(e=>e.type==="assistant_text")?.text);
-    expect(echoed).toContain("Ollama attachment content");
-    expect(echoed).not.toContain(cacheDir);
+    expect(echoed).toContain("Attached files");
+    expect(echoed).toContain(cacheDir);
+    expect(echoed).not.toContain("Ollama attachment content");
     await vi.waitFor(async()=>expect((await manager.getSession(id))?.status).toBe("idle"));
     await upload(id,"picture.png","image bytes");
-    const rejected=await fetch(origin + "/api/sessions/" + id + "/messages", {
+    const accepted=await fetch(origin + "/api/sessions/" + id + "/messages", {
       method:"POST", headers:{authorization:"Bearer "+adminToken(),"content-type":"application/json"},
       body:JSON.stringify({text:"See this",attachments:["picture.png"]}),
     });
-    expect(rejected.status).toBe(400);
-    expect(await rejected.json()).toMatchObject({code:"attachment_unsupported"});
-    expect((await store.readEvents(id)).filter(e=>e.type==="user_message")).toHaveLength(1);
+    expect(accepted.status).toBe(202);
+    expect((await store.readEvents(id)).filter(e=>e.type==="user_message")).toHaveLength(2);
   });
 
   it("lands in the session's workspace and is recorded in the transcript", async () => {

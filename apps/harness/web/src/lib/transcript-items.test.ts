@@ -56,6 +56,48 @@ it.each([event(2, "result", { status: "success" }), event(2, "error"), ...["idle
   expect(items[0]).toMatchObject({ commandResults: {} }); expect(items.at(-1)).toMatchObject({ key: "event-3", kind: "event" });
 });
 
+describe("interrupted public observation", () => {
+  const runId = "00000000-0000-4000-8000-000000000001", generation = "00000000-0000-4000-8000-000000000002";
+  const call = event(1, "tool_use", { toolName: "Bash", toolUseId: "provider-command", providerGeneration: generation, providerEventId: `${runId}:tool:root:native-command` });
+  const failed = event(2, "session_status", { status: "failed", providerObservation: { runId, generation, stopConfirmed: false } });
+  const output = event(3, "tool_result", { toolUseId: "provider-command", status: "unknown", output: "Command interrupted", providerGeneration: generation, providerEventId: `${runId}:output:root:native-command:unknown` });
+  const command = event(4, "command_result", { toolUseId: "provider-command", status: "unknown", providerGeneration: generation, providerEventId: `${runId}:command:root:native-command:unknown` });
+
+  it("retains exact run/source pairing across observation failure until confirmed cancellation", () => {
+    const items = transcriptItems([call, failed, output, command, event(5, "session_status", { status: "cancelled" })], new Set());
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: "activity", toolResults: { 1: { status: "unknown", output: "Command interrupted" } }, commandResults: { 1: { status: "unknown" } } });
+    expect(items[0].kind === "activity" && items[0].commandResults[1]).not.toHaveProperty("exitCode");
+  });
+
+  it.each([
+    { providerObservation: undefined },
+    { providerObservation: { runId, generation, stopConfirmed: true } },
+    { providerObservation: { runId: "another", generation, stopConfirmed: false } },
+    { providerObservation: { runId, generation: "00000000-0000-4000-8000-000000000003", stopConfirmed: false } },
+  ])("keeps legacy, unqualified and foreign failure boundaries strict: %j", marker => {
+    const items = transcriptItems([call, { ...failed, ...marker }, output, command], new Set());
+    expect(items[0]).toMatchObject({ commandResults: {}, toolResults: {} });
+    expect(items.filter(item => item.kind === "event")).toHaveLength(2);
+  });
+
+  it.each([
+    { providerGeneration: "00000000-0000-4000-8000-000000000003" },
+    { providerEventId: `${runId}:output:child:native-command:unknown` },
+    { providerEventId: undefined },
+    { toolUseId: "different-source-command" },
+  ])("never joins an unqualified or foreign output across the marker: %j", change => {
+    const items = transcriptItems([call, failed, { ...output, ...change }], new Set());
+    expect(items[0]).toMatchObject({ toolResults: {} }); expect(items.at(-1)).toMatchObject({ kind: "event", key: "event-3" });
+  });
+
+  it.each([event(3, "user_message"), event(3, "error"), event(3, "session_status", { status: "cancelled" })])("ends even qualified pairing at the next factual boundary: %j", boundary => {
+    const items = transcriptItems([call, failed, boundary, { ...output, seq: 4 }, { ...command, seq: 5 }], new Set());
+    expect(items[0]).toMatchObject({ commandResults: {}, toolResults: {} });
+    expect(items.filter(item => item.kind === "event" && ["tool_result", "command_result"].includes(item.event.type))).toHaveLength(2);
+  });
+});
+
 
 it("matches out-of-order tool outputs by call identity across prose while keeping groups stable", () => {
   const calls = [event(1, "user_message"), event(2, "tool_use", { toolName: "mcp__core__list_apps", toolUseId: "first" }), event(3, "tool_use", { toolName: "mcp__core__list_apps", toolUseId: "second" })];

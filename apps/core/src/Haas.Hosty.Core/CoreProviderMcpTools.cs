@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -24,10 +25,22 @@ internal static class CoreProviderResults
 }
 [McpServerToolType]
 internal sealed class CoreProviderMcpTools(IHttpContextAccessor accessor, CoreCapabilityAuthorization auth,
-    CoreTaskAdapter tasks, CoreAgentSessionAdapter sessions)
+    CoreTaskAdapter tasks, CoreAgentSessionAdapter sessions, CoreProviderMediation workflows)
 {
     private Task<CoreCapabilityCaller> Caller(string kind, string operation, CancellationToken ct)
         => CoreProviderApi.Caller((accessor.HttpContext ?? throw new AppIdentityException("permission_denied", "A current Core caller is required.")).Request, auth, kind, operation, ct);
+
+    private static System.Text.Json.JsonElement WorkflowInput<T>(T value, params string[] remove)
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(CoreJson.Text(value))!.AsObject();
+        foreach (var key in remove) node.Remove(key);
+        return System.Text.Json.JsonDocument.Parse(node.ToJsonString()).RootElement.Clone();
+    }
+    private static System.Text.Json.JsonElement WorkflowTaskInput<T>(T value, string taskId)
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(CoreJson.Text(value))!.AsObject(); node["taskId"] = taskId;
+        return System.Text.Json.JsonDocument.Parse(node.ToJsonString()).RootElement.Clone();
+    }
 
     [McpServerTool(Name = "task_providers", ReadOnly = true, Destructive = false)]
     [Description("Discover reviewed task providers accessible to the current user, including installation IDs and availability. Core does not select a default provider or store task records.")]
@@ -37,32 +50,62 @@ internal sealed class CoreProviderMcpTools(IHttpContextAccessor accessor, CoreCa
     [McpServerTool(Name = "task_options", ReadOnly = true, Destructive = false)]
     [Description("Read the explicitly selected task provider's capabilities and accessible executor directory. Supply an executor reference for that executor's opaque options. Profiles and runtime settings remain private to their provider.")]
     public Task<CallToolResult> TaskOptions([Description("Explicit task provider and optional executor, each qualified by installation and interface key.")] CoreTaskOptions input, CancellationToken cancellationToken)
-        => CoreProviderResults.Run(async () => await tasks.OptionsAsync(await Caller("tasks", "options", cancellationToken), input, cancellationToken));
+         => CoreProviderResults.Run(async () =>
+        {
+            var caller = await Caller("tasks", "options", cancellationToken);
+            return await workflows.SessionWorkflowAsync(caller, "task-options", WorkflowInput(input, "provider", "executor"), cancellationToken, input.Provider)
+                ?? await tasks.OptionsAsync(caller, input, cancellationToken);
+        });
 
     [McpServerTool(Name = "task_list", ReadOnly = true, Destructive = false)]
     [Description("List visible tasks from one explicitly selected provider. Results preserve provider-owned IDs and revisions; unavailable providers are errors, not empty task collections. No Harness conversation is needed.")]
     public Task<CallToolResult> TaskList([Description("Provider reference, optional status/cursor and page size 1–100.")] CoreTaskQuery input, CancellationToken cancellationToken)
-        => CoreProviderResults.Run(async () => await tasks.ListAsync(await Caller("tasks", "list", cancellationToken), input, cancellationToken));
+         => CoreProviderResults.Run(async () =>
+        {
+            var caller = await Caller("tasks", "list", cancellationToken);
+            return await workflows.SessionWorkflowAsync(caller, "task-list", WorkflowInput(input, "provider"), cancellationToken, input.Provider)
+                ?? await tasks.ListAsync(caller, input, cancellationToken);
+        });
 
     [McpServerTool(Name = "task_get", ReadOnly = true, Destructive = false)]
     [Description("Read a task through its qualified provider/installation/key/ID reference. The provider enforces current user access and returns its authoritative revision.")]
     public Task<CallToolResult> TaskGet([Description("Qualified task reference.")] CoreTaskGet input, CancellationToken cancellationToken)
-        => CoreProviderResults.Run(async () => await tasks.GetAsync(await Caller("tasks", "get", cancellationToken), input, cancellationToken));
+         => CoreProviderResults.Run(async () =>
+        {
+            var caller = await Caller("tasks", "get", cancellationToken);
+            return await workflows.SessionWorkflowAsync(caller, "task-get", WorkflowTaskInput<JsonElement>(System.Text.Json.JsonDocument.Parse("{}").RootElement, input.TaskRef.Id), cancellationToken, new(input.TaskRef.AppId, input.TaskRef.InstallationId, input.TaskRef.Key))
+                ?? await tasks.GetAsync(caller, input, cancellationToken);
+        });
 
     [McpServerTool(Name = "task_create", ReadOnly = false, Destructive = false, Idempotent = true)]
     [Description("Create a provider-owned Draft task with a stable request UUID. Requires explicit task write authority. Retain the provider selection and unchanged input when recovering an uncertain reply; references do not grant resource access.")]
     public Task<CallToolResult> TaskCreate([Description("Provider and replayable creation input, including title, markdown, assignee and resources.")] CoreTaskCreate input, CancellationToken cancellationToken)
-        => CoreProviderResults.Run(async () => await tasks.CreateAsync(await Caller("tasks", "create", cancellationToken), input, cancellationToken));
+         => CoreProviderResults.Run(async () =>
+        {
+            var caller = await Caller("tasks", "create", cancellationToken);
+            return await workflows.SessionWorkflowAsync(caller, "task-create", System.Text.Json.JsonSerializer.SerializeToElement(input.Input, CoreJson.TypeInfo<HostySdk.App.HostyTaskCreate>()), cancellationToken, input.Provider)
+                ?? await tasks.CreateAsync(caller, input, cancellationToken);
+        });
 
     [McpServerTool(Name = "task_edit", ReadOnly = false, Destructive = false, Idempotent = true)]
     [Description("Replace editable Draft task inputs using the provider's current expectedRevision and original request UUID. Active or uncertain execution must stop according to provider policy before editing.")]
     public Task<CallToolResult> TaskEdit([Description("Qualified task reference and revision-checked full replacement.")] CoreTaskEdit input, CancellationToken cancellationToken)
-        => CoreProviderResults.Run(async () => await tasks.EditAsync(await Caller("tasks", "edit", cancellationToken), input, cancellationToken));
+         => CoreProviderResults.Run(async () =>
+        {
+            var caller = await Caller("tasks", "edit", cancellationToken);
+            return await workflows.SessionWorkflowAsync(caller, "task-edit", WorkflowTaskInput(input.Input, input.TaskRef.Id), cancellationToken, new(input.TaskRef.AppId, input.TaskRef.InstallationId, input.TaskRef.Key))
+                ?? await tasks.EditAsync(caller, input, cancellationToken);
+        });
 
     [McpServerTool(Name = "task_action", ReadOnly = false, Destructive = true, Idempotent = true)]
     [Description("Apply ready, draft, start, complete, cancel, accept, request_changes, retry or disposition. To accept a delegated result, use action accept and its exact resultRef. Ready/start that dispatches executor work and cancellation of an active attempt require separate execute authority and current executor access. Execution results remain bound to their original executor; acceptance never proves native termination.")]
     public Task<CallToolResult> TaskAction([Description("One outer input object containing taskRef (an object, not JSON text) and input (the action object with requestId, expectedRevision, action and optional exact resultRef). Preserve both nested input levels.")] CoreTaskAction input, CancellationToken cancellationToken)
-        => CoreProviderResults.Run(async () => await tasks.ActionAsync(await Caller("tasks", "action", cancellationToken), input, cancellationToken));
+         => CoreProviderResults.Run(async () =>
+        {
+            var caller = await Caller("tasks", "action", cancellationToken);
+            return await workflows.SessionWorkflowAsync(caller, "task-action", WorkflowTaskInput(input.Input, input.TaskRef.Id), cancellationToken, new(input.TaskRef.AppId, input.TaskRef.InstallationId, input.TaskRef.Key))
+                ?? await tasks.ActionAsync(caller, input, cancellationToken);
+        });
 
     [McpServerTool(Name = "agent_session_providers", ReadOnly = true, Destructive = false)]
     [Description("Discover accessible reviewed agent-session providers independently of conversation-history providers. Native state stays at its owning provider; no Harness installation is required.")]

@@ -62,7 +62,10 @@ internal sealed partial class CoreLifecycleService
             var resolved = await ResolveWorkspaceTreeAsync(app, workspace.Id, allowed.Select(t => t.Id).ToArray(),
                 null, currentWorktreeId, ct);
             var tree = allowed.SingleOrDefault(t => t.Id == resolved.WorktreeId);
-            var recipe = tree is null ? null : await ReadWorkspaceRecipeAsync(app, installed, tree.Id, ct, resolved.Runtime);
+            string? recipe = null;
+            try { if (tree is not null) recipe = await ReadWorkspaceRecipeAsync(app, tree.Id, ct, resolved.Runtime); }
+            catch (Exception error) when (error is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException)
+            { /* An unavailable candidate must not remove the installed package's Return choice. */ }
             var reason = tree is null ? resolved.Unavailable
                 : recipe is null ? "Configure a development runtime for this workspace."
                 : tree.Observation?.State is "unavailable" ? "Workspace source is unavailable." : null;
@@ -80,15 +83,23 @@ internal sealed partial class CoreLifecycleService
     private string WorkspaceRecipePath(string appId, string treeId) => Path.Combine(
         AppExecutionStore.DirectoryFor(paths, appId), "recipes", treeId + ".json");
 
-    private async Task<string?> ReadWorkspaceRecipeAsync(AppRecord app, IReadOnlyList<RuntimeProfileManifest> installed, string treeId, CancellationToken ct,
+    private async Task<string?> ReadWorkspaceRecipeAsync(AppRecord app, string treeId, CancellationToken ct,
         string? configured = null)
     {
-        var profiles = installed.Where(p => p.Development).ToArray();
-        if (configured is not null) return profiles.Any(p => p.Key == configured) ? configured : null;
+        var tree = await DevWorkspaces.Read(treeId, null, ct);
+        await DevWorkspaces.CheckDevTreeAsync(tree, app, tree.Owner, ct);
+        await DevWorkspaces.RequireExternalSourceAsync(tree, ct, localOnly: true);
+        await new HostPathAuthority(paths, apps).OverrideAsync(app, tree.Path, ct);
+        var profiles = (await manifests.ReadRuntimeProfilesAsync(CombineManifestSubpath(tree.Path, app.SourceState?.ManifestSubpath), ct))
+            .Where(p => p.Development).ToArray();
+        if (configured is not null)
+            return profiles.Any(p => p.Key == configured)
+                ? (await LoadWorkspaceDevelopmentRecipeAsync(app, tree.Path, configured, ct)).RuntimeProfile.Key : null;
         var recipe = await JsonStorage.ReadAsync<WorkspaceExecutionRecipe>(WorkspaceRecipePath(app.Id, treeId), ct);
-        if (recipe?.Installation == app.InstalledAt && profiles.Any(p => p.Key == recipe.Runtime)) return recipe.Runtime;
-        return profiles.FirstOrDefault(p => p.Default)?.Key ?? profiles.FirstOrDefault(p => p.Key == "dev")?.Key
+        var runtime = recipe?.Installation == app.InstalledAt && profiles.Any(p => p.Key == recipe.Runtime) ? recipe.Runtime
+            : profiles.FirstOrDefault(p => p.Default)?.Key ?? profiles.FirstOrDefault(p => p.Key == "dev")?.Key
             ?? (profiles.Length == 1 ? profiles[0].Key : null);
+        return runtime is null ? null : (await LoadWorkspaceDevelopmentRecipeAsync(app, tree.Path, runtime, ct)).RuntimeProfile.Key;
     }
 
     internal Task<AppExecutionOperation> ExecuteTargetAsync(AppExecutionOperation operation, CancellationToken ct,
@@ -202,11 +213,8 @@ internal sealed partial class CoreLifecycleService
             : WorkspaceOwner.ForExternal(journal.Actor.UserId, journal.Actor.Principal ?? "local-control", journal.Request.RequestId, "Runtime selection");
         // The operator deliberately selects editable workspace source; an editing lease is not a lifecycle lock.
         await DevWorkspaces.CheckDevTreeAsync(candidateTree, app, sourceActor, ct);
-        var installedRecipe = await manifests.ReadRuntimeProfilesAsync(app.ManifestPath!, ct);
-        var runtime = request.Runtime ?? await ReadWorkspaceRecipeAsync(app, installedRecipe, candidateTree.Id, ct, resolvedTree.Runtime)
+        var runtime = request.Runtime ?? await ReadWorkspaceRecipeAsync(app, candidateTree.Id, ct, resolvedTree.Runtime)
             ?? throw DevError("recipe_required", "Configure a development runtime during workspace setup.");
-        if (!installedRecipe.Any(p => p.Key == runtime && p.Development))
-            throw DevError("profile_unsupported", "The workspace needs an installed development execution recipe.");
         if (active is { Phase: "active" } && active.WorktreeId == candidateTree.Id && active.TargetRuntime == runtime && journal.Phase == "pending")
         {
             await ClaimAsync();

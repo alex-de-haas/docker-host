@@ -120,3 +120,15 @@ test('recovery failures cannot silently suppress publication or select an unrela
   await assert.rejects(selectPublicationWithRecovery(options, native), /unavailable/);
   await assert.rejects(selectPublicationWithRecovery({ ...options, components: ['shell'] }, native), /only available/);
 });
+
+
+test('retained per-provider checks and the new shared provider check preserve exact component selection', () => {
+  const current = evidence(['apps/codex-provider/src/main.ts']);
+  assert.ok(current.required.includes('agent-providers'));
+  assert.equal(publicationSelected('workflow_run', ['codex-provider'], current, source), true);
+  assert.equal(publicationSelected('workflow_run', ['claude-code-provider'], current, source), false);
+  const historical = { ...current, required: current.required.filter(job => job !== 'agent-providers').concat('codex-provider') };
+  assert.equal(publicationSelected('workflow_run', ['codex-provider'], historical, source), true);
+  for (const required of [historical.required.concat('agent-providers'), historical.required.concat('claude-code-provider'), current.required.filter(job => job !== 'agent-providers')])
+    assert.throws(() => validateSelection({ ...current, required }, source), /manifest/);
+});

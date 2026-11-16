@@ -1,0 +1,435 @@
+// A per-session MCP proxy, so a five-minute credential stops being visible to the harness.
+//
+// The problem it removes (docs/features/delegated-token-exchange/plan.md): an MCP server config
+// carries *static* headers, so whichever token was baked in when the run started is the token every
+// later call presents. Re-minting into the config was implemented and **verified live not to work** —
+// a call paused on an approval is bound to the connection it was prepared on, so replacing server
+// configuration reaches the next call and never that one. An operator who thinks for longer than five
+// minutes then releases a call carrying a dead credential, which is exactly the pause an approval
+// gate exists to allow.
+//
+// The shape: the harness is handed a loopback URL on the gateway itself plus a per-session key that
+// does not expire while the session lives. Each request through it obtains a delegated token for the
+// target app *at the moment the request goes out*, so the TTL becomes a property of the hop the
+// gateway makes and never of the connection the harness holds.
+//
+// This is deliberately a transparent forwarder rather than a JSON-RPC re-implementation: an app may
+// serve plain POST JSON-RPC (demo-app does) or full streamable HTTP with SSE and `Mcp-Session-Id`,
+// and the proxy has no business knowing which.
+
+import type { McpToolPolicy } from "./policy.js";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as WebReadableStream } from "node:stream/web";
+import type { IncomingMessage, ServerResponse } from "node:http";
+
+/** Same ceiling the operator API uses; an MCP request body is orders of magnitude smaller. */
+const MAX_BODY_BYTES = 64 * 1024;
+
+/**
+ * Bounds only *getting a response* out of the app — connect plus time-to-headers. Generous, because
+ * a tool call may legitimately do real work before it answers.
+ *
+ * Deliberately not a ceiling on the response body. `AbortSignal.timeout` passed to `fetch` aborts the
+ * whole exchange including the body stream, which would truncate a long-running tool result and
+ * disconnect a streamable-HTTP SSE channel every two minutes. The timer is therefore cleared the
+ * moment the headers arrive, and an established stream lives as long as the app keeps it open.
+ */
+const UPSTREAM_RESPONSE_TIMEOUT_MS = 120_000;
+
+/** The path the harness is pointed at. */
+export const PROXY_PATH_PREFIX = "/internal/mcp/";
+
+/** Headers forwarded verbatim to the app. Everything else — above all the caller's own
+ * `authorization` — is dropped, because the credential the app sees is minted here. */
+const FORWARDED_REQUEST_HEADERS = [
+  "content-type",
+  "accept",
+  "mcp-session-id",
+  "mcp-protocol-version",
+  "last-event-id",
+];
+
+/** Headers copied back. `mcp-session-id` matters: a streamable-HTTP client correlates on it. */
+const FORWARDED_RESPONSE_HEADERS = ["content-type", "cache-control", "mcp-session-id"];
+
+export interface ProxyTarget {
+  appId: string;
+  /** The app's resolved MCP URL, as Core reported it. */
+  url: string;
+  /** Provider-owned bounded protocol adapter; never an upstream URL or caller-supplied callback. */
+  local?: (request: { method: string; body?: Buffer; requestId: string; signal: AbortSignal; guard: () => Promise<void> }) => Promise<{ status: number; body?: unknown; headers?: { "mcp-session-id": string } }>;
+}
+
+export interface MintedToken {
+  token: string;
+  expiresAtMs: number;
+}
+
+/** Obtains a token for `appId` on behalf of `sessionId`, or null when the chain has run out. */
+export type TokenMinter = (sessionId: string, appId: string) => Promise<MintedToken | null>;
+
+interface Registration {
+  key: string;
+  targets: Map<string, ProxyTarget>;
+}
+
+export class McpProxy {
+  allowRemoteWorker = false;
+  policy?: McpToolPolicy;
+  /** Client-side source binding and native stop coordination; Core still authorizes the invocation. */
+  platformCall?: (sessionId: string, name: string, input: unknown, guard: () => Promise<void>) => Promise<{ result: unknown } | null>;
+  beforeDispatch?: (sessionId: string) => Promise<void>;
+  identity?: (appId: string) => Promise<string>;
+  deniedTools?: (appId: string) => Promise<readonly string[]>;
+  allowedTool?: (sessionId: string, appId: string, name: string) => boolean;
+  private readonly sessions = new Map<string, Registration>();
+
+  constructor(
+    private readonly mint: TokenMinter,
+    /** Overridden only by tests, which cannot wait two minutes to prove the timer stops. */
+    private readonly responseTimeoutMs: number = UPSTREAM_RESPONSE_TIMEOUT_MS,
+    private readonly resolveOffered?: (appId: string) => Promise<string | null>,
+  ) {}
+
+  /**
+   * Points the session at `targets` and returns the key the harness will present.
+   *
+   * The key is stable for the life of the session: a provider toggle rewrites the target list, and
+   * re-keying there would break every MCP connection the harness already holds for providers that
+   * were not touched. Each request still needs a fresh Core token.
+   */
+  register(sessionId: string, targets: readonly ProxyTarget[], recoveredKey?: string): string {
+    const existing = this.sessions.get(sessionId);
+    const registration: Registration = existing ?? {
+      key: recoveredKey ?? randomBytes(32).toString("base64url"),
+      targets: new Map(),
+    };
+
+    // An app route can disappear independently of the session's development MCP server.
+    for (const old of registration.targets.values()) {
+      if (!targets.some(target => target.appId === old.appId && target.url === old.url)) this.policy?.cancel(sessionId, old.appId);
+    }
+    registration.targets = new Map(targets.map((target) => [target.appId, target]));
+    this.sessions.set(sessionId, registration);
+    return registration.key;
+  }
+
+  /** Drops the session's routes. */
+  unregister(sessionId: string): void {
+    for (const appId of this.sessions.get(sessionId)?.targets.keys() ?? []) this.policy?.cancel(sessionId, appId);
+    this.sessions.delete(sessionId);
+  }
+  /** Remove native routes and retain only the coordinator's reviewed post-exit operation. */
+  disconnect(sessionId: string, retainedGuard?: () => Promise<void>): void {
+    this.policy?.disconnect(sessionId, retainedGuard);
+    this.sessions.delete(sessionId);
+  }
+
+  /**
+   * Serves a proxy request. Returns false when the path is not ours, so the caller can carry on
+   * routing — the proxy owns one prefix and nothing else.
+   */
+  async handle(request: IncomingMessage, response: ServerResponse, pathname: string): Promise<boolean> {
+    if (!pathname.startsWith(PROXY_PATH_PREFIX)) {
+      return false;
+    }
+
+    // Loopback only, and worth being precise about what that does and does not buy. The harness is a
+    // child process of this gateway, so nothing else legitimately needs a route in, and this app's
+    // endpoint is `public: true` — its port is reachable on the host's network. What it does NOT stop
+    // is a request arriving through the Cloudflare tunnel: `cloudflared` runs on the host and routes a
+    // public hostname straight at this port, so such a request presents as loopback. The per-session
+    // key is therefore the gate; this check narrows the direct-network path, and nothing more.
+    if (!this.allowRemoteWorker && !isLoopback(request.socket.remoteAddress)) {
+      sendJson(response, 403, { code: "proxy_forbidden", message: "The MCP proxy is reachable from loopback only." });
+      return true;
+    }
+
+    const segments = pathname.slice(PROXY_PATH_PREFIX.length).split("/");
+    if (segments.length !== 2 || !segments[0] || !segments[1]) {
+      sendJson(response, 404, { code: "proxy_not_found", message: "Unknown proxy route." });
+      return true;
+    }
+
+    // Malformed percent-encoding throws rather than returning anything, and this is a public HTTP
+    // surface: an unpaired `%` must be an ordinary 404, not an unhandled rejection surfacing as 500.
+    const decoded = decodeSegments(segments[0], segments[1]);
+    if (!decoded) {
+      sendJson(response, 404, { code: "proxy_not_found", message: "Unknown proxy route." });
+      return true;
+    }
+
+    const [sessionId, appId] = decoded;
+    const registration = this.sessions.get(sessionId);
+    let target = registration?.targets.get(appId);
+
+    // One answer for an unknown session, an unknown app, and a wrong key. They are distinguishable
+    // to an attacker only if the gateway distinguishes them, and the caller can act on none of them.
+    if (!registration || !target || !keyMatches(registration.key, readBearer(request))) {
+      sendJson(response, 401, { code: "proxy_unauthorized", message: "Unknown session, app, or key." });
+      return true;
+    }
+
+    let body: Buffer | undefined;
+    if (request.method === "POST") {
+      body = await readBody(request);
+      if (!body) {
+        sendJson(response, 413, { code: "payload_too_large", message: `Body exceeds ${MAX_BODY_BYTES} bytes.` });
+        return true;
+      }
+    }
+
+    if (target.local) {
+      const local = target.local, abort = new AbortController();
+      const close = () => { if (!response.writableEnded) abort.abort(); };
+      response.on("close", close);
+      const guard = async () => {
+        if (abort.signal.aborted || this.sessions.get(sessionId) !== registration || registration.targets.get(appId)?.local !== local)
+          throw new Error("The native tool route ended before dispatch.");
+      };
+      try {
+        await guard();
+        const result = await local({ method: request.method ?? "GET", body, requestId: String(request.headers["mcp-session-id"] ?? ""), signal: abort.signal, guard });
+        if (result.headers) response.setHeader("mcp-session-id", result.headers["mcp-session-id"]);
+        if (result.body === undefined) { response.writeHead(result.status); response.end(); }
+        else sendJson(response, result.status, result.body);
+      } catch (error) {
+        if (!response.headersSent && !response.destroyed) sendJson(response, 403, { code: "workflow_unavailable", message: error instanceof Error ? error.message : "The local workflow route ended." });
+      } finally { response.off("close", close); }
+      return true;
+    }
+
+    let token: MintedToken | null;
+    try {
+      if (this.resolveOffered) {
+        const url = await this.resolveOffered(appId);
+        if (!url) {
+          sendJson(response, 403, { code: "agent_target_disabled", message: "This target is not offered to agents." });
+          return true;
+        }
+        target = { appId, url };
+      }
+      token = await this.mint(sessionId, appId);
+    }
+    catch {
+      sendJson(response, 503, { code: "core_unavailable", message: "Core is temporarily unavailable. Retry after reconnecting; this request was not forwarded." });
+      return true;
+    }
+    if (!token) {
+      sendChainExpired(response, body);
+      return true;
+    }
+
+    if (this.policy && request.method === "POST" && body) {
+      let rpc: { id?: string | number; method?: string; params?: { name?: string; arguments?: unknown } };
+      try { rpc = JSON.parse(body.toString("utf8")); if (!rpc || Array.isArray(rpc)) throw new Error(); }
+      catch { sendJson(response, 400, { message: "A single JSON-RPC request is required." }); return true; }
+      if (rpc.method === "tools/list" || rpc.method === "tools/call") {
+        const abort = new AbortController();
+        const close = () => { if (!response.writableEnded) abort.abort(); };
+        response.on("close", close);
+        try {
+          if (rpc.id === undefined || typeof rpc.id !== "string" && typeof rpc.id !== "number") throw new Error("A tool request ID is required.");
+          const identity = await this.identity?.(appId) ?? target.url;
+          if (rpc.method === "tools/list") {
+            const tools = await this.policy.discover(appId, identity, target.url, token.token);
+            const denied = await this.deniedTools?.(appId) ?? [];
+            sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id, result: { tools: tools.filter(tool => !denied.includes(tool.name) && (!this.allowedTool || this.allowedTool(sessionId, appId, tool.name))) } });
+          } else {
+            if (typeof rpc.params?.name !== "string") throw new Error("A tool name is required.");
+            if (this.allowedTool && !this.allowedTool(sessionId, appId, rpc.params.name)) throw new Error("This tool is outside the admitted run selection.");
+            if ((await this.deniedTools?.(appId) ?? []).includes(rpc.params.name)) throw new Error("Core has disabled this tool.");
+            await this.policy.discover(appId, identity, target.url, token.token);
+            const toolName = rpc.params.name;
+            const revalidate = async () => {
+              const currentUrl = this.resolveOffered ? await this.resolveOffered(appId) : target.url;
+              if (!currentUrl || currentUrl !== target.url || identity !== (await this.identity?.(appId) ?? target.url)) throw new Error("Provider changed while the call waited. Discover its tools again.");
+              if ((await this.deniedTools?.(appId) ?? []).includes(toolName)) throw new Error("Core has disabled this tool.");
+            };
+            const dispatchGuard = await this.policy.authorize(sessionId, appId, identity, JSON.stringify([request.headers["mcp-session-id"] ?? "", rpc.id]),
+              toolName, rpc.params.arguments ?? {}, abort.signal, revalidate);
+            token = await this.mint(sessionId, appId);
+            if (!token) throw new Error("Session delegation expired before dispatch.");
+            if (!this.sessions.has(sessionId) || abort.signal.aborted) throw new Error("Session ended before dispatch.");
+            if ((await this.deniedTools?.(appId) ?? []).includes(rpc.params.name)) throw new Error("Core has disabled this tool.");
+            await this.beforeDispatch?.(sessionId);
+            await dispatchGuard();
+            const coordinated = appId === "hosty:core" ? await this.platformCall?.(sessionId, rpc.params.name, rpc.params.arguments ?? {}, dispatchGuard) : null;
+            if (coordinated) sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id,
+              result: { content: [{ type: "text", text: JSON.stringify(coordinated.result) }] } });
+            else await this.forward(request, response, target, token.token, body);
+          }
+        } catch (error) { if (!response.headersSent && !response.destroyed) sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id,
+          error: { code: -32001, message: error instanceof Error ? error.message : "MCP request refused." } }); }
+        finally { response.off("close", close); }
+        return true;
+      }
+    }
+    await this.forward(request, response, target, token.token, body);
+    return true;
+  }
+
+  private async forward(
+    request: IncomingMessage,
+    response: ServerResponse,
+    target: ProxyTarget,
+    token: string,
+    body: Buffer | undefined,
+  ): Promise<void> {
+    const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+    for (const name of FORWARDED_REQUEST_HEADERS) {
+      const value = request.headers[name];
+      if (typeof value === "string") {
+        headers[name] = value;
+      }
+    }
+
+    // Cleared as soon as the headers are back — see UPSTREAM_RESPONSE_TIMEOUT_MS. Aborting on this
+    // controller after that point would kill the body mid-stream, which is the bug this shape avoids.
+    const abort = new AbortController();
+    const responseTimeout = setTimeout(() => abort.abort(), this.responseTimeoutMs);
+    let upstream: Response;
+    try {
+      upstream = await fetch(target.url, {
+        method: request.method ?? "POST",
+        redirect: "error",
+        headers,
+        ...(body && body.length > 0 ? { body } : {}),
+        signal: abort.signal,
+      });
+    } catch {
+      // The app is unreachable or too slow. 502 rather than 500: the gateway is fine, the hop is not,
+      // and the harness should read this as the tool failing rather than the session breaking.
+      sendJson(response, 502, {
+        code: "proxy_upstream_unreachable",
+        message: `The app ${target.appId} did not answer its MCP endpoint.`,
+      });
+      return;
+    } finally {
+      clearTimeout(responseTimeout);
+    }
+
+    const outgoing: Record<string, string> = {};
+    for (const name of FORWARDED_RESPONSE_HEADERS) {
+      const value = upstream.headers.get(name);
+      if (value !== null) {
+        outgoing[name] = value;
+      }
+    }
+    response.writeHead(upstream.status, outgoing);
+
+    if (!upstream.body) {
+      response.end();
+      return;
+    }
+
+    // Piped rather than buffered: a streamable-HTTP app answers with SSE, and buffering it would
+    // hold every event until the stream closed — which for a long tool call is never.
+    try {
+      await pipeline(Readable.fromWeb(upstream.body as WebReadableStream<Uint8Array>), response);
+    } catch {
+      // The client hung up, or the app's stream broke mid-flight. The status line is already out, so
+      // there is nothing to report but the end of the body.
+      response.end();
+    }
+  }
+}
+
+/**
+ * The chain has run out: the operator has not spoken for an hour, so nothing can mint a token for
+ * this app until they do.
+ *
+ * Answered as a JSON-RPC error when the request carried an id, so the model reads a sentence telling
+ * it what to ask for instead of a transport failure it can only report as broken.
+ */
+function sendChainExpired(response: ServerResponse, body: Buffer | undefined): void {
+  const message =
+    "This session has no current tool authority. Ask the operator to approve or renew tool access in Core, then retry. " +
+    "Sending a message cannot extend this authority.";
+  const id = readRequestId(body);
+  if (id === undefined) {
+    sendJson(response, 401, { code: "reauth_required", message });
+    return;
+  }
+
+  sendJson(response, 200, { jsonrpc: "2.0", id, error: { code: -32001, message } });
+}
+
+function readRequestId(body: Buffer | undefined): string | number | null | undefined {
+  if (!body || body.length === 0) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(body.toString("utf8")) as { id?: unknown };
+    // A notification has no id and must not be answered with a response object.
+    return typeof parsed.id === "string" || typeof parsed.id === "number" || parsed.id === null
+      ? (parsed.id as string | number | null)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Both path segments decoded, or null when either is not valid percent-encoding. */
+function decodeSegments(sessionSegment: string, appSegment: string): [string, string] | null {
+  try {
+    return [decodeURIComponent(sessionSegment), decodeURIComponent(appSegment)];
+  } catch {
+    return null;
+  }
+}
+
+function keyMatches(expected: string, presented: string | undefined): boolean {
+  // Length is compared on the strings first: the key is fixed-size, so a mismatch here is already
+  // decisive, and it keeps an oversized Authorization header from being copied into a Buffer just to
+  // be rejected. Equal lengths still go through the constant-time path, which is the case that
+  // matters — the timing of a wrong-length guess leaks nothing about the key.
+  if (presented === undefined || presented.length !== expected.length) {
+    return false;
+  }
+
+  const a = Buffer.from(expected, "utf8");
+  const b = Buffer.from(presented, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function isLoopback(address: string | undefined): boolean {
+  if (!address) {
+    return false;
+  }
+
+  // Node reports an IPv4 loopback peer on a dual-stack socket as `::ffff:127.0.0.1`.
+  const normalized = address.startsWith("::ffff:") ? address.slice("::ffff:".length) : address;
+  return normalized === "::1" || normalized === "127.0.0.1" || normalized.startsWith("127.");
+}
+
+function readBearer(request: IncomingMessage): string | undefined {
+  const header = request.headers.authorization;
+  return header?.toLowerCase().startsWith("bearer ") ? header.slice("bearer ".length).trim() : undefined;
+}
+
+/** Returns undefined when the body exceeds the ceiling, which the caller reports as 413. */
+async function readBody(request: IncomingMessage): Promise<Buffer | undefined> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += (chunk as Buffer).length;
+    if (size > MAX_BODY_BYTES) {
+      return undefined;
+    }
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+function sendJson(response: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": Buffer.byteLength(payload),
+  });
+  response.end(payload);
+}

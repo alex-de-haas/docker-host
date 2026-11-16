@@ -14,7 +14,7 @@ settings. Generalists and specialists use the same configuration. Permissions an
 approvals remain independent of profiles and their instructions.
 
 Profiles are Harness-owned application data and use its administrator API. They are separate from
-provider credentials and conversations, and are shared within Harness rather than exported to other
+the independent provider applications' accounts, credentials and native sessions, and are shared within Harness rather than exported to other
 applications. The configuration type and controlled `AgentProfileForm` component are reusable without
 a second configuration editor. [Basic Tasks](../basic-tasks/feature.md) exposes profiles as opaque
 executor choices and snapshots the selected configuration into each accepted execution. Profiles
@@ -35,9 +35,20 @@ models are disabled with their server/catalog reason; no compatible model is sub
 Unavailable connections/models produce errors rather than substitutions. Failed discovery retains
 saved selections. Profile-list loading is independent of connection discovery.
 
+Connection choices come from the [agent provider directory](../agent-provider-interface/feature.md).
+The selected ID represents an installation-qualified provider interface, provider account ID and
+decimal-string account revision. It is an opaque Harness selection, not a native engine name or
+credential path. Configure accounts and sign-in in the provider application's Settings entry in
+Shell. Harness profiles keep the selected reference and obtain models/efforts through that
+provider's public interface. A provider reinstall or account revision change requires a current
+selection; a matching display name does not restore an old binding.
+
 Common instructions remain under Instructions and retention. Role instructions are additional
-standing guidance. [Core platform context](../core-platform-skills/feature.md) is included for every
-agent; the profile editor shows its package checked and disabled with Core version provenance.
+standing guidance. Before its first provider configuration, Harness reads and validates
+[Core platform guidance](../core-platform-skills/feature.md), captures the introduction text and
+provenance in the conversation, and explicitly adds the platform package to its selected skills.
+The profile editor shows that package checked and disabled with Core version provenance. This is
+a Harness caller default; independent consumers can request an empty skill selection.
 Additional packages, including `hosty-app-skill`, remain optional native guidance, with no implication
 that each package must activate on every turn. The Skills tab manages packages; it has no assistant-wide
 selection checkboxes. The legacy settings mutation rejects skill selection with `skill_selection_moved`.
@@ -46,14 +57,21 @@ On first profile-store access, General captures the previously selected assistan
 selected as the default. New installations start without a profile. An operator can explicitly set a
 default in Settings; existing configured defaults and conversation snapshots are preserved. Existing skill migration runs before that capture. Initialization occurs once; deleting
 all profiles does not recreate General. Creating another profile does not change the default.
-Deleting the default clears it. A chat without a profile receives the platform introduction and
-package, common instructions and no implicitly selected additional skills. Explicit session `skillIds` remain supported for manual/API consumers.
+Deleting the default clears it. A chat without a profile receives the captured platform
+introduction/package and common instructions, with no implicitly selected additional skills.
+Explicit session `skillIds` remain supported for manual/API consumers.
 
 Names are unique ignoring case, with a 100-character limit. Descriptions allow 2,000 characters and
 role instructions 8,000. A collection holds at most 200 profiles. Skill references use existing Core
 stable IDs while the interface shows native names and Core provenance. Successful catalog reads prune deleted
-IDs from editable profiles and persist the removal. Catalog outages retain selections. Skill files
-keep current-content export semantics; profile snapshots do not preserve removed package bytes.
+IDs from editable profiles and persist the removal. Catalog outages retain selections. Profiles
+store skill IDs rather than package bytes. On provider session/configuration creation, Core pins
+the selected packages as an immutable snapshot for that configuration. A resumed run revalidates
+that same pin and digest; updating the library does not replace its bytes. A missing/deleted skill
+or unavailable snapshot fails explicitly. A fresh provider configuration resolves a new selection
+under the [agent interface's snapshot rules](../agent-provider-interface/feature.md).
+The captured platform text and explicit package selection survive Harness restart without a new
+catalog read replacing them. Optional profile skill IDs remain the operator's separate selection.
 
 The store serializes changes and atomically replaces `{data}/agent-profiles.json`. Directory and
 profile revisions reject stale edits/selections. A failed save keeps form fields; reloading stored
@@ -80,17 +98,23 @@ unlock them.
 The session stores a copy of the selected profile. At the first admitted message it captures common
 workflow instructions, common operator instructions and role instructions. The profile then remains
 fixed, including after restart. Editing or deleting the source profile does not rewrite the stored
-role, instructions or skill selection. Codex receives the exported selection through its native
-process-local skill roots before each fresh or resumed thread, including on Windows; delivery does
-not depend on a process home override or alter shared connection configuration. Existing explicit model/reasoning controls remain available
-between turns; the provider retains its existing started-session lock. Unavailable configured
+role, instructions or skill selection. Harness sends this configuration through the provider's
+public session API. The provider owns native discovery directories, configuration snapshots and
+native-session identity; Harness does not install a CLI, copy credentials or open a native home.
+Codex/Claude discovery and Ollama skill reading use the provider configuration's pinned package
+snapshot. Existing explicit model/reasoning controls remain available
+between turns subject to the provider's declared capabilities and catalog. Unavailable configured
 providers/models are reported rather than silently replaced. A profile with a missing default
 connection requires an available connection before execution.
 
 Creation request replay returns the originally accepted conversation even after its profile is
-deleted. Session ownership, workspace associations, retention, native resume and export cleanup keep
-their existing contracts. Existing conversations without profile metadata retain their legacy
-behavior. Planner-to-developer work uses separate conversations and existing workspace association.
+deleted. Session ownership, workspace associations and retention keep their existing contracts.
+Harness persists the qualified provider selection, public session/run references and replay
+watermark; native continuation and immutable skill snapshots belong to the selected provider.
+Restarting Harness reattaches to the same public run without replaying accepted input. Missing
+native state or an unresolved prior execution blocks a new turn. Legacy pre-extraction
+conversations are rejected by the clean-cutover guard and are not imported or rebound through a
+profile. Planner-to-developer work uses separate conversations and existing workspace association.
 
 ## Administrator API
 
@@ -114,6 +138,10 @@ Selecting a profile together with manual connection/skill overrides is rejected.
 manual connection/skill inputs without a profile bypass the profile default.
 
 ## Verification Evidence
+
+The following records describe the profile release before independent provider applications.
+References to Worker, native homes and the retired integration command describe those dated
+versions; they are not verification of the current provider interface or release artifacts.
 
 Verified on macOS, 2026-10-26, for Harness 0.71.0 → 0.72.0:
 
@@ -179,6 +207,12 @@ Verified on macOS, 2026-10-26, for Harness 0.71.0 → 0.72.0:
   profile changes after admission, including concurrent send/switch requests.
 - Verify instruction snapshots, native resume and creation replay after profile deletion/restart;
   manual no-profile sessions must not inherit old global skill defaults.
+- Keep provider/account references installation-qualified and account revisions as decimal strings;
+  reject stale installations and credentials without choosing a provider by name or vendor kind.
+- Verify immutable skill snapshots per public provider configuration: library changes do not
+  rewrite an existing pin, and missing/deleted selections or changed snapshot bytes fail closed.
+- Reattach after consumer restart using public session/run identities and committed replay
+  watermarks. Preserve native-session ownership in the provider and reject legacy-history adoption.
 - Enforce current administrator access and session ownership. Preserve drafts on save/discovery errors
   and keep profile lists visible when connection discovery fails.
 - Build the static UI before the full Harness suite. Exercise normal Core login, Shell embedding and

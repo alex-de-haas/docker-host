@@ -31,6 +31,7 @@ export type SessionStatus =
 export type SessionAutonomy = "normal" | "autonomous";
 
 export interface SessionRecord {
+  agentConsumerVersion?: 1;
   /** Immutable admitted input versions remain available independently of working-file cache. */
   sourceAttachments?: import("./message-queue.js").StoredQueueAttachment[];
   /** Unsettled durable input never authorizes a new physical execution after reopening. */
@@ -40,6 +41,9 @@ export interface SessionRecord {
   suggestionHistoryVersion?: 1;
   /** Provider-owned execution attempt identity; distinct from chat and native session IDs. */
   agentRunId?: string;
+  providerObservedRunId?: string;
+  /** Harness's explicit caller guidance is stable with this conversation's provider configuration. */
+  providerPlatformContext?: import("../skills.js").PlatformSkillContext;
   taskExecutionId?: string;
   taskDispatch?: import("@hosty-sdk/app/providers").TaskDispatchRef;
   autonomyRevision?: number;
@@ -47,9 +51,10 @@ export interface SessionRecord {
   taskInputGeneration?: number;
   taskCancellationRequested?: string;
   taskBarrier?: {
-    id: string; kind: import("../worker/contracts.js").WorkerBarrier["kind"]; generation: number; owner: string;
+    id: string; kind: import("../agent-providers/compatibility.js").WorkerBarrier["kind"]; generation: number; owner: string;
     snapshot: string; runId: string; state: "armed" | "parked" | "resuming"; commandId: string;
-    origin?: "coordinator"; acknowledgedSequence?: number; nativeSessionId?: string; sourceBefore?: SessionRecord["taskWorkspace"]; control?: import("../worker/contracts.js").WorkerBarrier;
+    origin?: "coordinator"; acknowledgedSequence?: number | string; nativeSessionId?: string; sourceBefore?: SessionRecord["taskWorkspace"]; control?: import("../agent-providers/compatibility.js").WorkerBarrier;
+    checkpointSessionId?: string; providerControl?: import("@hosty-sdk/app/agent").AgentRunControlInput;
   };
   taskContext?: {
     taskRef: import("@hosty-sdk/app/tasks").TaskRef;
@@ -66,10 +71,11 @@ export interface SessionRecord {
   instructionSnapshot?: string;
   skillIds?: string[];
   skillExportId?: string;
-  executionSelection?: import("../worker/contracts.js").ExecutionSelection;
+  executionSelection?: import("../agent-providers/compatibility.js").ExecutionSelection;
   selectionRevision?: number;
   workerRun?: { id: string; sequence: number; generation?: string };
-  workerRecovery?: { runId: string; input: import("../worker/contracts.js").WorkerRecovery; state: "pending" | "completed" };
+  workerRecovery?: { runId: string; input: import("../agent-providers/compatibility.js").WorkerRecovery; state: "pending" | "completed" };
+  providerRecovery?: { runId: string; input: import("@hosty-sdk/app/agent").AgentRunControlInput; state: "pending" | "completed" };
   retentionVersion?: 1;
   retention?: import("./retention.js").RetentionStatus;
   retentionCleanup?: { requestId: string; expectedRevision: number };
@@ -102,9 +108,14 @@ export interface SessionRecord {
   mcpPendingApprovals?: { id: string; tool: string }[];
   publicationReferences?: { workspaceId: string; repository: string; url: string; head?: string }[];
   connectionId?: string;
-  connectionRevision?: number;
+  connectionRevision?: string | number;
   connectionIdentity?: string;
-  harnessKind?: "claude" | "codex" | "ollama";
+  harnessKind?: "claude" | "codex" | "ollama" | "agent";
+  /** Exact public provider/account binding; no native identity or credentials are stored here. */
+  selection?: import("../agent-providers/types.js").AgentConnectionSelection;
+  providerExecution?: import("../agent-providers/execution.js").ProviderExecutionState;
+  providerUploads?: Record<string, string>;
+  providerStopProof?: { runId: string; generation: string; revision: string; observedAt: string };
   providerLocked?: boolean;
   title: string | null;
   /**
@@ -398,6 +409,37 @@ export class SessionStore {
       record.lastEventSeq = Math.max(record.lastEventSeq, next.lastEventSeq);
     }, true);
     await this.changed(record.id);
+  }
+
+  /** Independent command outbox: changing its bytes cannot overwrite a concurrent conversation edit. */
+  async saveProviderExecution(id: string, state: import("../agent-providers/execution.js").ProviderExecutionState): Promise<void> {
+    const content = JSON.stringify(state);
+    await this.serialize(id, async () => {
+      if (await this.deleted(id)) throw new Error("The conversation was deleted; provider execution metadata is fenced.");
+      await stat(path.join(this.sessionDir(id), "record.json"));
+      await durableWriteFile(path.join(this.sessionDir(id), "provider-execution.json"), content);
+    }, true);
+  }
+  async readProviderExecution(id: string): Promise<import("../agent-providers/execution.js").ProviderExecutionState | null> {
+    this.assertWritable(id);
+    if (await this.deleted(id)) return null;
+    try {
+      const value = JSON.parse(await readFile(path.join(this.sessionDir(id), "provider-execution.json"), "utf8")) as import("../agent-providers/execution.js").ProviderExecutionState;
+      if (value.version !== 1 || !value.sessionId || !value.selection) throw new Error("Invalid provider execution outbox.");
+      return value;
+    } catch (error) { if (absent(error)) return null; throw this.problem(id, error, "The provider execution outbox needs recovery."); }
+  }
+  /** An observer commits only its public projection; concurrent exact command bytes stay intact. */
+  async commitProviderObservation(id: string, observed: import("../agent-providers/execution.js").ProviderExecutionState): Promise<import("../agent-providers/execution.js").ProviderExecutionState> {
+    return this.serialize(id, async () => {
+      if (await this.deleted(id)) throw new Error("The conversation was deleted; provider observation is fenced.");
+      const current = await this.readProviderExecution(id);
+      if (!current || current.runId !== observed.runId || current.sessionId !== observed.sessionId)
+        throw new Error("The provider observation belongs to an earlier execution.");
+      const next = { ...current, run: observed.run, cursor: observed.cursor };
+      await durableWriteFile(path.join(this.sessionDir(id), "provider-execution.json"), JSON.stringify(next));
+      return next;
+    }, true);
   }
   private messageReceiptPath(id: string, requestId: string): string { return path.join(this.sessionDir(id), "message-requests", messageRequestId(requestId) + ".json"); }
   async saveMessageReceipt(id: string, receipt: StoredMessageReceipt): Promise<void> {

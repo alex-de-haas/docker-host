@@ -4,8 +4,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { main, suitePlan, suites } from './test-integration.mjs';
 
-const manifest = () => ({ services: [{ key: 'api', runtimes: { docker: { image: 'example/harness:1.2.3' } } }, { key: 'worker', runtimes: { docker: { image: 'example/worker:1.2.3' } } }] });
-const options = { platform: 'darwin', env: {}, log() {}, readManifest: manifest };
+const options = { platform: 'darwin', env: {}, log() {} };
 
 test('help, invalid input and dry-run never start processes', () => {
   const noRun = { ...options, run: () => assert.fail('unexpected process') };
@@ -13,7 +12,7 @@ test('help, invalid input and dry-run never start processes', () => {
   assert.equal(main(['--help'], noRun), 0);
   assert.equal(main(['all'], noRun), 2);
   assert.equal(main(['activation', '--unknown'], noRun), 2);
-  assert.equal(main(['worker', '--dry-run', 'extra'], noRun), 2);
+  assert.equal(main(['agent-providers', '--dry-run', 'extra'], noRun), 2);
   for (const suite of suites) assert.equal(main([suite, '--dry-run'], { ...noRun, platform: 'win32' }), 0);
 });
 
@@ -36,11 +35,15 @@ test('activation uses the host Python and managed isolated scenarios after build
   }
 });
 
-test('worker uses the declared service image, without an npm install or host tsx dependency', () => {
-  const plan = suitePlan('worker', { readManifest: manifest, node: '/path with space/node' });
-  assert.equal(plan.steps[0].args[4], 'example/worker:1.2.3');
-  assert.deepEqual(plan.steps[1], { file: '/path with space/node', args: ['scripts/check-harness-worker.mjs'], env: {} });
-  assert.throws(() => suitePlan('worker', { readManifest: () => ({}) }), /worker image/);
+test('agent providers check scripted native transports and a production Docker consumer with managed Local providers', () => {
+  const plan = suitePlan('agent-providers', { platform: 'darwin', node: '/path with space/node' });
+  assert.deepEqual(plan.steps.slice(0, 2).map(step => step.args[0]), ['build', 'build']);
+  assert.deepEqual(plan.steps[2], { file: '/path with space/node', args: ['scripts/check-agent-provider-native.mjs'], env: {} });
+  assert.deepEqual(plan.steps[3].args, ['build', '-f', 'apps/harness/Dockerfile', '-t', 'hosty-harness-api-acceptance:local', '.']);
+  assert.deepEqual(plan.steps[4].args, ['scripts/check-workspace-activation.py', '.', 'agent-providers', '--managed']);
+  assert.ok(plan.prerequisites.some(step => step.file === 'docker'));
+  assert.equal(plan.steps.filter(step => step.file === 'docker').length, 1);
+  assert.throws(() => suitePlan('worker'), /Unknown integration suite/);
 });
 
 test('skills builds Core and CLI before running selected imports in a managed child', () => {
@@ -117,14 +120,15 @@ test('Harness local acceptance uses managed Core and the native runtime without 
   assert.ok(!plan.steps.some(step => step.file === 'docker'));
 });
 
-test('tasks builds both local-only Harness images and runs inside a managed child Core', () => {
-  const plan = suitePlan('tasks', { readManifest: manifest });
+test('tasks builds one isolated Harness consumer image and runs inside a managed child Core', () => {
+  const plan = suitePlan('tasks');
   assert.deepEqual(plan.steps.slice(0, 2).map(step => step.args[0]), ['build', 'build']);
-  const images = plan.steps.slice(2, 4).map(step => step.args[4]);
-  assert.match(images[0], /^hosty-harness-api-acceptance:[a-f0-9-]{36}$/);
-  assert.equal(images[1], images[0].replace('-api-', '-worker-'));
-  assert.deepEqual(plan.steps.at(-1).env, { HOSTY_TASKS_API_IMAGE: images[0], HOSTY_TASKS_WORKER_IMAGE: images[1] });
-  assert.notEqual(suitePlan('tasks').steps[2].args[4], images[0]);
+  const image = plan.steps[2].args[4];
+  assert.match(image, /^hosty-harness-api-acceptance:[a-f0-9-]{36}$/);
+  assert.equal(plan.steps.filter(step => step.file === 'docker').length, 1);
+  assert.ok(plan.prerequisites.some(step => step.args.some(arg => arg.includes('npm --version'))));
+  assert.deepEqual(plan.steps.at(-1).env, { HOSTY_TASKS_API_IMAGE: image });
+  assert.notEqual(suitePlan('tasks').steps[2].args[4], image);
   assert.deepEqual(plan.steps.at(-1).args, ['scripts/check-workspace-activation.py', '.', 'tasks', '--managed']);
 });
 

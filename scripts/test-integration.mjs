@@ -10,7 +10,7 @@ const cli = 'apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj';
 const coreTests = 'apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj';
 const cliTests = 'apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj';
 const windowsFilter = 'FullyQualifiedName~CorePlatformFeedServiceTests|FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~StopAsync_OnWindowsKillsAdoptedJobDescendantAfterShellExited|FullyQualifiedName~CoreDevelopmentTests|FullyQualifiedName~ExplicitStop|FullyQualifiedName~SourceDocuments_ReferenceMetadataSupportsLfAndCrLf|FullyQualifiedName~WorkspaceGit_|FullyQualifiedName~WorkspaceDelete_|FullyQualifiedName~JsonStorageTests|FullyQualifiedName~NativeProcessEnvironmentTests|FullyQualifiedName~CoreEnvironmentLaunchTests|FullyQualifiedName~LocalCommandRuntimeAdapterTests.InjectEnvironment_';
-export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'tasks', 'windows', 'transport', 'worker', 'whisper', 'opus', 'documents', 'desktop', 'harness-local', 'feedback', 'shell', 'observability', 'skills', 'pull-requests']);
+export const suites = Object.freeze(['activation', 'dependencies', 'sessions', 'tasks', 'windows', 'transport', 'agent-providers', 'whisper', 'opus', 'documents', 'desktop', 'harness-local', 'feedback', 'shell', 'observability', 'skills', 'pull-requests']);
 const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--dry-run]\n'
   + 'Runs one explicitly selected local suite. Builds its fixtures first; no automatic retries.\n'
   + 'activation: .NET, Git, Python, Docker; isolated managed Core Return and recovery\n'
@@ -26,14 +26,13 @@ const usage = 'Usage: npm run test:integration -- <' + suites.join('|') + '> [--
   + 'shell: .NET, Git, Python, Docker; isolated Shell identity and workspace inventory with browser review\n'
   + 'feedback: .NET, Git, Python, Node/npm, Docker; feedback intake, SDK browser capture and exact-prompt processing in a managed Core\n'
   + 'skills: .NET, Git, Python, Docker; selected Git imports and CLI exports in a managed Core\n'
-  + 'harness-local: .NET, Git, Python, Node/npm, Docker; managed Core production local startup and recovery\n'
-  + 'worker: Docker; builds the manifest-matching worker image and checks its lifecycle\n'
+  + 'harness-local: .NET, Git, Python, Node/npm, Docker; managed Core cached Local development startup and recovery\n'
+  + 'agent-providers: .NET, Git, Python, Node/npm, Docker; production Docker consumer, independent Local providers and public session recovery in a managed Core\n'
   + 'whisper: .NET; downloads the pinned model and runs native CPU inference\n'
   + 'opus: Node 24 and uv; builds the app and runs pinned native OPUS-MT Big inference\n'
   + '--dry-run prints prerequisites and commands without running them.';
 
-export function suitePlan(suite, { platform = process.platform, node = process.execPath,
-  readManifest = () => JSON.parse(readFileSync(new URL('../apps/harness/manifest.json', import.meta.url), 'utf8')) } = {}) {
+export function suitePlan(suite, { platform = process.platform, node = process.execPath } = {}) {
   if (!suites.includes(suite)) throw new Error('Unknown integration suite: ' + suite);
   if (suite === 'windows' && platform !== 'win32') throw new Error('The windows suite requires Windows; it cannot be verified on ' + platform + '.');
   const python = platform === 'win32' ? 'python' : 'python3';
@@ -52,7 +51,6 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
         build(core), build(cli), build('apps/core/tests/Haas.Hosty.PrAcceptance/Haas.Hosty.PrAcceptance.csproj'),
         command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', 'hosty-harness-api-acceptance:local', '.']),
-        command('docker', ['build', '-f', 'apps/harness/worker/Dockerfile', '-t', 'hosty-harness-worker-acceptance:local', '.']),
         command('docker', ['build', '-f', 'apps/shell/Dockerfile', '-t', 'hosty-shell-acceptance:local', '.']),
         command(python, ['scripts/check-workspace-activation.py', '.', 'pull-requests', '--managed', ...(process.env.HOSTY_ACCEPTANCE_HOLD_UI === '1' ? ['--hold-ui'] : [])]),
       ] };
@@ -66,9 +64,12 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
       ] };
     case 'feedback':
     case 'harness-local':
+    case 'agent-providers':
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker,
         command(node, ['--version']), command(node, ['-e', "require('node:child_process').execSync('npm --version', {stdio:'inherit'})"])], steps: [
         build(core), build(cli),
+        ...(suite === 'agent-providers' ? [command(node, ['scripts/check-agent-provider-native.mjs'])] : []),
+        ...(suite === 'agent-providers' ? [command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', 'hosty-harness-api-acceptance:local', '.'])] : []),
         command(python, ['scripts/check-workspace-activation.py', '.', suite, '--managed']),
       ] };
     case 'activation':
@@ -84,13 +85,13 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
     case 'tasks':
     case 'sessions': {
       const tag = suite === 'tasks' ? randomUUID() : 'local';
-      const images = ['api', 'worker'].map(key => `hosty-harness-${key}-acceptance:${tag}`);
-      const imageEnvironment = suite === 'tasks' ? { HOSTY_TASKS_API_IMAGE: images[0], HOSTY_TASKS_WORKER_IMAGE: images[1] } : {};
+      const image = `hosty-harness-api-acceptance:${tag}`;
+      const imageEnvironment = suite === 'tasks' ? { HOSTY_TASKS_API_IMAGE: image } : {};
       const holdUi = suite === 'sessions' && process.env.HOSTY_ACCEPTANCE_HOLD_UI === '1';
-      return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
+      return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker,
+        ...(suite === 'tasks' ? [command(node, ['--version']), command(node, ['-e', "require('node:child_process').execSync('npm --version', {stdio:'inherit'})"])] : [])], steps: [
         build(core), build(cli),
-        command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', images[0], '.']),
-        command('docker', ['build', '-f', 'apps/harness/worker/Dockerfile', '-t', images[1], '.']),
+        command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', image, '.']),
         ...(holdUi ? [command('docker', ['build', '-f', 'apps/shell/Dockerfile', '-t', 'hosty-shell-acceptance:local', '.'])] : []),
         command(python, ['scripts/check-workspace-activation.py', '.', suite, '--managed', ...(holdUi ? ['--hold-ui'] : [])], imageEnvironment),
       ] };
@@ -125,14 +126,6 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
       return { prerequisites: [dotnet, pythonCheck, docker], steps: [build(core),
         command(python, ['scripts/check-docker-core-transport.py', 'apps/core/src/Haas.Hosty.Core/bin/Debug/net10.0/hosty-core.dll']),
       ] };
-    case 'worker': {
-      const image = readManifest().services?.find(service => service.key === 'worker')?.runtimes?.docker?.image;
-      if (typeof image !== 'string' || !image || image.startsWith('-') || /\s/.test(image)) throw new Error('Missing or invalid worker image in apps/harness/manifest.json.');
-      return { prerequisites: [docker], steps: [
-        command('docker', ['build', '-f', 'apps/harness/worker/Dockerfile', '-t', image, '.']),
-        command(node, ['scripts/check-harness-worker.mjs']),
-      ] };
-    }
     case 'opus':
       return { prerequisites: [command(node, ['--version']), command('uv', ['--version'])], steps: [
         command(node, ['apps/opus/scripts/build.mjs']),
@@ -151,11 +144,11 @@ function display(step) {
 }
 
 export function main(args, { platform = process.platform, env = process.env, cwd = root,
-  run = spawnSync, log = console.log, readManifest } = {}) {
+  run = spawnSync, log = console.log } = {}) {
   if (!args.length || (args.length === 1 && ['--help', '-h'].includes(args[0]))) { log(usage); return 0; }
   if (args.length > 2 || (args[1] && args[1] !== '--dry-run')) { log(usage); return 2; }
   let plan;
-  try { plan = suitePlan(args[0], { platform, readManifest }); }
+  try { plan = suitePlan(args[0], { platform }); }
   catch (error) { log(error.message); return 2; }
   const dryRun = args[1] === '--dry-run';
   if (!dryRun && env.GITHUB_ACTIONS === 'true') { log('Integration suites run locally, outside GitHub Actions.'); return 2; }

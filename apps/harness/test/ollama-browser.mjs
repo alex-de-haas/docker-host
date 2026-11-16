@@ -1,6 +1,6 @@
-// Normal Core login and real Harness provider administration. Credentials arrive on stdin.
+// Normal Core login and real provider-owned administration. Credentials arrive on stdin.
 import assert from 'node:assert/strict';
-import { randomUUID, createHash } from 'node:crypto';
+import { authenticateProvider, authenticateHarness, harnessProviderConnection } from './provider-browser.mjs';
 const { chromium } = await import(process.env.HOSTY_OLLAMA_PLAYWRIGHT_MODULE || 'playwright');
 let input = ''; for await (const chunk of process.stdin) input += chunk;
 const config = JSON.parse(input); input = '';
@@ -15,31 +15,25 @@ try {
   await Promise.all([page.waitForResponse(r => new URL(r.url()).pathname === '/login' && r.request().method() === 'POST'), page.getByRole('button', { name: 'Sign in', exact: true }).click()]);
   const identity = await (await page.request.get(config.core + '/api/auth/session')).json(); assert.equal(identity.authenticated, true);
   const csrf = await (await page.request.get(config.core + '/api/auth/csrf')).json();
-  const verifier = randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', '');
-  const code = await page.request.post(config.core + '/api/apps/hosty.harness/launch-code', { headers: { Origin: config.core, 'X-Hosty-CSRF': csrf.token },
-    data: { redirectUri: config.link, codeChallenge: createHash('sha256').update(verifier).digest('base64url'), codeChallengeMethod: 'S256' } });
-  assert.equal(code.status(), 200);
-  const exchange = await page.request.post(config.harness + '/api/auth/app-code', { headers: { Origin: config.harness }, data: { code: (await code.json()).code, codeVerifier: verifier } }); assert.equal(exchange.status(), 200);
-
-  await page.goto(config.harness + '/settings/providers/');
-  await page.getByRole('button', { name: '+ Add provider', exact: true }).click();
-  await page.getByLabel('Provider', { exact: true }).click();
-  await page.getByRole('option', { name: 'Ollama', exact: true }).click();
-  await page.getByLabel('Connection name', { exact: true }).fill('Browser Ollama');
+  await authenticateProvider(context, config.core, csrf.token, config.provider);
+  await page.goto(config.provider.origin + '/settings');
+  await page.getByRole('heading', { name: 'Ollama provider', exact: true }).waitFor();
+  await page.getByLabel('Name', { exact: true }).fill('Browser Ollama');
   const url = page.getByLabel('Ollama server URL', { exact: true });
   assert.equal(await url.getAttribute('placeholder'), 'http://127.0.0.1:11434');
-  assert.equal(await page.locator('#connection-secret').count(), 0);
+  assert.equal(await page.locator('#secret').isVisible(), false);
   await url.fill(config.ollama);
-  await page.getByRole('button', { name: 'Save provider', exact: true }).click();
-  const actions = page.getByRole('button', { name: 'Actions for Browser Ollama', exact: true });
-  await actions.waitFor();
-  await actions.click();
-  await page.getByRole('menuitem', { name: 'Test connection', exact: true }).click();
-  await page.getByText('Browser Ollama: Ollama is reachable from Worker.', { exact: true }).waitFor();
-  await actions.click();
-  await page.getByRole('menuitem', { name: 'Edit', exact: true }).click();
+  await page.getByRole('button', { name: 'Save connection', exact: true }).click();
+  const card = page.locator('article').filter({ has: page.getByRole('heading', { name: /Browser Ollama/, exact: false }) });
+  await card.waitFor();
+  await card.getByRole('button', { name: 'Edit', exact: true }).click();
   assert.equal(await url.inputValue(), config.ollama);
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'New connection', exact: true }).click();
+  // Sign into Harness separately; a provider app proof cannot authenticate another app.
+  await authenticateHarness(context, config.core, csrf.token, config);
+  const connection = await harnessProviderConnection(context, config.harness, config.provider, 'Browser Ollama');
+  const checked = await context.request.post(config.harness + '/api/connections/' + connection.id + '/test', { headers: { Origin: config.harness }, data: {} });
+  assert.equal(checked.status(), 200); assert.equal((await checked.json()).available, true);
   assert.deepEqual(errors, []);
-  console.log('PASS: normal Core browser login, Ollama provider form, URL persistence and Worker connection test without a credential field.');
+  console.log('PASS: normal Core browser login, provider-owned Ollama settings, URL persistence and Harness discovery without a credential field.');
 } finally { await browser.close(); }

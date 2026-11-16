@@ -53,10 +53,11 @@ internal static class CoreAppPermissions
     public const string HistoryRead = "core.history.read";
     public const string HistoryShare = "core.history.share";
     public const string HistoryExport = "core.history.export";
+    public const string AgentProviders = "providers.agent";
     public const string AgentSessionProviders = "providers.agent-sessions";
     public const string AgentSessionsRead = "core.agent-sessions.read";
     public const string AgentSessionsControl = "core.agent-sessions.control";
-    public static readonly string[] Known = [DecisionsRequest, DecisionsRead, DecisionsRespond, CoreEnvironmentsApi, PublicationWrite, TasksRead, TasksWrite, TasksExecute, HistoryProviders, HistoryRead, HistoryShare, HistoryExport, AgentSessionProviders, AgentSessionsRead, AgentSessionsControl, FeedbackManage, ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, ReadStorage, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
+    public static readonly string[] Known = [DecisionsRequest, DecisionsRead, DecisionsRespond, CoreEnvironmentsApi, PublicationWrite, TasksRead, TasksWrite, TasksExecute, HistoryProviders, HistoryRead, HistoryShare, HistoryExport, AgentProviders, AgentSessionProviders, AgentSessionsRead, AgentSessionsControl, FeedbackManage, ReadCredentials, RevokeCredentials, RequestMcpAccess, WorkspaceCore, Install, ReadApps, ReadPanels, AppLogs, Notifications, AppLifecycle, ConfigureApps, ReadCore, ReadStorage, UpdateCore, CoreLifecycle, ConfigureCore, CoreLogs, ReadUsers, ManageUsers, Sources, SourcesRead, WorkspacesRead, WorkspacesCleanup, CoreEnvironmentsRead, CoreEnvironmentsManage, CoreEnvironmentsInspect, CoreEnvironmentsOperate, SourceConnections, ReadSkills, ManageSkills, SpeechProviders, TranslationProviders, AssistantProviders, TaskProviders, TaskExecutors];
 
     // The old name grants exactly the same authority. Other retired permissions remain unsupported.
     public static string Normalize(string permission) => permission == LegacySources ? Sources : permission;
@@ -94,6 +95,7 @@ internal static class CoreAppPermissions
         HistoryRead => "Read and search your own or explicitly shared conversation history",
         HistoryShare => "Provide or revoke named-user access to your conversation history",
         HistoryExport => "Export an explicitly approved conversation corpus to its designated index consumer",
+        AgentProviders => "Invoke independently installed agent providers on your behalf",
         AgentSessionProviders => "Discover and use declared agent session providers",
         AgentSessionsRead => "Observe authorized agent sessions and execution runs",
         AgentSessionsControl => "Cancel authorized execution runs",

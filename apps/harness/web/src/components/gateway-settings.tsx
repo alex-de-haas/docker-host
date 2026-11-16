@@ -16,9 +16,6 @@ import {
 } from "@/components/ui/field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { AgentRuntime } from "@/components/agent-runtime";
-import { AgentProviders } from "@/components/agent-providers";
-import { TranslationProviders } from "@/components/translation-providers";
 import { SkillLibrary } from "@/components/skill-library";
 import { McpAccess } from "@/components/mcp-access";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
@@ -29,10 +26,10 @@ import {
   type SettingsResponse,
 } from "@/lib/api";
 
-type SettingsSection = "tasks" | "profiles" | "providers" | "translation" | "sources" | "skills" | "prompt" | "access" | "templates";
+type SettingsSection = "tasks" | "profiles" | "sources" | "skills" | "prompt" | "access" | "templates";
 
 export function GatewaySettings({
-  section = "providers",
+  section = "profiles",
 }: {
   section?: SettingsSection;
 }) {
@@ -105,17 +102,15 @@ export function GatewaySettings({
   }, []);
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-4 sm:p-6 lg:p-8">
-      <h1 className="text-2xl font-semibold tracking-[-0.02em]">Hosty Harness</h1>
+    <main className="harness-settings mx-auto flex w-full max-w-7xl flex-col gap-6 p-4 sm:p-6 lg:p-8">
+      <h1 className="harness-settings-heading text-2xl font-semibold tracking-[-0.02em]">Hosty Harness</h1>
       <Tabs value={activeSection} onValueChange={value => { setActiveSection(value as SettingsSection); if (value === "templates") setTemplatesVisited(true); }} className="gap-6">
-        <div className="-m-1 overflow-x-auto overflow-y-hidden p-1">
+        <div className="harness-settings-tabs -m-1 overflow-x-auto overflow-y-hidden p-1">
           <TabsList variant="line" aria-label="Hosty Harness settings">
             {(
               [
                 ["profiles", "Agent profiles"],
                 ["tasks", "Tasks"],
-                ["providers", "Agent providers"],
-                ["translation", "Translation providers"],
                 ["templates", "Prompt templates"],
                 ["prompt", "Instructions and retention"],
                 ["skills", "Skills"],
@@ -132,20 +127,9 @@ export function GatewaySettings({
         {needsSettings && !data && (error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
           : <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4 shrink-0" />Loading…</p>)}
         {data && <>
-        <TabsContent
-          value="providers"
-          forceMount
-          className="data-[state=inactive]:hidden"
-        >
-          <AgentRuntime />
-          {data.agentConnections && <AgentProviders />}
-        </TabsContent>
         <TabsContent value="tasks"><TaskLimits /></TabsContent>
         <TabsContent value="profiles"><AgentProfiles /></TabsContent>
         <TabsContent value="skills"><SkillLibrary /></TabsContent>
-        <TabsContent value="translation">
-          {data.agentConnections && <TranslationProviders />}
-        </TabsContent>
         <TabsContent value="sources"><p>Manage your GitHub connections and Git identity in Hosty Shell → Settings → Source connections.</p></TabsContent>
         <TabsContent
           value="prompt"

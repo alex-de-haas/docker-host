@@ -33,18 +33,21 @@ internal sealed partial class CoreLifecycleService
             outside.Add($"{mount.Key}: {mount.HostPath} ({(mount.ReadOnly ? "read-only" : "writable")})");
         var installed = input.Action == "return"
             ? await LoadDevReturnSelectionAsync(app, op, ct)
-            : await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
+            : await LoadDevelopmentBaselineAsync(app, app.SelectedRuntime, ct);
         if (input.Action != "return") await ValidateDevSourceAuthorityAsync(app, installed, actor, ct);
         var target = input.TargetRuntime;
         bool changed = false;
         if (input.Action == "enter")
         {
             if (op is { Active: true }) throw DevError("already_active", "This installation already has a development operation. Inspect it, retry its original request or return first.");
-            var selection = await manifests.LoadAsync(app.ManifestPath!, target, ct);
-            if (!selection.RuntimeProfile.Development || selection.Services.Any(s => workspaceActivation
-                ? s.Runtime.Type is not ("docker" or "localCommand") : s.Runtime.Type != "docker"))
-                throw DevError("profile_unsupported", "Choose an installed Docker development profile. Other manual runtime profiles remain available through Switch runtime.");
-            target = selection.RuntimeProfile.Key;
+            var selection = installed;
+            if (!workspaceActivation)
+            {
+                selection = await manifests.LoadAsync(app.ManifestPath!, target, ct);
+                if (!selection.RuntimeProfile.Development || selection.Services.Any(s => s.Runtime.Type != "docker"))
+                    throw DevError("profile_unsupported", "Choose an installed Docker development profile. Other manual runtime profiles remain available through Switch runtime.");
+                target = selection.RuntimeProfile.Key;
+            }
             if (app.SourceState is null) throw DevError("source_required", "Configure the application's Git source first.");
             treeId = input.WorktreeId;
             source = treeId is null ? app.SourceState.LocalOverridePath ?? ResolveLiveSourcePath(app with { SelectedRuntime = target }) :
@@ -67,9 +70,10 @@ internal sealed partial class CoreLifecycleService
             var live = await manifests.LoadAsync(CombineManifestSubpath(source, app.SourceState.ManifestSubpath), target, ct, forceRead: true);
             if (workspaceActivation)
             {
-                var candidate = await PrepareExecutionCandidateAsync(app, source, target, actor, ct);
+                var candidate = await PrepareExecutionCandidateAsync(app, source, target!, actor, ct);
                 await EnsureExecutionCandidateApprovedAsync(candidate, app, ct);
                 selection = candidate.Selection;
+                target = selection.RuntimeProfile.Key;
             }
             else if (!AppDevelopmentManifest.HasSameContract(selection.ManifestJson, live.ManifestJson))
                 throw DevError("contract_changed", "Review and install the source manifest first. This legacy development operation retains the installed contract.");

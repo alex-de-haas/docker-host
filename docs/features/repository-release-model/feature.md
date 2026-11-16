@@ -1,6 +1,6 @@
 ---
 created: 2026-05-12
-updated: 2026-11-04
+updated: 2026-11-13
 summary: The repository layout, release artifacts and versioning rules for every component.
 ---
 
@@ -21,6 +21,9 @@ Hosty uses one repository for:
 - `apps/marketplace` - Hosty Marketplace, the optional catalog storefront system app;
 - `apps/demo-app` - the first-party example runtime app;
 - `apps/cli` - the standalone `hosty` CLI;
+- `apps/harness` - the conversation/task coordinator, with its API/UI Docker service;
+- `apps/codex-provider`, `apps/claude-code-provider` and `apps/ollama-provider` - independent Local agent apps;
+- `packages/agent-provider-runtime` - shared provider mechanisms, without a separate running service;
 - `apps/shell-swift` - the native Apple client (iOS, iPadOS, macOS) for a Hosty host;
 - `apps/shell-cardputer` - native M5Stack Cardputer ADV operator-console firmware;
 - `skills/hosty-app-skill` - the repository-shipped Codex skill for wrapping apps as Hosty runtime apps;
@@ -71,9 +74,18 @@ publication and execution on one architecture do not establish other release tar
 
 ### The shared root lockfile
 
-The Node runtime apps, `apps/harness` and `packages/app-sdk` resolve
-through one root `package.json` / `package-lock.json` pair (npm workspaces). A component boundary in the
-diagram above is therefore not a dependency boundary: one lockfile decides what all of them install.
+The Node runtime apps, agent providers, shared agent runtime and `packages/app-sdk` resolve
+through one root `package.json` / `package-lock.json` pair (npm workspaces). Artifact inputs project
+that lock's reachable workspace/dependency graph rather than treating every archive entry as an
+input to every application. `scripts/npm-workspace.mjs` preserves actual nested installation paths,
+resolved archives/integrities and required peer/optional dependencies.
+
+Local providers prepare immutable generations in their separate Core app caches. Their snapshot
+contains the selected app, shared runtime/SDK and build dependencies; it excludes other providers'
+optional native SDK peers and SDK test/UI toolchains. Setup installs and bundles inside that private
+snapshot, with input/Node/OS/architecture keys and atomic publication. Starting a provider imports its
+prepared executable. It does not prune shared worktree `node_modules` or alter an older generation
+used by another process. See [Agent provider execution](../agent-provider-interface/feature.md).
 
 The root `overrides` block is that shared tree's **security floor**. It currently holds
 `"postcss": "^8.5.26"`, above the `8.5.23` that patches GHSA-fxqj-rqcc-2cmp. Two properties of how it is
@@ -126,7 +138,11 @@ their actual consumers. Unsupported Docker input syntax conservatively includes 
 and disables reuse with an explicit reason. npm contexts project the workspace lockfile's nested,
 peer and optional dependency closure; the builder receives those exact files, modes and symlinks.
 Fingerprints also include the Dockerfile, resolved base images, frontend, builder and build arguments.
-Recipes with unpinned package-manager/network setup explicitly disable reuse.
+The three Local agent source recipes explicitly exclude unused optional native peers; direct native
+SDK dependencies remain inputs. A Codex-only archive update selects Codex Provider without selecting
+Claude Code Provider, Ollama Provider or Harness. Shared provider runtime source selects all three.
+Unfamiliar dependency graphs fall back to conservative CI selection; other recipes retain their
+existing peer closure. Recipes with unpinned package-manager/network setup explicitly disable reuse.
 
 Reuse requires the original input fingerprint, full source commit, signed artifact provenance and
 consumer-readable content for every declared platform. A reused service retains its original build
@@ -202,11 +218,18 @@ The rollout sequence is explicit; code availability does not establish public re
    the feed URL, default ID and exact default manifest reference for catalog consumers; old static
    main URLs do not become stable merely because Core supports feeds.
 
-The nine repository apps are Shell, Desktop, Documents, Marketplace, Demo App, Harness, Telemetry,
-Whisper and OPUS. Docker and supported local production profiles are declared in the configuration;
-native source apps retain full commit pins and their existing execution capabilities.
+The publisher declares twelve repository app targets: Shell, Desktop, Documents, Marketplace, Demo
+App, Harness, Telemetry, Whisper, OPUS, Codex Provider, Claude Code Provider and Ollama Provider.
+The three agent providers publish independent Local source recipes with full commit pins and no OCI
+image. Harness publishes only its production Docker coordinator API/UI image; Local execution is a
+development recipe and is not a second production release profile. The final image contains the
+compiled Node API, static UI and projected production dependencies; build tools, source, native
+vendor SDKs and the former worker image are absent. Docker development retains its separately
+verified Node base image rather than inheriting the production image's digest.
 
-The official app and platform feeds are seeded. The [initial publisher](https://github.com/alex-de-haas/docker-host/actions/runs/41800939028)
+The originally published nine app feeds and the platform feed are seeded. Provider recipes and
+checked-in feed entry files do not by themselves establish publication or promotion of those new
+provider feeds. The [initial publisher](https://github.com/alex-de-haas/docker-host/actions/runs/41800939028)
 retains all nine complete app releases and the four native Core/CLI pairs. Explicit initial stable
 promotions publish both entries with stable as the fresh-install default; every promotion revalidates
 the retained bytes without building. The [catalog cutover](https://github.com/alex-de-haas/hosty-catalog/pull/21)
@@ -216,8 +239,9 @@ part of distribution installation data and has no separate catalog entry.
 The [recovery publication](https://github.com/alex-de-haas/docker-host/actions/runs/41805032955)
 uses retained candidates after an overlapping cold-start run was cancelled before publication.
 For the Harness-only source change, seven app images and all native platform artifacts are unchanged;
-only the two Harness images build. Harness and OPUS source/setup inputs qualify their app releases
-separately. Their daily advancement preserves the previously approved stable pointers. Unpinned
+the retained publication builds the Harness API and former worker images. The current extraction
+recipe contains only the Harness coordinator image. Harness, OPUS and each Local provider qualify
+source/setup inputs independently. Their daily advancement preserves the previously approved stable pointers. Unpinned
 build inputs still require the documented conservative rebuild; a skipped unchanged app does not
 claim that its recipe is generally reusable.
 
@@ -364,7 +388,10 @@ Core and CLI are tightly coupled and ship together as one immutable platform bun
 
 ### Tier 2 - Runtime apps (`apps/shell`, `apps/marketplace`, `apps/demo-app`, and external apps such as project-manager, media-server, torrent-engine)
 
-Each runtime app is its own release artifact (its own image / repository) and versions independently through the `version` field in its `manifest.json`. Shell and Marketplace are versioned exactly like other runtime apps, not as part of the platform.
+Each runtime app is its own release artifact (image or pinned source recipe) and versions independently
+through `version` in its `manifest.json`. Shell, Marketplace, Harness and each Local agent provider
+follow this rule rather than the platform version. Provider manifest/package/feed copies stay in step;
+the shared private runtime ships through its consuming provider artifacts.
 
 `version` is a separate axis from `schemaVersion` (`app.0.1` or `app.0.2`), which is the manifest *contract* version owned by Core (`RuntimeAppManifest.cs`). Bump `schemaVersion` only when the manifest format changes; it is unrelated to any single app's `version`. An app declares the `schemaVersion` it targets, and that declaration is the compatibility handshake, so no cross-repository version matrix is required.
 
@@ -400,6 +427,11 @@ Bump the relevant component's version in the same change that ships the work.
 - App/platform publishers preserve independent pointers, refuse incomplete candidates and retain
   immutable release bytes on retry. Automatic publication never promotes a manual-policy feed.
 - Core-only, app-only, shared-input and missed-publication fixtures select the correct builds.
+- Local provider source recipes retain direct native SDK dependencies while excluding another
+  provider's unused optional native peer. Codex-only lock changes select Codex alone; shared runtime
+  changes select all three providers. Harness has no worker image or native SDK build dependency.
+- Cached Local provider preparations preserve source installs and active older generations, serialize
+  concurrent setup, reject moving source snapshots and recover failed/incomplete output.
 - Version aliases stay on their first digest across same-version rebuilds and recovery.
 
 - Cardputer host tests and the ESP32-S3 firmware build pass, the binary fits a 3.8125 MiB OTA slot, and release assets carry checksums and provenance.

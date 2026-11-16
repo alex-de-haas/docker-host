@@ -33,6 +33,7 @@ test('check scope does not order builds; core, app, shared and recovery select i
     write(root, 'core.cs', 'initial core'); write(root, 'shared/data', 'shared');
     write(root, '.github/workflows/ready-releases.yml', 'workflow');
     for (const file of ['context.mjs','docker-inputs.mjs']) write(root, `scripts/releases/${file}`, readFileSync(new URL(file, import.meta.url)));
+    write(root, 'scripts/npm-workspace.mjs', readFileSync(new URL('../npm-workspace.mjs', import.meta.url)));
     for (const app of config.apps) {
       write(root, app.manifest, JSON.stringify({ id: app.id, version: '1.0.0' }));
       write(root, `apps/${app.id}/Dockerfile`, `FROM example/base@sha256:${hash}\nCOPY apps/${app.id} /app\nCOPY shared /shared\n`);
@@ -115,5 +116,62 @@ test('one missing image cannot hold an independently complete source app release
     assert.ok(store.values.has('apps/working/feeds.json'));
     assert.ok(store.values.has('apps/working/install.json'));
     assert.equal(store.values.has('apps/broken/feeds.json'), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+
+test('source Docker development profiles retain their own verified base instead of the production app image', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'hosty-dev-base-')), store = memoryStore(), requests = [];
+  try {
+    execFileSync('git', ['init', '-q', root]);
+    const app = { id: 'independent.app', manifest: 'app/manifest.json', profiles: ['docker'] };
+    const manifest = { id: app.id, version: '1.0.0', runtimeProfiles: [{ key: 'docker', type: 'docker' }, { key: 'docker-dev', type: 'docker', development: true }],
+      services: [{ key: 'api', runtimes: { docker: { type: 'docker', image: 'example/app:1.0.0' }, 'docker-dev': { type: 'docker', artifact: 'source', image: { repository: 'node', tag: '24-slim' } } } }] };
+    const receipt = { repository: 'example/app', digest: `sha256:${hash}`, inputFingerprint: hash, buildSourceCommit: commit, platforms: ['linux/amd64','linux/arm64'] };
+    const plan = { sourceCommit: commit, validationRunId: '42', repository: 'example/repo', config: { images: [{ id: 'app', appId: app.id, services: ['api'] }], feeds: [] },
+      images: [{ recipe: { id: 'app', appId: app.id, repository: receipt.repository, platforms: receipt.platforms }, decision: 'reuse', previous: receipt, inputFingerprint: hash }],
+      apps: [{ app, manifest, selected: true, sourceFingerprint: hash, inputFingerprint: hash }] };
+    await publishApps({ root, plan, artifacts: root, store, prove: async () => ({}), aliases: async () => {}, validate: async () => {},
+      request: async url => { const value = store.values.get(url.split(`/${commit}/`)[1]); const response = new Response(value ? canonical(value) + '\n' : '', { status: value ? 200 : 404 }); Object.defineProperty(response, 'url', { value: url }); return response; },
+      verify: async (repository, reference, platforms) => { requests.push([repository, reference]); return { repository, digest: repository === 'node' ? `sha256:${'c'.repeat(64)}` : receipt.digest, platforms }; } });
+    const candidate = store.values.get(`apps/${app.id}/candidate.json`), emitted = store.values.get(`apps/${app.id}/releases/${candidate.releaseId}/manifest.json`);
+    assert.equal(emitted.services[0].runtimes.docker.image.repository, 'example/app');
+    assert.equal(emitted.services[0].runtimes['docker-dev'].image.repository, 'node');
+    assert.equal(emitted.services[0].runtimes['docker-dev'].image.digest, `sha256:${'c'.repeat(64)}`);
+    assert.ok(requests.some(([repository, reference]) => repository === 'node' && reference === '24-slim'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+
+test('an unrelated .NET build-target change does not select the Docker-only Harness release', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'hosty-harness-dotnet-input-')), store = memoryStore();
+  try {
+    execFileSync('git', ['init', '-q', root]);
+    const configured = JSON.parse(readFileSync(new URL('../../distribution/release-publisher.json', import.meta.url))).apps.find(app => app.id === 'hosty.harness');
+    assert.ok(!configured.sourceInputs.includes('Directory.Build.targets'));
+    const workspaces = ['apps/harness','apps/harness/web','packages/app-sdk'], packages = { '': { workspaces } };
+    for (const [workspace, name] of [['apps/harness','harness'],['apps/harness/web','web'],['packages/app-sdk','sdk']]) {
+      packages[workspace] = { name, ...(name === 'harness' ? { dependencies: { sdk: '*' } } : {}) };
+      packages['node_modules/' + name] = { link: true, resolved: workspace };
+      write(root, workspace + '/package.json', JSON.stringify(packages[workspace]));
+    }
+    const config = { schemaVersion: 'hosty-publisher.0.1', metadataBranch: 'releases', feeds: [{ id: 'edge', policy: 'validated-source' }], apps: [configured], images: [],
+      platform: { rids: ['fixture'], inputs: ['Directory.Build.props','Directory.Build.targets'] } };
+    write(root, 'distribution/release-publisher.json', JSON.stringify(config));
+    write(root, configured.manifest, JSON.stringify({ id: configured.id, version: '0.99.0' }));
+    write(root, 'package.json', JSON.stringify({ workspaces })); write(root, 'package-lock.json', JSON.stringify({ lockfileVersion: 3, packages }));
+    write(root, 'Directory.Build.props', '<Project><Version>0.180.0</Version></Project>'); write(root, 'Directory.Build.targets', 'native build metadata');
+    write(root, 'scripts/npm-workspace.mjs', 'locked projection');
+    const options = { root, sourceCommit: commit, validationRunId: '42', repository: 'example/repo', store, resolveExternal: false };
+    const before = await prepareRelease({ ...options, output: join(root,'.git/before') });
+    store.values.set(`apps/${configured.id}/candidate.json`, { inputFingerprint: before.apps[0].inputFingerprint, releaseId: hash });
+    store.values.set(`apps/${configured.id}/feed-state.json`, { feeds: { edge: { releaseId: hash } } });
+    store.values.set('platform/candidate.json', { inputFingerprint: before.platform.inputFingerprint, releaseId: hash });
+    store.values.set('platform/feed-state.json', { feeds: { edge: { releaseId: hash } } });
+    write(root, 'Directory.Build.targets', 'changed native build metadata');
+    const nativeOnly = await prepareRelease({ ...options, output: join(root,'.git/native') });
+    assert.equal(nativeOnly.apps[0].selected, false); assert.equal(nativeOnly.platform.selected, true);
+    write(root, 'scripts/npm-workspace.mjs', 'changed locked projection');
+    const ownInput = await prepareRelease({ ...options, output: join(root,'.git/own') }); assert.equal(ownInput.apps[0].selected, true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

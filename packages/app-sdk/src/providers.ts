@@ -1,5 +1,5 @@
 /** Provider categories supported by Core. Task execution does not expose model/profile configuration. */
-export type ProviderKind = "speech-to-text" | "assistant" | "translation" | "tasks" | "task-executor" | "conversation-history" | "agent-sessions";
+export type ProviderKind = "agent" | "speech-to-text" | "assistant" | "translation" | "tasks" | "task-executor" | "conversation-history" | "agent-sessions";
 export type ProviderDescriptor = {
   appId: string; displayName: string; kind: ProviderKind; key: string;
   version: number | null; capabilities: string[]; url: string | null; available: boolean;
@@ -13,6 +13,8 @@ export type AppPermissionState = { required: string[]; optional: string[]; grant
 export type ProviderInvocation = { callerAppId: string; callerInstallation: string; userId: string | null; hostRole: string | null; kind: ProviderKind; key: string };
 /** Core-mediated v2 invocations carry the original principal; direct clients have no app identity. */
 export type MediatedProviderInvocation = {
+  /** Present for exact session.workflow requests under retained admitted agent authority. */
+  agentExecution?: import("./agent.js").AgentExecutionReference;
   taskWorkflow?: TaskWorkflowBinding;
   version: 2; callerAppId: string | null; callerInstallation: string | null; userId: string; hostRole: string;
   principalId: string; kind: ProviderKind; key: string; operation: string; resourceIds: string[];

@@ -23,7 +23,7 @@ beforeEach(() => {
     instructions: [{ appId: "notes", identity: "notes-1", digest: "content-1", markdown: "Reviewed notes guidance", approved: false }],
   };
   vi.mocked(loadSettings).mockImplementation(async () => structuredClone(data));
-  vi.mocked(call).mockImplementation(async (url) => Response.json(url === "/settings/tools" ? { catalogs: data.toolCatalogs } : url === "/settings/mcp/review" ? { id: "review", status: "succeeded", approvalUrl: "https://core.test/install/confirm/review" } : {}));
+  vi.mocked(call).mockImplementation(async (url) => Response.json(url === "/settings/tools" ? { catalogs: data.toolCatalogs } : url === "/settings/mcp/review" ? { id: "review", status: "succeeded", approvalUrl: "https://core.test/install/confirm/review" } : url === "/profiles" ? { revision: 1, profiles: [], defaultId: null } : url === "/connections" ? { connections: [], defaultId: null, providers: [] } : url === "/skills" ? { skills: [] } : {}));
   vi.spyOn(window, "open").mockReturnValue(null); refresh.mockResolvedValue(undefined);
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
@@ -238,27 +238,27 @@ it("distinguishes runtime discovery failure from pending reads and retains confi
   let rejectFirst!: (cause: Error) => void;
   vi.mocked(call).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject; }));
   await act(async () => root.render(<AgentRuntime />));
-  expect(container.querySelector('[role="status"]')?.textContent).toBe("Checking worker…");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Checking runtime…");
   expect(container.textContent).toContain("Loading runtime…");
   await act(async () => rejectFirst(new Error("Runtime discovery offline")));
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("Runtime discovery offline");
-  expect(container.querySelector('[role="status"]')?.textContent).toBe("Worker status unavailable");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Runtime status unavailable");
   expect(container.textContent).toContain("Runtime unavailable");
   expect(container.textContent).not.toContain("Loading runtime…");
   let completeRefresh!: (response: Response) => void;
   vi.mocked(call).mockImplementationOnce(() => new Promise(resolve => { completeRefresh = resolve; }));
   await click(button("Refresh"));
   expect(button("Refresh").disabled).toBe(true);
-  expect(container.querySelector('[role="status"]')?.textContent).toBe("Checking worker…");
-  await act(async () => completeRefresh(Response.json({ defaultMode: "docker", worker: { available: true, ready: false, reason: "Worker authorization pending" } })));
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Checking runtime…");
+  await act(async () => completeRefresh(Response.json({ defaultMode: "docker", providers: "independent" })));
   expect(container.textContent).toContain("Docker");
-  expect(container.querySelector('[role="status"]')?.textContent).toBe("Worker is connecting");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Independent providers");
   vi.mocked(call).mockRejectedValueOnce(new Error("Refresh offline"));
   await click(button("Refresh"));
   expect(container.textContent).toContain("Docker");
-  expect(container.querySelector('[role="status"]')?.textContent).toBe("Last observed: Worker is connecting");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Last observed: Independent providers");
   expect(container.querySelector('[role="alert"]')?.textContent).toBe("Refresh offline");
-  expect(container.textContent).not.toContain("Checking worker…");
+  expect(container.textContent).not.toContain("Checking runtime…");
   expect(button("Refresh").disabled).toBe(false);
 });
 
@@ -410,4 +410,15 @@ it("labels the remaining local tools with the actual owning application", async 
   expect(button("Independent assistant").textContent).toContain("1/1");
   expect(container.textContent).not.toContain("Development tools");
   expect(container.querySelector('section[aria-label="Applications"]')?.textContent).toContain("Independent assistant");
+});
+
+
+it("opens Agent profiles and keeps provider account management in the provider apps", async () => {
+  await act(async () => root.render(<GatewaySettings />));
+  const tabs = [...container.querySelectorAll('[role="tab"]')];
+  expect(tabs.map(tab => tab.textContent)).not.toContain("Agent providers");
+  expect(tabs.find(tab => tab.textContent === "Agent profiles")?.getAttribute("aria-selected")).toBe("true");
+  expect(tabs.map(tab => tab.textContent)).not.toContain("Translation providers");
+  expect(vi.mocked(call).mock.calls.map(args => args[0])).not.toContain("/settings/translation");
+  expect(vi.mocked(call).mock.calls.map(args => args[0])).not.toContain("/runtime");
 });

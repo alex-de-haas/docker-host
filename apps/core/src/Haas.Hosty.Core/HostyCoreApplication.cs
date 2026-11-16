@@ -69,6 +69,7 @@ internal static class HostyCoreApplication
             .WithTools<CoreAppCreationMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithTools<CorePublicationMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithTools<CoreProviderMcpTools>(CoreJsonSerializerContext.Default.Options)
+            .WithTools<CoreTaskSessionMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithTools<CoreDecisionMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithTools<CoreHistoryMcpTools>(CoreJsonSerializerContext.Default.Options)
             .WithTools<CoreHistoryExportMcpTools>(CoreJsonSerializerContext.Default.Options)
@@ -273,6 +274,8 @@ internal static class HostyCoreApplication
         builder.Services.AddHostedService<AppUpdateSweepScheduler>();
         builder.Services.AddHostedService<AppPermissionObserver>();
         builder.Services.AddSingleton<ProviderAccessService>();
+        builder.Services.AddSingleton<CoreAgentAuthorizationStore>();
+        builder.Services.AddSingleton<CoreAgentExecution>();
         builder.Services.AddSingleton<ToolActivityService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<ToolActivityService>());
         builder.Services.AddSingleton<UiPanelService>();
@@ -306,6 +309,7 @@ internal static class HostyCoreApplication
         ProtectedSettingsChanges.Map(app);
         InstallationApprovalEndpoints.Map(app);
         ProviderEndpoints.Map(app);
+        CoreAgentEndpoints.Map(app);
         CoreProviderApi.Map(app);
         CoreSourceApi.Map(app);
         CorePublicationApi.Map(app);

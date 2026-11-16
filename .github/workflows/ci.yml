@@ -39,6 +39,7 @@ jobs:
       app_sdk_dotnet: ${{ steps.filter.outputs.app_sdk_dotnet }}
       whisper: ${{ steps.filter.outputs.whisper }}
       opus: ${{ steps.filter.outputs.opus }}
+      agent_providers: ${{ steps.filter.outputs.agent_providers }}
       demo_app: ${{ steps.filter.outputs.demo_app }}
       core: ${{ steps.filter.outputs.core }}
       core_aot: ${{ steps.filter.outputs.core_aot }}
@@ -87,7 +88,7 @@ jobs:
         with:
           node-version: 24
       - name: Test selection, required gate and publication denial
-        run: node --test scripts/ci*.test.mjs scripts/releases/*.test.mjs scripts/test-integration.test.mjs .github/actions/ci-validation-gate/*.test.mjs
+        run: node --test scripts/ci*.test.mjs scripts/releases/*.test.mjs scripts/test-integration.test.mjs scripts/cleanup-legacy-harness-history.test.mjs .github/actions/ci-validation-gate/*.test.mjs
 
   # Ungated on purpose: it reads version fields out of every manifest and package.json in the repo, so
   # any filter narrow enough to be useful would also be wrong. It needs no `npm ci` and finishes in
@@ -459,6 +460,41 @@ jobs:
       - name: Build Marketplace
         run: npm run marketplace:build
 
+  agent-providers:
+    name: Agent providers
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: changes
+    if: needs.changes.outputs.agent_providers == 'true'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Validate selected providers with one isolated dependency closure
+        env:
+          CI_PLAN: ${{ needs.changes.outputs.plan }}
+        run: |
+          if [ -f scripts/ci-agent-providers.mjs ]; then
+            node scripts/ci-agent-providers.mjs
+          else
+            # Older qualified source predates the staging helper; preserve its direct checks.
+            npm ci
+            node --input-type=module <<'NODE'
+            import { execFileSync } from 'node:child_process';
+            const run = args => execFileSync('npm', args, { stdio: 'inherit' });
+            run(['run', 'test', '--workspace', '@hosty/agent-provider-runtime']);
+            for (const slug of ['codex-provider', 'claude-code-provider', 'ollama-provider']) {
+              if (!JSON.parse(process.env.CI_PLAN).components.includes(slug)) continue;
+              run(['run', 'lint', '--workspace', '@hosty/' + slug]);
+              run(['run', 'build', '--workspace', '@hosty/' + slug]);
+            }
+          NODE
+          fi
+
   opus:
     name: OPUS Translate
     runs-on: ubuntu-latest
@@ -677,7 +713,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
-    needs: [changes, versions, docs, ci-policy, actionlint, shell, desktop, app-sdk, app-sdk-dotnet, whisper, opus, demo-app, core, core-aot, cli, telemetry-backend, marketplace, documents, harness, telemetry-ui, swift-shell, cardputer-shell]
+    needs: [changes, versions, docs, ci-policy, actionlint, shell, desktop, app-sdk, app-sdk-dotnet, whisper, opus, agent-providers, demo-app, core, core-aot, cli, telemetry-backend, marketplace, documents, harness, telemetry-ui, swift-shell, cardputer-shell]
     steps:
       - uses: actions/checkout@v7
         with:

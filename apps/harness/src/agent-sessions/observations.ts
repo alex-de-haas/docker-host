@@ -123,5 +123,7 @@ export class AgentObservations {
       const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
     } });
   }
+  /** The public provider's authoritative stop receipt supplies proof on natural completion. */
+  confirmStopped(id: string): Promise<void> { return this.stopped(id, true); }
   async synchronize(): Promise<void> { for (const record of await this.conversations.listRecords()) await this.observe(record.id); }
 }

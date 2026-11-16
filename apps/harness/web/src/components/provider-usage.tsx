@@ -79,7 +79,7 @@ export function UsageDetails({ usage }: { usage: ProviderUsage | null }) {
     {!usage.rows.length && usage.observedAt && <p className="text-xs text-muted-foreground">Last observed {date(usage.observedAt)}</p>}
   </div>;
 }
-export function ProviderUsageIndicator({ connectionId, revision, model }: { connectionId: string; revision?: number; model?: string | null }) {
+export function ProviderUsageIndicator({ connectionId, revision, model }: { connectionId: string; revision?: string | number; model?: string | null }) {
   const { usage: latest, refreshing, refresh } = useProviderUsage(connectionId), titleId = useId();
   const now = useUsageNow();
   const usage = revision !== undefined && latest && latest.connectionRevision !== revision ? { state: "unavailable" as const, rows: [], observedAt: null } : latest;

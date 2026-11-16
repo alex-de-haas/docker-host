@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantSession } from "./assistant-api";
-import { loadBrowserAgentDefaults, readBrowserAgentDefaults, rememberAutonomy, rememberManualModel } from "./browser-agent-preferences";
+import { loadBrowserAgentDefaults, readBrowserAgentDefaults, rememberAutonomy, rememberManualModel, rememberManualProvider } from "./browser-agent-preferences";
 
 const { appFetch } = vi.hoisted(() => ({ appFetch: vi.fn() }));
 vi.mock("@hosty-sdk/app/browser-auth", () => ({ appFetch }));
@@ -25,6 +25,31 @@ afterEach(() => { vi.unstubAllGlobals(); });
 const onlyKey = () => [...browser.data.keys()][0]!;
 
 describe("browser agent defaults", () => {
+  it("remembers the latest confirmed provider per owner without replacing model or autonomy choices", () => {
+    rememberManualModel(record());
+    rememberAutonomy(record({ autonomy: "autonomous" }));
+    rememberManualProvider(record({ connectionId: "opaque-provider-account-revision-a" }));
+    rememberManualProvider(record({ connectionId: "opaque-provider-account-revision-b" }));
+    rememberManualProvider(record({ createdBy: "owner-b", connectionId: "another-owner-provider" }));
+    expect(readBrowserAgentDefaults("owner-a")).toEqual({
+      connectionId: "opaque-provider-account-revision-b",
+      models: { "connection-a": { model: "model-a", reasoningEffort: "high" } }, autonomy: "autonomous",
+    });
+    expect(readBrowserAgentDefaults("owner-b")).toEqual({ connectionId: "another-owner-provider" });
+    expect(JSON.stringify([...browser.data.values()])).not.toContain("chat-private");
+    appFetch.mockResolvedValueOnce(Response.json({ status: "active", userId: "owner-a" }));
+    return expect(loadBrowserAgentDefaults()).resolves.toMatchObject({
+      ownerId: "owner-a", connectionId: "opaque-provider-account-revision-b",
+    });
+  });
+
+  it("retains the provider hint when a fresh other-tab model or autonomy choice is saved", () => {
+    rememberManualProvider(record({ connectionId: "provider-from-another-tab" }));
+    rememberManualModel(record());
+    rememberAutonomy(record({ autonomy: "autonomous" }));
+    expect(readBrowserAgentDefaults("owner-a")).toMatchObject({ connectionId: "provider-from-another-tab", autonomy: "autonomous" });
+  });
+
   it("round-trips model/effort per owner and connection, including explicit provider defaults", () => {
     rememberManualModel(record());
     rememberManualModel(record({ connectionId: "connection-b", executionSelection: { model: null, reasoningEffort: null } }));
@@ -73,19 +98,22 @@ describe("browser agent defaults", () => {
     { taskExecutionId: "task-execution" }, { createdBy: undefined }, { createdBy: "" },
   ])("does not remember task or unattributed selections: %j", values => {
     rememberManualModel(record(values));
+    rememberManualProvider(record(values));
     rememberAutonomy(record(values));
     expect(browser.storage.setItem).not.toHaveBeenCalled();
   });
 
   it.each([undefined, ""])("stores autonomy without a provider but skips its model: %j", connectionId => {
     rememberManualModel(record({ connectionId }));
+    rememberManualProvider(record({ connectionId }));
     expect(browser.storage.setItem).not.toHaveBeenCalled();
     rememberAutonomy(record({ connectionId }));
     expect(readBrowserAgentDefaults("owner-a")).toEqual({ autonomy: "normal" });
   });
 
   it.each([
-    "{bad", "null", "[]", '{"models":[]}', '{"models":{"connection-a":{"model":7,"reasoningEffort":null}}}',
+    "{bad", "null", "[]", '{"connectionId":null}', '{"connectionId":42}', '{"connectionId":" "}',
+    JSON.stringify({ connectionId: "x".repeat(513) }), '{"models":[]}', '{"models":{"connection-a":{"model":7,"reasoningEffort":null}}}',
     '{"models":{"connection-a":{"model":null}}}', '{"autonomy":"unexpected"}',
     '{"models":{"connection-a":{"model":"model with spaces","reasoningEffort":null}}}',
     JSON.stringify({ models: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [String(i), { model: null, reasoningEffort: null }])) }),
@@ -119,6 +147,7 @@ describe("browser agent defaults", () => {
   it("survives denied reads, quota failures and an absent browser without a memory fallback", () => {
     browser.storage.getItem.mockImplementation(() => { throw new Error("blocked"); });
     expect(() => rememberManualModel(record())).not.toThrow();
+    expect(() => rememberManualProvider(record())).not.toThrow();
     expect(() => rememberAutonomy(record())).not.toThrow();
     expect(browser.storage.setItem).not.toHaveBeenCalled();
     expect(readBrowserAgentDefaults("owner-a")).toBeUndefined();

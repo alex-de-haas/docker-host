@@ -72,7 +72,7 @@ public sealed class RuntimePreparationTests : IDisposable
             Values(command, "--env"));
         Assert.Contains($"type=bind,source={MountPathPolicy.ResolveRealPath(context.SourceRoot!)},target=/workspace,readonly", command);
         Assert.Equal(new[] { "/bin/sh", "-lc", "prepare-engine" }, command.TakeLast(3));
-        Assert.Equal(new[] { "engine" }, prepared.SetupServices);
+        Assert.Empty(prepared.SetupServices);
         Assert.True(Directory.Exists(context.AppDataPath));
         Assert.True(Directory.Exists(context.AppCachePath));
         Assert.DoesNotContain(command, value => value.Contains("ordinary-app", StringComparison.Ordinal) ||
@@ -123,13 +123,31 @@ public sealed class RuntimePreparationTests : IDisposable
     {
         var context = Context(new() { Service = "another" }, new() { Service = "another" }, cachePath: false);
         var runner = new RecordingRunner();
-        await Adapter(runner).PrepareAsync(context, default);
+        var prepared = await Adapter(runner).PrepareAsync(context, default);
         var command = Assert.Single(runner.Commands, args => args[0] == "run");
         Assert.Empty(Values(command, "-v"));
+        Assert.Equal(new[] { "engine" }, prepared.SetupServices);
         Assert.DoesNotContain(Values(command, "--env"), value => value.StartsWith("HOSTY_APP_DATA_DIR=", StringComparison.Ordinal) ||
             value.StartsWith("HOSTY_APP_CACHE_DIR=", StringComparison.Ordinal));
         Assert.False(Directory.Exists(context.AppDataPath));
         Assert.False(Directory.Exists(Path.Combine(context.AppRoot, "cache")));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DockerPreparation_ScratchStorageDoesNotSuppressActualContainerSetup(bool legacyReceipt)
+    {
+        var context = Context(new(), new());
+        var runner = new RecordingRunner();
+        var prepared = await Adapter(runner).PrepareAsync(context, default);
+        Assert.Empty(prepared.SetupServices);
+        var actual = context with { AppDataPath = Path.Combine(context.AppRoot, "data"), AppCachePath = Path.Combine(context.AppRoot, "cache"), PreparationOnly = false, PreparedSetupServices = legacyReceipt ? ["engine"] : prepared.SetupServices };
+        var launch = await DockerSourceRuntime.PrepareAsync(actual, Assert.Single(actual.Manifest.Services), runner, default);
+        Assert.NotNull(launch);
+        Assert.Equal(new[] { "/bin/sh", "-lc", "(prepare-engine) && run-engine" }, launch.Command);
+        Assert.False(Directory.Exists(actual.AppDataPath));
+        Assert.False(Directory.Exists(actual.AppCachePath));
     }
 
     [Fact]

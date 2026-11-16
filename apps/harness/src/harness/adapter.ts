@@ -63,7 +63,7 @@ export type HarnessEvent =
   | { type: "answer_complete" }
   /** Private execution evidence used only for task barriers, never transcript display. */
   | { type: "native_effect"; id: string; state: "started" | "settled" | "unknown" }
-  | { type: "execution_parked"; runId: string; barrier?: import("../worker/contracts.js").WorkerBarrier }
+  | { type: "execution_parked"; runId: string; barrier?: import("../agent-providers/compatibility.js").WorkerBarrier }
   | { type: "provider_usage"; usage: import("./provider-usage.js").ProviderUsage }
   | { type: "context_usage"; usage: import("./context-usage.js").ContextUsage | null }
   | { type: "execution_model"; requested: { model: string | null; reasoningEffort: string | null }; reported: { model: string | null; reasoningEffort: string | null } }
@@ -124,17 +124,17 @@ export type HarnessEvent =
 
 export interface HarnessStartOptions {
   promptSuggestions?: boolean;
-  operation?: "chat" | "translation" | "task";
+  operation?: "chat" | "task";
   skillExportId?: string;
   /** Worker-owned isolated discovery home; never supplied by an API caller. */
   nativeHome?: string;
   workerRunId?: string;
-  onWorkerUsage?: (runId: string, usage: NonNullable<import("../worker/contracts.js").WorkerReceipt["usage"]>) => void | Promise<void>;
-  onWorkerEvent?: (frame: import("../worker/contracts.js").WorkerEvent) => Promise<void>;
-  onWorkerPending?: (events: import("../worker/contracts.js").WorkerEvent[]) => Promise<void>;
+  onWorkerUsage?: (runId: string, usage: NonNullable<import("../agent-providers/compatibility.js").WorkerReceipt["usage"]>) => void | Promise<void>;
+  onWorkerEvent?: (frame: import("../agent-providers/compatibility.js").WorkerEvent) => Promise<void>;
+  onWorkerPending?: (events: import("../agent-providers/compatibility.js").WorkerEvent[]) => Promise<void>;
   model?: string | null;
   reasoningEffort?: string | null;
-  resource?: import("../worker/contracts.js").ResourceReference;
+  resource?: import("../agent-providers/compatibility.js").ResourceReference;
   processTransport?: import("../runtime/transport.js").AgentProcessTransport;
   autonomy?: "normal" | "autonomous";
   sessionId: string;
@@ -193,6 +193,6 @@ export interface HarnessAdapter {
   probe(): Promise<HarnessAvailability>;
   dispose?(): Promise<void>;
   readUsage?(): Promise<import("./provider-usage.js").ProviderUsage>;
-  models?(): Promise<import("../worker/contracts.js").ModelCatalog>;
+  models?(): Promise<import("../agent-providers/compatibility.js").ModelCatalog>;
   start(options: HarnessStartOptions): HarnessRun;
 }

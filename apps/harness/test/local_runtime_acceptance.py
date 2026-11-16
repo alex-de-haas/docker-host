@@ -1,4 +1,4 @@
-"""Production local Harness lifecycle in a parent-managed child Core with disposable identity/data."""
+"""Docker production and cached Local development acceptance in a managed child Core."""
 import base64
 import hashlib
 import http.cookiejar
@@ -31,21 +31,32 @@ def check(context):
     request('/control/v1/skills/exports/'+selected['id'], method='DELETE', control=True)
     assert not exported.exists()
     say('PASS: empty-app Core catalog, versioned built-in packages, portable exports and platform introduction')
+    from agent_provider_acceptance import ProviderAcceptance
+    providers = context.get('agentProviders') or ProviderAcceptance(context).install_all(scripted_codex=True)
     manifest = json.loads((workspace/'apps/harness/manifest.json').read_text())
     app = manifest['id']
+    context['harnessAppId'] = app
     manifest['source']['repository'] = context['repository']
-    if context.get('scenario') == 'feedback':
-        worker = next(s for s in manifest['services'] if s['key'] == 'worker')['runtimes']['local']
-        worker.setdefault('environment', {})['HOSTY_HARNESS_CODEX_COMMAND'] = str(workspace/'apps/harness/test/fake-codex-server.mjs')
+    assert [service['key'] for service in manifest['services']] == ['api']
+    docker_consumer = context.get('scenario') == 'agent-providers'
+    runtime = 'docker' if docker_consumer else 'dev'
+    assert not any(profile['key'] == 'local' for profile in manifest['runtimeProfiles'])
+    if docker_consumer:
+        manifest['services'][0]['runtimes']['docker']['image'] = 'hosty-harness-api-acceptance:local'
     target = base/'harness-manifest.json'
     target.write_text(json.dumps(manifest))
     shutil.copytree(workspace/'apps/harness/assets', base/'assets', dirs_exist_ok=True)
-    run([cli, '--data-root', root, 'apps', 'install', target, '--runtime', 'local', '--no-autostart'])
+    run([cli, '--data-root', root, 'apps', 'install', target, '--runtime', runtime, '--no-autostart'])
     def timed(action):
         began = time.monotonic()
         run([cli, '--data-root', root, 'apps', action, app])
         wait_for(lambda: request('/api/apps/'+app+'/health')['status'] == 'healthy', 180)
         return round(time.monotonic()-began, 3)
+    def runtime_identity():
+        service = next(service for service in request('/api/apps/'+app+'/health')['services'] if service['service'] == 'api')
+        assert service.get('processId') or service.get('startedAt'), 'Core must identify the actual runtime process/start'
+        return (service.get('processId'), service.get('startedAt'))
+    context['harnessRuntimeIdentity'] = runtime_identity
     cold = timed('start')
     link = json.loads(run([cli, '--data-root', root, 'apps', 'open', app, '--format', 'json']))['url']
     parsed = urllib.parse.urlparse(link)
@@ -69,11 +80,11 @@ def check(context):
     call(app_origin, '/api/auth/app-code', {'code':code,'codeVerifier':verifier})
     assert call(app_origin, '/api/auth/identity')['status'] == 'active'
     call(app_origin, '/api/sessions')
-    connection = call(app_origin, '/api/connections', {'name':'Usage fixture', 'kind':'claude', 'auth':'api-key', 'secret':'synthetic-usage-fixture'})
+    connection = providers.configure_for_harness(app_origin, call, 'claude', 'Usage fixture', secret='synthetic-usage-fixture')
     usage = call(app_origin, '/api/connections/'+connection['id']+'/usage?refresh=true')
     assert usage['state'] == 'unsupported' and usage['rows'] == [] and usage['connectionRevision'] == connection['revision']
-    say('PASS: authenticated Local worker usage reports unsupported API-key telemetry without inference')
-    local_usage = call(app_origin, '/api/connections', {'name':'Local quota fixture', 'kind':'ollama', 'auth':'none'})
+    say('PASS: independent Claude provider settings and qualified usage report unsupported API-key telemetry without inference')
+    local_usage = providers.configure_for_harness(app_origin, call, 'ollama', 'Local quota fixture', auth='none')
     local_usage = call(app_origin, '/api/connections/'+local_usage['id']+'/usage?refresh=true')
     assert local_usage['state'] == 'not_applicable' and local_usage['rows'] == []
     say('PASS: local Ollama quota is not applicable without a provider request')
@@ -86,9 +97,23 @@ def check(context):
     for asset in assets:
         with client.open(urllib.parse.urljoin(app_origin, asset), timeout=30) as response:
             assert response.status == 200 and len(response.read()) > 0
-    say('PASS: production API/worker, password login, Core launch-code identity, sessions API and compiled static assets')
+    say('PASS: production consumer API, three independent Local providers, password login, Core launch-code identity and compiled static assets')
 
-    if os.environ.get('HOSTY_HISTORY_DURABILITY'):
+    if os.environ.get('HOSTY_PROVIDER_PORT_CHANGE') == '1':
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('provider_port_acceptance', workspace/'apps/harness/test/provider_port_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(context, app, app_origin, call, client)
+
+    if context.get('scenario') == 'agent-providers' or os.environ.get('HOSTY_EXECUTION_RECOVERY'):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('execution_recovery_acceptance', workspace/'apps/harness/test/execution_recovery_acceptance.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check(context, app, app_origin, call, timed, link, client)
+
+    if context.get('scenario') == 'agent-providers' or os.environ.get('HOSTY_HISTORY_DURABILITY'):
         import importlib.util
         spec = importlib.util.spec_from_file_location('history_durability_acceptance', workspace/'apps/harness/test/history_durability_acceptance.py')
         module = importlib.util.module_from_spec(spec)
@@ -101,13 +126,6 @@ def check(context):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         module.check(context, app, app_origin, client, call, link)
-
-    if os.environ.get('HOSTY_EXECUTION_RECOVERY'):
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('execution_recovery_acceptance', workspace/'apps/harness/test/execution_recovery_acceptance.py')
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        module.check(context, app, app_origin, call, timed, link)
 
     if context.get('scenario') == 'feedback':
         from feedback_acceptance import check as check_feedback
@@ -137,7 +155,8 @@ def check(context):
     if os.environ.get('HOSTY_QUEUE_BROWSER'):
         import subprocess
         result = subprocess.run(['node', str(workspace/'apps/harness/test/message-queue-browser.mjs')],
-            input=json.dumps({'core':(context.get('child', {}).get('previewUrl') or origin).rstrip('/'), 'harness':app_origin, 'appId':app, 'email':'activation-fixture@example.test', 'password':password, 'link':link}),
+            input=json.dumps({'core':(context.get('child', {}).get('previewUrl') or origin).rstrip('/'), 'harness':app_origin, 'appId':app, 'email':'activation-fixture@example.test', 'password':password, 'link':link,
+                             'provider':providers.entries['ollama']}),
             text=True, cwd=workspace)
         assert result.returncode == 0, 'Message queue browser acceptance failed'
 
@@ -207,26 +226,32 @@ def check(context):
             request('/api/development/workspaces/'+tree['id']+'/operations/release-lease', {'requestId':str(uuid.uuid4()), 'leaseId':lease})
 
     app_root = root/'apps'/app
+    if docker_consumer:
+        first_runtime = runtime_identity()
+        warm = timed('restart')
+        assert runtime_identity() != first_runtime, 'Docker restart must report a replacement process/start identity'
+        assert call(app_origin, '/api/auth/identity')['status'] == 'active'
+        call(app_origin, '/api/sessions')
+        assert not list(app_root.rglob('.local-runtime/*/bundle.json')), 'Production Docker must use the CI-built image, not build source at startup'
+        say(f'PASS: Docker production cold start {cold:.3f}s; warm restart {warm:.3f}s; app identity and durable data retained')
+        run([cli, '--data-root', root, 'apps', 'stop', app])
+        say('PASS: Docker consumer stopped; parent fixture will Finish the child and verify resource removal')
+        return
     receipts = list(app_root.rglob('.local-runtime/*/bundle.json'))
     assert len(receipts) == 1, 'Expected exactly one isolated production generation'
     receipt = receipts[0]
     bundle = receipt.parent
     metadata = json.loads(receipt.read_text())
     stamped = receipt.stat().st_mtime_ns
-    worker_log = app_root/'logs/worker.log'
-    log = worker_log.read_text()
+    runtime_log = app_root/'logs/api.log'
+    log = runtime_log.read_text()
     assert log.count('Preparing production bundle') == 1
     # Runtime source was bundled; the process does not depend on the development TS tree.
     assert not (bundle/'apps/harness/src').exists()
     assert not (bundle/'apps/harness/web').exists()
-    for package in ['next', 'react', 'typescript', 'tsx']:
+    assert (bundle/'api.mjs').is_file() and not (bundle/'worker.mjs').exists()
+    for package in ['next', 'react', 'typescript', 'tsx', '@openai/codex', '@anthropic-ai/claude-agent-sdk', '@haas/hosty-agent-provider-runtime']:
         assert not (bundle/'node_modules'/package).exists(), 'Unexpected production dependency: '+package
-    provider_probe = (
-        "const {createRequire}=require('node:module');const real=require('node:fs').realpathSync;const r=createRequire(process.argv[1]);"
-        "for(const name of ['@openai/codex/bin/codex.js','@anthropic-ai/claude-agent-sdk']){"
-        "if(!real(r.resolve(name)).startsWith(real(process.argv[2])+require('node:path').sep))throw Error('External provider fallback');}"
-    )
-    run(['node', '-e', provider_probe, bundle/'worker.mjs', bundle])
     # Keep the real browser's paused work and immutable attachment bytes across both lifecycle
     # paths below. The HTTP fixture has already closed, so a restarted queue must stay paused.
     retained_queues = {}
@@ -257,7 +282,7 @@ def check(context):
     second_runtime = json.loads((app_root/'run/api.json').read_text())['pid']
     assert first_runtime != second_runtime, 'Restart must replace the runtime processes'
     assert receipt.stat().st_mtime_ns == stamped
-    log = worker_log.read_text()
+    log = runtime_log.read_text()
     assert log.count('Preparing production bundle') == 1
     assert 'Reusing production bundle' in log
     assert call(app_origin, '/api/auth/identity')['status'] == 'active'
@@ -271,7 +296,7 @@ def check(context):
     recovery = timed('start')
     assert (bundle/'web/assistant/index.html').is_file()
     assert json.loads(receipt.read_text())['key'] == metadata['key']
-    assert worker_log.read_text().count('Preparing production bundle') == 2
+    assert runtime_log.read_text().count('Preparing production bundle') == 2
     assert call(app_origin, '/api/auth/identity')['status'] == 'active'
     verify_retained_queues()
     if retained_queues: say('PASS: paused queue entries and immutable attachment bytes survive warm restart and missing-output recovery')

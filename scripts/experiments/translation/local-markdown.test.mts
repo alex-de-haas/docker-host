@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { proseSpans, restoreProse } from "./local-markdown.mjs";
-import { validateMarkdownTranslation } from "../../../apps/harness/src/translation/markdown.js";
+import { validateMarkdownTranslation } from "./local-contract.mjs";
 
 test("both fixed benchmark plans retain protected Markdown through prose replacement", async () => {
   const evidence = JSON.parse(await readFile("docs/features/translation-provider/benchmark-evidence.json", "utf8"));

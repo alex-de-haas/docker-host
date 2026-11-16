@@ -2,17 +2,21 @@
 import { appendFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { canonical, projectNpm } from "./releases/context.mjs";
 
 export const BASE_JOBS = Object.freeze(["changes", "versions", "docs", "ci-policy"]);
 export const COMPONENTS = Object.freeze([
-  "shell", "desktop", "app-sdk", "app-sdk-dotnet", "whisper", "opus", "demo-app", "core", "cli",
+  "shell", "desktop", "app-sdk", "app-sdk-dotnet", "whisper", "opus", "codex-provider", "claude-code-provider", "ollama-provider", "demo-app", "core", "cli",
   "telemetry-backend", "marketplace", "documents", "harness", "telemetry-ui", "swift-shell", "cardputer-shell",
 ]);
 export const PROFILES = Object.freeze(["core-aot"]);
-export const ALL_JOBS = Object.freeze([...BASE_JOBS, "actionlint", ...COMPONENTS, ...PROFILES]);
-const NODE_COMPONENTS = ["opus", "shell", "desktop", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
+export const AGENT_PROVIDERS = Object.freeze(["codex-provider", "claude-code-provider", "ollama-provider"]);
+export const componentJob = component => AGENT_PROVIDERS.includes(component) ? "agent-providers" : component;
+export const ALL_JOBS = Object.freeze([...BASE_JOBS, "actionlint", ...new Set(COMPONENTS.map(componentJob)), ...PROFILES]);
+const NODE_COMPONENTS = [...AGENT_PROVIDERS, "opus", "shell", "desktop", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
 const DOTNET_COMPONENTS = ["app-sdk-dotnet", "whisper", "core", "cli", "telemetry-backend"];
 const COMPONENT_PATHS = [
+  ...AGENT_PROVIDERS.map(id => [`apps/${id}/`, id]),
   ["apps/opus/", "opus"],
   ["apps/shell/", "shell"], ["apps/desktop/", "desktop"], ["apps/demo-app/", "demo-app"], ["apps/marketplace/", "marketplace"],
   ["apps/documents/", "documents"], ["apps/harness/", "harness"], ["apps/telemetry-ui/", "telemetry-ui"],
@@ -20,7 +24,7 @@ const COMPONENT_PATHS = [
 ];
 const BUILD_CONFIG = /(?:^|\/)(?:[^/]+\.csproj|global\.json|[Nn]u[Gg]et\.[Cc]onfig|appsettings[^/]*\.json)$/;
 const WORKFLOW_COMPONENTS = {
-  "ready-releases.yml": ["core", "cli", "shell", "desktop", "documents", "marketplace", "demo-app", "harness", "telemetry-backend", "telemetry-ui", "whisper", "opus"],
+  "ready-releases.yml": ["core", "cli", "shell", "desktop", "documents", "marketplace", "demo-app", "harness", "telemetry-backend", "telemetry-ui", "whisper", "opus", ...AGENT_PROVIDERS],
   "promote-release.yml": [], "platform-bridge.yml": ["core", "cli"],
   "shell-image.yml": ["shell"], "desktop-image.yml": ["desktop"], "demo-app-image.yml": ["demo-app"], "marketplace-image.yml": ["marketplace"],
   "documents-image.yml": ["documents"], "telemetry-ui-image.yml": ["telemetry-ui"],
@@ -47,21 +51,25 @@ export function versionOnlyBuildProps(before, after) {
 }
 
 /** Classifies names from Git, including names of files that no longer exist. */
-export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
+export function classifyPaths(paths, { versionOnlyPaths = [], nodeDependencyComponents } = {}) {
   if (!Array.isArray(paths) || paths.some(path => typeof path !== "string")) {
     throw new TypeError("Changed paths must be an array of strings");
   }
   if (!Array.isArray(versionOnlyPaths) || versionOnlyPaths.some(path => path !== "Directory.Build.props")) throw new TypeError("Only validated Directory.Build.props metadata may be exempted");
+  if (nodeDependencyComponents !== undefined && (!Array.isArray(nodeDependencyComponents) || nodeDependencyComponents.some(c => !NODE_COMPONENTS.includes(c))))
+    throw new TypeError("Dependency projection must name known Node components");
   const selected = new Set(BASE_JOBS);
   const reasons = Object.fromEntries(BASE_JOBS.map(job => [job, ["Always required"]]));
   function add(jobs, reason) {
     for (const job of Array.isArray(jobs) ? jobs : [jobs]) {
       selected.add(job);
-      const entries = reasons[job] ??= [];
+      const check = componentJob(job);
+      selected.add(check);
+      const entries = reasons[check] ??= [];
       if (!entries.includes(reason)) entries.push(reason);
     }
   }
-  function all(reason) { add(ALL_JOBS, reason); }
+  function all(reason) { add([...ALL_JOBS, ...COMPONENTS], reason); }
   for (const path of [...new Set(paths)].sort()) {
     const reason = rule => `${path}: ${rule}`;
     if (!path || path.startsWith("/") || path.includes("\0") || path.split("/").some(part => part === "." || part === "..")) {
@@ -74,6 +82,8 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
       if (!(name in WORKFLOW_COMPONENTS) && !["ci.yml", "claude-code-review.yml"].includes(name)) all(reason("unrecognized workflow; validate all jobs"));
       add(WORKFLOW_COMPONENTS[name] ?? [], reason("artifact workflow"));
       if (["cli-release.yml", "ready-releases.yml", "platform-bridge.yml"].includes(name)) add("core-aot", reason("platform publication workflow"));
+    } else if (path === "scripts/npm-workspace.mjs") {
+      add(["ci-policy", ...AGENT_PROVIDERS, "harness"], reason("locked workspace projection and provider/Harness packaging"));
     } else if (path.startsWith("scripts/releases/") || path === "distribution/release-publisher.json") {
       // Publisher protocol changes run its complete fixture suite, not unrelated runtime checks.
       add("ci-policy", reason("release publisher contract"));
@@ -84,7 +94,8 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
     } else if (["README.md", "AGENTS.md", "CLAUDE.md", "LICENSE", ".gitignore", ".gitattributes", ".editorconfig", ".github/dependabot.yml"].includes(path)) {
       // These repository metadata files do not change a compiled/runtime input.
     } else if (path === "package-lock.json" || [".npmrc", ".node-version", ".nvmrc"].includes(path)) {
-      add(NODE_COMPONENTS, reason("shared Node dependencies or toolchain"));
+      add(path === "package-lock.json" && nodeDependencyComponents !== undefined ? nodeDependencyComponents : NODE_COMPONENTS,
+        reason(path === "package-lock.json" && nodeDependencyComponents !== undefined ? "proven workspace dependency changes" : "shared Node dependencies or toolchain"));
     } else if (path === "package.json") {
       all(reason("root workspace and build/test commands"));
     } else if (path === "Directory.Build.props" && versionOnlyPaths.includes(path)) {
@@ -92,12 +103,16 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
     } else if (["global.json", "Directory.Build.props", "Directory.Build.targets", "NuGet.Config", "nuget.config", "scripts/HostyBuildIdentity.cs"].includes(path)) {
       add(DOTNET_COMPONENTS, reason("shared .NET build input"));
       add("core-aot", reason("shared .NET build/toolchain input"));
+    } else if (path.startsWith("packages/agent-provider-runtime/")) {
+      add(AGENT_PROVIDERS, reason("shared local agent runtime"));
     } else if (path.startsWith("packages/app-sdk/")) {
       add(NODE_COMPONENTS, reason("shared app SDK"));
     } else if (path.startsWith("packages/app-sdk-dotnet/")) {
       add(["app-sdk-dotnet", "whisper"], reason("shared .NET app SDK"));
     } else if (path.startsWith("shared/web/")) {
       add(["shell", "harness"], reason("shared web components"));
+      if (path === "shared/web/hosty-theme.css" || path.startsWith("shared/web/fonts/"))
+        add(AGENT_PROVIDERS, reason("provider settings theme and fonts"));
     } else if (/^shared\/[^/]+\.cs$/.test(path)) {
       add(["core", "cli", "core-aot"], reason("shared native launch and recovery contracts"));
     } else if (path.startsWith("apps/core/")) {
@@ -114,8 +129,8 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
     } else if (COMPONENT_PATHS.some(([prefix]) => path.startsWith(prefix))) {
       const [, component] = COMPONENT_PATHS.find(([prefix]) => path.startsWith(prefix));
       add(component, reason("component source or configuration"));
-    } else if (["scripts/test-integration.mjs", "scripts/test-integration.test.mjs"].includes(path)) {
-      add("ci-policy", reason("local integration command contract"));
+    } else if (["scripts/test-integration.mjs", "scripts/test-integration.test.mjs", "scripts/cleanup-legacy-harness-history.mjs", "scripts/cleanup-legacy-harness-history.test.mjs"].includes(path)) {
+      add("ci-policy", reason("local integration and cutover command contracts"));
     } else if (path === "scripts/check-workspace-activation.py") {
       add(["core", "cli"], reason("native acceptance fixture"));
     } else if (path === "scripts/observability_acceptance.py") {
@@ -126,8 +141,10 @@ export function classifyPaths(paths, { versionOnlyPaths = [] } = {}) {
       add(["core", "core-aot"], reason("NativeAOT compatibility gate"));
     } else if (path === "scripts/check-docker-core-transport.py") {
       add("core", reason("Docker transport fixture"));
-    } else if (path === "scripts/check-harness-worker.mjs") {
-      add("harness", reason("Docker worker fixture"));
+    } else if (["scripts/check-agent-provider-native.mjs", "scripts/check-harness-worker.mjs"].includes(path)) {
+      add(AGENT_PROVIDERS, reason("independent native provider fixture"));
+    } else if (path === "scripts/agent_provider_acceptance.py") {
+      add(["harness", ...AGENT_PROVIDERS], reason("public provider integration fixture"));
     } else if (path === "scripts/check-versions.mjs") {
       add("cardputer-shell", reason("firmware version contract"));
     } else if (["scripts/install.sh", "scripts/install.ps1"].includes(path)) {
@@ -160,11 +177,12 @@ export function evaluateGate(plan, needs) {
       for (const job of plan[field]) if (!allowed.includes(job)) errors.push(`Unknown ${field} job: ${String(job)}`);
       if (new Set(plan[field]).size !== plan[field].length) errors.push(`Duplicate jobs in ${field}`);
     }
-    for (const job of [...BASE_JOBS, ...plan.components, ...plan.profiles]) {
+    for (const job of [...BASE_JOBS, ...plan.components.map(componentJob), ...plan.profiles]) {
       if (!plan.required.includes(job)) errors.push(`Classification omitted required job: ${job}`);
     }
     for (const job of plan.required) {
-      if (COMPONENTS.includes(job) && !plan.components.includes(job)) errors.push(`Required component is absent from selection: ${job}`);
+      if (COMPONENTS.some(component => componentJob(component) === job) && !plan.components.some(component => componentJob(component) === job))
+        errors.push(`Required component is absent from selection: ${job}`);
       if (PROFILES.includes(job) && !plan.profiles.includes(job)) errors.push(`Required profile is absent from selection: ${job}`);
     }
   }
@@ -190,8 +208,20 @@ export function planOutputs(plan) {
   const { version, components, profiles, required } = plan;
   const result = { plan: JSON.stringify({ version, components, profiles, required, reasons: {} }) };
   for (const job of ALL_JOBS) result[job.replaceAll("-", "_")] = String(plan.required.includes(job));
+  for (const component of COMPONENTS) result[component.replaceAll("-", "_")] = String(plan.components.includes(component));
   result.workflows = result.actionlint;
   return result;
+}
+
+/** Compare actual locked installation graphs. Missing or unfamiliar data selects that consumer conservatively. */
+export function nodeDependencyChanges(beforePackage, beforeLock, afterPackage, afterLock) {
+  return NODE_COMPONENTS.filter(component => {
+    const workspace = component === "app-sdk" ? "packages/app-sdk" : `apps/${component}`;
+    const roots = component === "harness" ? [workspace, "apps/harness/web"] : [workspace];
+    const options = { ignoreOptionalPeers: AGENT_PROVIDERS.includes(component) };
+    try { return canonical(projectNpm(beforePackage, beforeLock, roots, options)) !== canonical(projectNpm(afterPackage, afterLock, roots, options)); }
+    catch { return true; }
+  });
 }
 
 function classifyGit(base, head) {
@@ -210,7 +240,19 @@ function classifyGit(base, head) {
     const after = contents(head);
     if (!before.error && !after.error && before.status === 0 && after.status === 0 && versionOnlyBuildProps(before.stdout, after.stdout)) versionOnlyPaths.push("Directory.Build.props");
   }
-  return classifyPaths(paths, { versionOnlyPaths });
+  let nodeDependencyComponents;
+  if (paths.includes("package-lock.json")) {
+    try {
+      const read = (sha, path) => {
+        const result = spawnSync("git", ["show", `${sha}:${path}`], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+        if (result.error || result.status !== 0) throw new Error("Dependency graph unavailable");
+        return JSON.parse(result.stdout);
+      };
+      nodeDependencyComponents = nodeDependencyChanges(read(base, "package.json"), read(base, "package-lock.json"),
+        read(head, "package.json"), read(head, "package-lock.json"));
+    } catch { /* Unknown source/lock formats keep the conservative Node fan-out. */ }
+  }
+  return classifyPaths(paths, { versionOnlyPaths, nodeDependencyComponents });
 }
 
 function main(args) {

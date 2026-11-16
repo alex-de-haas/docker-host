@@ -3,7 +3,7 @@ import { appendFileSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
-import { classifyPaths, fullPlan, planOutputs, versionOnlyBuildProps } from './ci-policy.mjs';
+import { classifyPaths, fullPlan, planOutputs, versionOnlyBuildProps, nodeDependencyChanges } from './ci-policy.mjs';
 
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 export function resolveRevision(revision) {
@@ -37,7 +37,15 @@ export function select(eventName, event, env = process.env) {
       }
     } catch { /* Added/deleted/unreadable configuration stays conservative. */ }
   }
-  const affected = classifyPaths(paths, { versionOnlyPaths });
+  let nodeDependencyComponents;
+  if (base && paths.includes('package-lock.json')) {
+    try {
+      const read = (sha, path) => JSON.parse(git('show', `${sha}:${path}`));
+      nodeDependencyComponents = nodeDependencyChanges(read(base, 'package.json'), read(base, 'package-lock.json'),
+        read(head, 'package.json'), read(head, 'package-lock.json'));
+    } catch { /* An unprovable historic graph retains the ordinary conservative Node fan-out. */ }
+  }
+  const affected = classifyPaths(paths, { versionOnlyPaths, nodeDependencyComponents });
   const scope = manual ? 'all' : 'affected';
   return { head, base, scope, paths, plan: qualificationPlan(scope, affected) };
 }

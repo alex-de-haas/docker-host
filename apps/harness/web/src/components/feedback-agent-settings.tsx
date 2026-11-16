@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { listAgentConnections, type ModelCatalog } from "@/lib/assistant-api";
 import { connectionModels, listProfiles, type ProfileDirectory } from "@/lib/profiles-api";
-import type { AgentConnection } from "./agent-providers";
+import type { AgentConnection } from "@/lib/agent-connection";
 import { Button } from "./ui/button";
 import { FeedbackSelect } from "./feedback-select";
 import { loadBrowserAgentDefaults, type BrowserAgentDefaults } from "@/lib/browser-agent-preferences";

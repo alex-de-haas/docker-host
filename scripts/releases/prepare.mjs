@@ -16,7 +16,7 @@ export async function prepareRelease({ root, output, sourceCommit, validationRun
   const head = store.refresh(), paths = trackedPaths(root);
   const plan = { schemaVersion: 'hosty-release-plan.0.1', sourceCommit, validationRunId: String(validationRunId), repository,
     config, metadataHead: head, images: [], apps: [], platform: null, force };
-  mkdirSync(output, { recursive: true });
+  mkdirSync(join(output, 'contexts'), { recursive: true });
   // A resolved builder image is also passed to setup-buildx, so it describes the actual builder.
   let builder, frontend;
   if (resolveExternal) {
@@ -25,7 +25,7 @@ export async function prepareRelease({ root, output, sourceCommit, validationRun
   }
   for (const configured of config.images) {
     const recipe = structuredClone(configured);
-    recipe.toolchain.contextImplementation = identity(['context.mjs','docker-inputs.mjs'].map(file => sha256(readFileSync(join(root, 'scripts/releases', file)))));
+    recipe.toolchain.contextImplementation = identity(['scripts/releases/context.mjs','scripts/releases/docker-inputs.mjs','scripts/npm-workspace.mjs'].map(file => sha256(readFileSync(join(root, file)))));
     recipe.toolchain.workflow = sha256(readFileSync(join(root, '.github/workflows/ready-releases.yml')));
     if (frontend) recipe.toolchain.frontend = `${frontend.repository}@${frontend.digest}`;
     if (builder) recipe.toolchain.builder = `${builder.repository}@${builder.digest}`;
@@ -44,7 +44,9 @@ export async function prepareRelease({ root, output, sourceCommit, validationRun
   }
   for (const app of config.apps) {
     const manifest = JSON.parse(readFileSync(join(root, app.manifest)));
-    const sourceContext = buildContext(root, { inputs: app.sourceInputs, dockerfile: app.manifest, platforms: [], reusable: false }, { paths });
+    const sourceContext = buildContext(root, { inputs: app.sourceInputs, dockerfile: app.manifest, platforms: [], reusable: false,
+      ...(app.sourceWorkspaces?.length ? { workspaces: app.sourceWorkspaces, retainRootScripts: true } : {}),
+      ...(app.sourceIgnoreOptionalPeers === true ? { ignoreOptionalPeers: true } : {}) }, { paths });
     const images = plan.images.filter(i => i.recipe.appId === app.id);
     const inputFingerprint = identity({ manifest, profiles: app.profiles, sourceFingerprint: sourceContext.fingerprint,
       images: images.map(i => ({ id: i.recipe.id, inputFingerprint: i.inputFingerprint })) });

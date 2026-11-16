@@ -1,7 +1,7 @@
 ---
 created: 2026-09-29
-updated: 2026-11-09
-summary: Apps discover and call confirmed speech, translation, assistant, task and execution providers with short-lived Core credentials.
+updated: 2026-11-12
+summary: Apps discover confirmed providers and use category or exact-operation Core credentials without relaying inference through Core.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/whisper, apps/harness]
 ---
 
@@ -13,7 +13,8 @@ Core 0.132.0 accepts `providers.speech-to-text`, `providers.translation` and `pr
 use of every confirmed provider in its category, including later installations. There is no separate
 use permission or per-provider ACL. Supply roles are `speech-to-text`, `translation` and `assistant` in `provides`;
 roles require installation/update confirmation. Ordinary runtime apps can supply and consume these
-interfaces. Agent connections remain inside Harness; `providers.agent` is not accepted.
+interfaces. Reviewed `agent` providers and `providers.agent` use the exact-operation execution
+contract described below; their accounts and native sessions belong to independently installed apps.
 
 Translation uses the same app-authorized credential flow as speech. Harness exposes two static
 interface keys (`codex` and `claude`) backed by explicitly selected connections. Text and Markdown
@@ -46,10 +47,11 @@ Server-side SDK clients use the calling app's `HOSTY_APP_ID`, `HOSTY_CORE_ORIGIN
 | --- | --- |
 | `GET /permissions` | Own required, optional and granted permission names |
 | `GET /providers/{kind}` | Confirmed providers in an authorized category |
-| `POST /providers/{kind}/token` | `{ providerAppId, key }` selects exactly one interface |
+| `POST /providers/{kind}/token` | Non-agent category credential; `{ providerAppId, key }` selects one interface |
 | `POST /provider/introspect` | Provider validates `{ token, kind, key }` on every request |
 
-Descriptors contain app ID, name, category, interface key/version, capabilities, URL and availability.
+Descriptors contain app ID, opaque installation ID, name, category, interface key/version,
+capabilities, URL and availability.
 Discovery and credential issuance resolve provider API URLs from the endpoint's direct transport
 address. Generated browser hostnames and configured public origins are excluded from backend calls,
 so local speech recognition does not depend on browser-only name resolution or public ingress.
@@ -77,6 +79,35 @@ settings, MCP, agent connections or general Core APIs. Finalization always uses 
 draft-only policy for provider-originated handoffs, regardless of the immediate-handoff setting.
 Only Harness's own operator clients can dispatch immediately. Provider credentials never become
 general delegation.
+
+## Agent Execution Providers
+
+Core accepts the reviewed `agent` supply role and `providers.agent` consumer permission. Service-only
+`GET /api/internal/apps/{consumer}/providers/agent` lists confirmed installations without granting
+native invocation. An explicit `{ appId, installationId, key }` selection identifies a provider;
+Core infers no vendor, account or authority from its name. Independent consumers need no Harness
+installation.
+
+Execution uses `POST /api/internal/apps/{consumer}/agent/authorize`, not the broad category-token
+route. The consumer sends only the exact operation, method, path, SHA-256 body digest and bounded
+configuration/resource ceiling. Core validates the original current user or retained exact task
+attempt and the existing administrator requirement. Inputs, uploads, snapshots and SSE events travel
+directly between consumer and provider. Core's own skills, MCP and Decisions keep their ordinary
+platform responsibilities.
+
+The selected provider introspects the request, durably accepts the public command and admits native
+work through its own Core identity. It renews admitted authority and obtains selected-tool MCP
+credentials without depending on the consumer process. Renewal respects the original expiry and
+current grants; the provider's service identity is not replacement user authority. Metadata-only
+settlement of its exact Decision records can continue after execution expiry, but authorizes no
+new native effects. Provider-only scoped workspace cleanup releases exact retained lease identities.
+
+TypeScript exports `AgentClient`, request preparation, validators, SSE recovery and OpenAPI/event
+schemas from the `/agent` entrypoints. Its authorization callback keeps Core credentials in the
+consumer backend. .NET exposes `HostyAgentExecutionClient` and typed `HostyProviderClient` agent
+bridges; its stream API uses explicit cursor/snapshot recovery. See
+[Agent provider execution](../agent-provider-interface/feature.md) for routes, native resume,
+immutable skills, ownership, capabilities, stop evidence and the clean-slate Harness boundary.
 
 ## Task Providers And Executors
 
@@ -192,6 +223,15 @@ or an explicitly scoped [background grant](../continuous-app-access/feature.md).
 validation rechecks that source online. Harness uses its own continuous sign-in for interactive MCP
 and workspace/publication calls; conversations require no additional consent.
 
+Agent consumers can optionally bind their own reviewed `task-executor` v1 `session-workflow`
+interface to an admitted provider run. The provider sends bounded task business commands through
+Core's `/api/internal/apps/{provider}/agent/workflow` service endpoint. Core rechecks the original
+actor and current attempt and signs the exact request for that consumer's public executor route;
+qualified task-source and executor keys remain distinct. Selected tool names and policy are fixed
+in the admission, and Disabled tools are refused at Core dispatch. This optional task business
+channel has its own provider-side tool presentation and Decisions and leaves general Core MCP
+access unchanged. See the [agent execution boundary](../agent-provider-interface/feature.md).
+
 ## Testing Expectations
 
 - Core: optional defaults and updates, review-only mutation, stale consent, stored declarations,
@@ -201,6 +241,9 @@ and workspace/publication calls; conversations require no additional consent.
   API addresses use transport while declared UI surfaces retain their browser addresses.
   Grant changes in either direction must reject stale update enqueue without changing operation state;
   missing speech and assistant interface contracts must report category-specific validation errors.
+- Agent execution: unrelated provider/consumer IDs, exact bytes and installations, original task/user
+  authority, revocation, provider-owned renewal, tool ceilings, pinned skill removal, precise lease
+  cleanup and expired Decision metadata that cannot admit native work.
 - SDKs: credential separation, denied access, compatibility, cancellation and assistant handoff ownership.
 - Whisper: malformed/oversized WAV, PCM decoding, silence, busy capacity, cancellation and actual native
   CPU inference. `HOSTY_WHISPER_INTEGRATION=1 dotnet test apps/whisper/Hosty.Whisper.Tests` downloads the

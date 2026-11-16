@@ -2,13 +2,21 @@
   "schemaVersion": "app.0.1",
   "id": "hosty.harness",
   "name": "Hosty Harness",
-  "description": "Hosty assistant with Docker and Local production runtimes, managed Claude and Codex connections, chat and settings.",
-  "version": "0.98.1",
+  "description": "Hosty conversation and task coordination with independently installed local agent providers.",
+  "version": "0.99.0",
   "role": "system",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",
-    "branch": "main"
+    "branch": "main",
+    "paths": [
+      "apps/harness",
+      "packages/app-sdk",
+      "shared/web",
+      "package.json",
+      "package-lock.json",
+      "scripts/npm-workspace.mjs"
+    ]
   },
   "runtimeProfiles": [
     {
@@ -17,12 +25,13 @@
       "default": true
     },
     {
-      "key": "local",
-      "type": "localCommand"
-    },
-    {
       "key": "dev",
       "type": "localCommand",
+      "development": true
+    },
+    {
+      "key": "docker-dev",
+      "type": "docker",
       "development": true
     }
   ],
@@ -31,7 +40,7 @@
     {
       "key": "api",
       "runtimes": {
-        "local": {
+        "dev": {
           "type": "localCommand",
           "workingDirectory": "apps/harness",
           "command": "node scripts/local-runtime.mjs start api",
@@ -52,33 +61,12 @@
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "native",
             "NODE_ENV": "production"
-          }
-        },
-        "dev": {
-          "type": "localCommand",
-          "workingDirectory": "apps/harness",
-          "command": "npm run dev",
-          "ports": [
-            {
-              "key": "http",
-              "containerPort": 3400,
-              "protocol": "http",
-              "public": true
-            }
-          ],
-          "healthcheck": {
-            "type": "http",
-            "port": 3400,
-            "path": "/healthz",
-            "timeoutSeconds": 5
           },
-          "environment": {
-            "HOSTY_HARNESS_RUNTIME": "native"
-          }
+          "setup": "node scripts/local-runtime.mjs prepare"
         },
         "docker": {
           "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness:0.98.1",
+          "image": "ghcr.io/alex-de-haas/hosty-harness:0.99.0",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
             "PORT": "3400"
@@ -99,94 +87,52 @@
             "retries": 3,
             "gracePeriodSeconds": 20
           }
-        }
-      },
-      "dependsOn": [
-        "worker"
-      ],
-      "injection": {
-        "settings": []
-      }
-    },
-    {
-      "key": "worker",
-      "injection": {
-        "appServiceToken": false,
-        "appIdentityToken": false,
-        "settings": []
-      },
-      "runtimes": {
-        "local": {
-          "type": "localCommand",
+        },
+        "docker-dev": {
+          "type": "docker",
+          "image": {
+            "repository": "node",
+            "tag": "24-bookworm-slim"
+          },
+          "artifact": "source",
+          "sourceMount": {
+            "path": ".",
+            "target": "/workspace",
+            "mode": "ro",
+            "caches": [
+              "apps/harness/.local-runtime"
+            ]
+          },
           "workingDirectory": "apps/harness",
           "setup": "node scripts/local-runtime.mjs prepare",
-          "command": "node scripts/local-runtime.mjs start worker",
-          "ports": [
-            {
-              "key": "worker",
-              "containerPort": 3401,
-              "protocol": "http",
-              "public": false
-            }
-          ],
-          "healthcheck": {
-            "type": "http",
-            "port": 3401,
-            "path": "/healthz",
-            "timeoutSeconds": 5
-          },
-          "environment": {
-            "HOSTY_HARNESS_RUNTIME": "native",
-            "NODE_ENV": "production"
-          }
-        },
-        "dev": {
-          "type": "localCommand",
-          "workingDirectory": "apps/harness",
-          "setup": "npm --prefix ../.. install && npm run build:web",
-          "command": "npm run worker",
-          "ports": [
-            {
-              "key": "worker",
-              "containerPort": 3401,
-              "protocol": "http",
-              "public": false
-            }
-          ],
-          "healthcheck": {
-            "type": "http",
-            "port": 3401,
-            "path": "/healthz",
-            "timeoutSeconds": 5
-          },
-          "environment": {
-            "HOSTY_HARNESS_RUNTIME": "native"
-          }
-        },
-        "docker": {
-          "type": "docker",
-          "image": "ghcr.io/alex-de-haas/hosty-harness-worker:0.98.1",
+          "command": "node scripts/local-runtime.mjs start api",
           "environment": {
             "HOSTY_HARNESS_RUNTIME": "docker",
-            "PORT": "3401"
+            "NODE_ENV": "production",
+            "NEXT_TELEMETRY_DISABLED": "1",
+            "HOME": "/tmp",
+            "PORT": "3400"
           },
           "ports": [
             {
-              "key": "worker",
-              "containerPort": 3401,
+              "key": "http",
+              "containerPort": 3400,
               "protocol": "http",
-              "public": false
+              "public": true
             }
           ],
           "healthcheck": {
             "type": "exec",
-            "command": "node -e \"fetch('http://127.0.0.1:3401/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+            "command": "node -e \"fetch('http://127.0.0.1:3400/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
             "intervalSeconds": 10,
             "timeoutSeconds": 5,
             "retries": 3,
-            "gracePeriodSeconds": 20
+            "gracePeriodSeconds": 60
           }
         }
+      },
+      "injection": {
+        "settings": []
       }
     }
   ],
@@ -200,55 +146,15 @@
         "environment": "HOSTY_APP_DATA_DIR"
       },
       {
-        "runtime": "local",
-        "environment": "HOSTY_APP_DATA_DIR",
-        "service": "api"
-      },
-      {
         "runtime": "dev",
         "environment": "HOSTY_APP_DATA_DIR",
         "service": "api"
       },
       {
-        "runtime": "docker",
-        "service": "worker",
-        "subPath": "worker-service",
-        "environment": "HOSTY_APP_DATA_DIR",
-        "containerPath": "/control/state"
-      },
-      {
-        "runtime": "local",
-        "service": "worker",
-        "subPath": "worker-service",
+        "runtime": "docker-dev",
+        "service": "api",
+        "containerPath": "/app/data",
         "environment": "HOSTY_APP_DATA_DIR"
-      },
-      {
-        "runtime": "dev",
-        "service": "worker",
-        "subPath": "worker-service",
-        "environment": "HOSTY_APP_DATA_DIR"
-      },
-      {
-        "runtime": "docker",
-        "service": "worker",
-        "subPath": "service-auth",
-        "mode": "ro",
-        "environment": "HOSTY_WORKER_AUTH_DIR",
-        "containerPath": "/control/auth"
-      },
-      {
-        "runtime": "local",
-        "service": "worker",
-        "subPath": "service-auth",
-        "mode": "ro",
-        "environment": "HOSTY_WORKER_AUTH_DIR"
-      },
-      {
-        "runtime": "dev",
-        "service": "worker",
-        "subPath": "service-auth",
-        "mode": "ro",
-        "environment": "HOSTY_WORKER_AUTH_DIR"
       }
     ]
   },
@@ -262,52 +168,15 @@
         "environment": "HOSTY_APP_CACHE_DIR"
       },
       {
-        "runtime": "local",
-        "environment": "HOSTY_APP_CACHE_DIR",
-        "service": "api"
-      },
-      {
         "runtime": "dev",
         "environment": "HOSTY_APP_CACHE_DIR",
         "service": "api"
       },
       {
-        "runtime": "docker",
-        "service": "worker",
-        "subPath": "worker-service",
-        "environment": "HOSTY_APP_CACHE_DIR",
-        "containerPath": "/control/cache"
-      },
-      {
-        "runtime": "local",
-        "service": "worker",
-        "subPath": "worker-service",
+        "runtime": "docker-dev",
+        "service": "api",
+        "containerPath": "/app/cache",
         "environment": "HOSTY_APP_CACHE_DIR"
-      },
-      {
-        "runtime": "dev",
-        "service": "worker",
-        "subPath": "worker-service",
-        "environment": "HOSTY_APP_CACHE_DIR"
-      },
-      {
-        "runtime": "docker",
-        "service": "worker",
-        "subPath": "worker-files",
-        "environment": "HOSTY_WORKER_FILES_DIR",
-        "containerPath": "/work"
-      },
-      {
-        "runtime": "local",
-        "service": "worker",
-        "subPath": "worker-files",
-        "environment": "HOSTY_WORKER_FILES_DIR"
-      },
-      {
-        "runtime": "dev",
-        "service": "worker",
-        "subPath": "worker-files",
-        "environment": "HOSTY_WORKER_FILES_DIR"
       }
     ]
   },
@@ -329,28 +198,6 @@
         "version": 1,
         "capabilities": [
           "attachments"
-        ]
-      }
-    ],
-    "translation": [
-      {
-        "key": "codex",
-        "endpoint": "http",
-        "path": "/api/translation/v1/codex",
-        "version": 1,
-        "capabilities": [
-          "text",
-          "markdown"
-        ]
-      },
-      {
-        "key": "claude",
-        "endpoint": "http",
-        "path": "/api/translation/v1/claude",
-        "version": 1,
-        "capabilities": [
-          "text",
-          "markdown"
         ]
       }
     ],
@@ -382,7 +229,8 @@
           "markdown",
           "options",
           "cancellation",
-          "configuration-ref"
+          "configuration-ref",
+          "session-workflow"
         ]
       }
     ],
@@ -423,7 +271,7 @@
   ],
   "catalogMetadata": {
     "icon": "assets/icon.svg",
-    "summary": "Admin-only Hosty assistant with Docker and Local runtimes."
+    "summary": "Admin-only Hosty assistant with Docker production and managed development runtimes."
   },
   "ui": {
     "entrypoint": {
@@ -495,7 +343,6 @@
   },
   "provides": [
     "assistant",
-    "translation",
     "tasks",
     "task-executor",
     "conversation-history",
@@ -511,7 +358,8 @@
     "apps.feedback.manage",
     "decisions.request",
     "decisions.read",
-    "decisions.respond"
+    "decisions.respond",
+    "providers.agent"
   ],
   "optionalCorePermissions": [
     "apps.workspaces.cleanup",
@@ -541,21 +389,5 @@
     "providers.agent-sessions",
     "core.agent-sessions.read",
     "core.agent-sessions.control"
-  ],
-  "externalMounts": {
-    "development": {
-      "kind": "managed-workspaces",
-      "scope": "instance",
-      "service": "worker",
-      "mode": "rw",
-      "required": true
-    },
-    "skills": {
-      "kind": "agent-skills",
-      "scope": "instance",
-      "service": "worker",
-      "mode": "ro",
-      "required": true
-    }
-  }
+  ]
 }

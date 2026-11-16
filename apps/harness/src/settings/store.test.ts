@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { SettingsStore } from "./store.js";
@@ -51,4 +51,25 @@ describe("SettingsStore Core defaults", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+});
+
+
+it("keeps retired translation selections inert and preserves their values during unrelated saves", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "hosty-settings-retired-"));
+  const retired = { translationConnections: { codex: { connectionId: "retained-account", connectionRevision: "1", harnessKind: "agent" }, claude: null },
+    translationModels: { codex: "retained-model", claude: null } };
+  try {
+    writeFileSync(path.join(dataDir, "settings.json"), JSON.stringify({ ...retired, systemPrompt: "Existing instructions" }));
+    const store = new SettingsStore(dataDir);
+    const active = await store.read();
+    expect(active).toMatchObject({ systemPrompt: "Existing instructions" });
+    expect(active).not.toHaveProperty("translationConnections");
+    expect(active).not.toHaveProperty("translationModels");
+    await store.update({ systemPrompt: "Updated instructions" });
+    const persisted = JSON.parse(readFileSync(path.join(dataDir, "settings.json"), "utf8"));
+    expect(persisted).toMatchObject({ ...retired, systemPrompt: "Updated instructions" });
+    const reopened = await new SettingsStore(dataDir).read();
+    expect(reopened).not.toHaveProperty("translationConnections");
+    expect(reopened).not.toHaveProperty("translationModels");
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
 });

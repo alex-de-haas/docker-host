@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderClient } from "./providers-server";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { Agent, fetch as speechFetch } from "undici";
 vi.mock("undici", async importOriginal => {
@@ -81,6 +82,27 @@ describe("speech deadlines", () => {
 describe("translation providers", () => {
   const selected = { ...provider, appId: "harness", key: "claude", kind: "translation", url: "http://harness.test/api/translation/v1/claude" };
   const input = { text: "# Example\n\n- [ ] D1. Read.", targetLanguage: "ru", format: "markdown" as const };
+  it("checks an exact optional connection with scoped app-only authority and encoded query values", async () => {
+    const capabilities = { version: 1, ready: false, reason: "Connection changed" };
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ token: "scoped", provider: selected })).mockResolvedValueOnce(Response.json(capabilities));
+    vi.stubGlobal("fetch", fetch);
+    expect(await client().translationCapabilities(selected, undefined, { connection: { id: "account/with space&x", revision: "9007199254740994" } })).toEqual(capabilities);
+    const url = new URL(String(fetch.mock.calls[1]![0]));
+    expect(url.pathname).toBe("/api/translation/v1/claude/capabilities");
+    expect([...url.searchParams]).toEqual([["connectionId", "account/with space&x"], ["connectionRevision", "9007199254740994"]]);
+    expect(fetch.mock.calls[0]![1].headers.authorization).toBe("Bearer private-service");
+    expect(fetch.mock.calls[0]![1].headers["X-Hosty-User-Token"]).toBeUndefined();
+    expect(fetch.mock.calls[1]![1].headers).toEqual({ authorization: "Bearer scoped" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it("preserves generic capability requests and refuses invalid selection before issuing authority", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ token: "scoped", provider: selected })).mockResolvedValueOnce(Response.json({ ready: true })); vi.stubGlobal("fetch", fetch);
+    await client().translationCapabilities(selected);
+    expect(fetch.mock.calls[1]![0]).toBe(selected.url + "/capabilities");
+    await expect(client().translationCapabilities(selected, undefined, { connection: { id: "account", revision: "1.5" } }))
+      .rejects.toMatchObject({ code: "translation_connection_invalid", status: 400 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it("sends Markdown and only the scoped credential to the exact selected key", async () => {
     const result = { text: "# Пример\n\n- [ ] D1. Прочитать.", targetLanguage: "ru", sourceLanguage: "auto" };
     const fetch = vi.fn().mockResolvedValueOnce(Response.json({ token: "scoped", provider: selected })).mockResolvedValueOnce(Response.json(result)); vi.stubGlobal("fetch", fetch);
@@ -133,4 +155,37 @@ it("keeps task workspace recovery bound to the original receipt without a user t
   expect(request.headers["X-Hosty-User-Token"]).toBeUndefined();
   expect(JSON.parse(request.body)).toEqual(input);
   expect(request.body).not.toContain("private-service");
+});
+
+
+describe("admitted agent workflow mediation", () => {
+  const agent = { provider: { appId: "independent.executor", installationId: "installed-once", key: "coding" },
+    sessionId: "5bc2e2c8-e7c0-4ee9-8b53-1b2be4a32764", runId: "612ac387-8ced-4d91-a217-135a51b24ab2" };
+  const invocation = { version: 2, callerAppId: "independent.executor", callerInstallation: "installed-once",
+    userId: "original-user", hostRole: "host.admin", principalId: "original:opaque", kind: "task-executor",
+    key: "workflow", operation: "session.workflow", resourceIds: ["consumer-session"], agentExecution: agent };
+  const body = JSON.stringify({ action: "task-result", input: { completed: true, result: { markdown: "Done", resources: [] } }, agent });
+  const request = { operation: "session.workflow", method: "POST", path: "/sessions/consumer-session/workflow", body };
+
+  it("preserves the original actor and public run binding while introspecting exact workflow bytes", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json(invocation)); vi.stubGlobal("fetch", fetcher);
+    expect(await client().validateMediated("hosty_provider.2.signed", "task-executor", request, "workflow")).toEqual(invocation);
+    const [url, init] = fetcher.mock.calls[0]!;
+    expect(String(url)).toBe("http://core.test/api/internal/apps/ordinary/provider/introspect-v2");
+    expect(JSON.parse(init.body)).toEqual({ token: "hosty_provider.2.signed", kind: "task-executor", key: "workflow",
+      operation: request.operation, method: request.method, path: request.path,
+      bodyHash: createHash("sha256").update(body).digest("hex") });
+    expect(init.headers.authorization).toBe("Bearer private-service");
+  });
+
+  it.each([
+    undefined,
+    { ...agent, runId: "" },
+    { ...agent, provider: { ...agent.provider, installationId: "" } },
+    { ...agent, sessionId: "bad\nidentity" },
+  ])("rejects workflow introspection without a complete admitted run binding (%j)", async agentExecution => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ ...invocation, agentExecution })));
+    await expect(client().validateMediated("hosty_provider.2.signed", "task-executor", request, "workflow"))
+      .rejects.toMatchObject({ code: "token_invalid" });
+  });
 });

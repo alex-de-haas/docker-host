@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-11-10
+updated: 2026-11-13
 summary: Affected component CI, explicit local integration checks and publication of verified main revisions.
 components: [.github, scripts]
 ---
@@ -28,7 +28,13 @@ source revisions selected by publication, rather than a separate hard-coded tool
 `scripts/ci-policy.mjs` owns the inspectable path policy. `scripts/ci-select.mjs` resolves the full source SHA, reads both sides of renames/deletions and publishes the selected job list in the run summary. PRs compare their base with the tested merge revision; main pushes compare their `before` revision with the pushed commit. An initial push without a baseline classifies the entire tracked tree.
 
 - Component source selects its own checks; the shared app SDK selects its Node consumers.
-- `shared/web` selects Shell and Harness. It does not compile Core or CLI.
+- Codex, Claude Code and Ollama retain independent component selections but share one required
+  `agent-providers` job. It installs a projected five-workspace dependency closure once, runs common
+  runtime lint/tests once, then lints/builds only the selected provider apps. The shared agent
+  runtime selects all three. Harness has no native vendor runtime dependency; provider dependency
+  changes do not select Harness when the lockfile dependency projection proves that separation.
+- Shared web components select Shell and Harness; provider-consumed theme/fonts also select the
+  three agent providers. These inputs do not compile Core or CLI.
 - Root Node dependencies select Node consumers. Actual .NET build/toolchain changes select .NET consumers and NativeAOT.
 - A strictly validated version-only change in `Directory.Build.props` selects Core, CLI and Core NativeAOT without triggering unrelated speech, SDK or native lifecycle scenarios. Added, deleted, malformed or substantive configuration stays conservative.
 - Documentation also selects Plans because its tests exercise the repository document parser contract.
@@ -51,11 +57,11 @@ The heavyweight `tasks` suite is an optional manual diagnostic, not a routine PR
 Run it only on the user's explicit request or under a user-approved verification plan; changing
 task or Harness code alone does not select it. Ordinary changes still require affected fast
 unit/component tests and builds. Leaving this suite unselected is not a blocking verification gap.
-Its full Core/Worker/MCP, identity and cleanup journey remains available for a deliberately selected
+Its full Core/provider/MCP, identity and cleanup journey remains available for a deliberately selected
 end-to-end investigation. The optional browser journey follows the same selection rule.
 
 GitHub CI has no activation,
-Windows process-control, Docker transport/worker or native speech jobs, nightly risk schedule
+Windows process-control, Docker transport, provider-native acceptance or native speech jobs, nightly risk schedule
 or integration dispatch scopes. Ordinary component suites remain intact, including their
 existing isolated HTTP/component tests. NativeAOT and Docker-based artifact builds remain
 build checks.
@@ -67,7 +73,7 @@ npm run test:integration -- activation
 npm run test:integration -- dependencies
 npm run test:integration -- windows
 npm run test:integration -- transport
-npm run test:integration -- worker
+npm run test:integration -- agent-providers
 npm run test:integration -- sessions
 npm run test:integration -- pull-requests
 npm run test:integration -- tasks
@@ -95,13 +101,13 @@ GitHub Actions. Its small command-construction tests remain in the CI policy job
 | dependencies | Requires .NET, Python and Docker; builds Core/CLI and checks dependency waits, recovery, cancellation and boot in a parent-owned isolated Core. |
 | skills | Requires .NET, Git, Python and Docker; builds Core/CLI, verifies selected public Git imports, table/JSON output, exports and atomic failures in a parent-owned child Core, then probes the requested awesome-copilot package and Finishes the child. |
 | transport | Requires .NET, Python and Docker; builds Core and runs its isolated real-Docker listener/transport fixture. |
-| worker | Requires Docker; builds the worker image named by the current manifest and runs its process/mount/control fixtures. |
+| agent-providers | Requires Node 24/npm, .NET, Git, Python and Docker for the parent-managed child Core; builds the production Harness consumer image, checks scripted native transports, installs all three Local providers, and checks Settings, qualified discovery, public session continuity/stop proof and Docker consumer recovery. No personal account or inference credential is used. |
 | shell | Requires .NET, Git, Python and Docker; builds Shell and verifies password identity and workspace inventory in a managed child Core. `HOSTY_SHELL_BROWSER_REVIEW` names a private temporary browser checkpoint; its `.continue` marker resumes Finish cleanup. |
-| harness-local | Requires Node/npm, .NET, Git, Python and Docker for the parent-managed child Core; verifies native production cold/warm startup, password/app identity, compiled assets, recovery and Finish cleanup. |
+| harness-local | Requires Node 24/npm, .NET, Git, Python and Docker for the parent-managed child Core; installs the independent Local providers and verifies cached Harness Local development cold/warm startup, password/app identity, compiled assets, cache recovery and Finish cleanup. |
 | feedback | Requires the harness-local prerequisites and Playwright Chromium; verifies annotated capture/drafts, one reviewed batch, exact-prompt outcomes, partial repeat, workspace retention and Finish cleanup. See [feedback acceptance](../app-feedback-inbox/feature.md#testing-expectations). |
-| tasks | Optional manual diagnostic under the selection rule above; requires .NET, Git, Python and Docker; builds Core/CLI and Harness images, verifies human/profile/independent-provider tasks, explicit MCP results, cancellation, existing workspaces and restart in a managed child Core. `HOSTY_TASKS_BROWSER=1` adds the Playwright browser journey. |
+| tasks | Optional manual diagnostic under the selection rule above; requires Node 24/npm, .NET, Git, Python and Docker; builds Core/CLI and the Harness consumer image, installs the independent Local providers, and checks human/profile tasks, explicit MCP results, cancellation, existing workspaces and restart in a managed child Core. `HOSTY_TASKS_BROWSER=1` adds the Playwright browser journey. |
 | pull-requests | Requires .NET, Git, Python and Docker; uses a test-only provider executable in a parent-managed child Core to verify installed repositories, PR reads, scoped SSE, access isolation and Finish cleanup. |
-| sessions | Requires .NET, Git, Python and Docker; builds Core/CLI and both Harness images, then runs multi-user workspace acceptance in a parent-managed child Core with separate password-authenticated users and data. |
+| sessions | Requires .NET, Git, Python and Docker; builds Core/CLI and the Harness consumer image, then runs multi-user workspace acceptance in a parent-managed child Core with separate password-authenticated users and data. |
 | opus | Requires Node 24 and uv; builds the app, verifies real OPUS-MT Big inference, cancellation and model-cache reuse/recovery. `HOSTY_OPUS_TEST_CACHE` reuses a dedicated cache. |
 | whisper | Requires .NET; explicitly enables only NativeSpeechTests, including pinned-model download and real CPU inference. `HOSTY_WHISPER_TEST_CACHE` can reuse a verified cache. |
 
@@ -111,6 +117,26 @@ remain available for focused scenarios and supported native modes; see
 Passing on macOS does not establish Windows or Linux readiness. Failure diagnostics and
 cleanup retain each fixture's existing ownership rules; ordinary app data and provider
 credentials remain outside these checks.
+
+The native provider checker is also available as `node scripts/check-agent-provider-native.mjs`.
+Its default uses synthetic CLI peers, temporary homes and native child processes. Real installed-CLI
+metadata probes require `--installed-clis`; neither mode submits a paid model turn. These checks
+cover native process/environment contracts rather than browser identity. The managed scenario
+uses normal Core password login and separate app-owned proofs before provider Settings access.
+Its default actual agent execution uses the scripted Codex peer; Claude and Ollama installation,
+configuration and usage checks are separate from the native transport fixtures. Optional Ollama
+inference and browser checks retain their explicit environment gates.
+
+Harness Local acceptance and Docker-to-Local provider transport are distinct checks. Passing the
+Local scenario does not establish the Docker consumer path. See the
+[agent provider interface](../agent-provider-interface/feature.md#testing-expectations) for the
+public execution contract, supported platform matrix and required managed-runtime evidence.
+
+Harness production source preparation uses a Webpack build worker that exits before TypeScript
+checking, memory optimizations and one static-page worker. This reduces overlapping build memory
+inside the app's Core resource budget while retaining type checking and the static export. The
+ordinary direct web build keeps its default bundler. A successful native build does not prove the
+same preparation fits a particular Docker memory limit; managed startup checks retain that evidence.
 
 Manual CI dispatch accepts an exact source revision and runs the remaining normal checks.
 The resolved full SHA is recorded and component jobs check out that SHA. CI policy tests
@@ -188,19 +214,20 @@ A feature is ready to merge when its agreed scope is implemented, current revisi
 
 Review the complete change once, collect findings into a consolidated correction batch, then verify the affected paths. A new full review needs a material design change or new evidence. Correctness, data loss, security and supported-runtime failures block completion. Optional suggestions do not automatically restart the loop. A failing check is investigated; repeated reruns are not a fix.
 
-## Verified Migration
+## Historical Migration Verification
 
-The 2026-10-21 local migration verification passes 208 CI-policy, publication, launcher and
+The 2026-10-21 local migration verification recorded 208 passing CI-policy, publication, launcher and
 documentation tests, workflow lint, composite shell lint, documentation validation and version
 consistency. The macOS activation command builds Core/CLI and passes managed Return and
 interrupted-helper recovery; both child environments confirm Finish and removal of their
 processes, ports and scratch data. Docker transport passes health and authorization checks
-from both default and per-app networks. The locally built Harness worker passes process,
+from both default and per-app networks. At that baseline, the locally built Harness worker passed process,
 mount and native control checks without provider credentials or model turns. Native Whisper
 CPU inference passes its Russian speech, silence, capacity and cancellation checks on macOS.
 Windows acceptance is not run because the local host is macOS; launcher tests cover its
 command selection and refusal on unsupported hosts. Local results do not establish Windows
 or Linux native readiness. Hosted validation is reported separately in the pull request.
+The worker image and its launcher are retired; the current command above is `agent-providers`.
 
 The `sessions` local integration suite builds Core/CLI and Docker Harness, then exercises explicit
 workspace sharing, private conversations, independent session deletion and source retention with
@@ -211,6 +238,14 @@ three invited/password-authenticated users in a parent-managed child Core. See
 
 - Policy tests cover affected/shared/unknown inputs, semantic version metadata, deleted/renamed paths, exact source resolution and exclusion of local runtime suites from every CI selection.
 - Local launcher tests cover explicit selection, prerequisite and command failures, unsupported platforms, shell-free arguments, native inference opt-in and side-effect-free previews.
+- Provider runtime tests cover exact-operation authorization, durable public sessions/controls,
+  event replay, bounded snapshots, process-stop evidence, configuration/skill pins and independent
+  account ownership without personal credentials. Managed acceptance separately covers normal
+  Core/app identity, consumer/provider restart independence and isolated resource cleanup.
+  Storage-isolation fixtures observe completed event writes through the journal serialization
+  boundary used by runtime reads; missing records and storage failures still fail the check.
+  Timer-driven failure fixtures observe the real sampler invocation before checking unhealthy
+  state, rather than racing a polling deadline equal to the production sampling interval.
 - Gate tests cover failed classification, missing/cancelled/failed/required-skipped jobs, workflow coverage and bounded process startup for large changesets without weakening required results.
 - Publication tests cover exact main identity, stale source, current run attempts, delayed required-job evidence and its bounded timeout, failed or missing CI, complete verified artifact consumption, and required signing identity/source/workflow fields.
 - Native recovery tests cover cumulative unpublished changes, legacy/missing receipts, unchanged releases, renamed/shared paths, truncated comparisons, API failures and failure before the completion receipt is written.
