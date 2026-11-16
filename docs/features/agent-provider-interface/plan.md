@@ -1574,3 +1574,8 @@ Pre-publication CI selection validation finds and corrects one missing edge: cha
 npm workspace projection select Harness packaging as well as all three providers. The regression
 requires both selected jobs to succeed. The policy, release, integration-entry and publication-gate
 suites pass all 273 tests after the correction.
+
+The publication candidate integrates current main with a regular merge, preserving Whisper
+retirement and moving its updated Hono and Node adapter versions into the actual provider lock
+closure. The isolated CI helper passes again on this integrated source in 121.439 seconds with
+716 passing tests, three Windows-only skips and all three provider checks/builds.

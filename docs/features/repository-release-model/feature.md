@@ -1,6 +1,6 @@
 ---
 created: 2026-05-12
-updated: 2026-11-13
+updated: 2026-11-16
 summary: The repository layout, release artifacts and versioning rules for every component.
 ---
 
@@ -218,8 +218,8 @@ The rollout sequence is explicit; code availability does not establish public re
    the feed URL, default ID and exact default manifest reference for catalog consumers; old static
    main URLs do not become stable merely because Core supports feeds.
 
-The publisher declares twelve repository app targets: Shell, Desktop, Documents, Marketplace, Demo
-App, Harness, Telemetry, Whisper, OPUS, Codex Provider, Claude Code Provider and Ollama Provider.
+The publisher declares eleven repository app targets: Shell, Desktop, Documents, Marketplace, Demo
+App, Harness, Telemetry, OPUS, Codex Provider, Claude Code Provider and Ollama Provider.
 The three agent providers publish independent Local source recipes with full commit pins and no OCI
 image. Harness publishes only its production Docker coordinator API/UI image; Local execution is a
 development recipe and is not a second production release profile. The final image contains the
@@ -227,10 +227,11 @@ compiled Node API, static UI and projected production dependencies; build tools,
 vendor SDKs and the former worker image are absent. Docker development retains its separately
 verified Node base image rather than inheriting the production image's digest.
 
-The originally published nine app feeds and the platform feed are seeded. Provider recipes and
+The previously published app feeds and the platform feed are seeded. Provider recipes and
 checked-in feed entry files do not by themselves establish publication or promotion of those new
 provider feeds. The [initial publisher](https://github.com/alex-de-haas/docker-host/actions/runs/41800939028)
-retains all nine complete app releases and the four native Core/CLI pairs. Explicit initial stable
+retains the nine complete app releases present at that baseline, including the since-retired Whisper
+app, and the four native Core/CLI pairs. Explicit initial stable
 promotions publish both entries with stable as the fresh-install default; every promotion revalidates
 the retained bytes without building. The [catalog cutover](https://github.com/alex-de-haas/hosty-catalog/pull/21)
 changes its eight existing first-party entries and is deployed on GitHub Pages. Marketplace remains

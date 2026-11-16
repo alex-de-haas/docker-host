@@ -76,7 +76,7 @@ test('push selection narrows version metadata only after comparing real Git cont
     command('commit', '-qam', 'build configuration');
     const config = select('push', { before: head }, { GITHUB_SHA: command('rev-parse', 'HEAD') });
     assert.deepEqual(config.plan.profiles, ['core-aot']);
-    assert.ok(config.plan.components.includes('whisper'));
+    assert.ok(config.plan.components.includes('telemetry-backend'));
   } finally {
     process.chdir(previous);
     rmSync(directory, { recursive: true, force: true });

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-10
-updated: 2026-10-24
+updated: 2026-11-12
 summary: Current boundaries between runtime apps, confirmed provider roles, Core permissions and platform-owned operations.
 components: [apps/core, apps/shell]
 ---
@@ -8,7 +8,7 @@ components: [apps/core, apps/shell]
 # Core Extension Model
 
 Hosty delivers optional platform functions as ordinary out-of-process runtime apps. Marketplace,
-Telemetry, Harness and Whisper use the same installation, update and removal lifecycle as other
+Telemetry and Harness use the same installation, update and removal lifecycle as other
 apps. Core owns authorization, installation review, manifest validation and privileged lifecycle
 operations. There is no general in-process extension loader or universal driver registry.
 

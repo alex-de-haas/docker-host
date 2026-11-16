@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-11-13
+updated: 2026-11-16
 summary: Independent OPUS-MT Big CPU translation app for English-to-Russian text and protected Markdown, with pinned native dependencies and verified model caching.
 components: [apps/opus]
 ---
@@ -11,8 +11,8 @@ components: [apps/opus]
 
 OPUS Translate (`hosty.opus`, version 0.2.1) is a headless native runtime app in `apps/opus`, with
 independent version, manifest, main feed and icon. It is the repository’s sole supplied translation app;
-Harness, Codex Provider and Claude Code Provider do not provide translation. Like [Whisper](../../../apps/whisper/manifest.json),
-it has local and development profiles, app-owned cache storage, logs and HTTP health. It has no
+Harness, Codex Provider and Claude Code Provider do not provide translation. It has local and
+development profiles, app-owned cache storage, logs and HTTP health. It has no
 system role, app UI or requested Core permissions. Core discovers its ordinary version-one
 `translation` interface under key `default`; production code has no provider-specific Core branch.
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { projectNpm, buildContext, materializeContext, identity, reusableArtifact } from './context.mjs';
@@ -9,6 +9,30 @@ import { imageReceipt } from './artifacts.mjs';
 const hash = 'a'.repeat(64), commit = 'b'.repeat(40);
 const config = count => ({ schemaVersion: 'hosty-publisher.0.1', metadataBranch: 'artifacts', feeds: Array.from({ length: count }, (_, i) => ({ id: `feed-${i}`, policy: i ? 'manual-promotion' : 'validated-source', default: i === count - 1 })), apps: [], images: [] });
 
+test('repository publication targets resolve existing production apps and migration declarations', () => {
+  const read = path => JSON.parse(readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8'));
+  const publisher = validatePublisher(read('distribution/release-publisher.json'));
+  const appIds = new Set(publisher.apps.map(app => app.id));
+  for (const app of publisher.apps) {
+    const manifest = read(app.manifest);
+    assert.equal(manifest.id, app.id, app.manifest);
+    for (const profile of app.profiles) {
+      assert.ok(manifest.runtimeProfiles.some(runtime => runtime.key === profile && !runtime.development),
+        `${app.id}: missing production profile ${profile}`);
+    }
+    for (const input of app.sourceInputs) {
+      assert.ok(existsSync(new URL(`../../${input}`, import.meta.url)), `${app.id}: missing source input ${input}`);
+    }
+  }
+  const declarations = read('distribution/app-source-migrations.json');
+  assert.equal(declarations.schemaVersion, 'app-source-migrations.0.1');
+  const migrationIds = new Set();
+  for (const migration of declarations.migrations) {
+    assert.ok(appIds.has(migration.appId), `${migration.migrationId}: app is not a publication target`);
+    assert.ok(!migrationIds.has(migration.migrationId), `Duplicate migration ${migration.migrationId}`);
+    migrationIds.add(migration.migrationId);
+  }
+});
 test('publisher names and counts are data; duplicate/default/control IDs fail', () => {
   for (const count of [1,3,10]) assert.equal(validatePublisher(config(count)).feeds.length, count);
   const c = config(2); c.feeds[1].id = c.feeds[0].id; assert.throws(() => validatePublisher(c), /duplicate/);

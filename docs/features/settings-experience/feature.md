@@ -1,6 +1,6 @@
 ---
 created: 2026-10-20
-updated: 2026-11-06
+updated: 2026-11-12
 summary: Shell unifies personal, host and application settings; Core confirms protected changes while Harness owns invocation preferences and skill selections.
 components: [apps/core, apps/shell, apps/harness, apps/marketplace]
 ---
@@ -299,8 +299,8 @@ and an expected source revision. Corrupt storage is not silently overwritten.
 
 Core retains the two retired bootstrap values for upgrade initialization but hides them from the
 manifest editor and rejects competing configure writes. Subsequent preferences come from app storage.
-Typed manifest parameters remain supported for wrappers and headless apps. Whisper's model setting
-continues to use Shell's Launch form and needs no application-specific web UI.
+Typed manifest parameters remain supported for wrappers and headless apps through Shell's Launch
+form, without requiring an application-specific web UI.
 
 Legacy Harness tool exclusions migrate through Core review before the local disabled rule is removed.
 Explicit previous Harness instruction choices migrate to stable app/default skill IDs, including

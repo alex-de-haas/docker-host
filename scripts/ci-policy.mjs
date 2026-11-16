@@ -6,7 +6,7 @@ import { canonical, projectNpm } from "./releases/context.mjs";
 
 export const BASE_JOBS = Object.freeze(["changes", "versions", "docs", "ci-policy"]);
 export const COMPONENTS = Object.freeze([
-  "shell", "desktop", "app-sdk", "app-sdk-dotnet", "whisper", "opus", "codex-provider", "claude-code-provider", "ollama-provider", "demo-app", "core", "cli",
+  "shell", "desktop", "app-sdk", "app-sdk-dotnet", "opus", "codex-provider", "claude-code-provider", "ollama-provider", "demo-app", "core", "cli",
   "telemetry-backend", "marketplace", "documents", "harness", "telemetry-ui", "swift-shell", "cardputer-shell",
 ]);
 export const PROFILES = Object.freeze(["core-aot"]);
@@ -14,7 +14,7 @@ export const AGENT_PROVIDERS = Object.freeze(["codex-provider", "claude-code-pro
 export const componentJob = component => AGENT_PROVIDERS.includes(component) ? "agent-providers" : component;
 export const ALL_JOBS = Object.freeze([...BASE_JOBS, "actionlint", ...new Set(COMPONENTS.map(componentJob)), ...PROFILES]);
 const NODE_COMPONENTS = [...AGENT_PROVIDERS, "opus", "shell", "desktop", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
-const DOTNET_COMPONENTS = ["app-sdk-dotnet", "whisper", "core", "cli", "telemetry-backend"];
+const DOTNET_COMPONENTS = ["app-sdk-dotnet", "core", "cli", "telemetry-backend"];
 const COMPONENT_PATHS = [
   ...AGENT_PROVIDERS.map(id => [`apps/${id}/`, id]),
   ["apps/opus/", "opus"],
@@ -24,7 +24,7 @@ const COMPONENT_PATHS = [
 ];
 const BUILD_CONFIG = /(?:^|\/)(?:[^/]+\.csproj|global\.json|[Nn]u[Gg]et\.[Cc]onfig|appsettings[^/]*\.json)$/;
 const WORKFLOW_COMPONENTS = {
-  "ready-releases.yml": ["core", "cli", "shell", "desktop", "documents", "marketplace", "demo-app", "harness", "telemetry-backend", "telemetry-ui", "whisper", "opus", ...AGENT_PROVIDERS],
+  "ready-releases.yml": ["core", "cli", "shell", "desktop", "documents", "marketplace", "demo-app", "harness", "telemetry-backend", "telemetry-ui", "opus", ...AGENT_PROVIDERS],
   "promote-release.yml": [], "platform-bridge.yml": ["core", "cli"],
   "shell-image.yml": ["shell"], "desktop-image.yml": ["desktop"], "demo-app-image.yml": ["demo-app"], "marketplace-image.yml": ["marketplace"],
   "documents-image.yml": ["documents"], "telemetry-ui-image.yml": ["telemetry-ui"],
@@ -108,7 +108,7 @@ export function classifyPaths(paths, { versionOnlyPaths = [], nodeDependencyComp
     } else if (path.startsWith("packages/app-sdk/")) {
       add(NODE_COMPONENTS, reason("shared app SDK"));
     } else if (path.startsWith("packages/app-sdk-dotnet/")) {
-      add(["app-sdk-dotnet", "whisper"], reason("shared .NET app SDK"));
+      add("app-sdk-dotnet", reason("shared .NET app SDK"));
     } else if (path.startsWith("shared/web/")) {
       add(["shell", "harness"], reason("shared web components"));
       if (path === "shared/web/hosty-theme.css" || path.startsWith("shared/web/fonts/"))
@@ -120,8 +120,6 @@ export function classifyPaths(paths, { versionOnlyPaths = [], nodeDependencyComp
       if (path.startsWith("apps/core/src/") || BUILD_CONFIG.test(path)) add("core-aot", reason("Core production input"));
     } else if (path.startsWith("apps/cli/")) {
       add("cli", reason("CLI component"));
-    } else if (path.startsWith("apps/whisper/")) {
-      add("whisper", reason("Whisper component"));
     } else if (path.startsWith("apps/telemetry-backend/")) {
       add("telemetry-backend", reason("telemetry backend"));
     } else if (path.startsWith("apps/telemetry/")) {
