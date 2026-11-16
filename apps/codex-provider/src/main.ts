@@ -1,2 +1,3 @@
 import { startAgentProvider } from "@hosty/agent-provider-runtime";
-await startAgentProvider({ kind: "codex", defaultPort: 3520 });
+import { codexEngine } from "./provider.js";
+await startAgentProvider({ engine: codexEngine, defaultPort: 3520 });

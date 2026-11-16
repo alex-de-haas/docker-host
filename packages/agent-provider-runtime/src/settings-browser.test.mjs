@@ -17,7 +17,7 @@ let stop;
 const element = id => document.getElementById(id);
 const settle = async () => { for (let turn = 0; turn < 40; turn++) await Promise.resolve(); };
 const response = (value, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => value });
-const connection = (overrides = {}) => ({ id:'account-1', name:'Personal', kind:'codex', auth:'api-key', revision:'7', available:true, ...overrides });
+const connection = (overrides = {}) => ({ id:'account-1', name:'Personal', kind:'sample', auth:'credential', revision:'7', available:true, ...overrides });
 const pendingLogin = { id:'login-1', connectionId:'account-1', status:'pending', userCode:'ABCD-EFGH', verificationUrl:'https://auth.example/device' };
 const namedButton = (name, root = document) => [...root.querySelectorAll('button')].find(node => node.textContent.trim() === name);
 const actionTrigger = () => document.querySelector('button[aria-haspopup="menu"]');
@@ -41,11 +41,12 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-async function page({ kind = 'codex', connections = [connection()], defaultId = 'account-1', handle } = {}) {
-  const parsed = new DOMParser().parseFromString(settingsHtml(kind),'text/html');
+async function page({ kind = 'sample', connections = [connection()], defaultId = 'account-1', handle } = {}) {
+  const definition={kind,name:'Example',authentication:kind==='other'?[{id:'credential',label:'Credential',credential:true}]:[{id:'browser',label:'Example Account sign-in',browserLogin:true},{id:'credential',label:'Credential',credential:true}],login:{name:'Example Account',description:'Open your account and enter this one-time code.'},usage:{grouping:'model',resetLabels:true}};
+  const parsed = new DOMParser().parseFromString(settingsHtml(definition),'text/html');
   document.head.replaceChildren(...[...parsed.head.children].filter(node => node.tagName !== 'SCRIPT'));
   document.body.replaceWith(document.importNode(parsed.body,true));
-  for (const script of document.querySelectorAll('script')) script.remove();
+  for (const script of document.querySelectorAll('script:not([type="application/json"])')) script.remove();
   let inventory = { defaultId, connections };
   const requests = [];
   sdk.appFetch.mockImplementation(async (path, options = {}) => {
@@ -88,24 +89,24 @@ it('edits with a blank credential and immutable auth, sending the exact revision
   expect(element('name').value).toBe('Personal');
   expect(element('secret').value).toBe('');
   expect(element('secret').required).toBe(false);
-  expect(element('auth').value).toBe('api-key'); expect(element('auth').disabled).toBe(true);
+  expect(element('auth').value).toBe('credential'); expect(element('auth').disabled).toBe(true);
   element('name').value = 'Renamed'; submit(); await settle();
   expect(f.requests.find(request => request.method === 'PUT')).toEqual({
-    path:'/api/settings/connections/account-1', method:'PUT', body:{name:'Renamed',auth:'api-key',expectedRevision:'7'},
+    path:'/api/settings/connections/account-1', method:'PUT', body:{name:'Renamed',auth:'credential',expectedRevision:'7'},
   });
   expect(element('editor').open).toBe(false);
   expect(document.activeElement).toBe(element('add-provider'));
 });
 
-it('starts ChatGPT login with the saved acknowledgement from the inventory response', async () => {
+it('starts Example Account login with the saved acknowledgement from the inventory response', async () => {
   const f = await page({connections:[],handle:request => {
     if (request.path === '/api/settings/connections' && request.method === 'POST') {
-      f.setInventory({defaultId:'new-account',connections:[connection({id:'new-account',name:'New ChatGPT',auth:'chatgpt',revision:'12'})]});
-      return response({defaultId:'new-account',connections:[connection({id:'new-account',auth:'chatgpt',revision:'12'})],saved:{id:'new-account',revision:'12'}});
+      f.setInventory({defaultId:'new-account',connections:[connection({id:'new-account',name:'New Example Account',auth:'browser',revision:'12'})]});
+      return response({defaultId:'new-account',connections:[connection({id:'new-account',auth:'browser',revision:'12'})],saved:{id:'new-account',revision:'12'}});
     }
     if (request.path === '/api/settings/connections/new-account/login') return response({...pendingLogin,connectionId:'new-account'});
   }});
-  element('add-provider').click(); element('name').value = 'New ChatGPT'; submit(); await settle();
+  element('add-provider').click(); element('name').value = 'New Example Account'; submit(); await settle();
   expect(f.requests.find(request => request.path.endsWith('/login'))).toEqual({
     path:'/api/settings/connections/new-account/login',method:'POST',body:{expectedRevision:'12'},
   });
@@ -115,7 +116,7 @@ it('starts ChatGPT login with the saved acknowledgement from the inventory respo
 });
 
 it('keeps a failed save and its credential draft open until Cancel clears it and restores focus', async () => {
-  await page({kind:'claude',connections:[],handle:request => request.method === 'POST' ? response({message:'Connection changed; refresh and retry.'},409) : undefined});
+  await page({kind:'other',connections:[],handle:request => request.method === 'POST' ? response({message:'Connection changed; refresh and retry.'},409) : undefined});
   const add = element('add-provider'); add.focus(); add.click();
   element('name').value = 'Work'; element('secret').value = 'synthetic-draft'; submit(); await settle();
   expect(element('editor').open).toBe(true);
@@ -158,11 +159,11 @@ it('ignores a polling response that arrives after cancellation without reopening
   vi.useFakeTimers();
   let resolvePoll;
   const late = new Promise(resolve => { resolvePoll = resolve; });
-  const f = await page({connections:[connection({auth:'chatgpt',available:false})],handle:request => {
+  const f = await page({connections:[connection({auth:'browser',available:false})],handle:request => {
     if (request.path.endsWith('/login') && request.method === 'POST') return response(pendingLogin);
     if (request.path === '/api/settings/logins/login-1') return request.method === 'GET' ? late : response({status:'cancelled'});
   }});
-  openAction('Sign in with ChatGPT'); await settle();
+  openAction('Sign in with Example Account'); await settle();
   await vi.advanceTimersByTimeAsync(2000);
   expect(f.requests.filter(request => request.path === '/api/settings/logins/login-1' && request.method === 'GET')).toHaveLength(1);
   element('login-close').click(); await settle();
@@ -175,14 +176,14 @@ it('ignores a polling response that arrives after cancellation without reopening
 });
 
 it.each([true,false])('restores login focus after load replaces the row (connection remains: %s)', async remains => {
-  const f = await page({connections:[connection({auth:'chatgpt',available:false})],handle:request => {
+  const f = await page({connections:[connection({auth:'browser',available:false})],handle:request => {
     if (request.path.endsWith('/login') && request.method === 'POST') return response(pendingLogin);
     if (request.path === '/api/settings/logins/login-1' && request.method === 'DELETE') {
-      f.setInventory({defaultId:remains?'account-1':null,connections:remains?[connection({auth:'chatgpt'})]:[]});
+      f.setInventory({defaultId:remains?'account-1':null,connections:remains?[connection({auth:'browser'})]:[]});
       return response({status:'cancelled'});
     }
   }});
-  const original = actionTrigger(); openAction('Sign in with ChatGPT'); await settle();
+  const original = actionTrigger(); openAction('Sign in with Example Account'); await settle();
   expect(element('login-dialog').open).toBe(true);
   element('login-close').click(); await settle();
   expect(element('login-dialog').open).toBe(false); expect(original.isConnected).toBe(false);
@@ -193,14 +194,14 @@ const limits = () => document.querySelector('[data-slot="provider-usage"]');
 const usageValue = (overrides = {}) => {
   const observedAt = new Date().toISOString();
   return {state:'available',connectionRevision:'7',observedAt,rows:[
-    {id:'short',group:'codex:account',kind:'quota',label:'Account · 5 hours',unit:'percent',used:20,remaining:80,limit:100,observedAt,resetsAt:new Date(Date.now()+3600000).toISOString()},
-    {id:'weekly',group:'codex:account',kind:'quota',label:'Account · 7 days',unit:'percent',used:65,remaining:35,limit:100,observedAt,resetsAt:new Date(Date.now()+86400000).toISOString()},
+    {id:'short',group:'account:account',kind:'quota',label:'Account · 5 hours',unit:'percent',used:20,remaining:80,limit:100,observedAt,resetsAt:new Date(Date.now()+3600000).toISOString()},
+    {id:'weekly',group:'account:account',kind:'quota',label:'Account · 7 days',unit:'percent',used:65,remaining:35,limit:100,observedAt,resetsAt:new Date(Date.now()+86400000).toISOString()},
   ],...overrides};
 };
 const isUsage = request => request.path.includes('/usage?refresh=true');
 
 it('loads the old compact ring before a chat and opens all factual quota/credit details with Escape focus restoration', async () => {
-  const value=usageValue();value.rows.push({id:'credits',group:'codex:credits',kind:'credits',label:'Extra credits',unit:'credits',remaining:0,observedAt:value.observedAt});
+  const value=usageValue();value.rows.push({id:'credits',group:'account:credits',kind:'credits',label:'Extra credits',unit:'credits',remaining:0,observedAt:value.observedAt});
   const f=await page({handle:request=>isUsage(request)?response(value):undefined});
   expect(f.requests.filter(isUsage)).toHaveLength(1);
   expect(limits().textContent).toBe('35% left');expect(limits().querySelector('[role="meter"]').getAttribute('aria-valuenow')).toBe('35');

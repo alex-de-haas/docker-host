@@ -30,15 +30,15 @@ it("reserves native generations once and keeps empty-process proof separate from
   expect(() => f.tracked.transport.spawnTool!(["-e", ""], { cwd: f.data, env: { PATH: process.env.PATH, HOME: f.data } })).toThrow("sealed");
 });
 it("forwards selected homes and explicitly referenced MCP bearers without Hosty control credentials", () => {
-  const env = nativeProcessEnvironment({ PATH: "selected-path", HOME: "/selected-home", CODEX_HOME: "/selected-codex", HOSTY_APP_SERVICE_TOKEN: "private-control",
+  const env = nativeProcessEnvironment({ PATH: "selected-path", HOME: "/selected-home", ENGINE_CONFIG_HOME: "/selected-config", HOSTY_APP_SERVICE_TOKEN: "private-control",
     HOSTY_CORE_CONTROL_SECRET: "private-core", HOSTY_MCP_BEARER_CHOSEN: "narrow-proxy", HOSTY_MCP_BEARER_OTHER: "other-run", NODE_CHANNEL_FD: "3", NODE_OPTIONS: "--unsafe" },
-    ['mcp_servers.selected.bearer_token_env_var="HOSTY_MCP_BEARER_CHOSEN"']);
-  expect(env).toMatchObject({ PATH: "selected-path", HOME: "/selected-home", CODEX_HOME: "/selected-codex", HOSTY_MCP_BEARER_CHOSEN: "narrow-proxy" });
+    ['HOSTY_MCP_BEARER_CHOSEN']);
+  expect(env).toMatchObject({ PATH: "selected-path", HOME: "/selected-home", ENGINE_CONFIG_HOME: "/selected-config", HOSTY_MCP_BEARER_CHOSEN: "narrow-proxy" });
   for (const key of ["HOSTY_APP_SERVICE_TOKEN", "HOSTY_CORE_CONTROL_SECRET", "HOSTY_MCP_BEARER_OTHER", "NODE_CHANNEL_FD", "NODE_OPTIONS"]) expect(env).not.toHaveProperty(key);
 });
 it("persists stop proof after an actual native command exits and checks execution identity", async () => {
   const f = await fixture();
-  const child = f.tracked.transport.spawn("claude", ["-e", "process.stdout.write('native output');"], { command: process.execPath, cwd: f.data, env: { PATH: process.env.PATH, HOME: f.data } });
+  const child = f.tracked.transport.spawn(process.execPath, ["-e", "process.stdout.write('native output');"], { command: process.execPath, cwd: f.data, env: { PATH: process.env.PATH, HOME: f.data } });
   let output = ""; child.stdout.on("data", value => { output += value; }); child.stderr.resume();
   await new Promise(resolve => child.once("close", resolve));
   expect(output).toBe("native output");

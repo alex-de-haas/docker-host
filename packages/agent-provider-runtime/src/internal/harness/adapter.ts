@@ -25,9 +25,8 @@ export interface HarnessCapabilities {
    */
   appMcp: boolean;
   /**
-   * Configuration changes can be applied to a running session. The Claude SDK exposes
-   * setMcpServers/toggleMcpServer/reconnectMcpServer. Codex has no mid-turn equivalent;
-   * its adapter can instead prepare a resumed process between turns.
+   * Configuration changes can be applied to a running session. Adapters that cannot apply
+   * changes mid-turn can prepare a resumed process between turns instead.
    */
   liveReconfigure: boolean;
   /**
@@ -44,9 +43,8 @@ export interface HarnessCapabilities {
   denyReason: boolean;
 }
 
-// One question the harness wants answered. Mirrors the Claude SDK's AskUserQuestionInput shape
-// (verified against the shipped types, not assumed) so nothing is lost in translation: 1-4
-// questions, each with 2-4 options carrying a label and a description.
+// One normalized question the harness wants answered. Each adapter validates its native
+// input before projecting stable question and option identities into this interface.
 export interface HarnessQuestion {
   /** Stable within the native request; absent only in legacy persisted events. */
   id?: string;
@@ -112,8 +110,8 @@ export type HarnessEvent = (
    * approval: approving the act of being asked a question is nonsense, and the resolution carries
    * answers rather than a verdict.
    *
-   * `delivery: "message"` marks a question whose native request already returned (Codex
-   * request_user_input_async): there is no callback to answer, and the saved answer starts a later
+   * `delivery: "message"` marks a question whose native request already returned:
+   * there is no callback to answer, and the saved answer starts a later
    * turn in the same native thread instead.
    */
   | { type: "question_request"; questionId: string; questions: HarnessQuestion[]; blocking?: boolean; delivery?: "message"; native?: { threadId?: string; turnId?: string; itemId?: string } }
@@ -134,7 +132,7 @@ export type HarnessEvent = (
   | { type: "error"; message: string }) & { source?: HarnessEventSource };
 
 /** Registry-owned durable history, separate from credential cache and per-run skill discovery. */
-export interface NativeHistoryHome { home: string; projects: string }
+export interface NativeHistoryHome { home: string; directories: Readonly<Record<string, string>> }
 
 export interface HarnessStartOptions {
   nativeTools?: "provider_default" | "none";

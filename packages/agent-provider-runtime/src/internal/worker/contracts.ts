@@ -50,7 +50,7 @@ export function validateRun(value: unknown): asserts value is WorkerRunRequest {
   const r = value as WorkerRunRequest;
   if (!r || ![undefined, "chat", "task"].includes(r.operation) || !safeIdentity(r.conversationId) || !r.binding || !safeIdentity(r.binding.connectionId)
     || !Number.isSafeInteger(r.binding.connectionRevision) || r.binding.connectionRevision < 1
-    || !["codex", "claude", "ollama"].includes(r.binding.harnessKind) || typeof r.input !== "string" || !r.input.trim()
+    || (typeof r.binding.harnessKind !== "string" || !r.binding.harnessKind || r.binding.harnessKind.length > 100 || /[\u0000-\u001f\u007f]/.test(r.binding.harnessKind)) || typeof r.input !== "string" || !r.input.trim()
     || !r.selection || ![r.selection.model, r.selection.reasoningEffort].every(v => v === null || typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$/.test(v))
     || !r.resource || !safeIdentity(r.resource.id) || !["conversation", "worktree"].includes(r.resource.kind)
     || !r.options || ![undefined, "normal", "autonomous"].includes(r.options.autonomy)

@@ -30,7 +30,7 @@ source revisions selected by publication, rather than a separate hard-coded tool
 - Component source selects its own checks; the shared app SDK selects its Node consumers.
 - Codex, Claude Code and Ollama retain independent component selections but share one required
   `agent-providers` job. It installs a projected five-workspace dependency closure once, runs common
-  runtime lint/tests once, then lints/builds only the selected provider apps. The shared agent
+  runtime lint/tests once, then lints, tests and builds only the selected provider apps. The shared agent
   runtime selects all three. Harness has no native vendor runtime dependency; provider dependency
   changes do not select Harness when the lockfile dependency projection proves that separation.
 - Shared web components select Shell and Harness; provider-consumed theme/fonts also select the

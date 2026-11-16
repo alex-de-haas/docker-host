@@ -3,11 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { ConnectionUsage } from "./usage.js";
-import { codexUsage, absentUsage } from "../harness/provider-usage.js";
+import { absentUsage, type ProviderUsage } from "../harness/provider-usage.js";
 const directories: string[] = [];
 afterEach(async () => { vi.useRealTimers(); for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }); });
 const cache = async () => { const directory = await mkdtemp(path.join(os.tmpdir(), "usage-test-")); directories.push(directory); return { directory, store: new ConnectionUsage(directory) }; };
-const sample = () => codexUsage({ rateLimits: { primary: { usedPercent: 25 } } });
+const sample = (): ProviderUsage => { const observedAt = new Date().toISOString(); return { state: "available", observedAt, rows: [{ id: "account", group: "account", label: "Account", kind: "quota", unit: "percent", used: 25, observedAt }] }; };
 it("coalesces refreshes, retains latest state across restart, and isolates revisions/accounts", async () => {
   const { directory, store } = await cache(), fetch = vi.fn(async () => sample());
   const values = await Promise.all([store.read("id", "key", true, fetch, async () => true), store.read("id", "key", true, fetch, async () => true)]);

@@ -24,8 +24,14 @@ The distribution contains three independently installed Local applications:
 | `apps/claude-code-provider` | `hosty.claude-code-provider` | Pinned Claude Agent SDK/Claude Code |
 | `apps/ollama-provider` | `hosty.ollama-provider` | Hosty agent loop using a configured Ollama endpoint |
 
-`packages/agent-provider-runtime` supplies shared implementation mechanisms; it is not another
-running service. Each installed app owns its connection settings, Core secret namespace, selected
+`packages/agent-provider-runtime` supplies engine-neutral implementation mechanisms; it is not another
+running service. Each provider application owns its native adapter, account authentication and
+refresh, history/skill layout, capabilities, input preparation and settings presentation policy.
+The application passes those contracts to the runtime at startup. The runtime owns shared
+HTTP/SSE delivery, durable bookkeeping, execution coordination and process containment; it has no
+native engine catalogue or vendor SDK dependency.
+
+Each installed app owns its connection settings, Core secret namespace, selected
 native homes, session aggregates, execution journal, attachments, pending native questions and
 process evidence. Selecting a Codex host-login directory is explicit; setup imports no account,
 credential or history from Harness or another provider. The operator supplies project tools on the
@@ -436,6 +442,14 @@ releases and selected lock closures are described in the
 [repository release model](../repository-release-model/feature.md).
 
 ## Testing Expectations
+
+- Run the common runtime suite and each affected provider application's type checking, tests and
+  production build. An unrelated injected engine exercises startup, settings, capabilities and
+  generic connection bookkeeping. Architecture checks reject native engine references and
+  application imports in shared production infrastructure.
+- Keep adapter parsing, authentication/history/skill integration and native fixtures with their
+  owning provider. Build metadata declares native dependencies/assets; generic packaging must
+  also build an unrelated provider and keep private native helpers out of other app bundles.
 
 - Core HTTP tests cover an empty/independent app boundary, exact operation/hash/install binding,
   current original authority, task chains, revoked grants, selected tools, pinned skill availability,

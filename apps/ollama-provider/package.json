@@ -1,6 +1,6 @@
 {
   "name": "@hosty/ollama-provider",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -10,15 +10,25 @@
     "build": "node ../../packages/agent-provider-runtime/scripts/build.mjs ollama-provider",
     "doctor": "node ../../packages/agent-provider-runtime/scripts/doctor.mjs ollama",
     "lint": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "dependencies": {
     "@hosty/agent-provider-runtime": "*",
-    "@hosty-sdk/app": "*"
+    "@hosty-sdk/app": "*",
+    "undici": "^8.12.4",
+    "@modelcontextprotocol/sdk": "1.32.2"
   },
   "devDependencies": {
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "@types/node": "^24.19.2"
+    "@types/node": "^24.19.2",
+    "vitest": "^5.1.0"
+  },
+  "hostyAgentProvider": {
+    "external": [],
+    "assets": [],
+    "nativeTests": [
+      "test/native-tools.mjs"
+    ]
   }
 }

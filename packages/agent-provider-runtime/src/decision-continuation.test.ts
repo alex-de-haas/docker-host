@@ -1,3 +1,4 @@
+import { fixtureCapabilities } from "./test-support/provider.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -84,7 +85,7 @@ it("refreshes only a definitively rejected unadmitted CAS, retaining the old req
   delete delivery.submitted; delete value.record.controls[f.requestId]; value.record.snapshot.revision = "2";
   value.record.snapshot.pending = [{ id: "public-decision", revision: "1", kind: "question", delivery: "continue_run", questions: [{ id: "q", text: "Continue?" }] }]; await f.store.save(value.session);
   const original = structuredClone(delivery.input);
-  const actual = new ProviderController(f.store, f.authority, {} as never, "claude");
+  const actual = new ProviderController(f.store, f.authority, {} as never, fixtureCapabilities);
   const delivered = vi.fn(async () => {}); actual.driver = { respond: delivered } as never;
   await syncDecisionDeliveries(f.store, actual, f.authority, f.runId); const retry = (await f.store.run(f.runId)).record.decisionDeliveries![f.coreId]!;
   expect(retry.previousInputs).toEqual([original]); expect(retry.input.requestId).not.toBe(original.requestId); expect(retry.input.expectedRevision).toBe("2");

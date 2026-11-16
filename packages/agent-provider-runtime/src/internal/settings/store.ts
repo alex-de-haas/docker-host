@@ -37,9 +37,8 @@ export interface AssistantSettings {
   immediateHandoffs?: boolean;
   /**
    * Operator text appended to the harness's own instruction sources — never replacing them. The
-   * Claude adapter runs with settingSources ["user", "project"], so the operator's own CLAUDE.md and
-   * skills already flow in; displacing them would make the assistant stop behaving the way the same
-   * operator's CLI does, with nothing on screen to explain it.
+   * native adapter retains its own instruction sources and selected skills. These instructions
+   * append to those sources rather than replacing the owning application's policy.
    */
   systemPrompt: string;
   /**

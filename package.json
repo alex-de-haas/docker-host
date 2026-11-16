@@ -86,8 +86,8 @@
     "desktop:start": "npm run start --workspace @haas/hosty-desktop",
     "desktop:lint": "npm run lint --workspace @haas/hosty-desktop",
     "desktop:test": "npm run test --workspace @haas/hosty-desktop",
-    "agent-providers:lint": "npm run lint --workspace @hosty/agent-provider-runtime",
-    "agent-providers:test": "npm run test --workspace @hosty/agent-provider-runtime",
+    "agent-providers:lint": "npm run lint --workspace @hosty/agent-provider-runtime && npm run lint --workspace @hosty/codex-provider && npm run lint --workspace @hosty/claude-code-provider && npm run lint --workspace @hosty/ollama-provider",
+    "agent-providers:test": "npm run test --workspace @hosty/agent-provider-runtime && npm run test --workspace @hosty/codex-provider && npm run test --workspace @hosty/claude-code-provider && npm run test --workspace @hosty/ollama-provider",
     "agent-providers:doctor": "node packages/agent-provider-runtime/scripts/doctor.mjs"
   }
 }

@@ -34,6 +34,13 @@ local runtime tests and necessary application restarts while absent. Disposable 
 their own users/data; existing provider credentials are not copied. Publication and commits remain
 separate actions.
 
+Owner approval, 2026-11-16: restore the application/code boundaries below by moving native
+engine adapters, account integration, settings policy and build metadata into the three provider
+applications. The shared runtime accepts explicit implementation contracts and retains only
+engine-neutral execution infrastructure. Preserve the public API and existing provider-owned
+data formats; verify neutral infrastructure with an unrelated injected engine. This approval
+covers implementation and isolated checks, not commits, publication or ordinary-data activation.
+
 ## Accepted Delivery Scope
 
 The recommended first delivery is the complete extraction: three Local providers, Docker Harness,
@@ -870,6 +877,7 @@ neither caching nor a universal inference API is a prerequisite to this provider
 - [x] D19. Preserve the latest context observation in the provider snapshot and restore it after consumer disconnect/restart, with a sequence-bound nullable value and compatible SDK validation; verify the latest measurement against its actual model request without claiming an offline per-request telemetry ledger.
 - [x] D20. Fence direct and agent-origin MCP workspace lease acquisition against concurrent cleanup and replay, persist admission closure, preserve idempotent cleanup after expiry/revocation/restart, and verify real claims with deterministic interleavings.
 - [x] D21. Persist pending workspace cleanup after native stop and retry the same release identity during maintenance after transient Core failure, including provider reconstruction and executions without pending decisions.
+- [x] D22. Restore engine-neutral shared infrastructure: move concrete adapters, account/auth/history/skill integration, settings policy and build metadata into their provider applications; inject explicit runtime contracts, preserve persisted state/public behavior and verify neutral-engine, provider, packaging and affected integration checks.
 
 ### Implementation Order
 
@@ -1714,3 +1722,38 @@ checks/builds pass. All 348 source hashes remain unchanged and temporary staging
 This uses an existing npm cache and is not a cold GitHub benchmark. The preceding Core-lease
 head passes all 26 hosted checks in 16 minutes 29 seconds; this additional provider correction
 requires fresh exact-head CI. D5, D6 and D11 retain their remaining accepted scope.
+
+### Engine-Neutral Runtime Boundary (2026-11-16)
+
+D22 restores the approved code boundary. Each provider owns its adapter, native event parsers,
+account authentication/refresh, history and skill policy, capabilities, input preparation,
+settings descriptors and build assets. Shared startup receives structural application contracts;
+its connection bookkeeping, HTTP/SSE, execution journal and process containment contain no engine
+catalogue or vendor SDK dependency. An unrelated engine exercises startup, settings, account
+revisions/reservations and actual worker admission with an opaque engine identity. Source/dependency
+checks enforce the production boundary. Existing storage formats, account/history paths and public
+HTTP/SSE versions remain unchanged. The three provider artifacts and private runtime move from
+0.1.0 to 0.1.1; Core, Harness and public SDK versions do not change for this refactor.
+
+The frozen source passes the actual isolated all-provider CI helper on macOS arm64: 750 tests pass,
+three Windows-only cases skip, shared/runtime and all three app type checks pass, and each provider
+production build passes. Its 344 recorded source inputs remain unchanged and temporary staging is
+removed. The commands are `CI=true CI_PLAN='{"version":1,"components":["codex-provider","claude-code-provider","ollama-provider"]}' node scripts/ci-agent-providers.mjs`,
+`npm run test --workspace @haas/hosty-harness -- src/agent-providers/provider-admission.test.ts test/independent-agent-consumer.test.ts`
+(10 passing tests), packaging fixtures (40 passing tests), and Node CI/policy/integration-routing
+fixtures (58 passing tests). Version, documentation/link and whitespace checks pass.
+
+`npm run test:integration -- agent-providers` passes the Core/CLI builds, scripted native probes,
+production Harness Docker build and managed acceptance. After the final bounded engine-identity
+and revoked-key usage regressions, the frozen candidate repeats
+`python3 scripts/check-workspace-activation.py . agent-providers --managed` successfully. Normal
+password/app-code login, all three provider readiness/settings, an independent SDK-only consumer
+without Harness, restart/resume, pending approvals, unknown-stop fencing, confirmed cancellation,
+queue/attachment durability and corruption isolation pass. Docker cold/warm startup measures
+7.708/6.857 seconds locally; this is not a cross-machine performance claim. Both parent owners
+Finish their child environments; independent checks confirm fixture roots and child-labelled
+containers, networks and volumes are absent. No ordinary-data runtime is changed.
+
+The optional installed-only Claude SDK probe is not enabled, and no personal provider credential
+is copied or paid inference claimed. Linux/Windows end-to-end acceptance and the existing D5, D6
+and D11 scope remain open; D22 does not close those earlier release/finalization requirements.

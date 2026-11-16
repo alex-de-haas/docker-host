@@ -8,20 +8,22 @@ const stopTheme = configureProviderTheme();
 const usageEntries=new Map(),usageViews=new Map(),usageQueue=[];let usageReading=0,usageDialog,usageDialogEntry,usageDialogTrigger;
 const usageClock=setInterval(refreshUsageDisplays,60000);document.addEventListener('visibilitychange',refreshUsageDisplays);
 const element = id => document.getElementById(id);
-const kind = document.body.dataset.providerKind;
-const providerName = kind === 'codex' ? 'Codex' : kind === 'claude' ? 'Claude' : 'Ollama';
-const authLabels = { none:'No authentication', 'api-key':'API key', 'claude-token':'Claude Code token', chatgpt:'ChatGPT sign-in', 'host-login':'Existing Codex login on this host' };
+const definition=JSON.parse(element('provider-definition').textContent);
+const providerName=definition.connectionName??definition.name;
+const authLabels=Object.fromEntries(definition.authentication.map(method=>[method.id,method.label]));
+const authDefinition=auth=>definition.authentication.find(method=>method.id===auth);
+const loginName=definition.login?.name??providerName;
 let recovery, editing = null, inventory, loginTimer, continuityStop, activityStop, continuityId, busy = false, editorTrigger, activeLogin, focusAfterBusy, loginEpoch = 0, stopped = false;
 const message = (text, state = 'status') => { const node=element('message'); node.textContent=text;node.hidden=!text;node.dataset.state=state;node.setAttribute('role',state==='error'?'alert':'status');node.parentElement.hidden=!text&&element('signin').hidden; };
 const errorAt = (id, text) => { const node=element(id);node.textContent=text;node.hidden=!text; };
 const reportError = error => { const text=error instanceof Error?error.message:String(error);if(element('editor').open)errorAt('form-error',text);else if(element('login-dialog').open)errorAt('login-error',text);else message(text,'error'); };
-const authOptions = kind==='codex'?['chatgpt','api-key','host-login']:kind==='claude'?['api-key','claude-token']:['none'];
+const authOptions=definition.authentication.map(method=>method.id);
 for(const value of authOptions){const option=document.createElement('option');option.value=value;option.textContent=authLabels[value];element('auth').append(option);}
 const fields = () => {
   const auth=element('auth').value;
-  element('secret-field').hidden=!['api-key','claude-token'].includes(auth);element('secret').required=!editing&&!element('secret-field').hidden;
-  element('host-field').hidden=auth!=='host-login';element('hostDirectory').required=auth==='host-login';
-  element('url-field').hidden=kind!=='ollama';element('chatgpt-description').hidden=auth!=='chatgpt';element('save-provider').textContent=auth==='chatgpt'&&!editing?'Add and sign in':'Save provider';
+  element('secret-field').hidden=!authDefinition(auth)?.credential;element('secret').required=!editing&&!element('secret-field').hidden;
+  element('host-field').hidden=!authDefinition(auth)?.hostDirectory;element('hostDirectory').required=authDefinition(auth)?.hostDirectory;
+  element('url-field').hidden=!definition.baseUrl;element('browser-login-description').hidden=!authDefinition(auth)?.browserLogin;element('save-provider').textContent=authDefinition(auth)?.browserLogin&&!editing?'Add and sign in':'Save provider';
 };
 element('auth').addEventListener('change',()=>{element('secret').value='';fields();});fields();
 function setBusy(value){busy=value;for(const node of document.querySelectorAll('button'))node.disabled=value||node.dataset.unavailable==='true'||node.dataset.loading==='true';element('connection-fields').disabled=value;element('auth').disabled=!!editing;}
@@ -82,7 +84,7 @@ function render(){
     const actions=document.createElement('div');actions.className='connection-actions';const trigger=document.createElement('button');trigger.type='button';trigger.className='button button-ghost button-icon';trigger.setAttribute('aria-label',`Actions for ${connection.name}`);trigger.setAttribute('aria-haspopup','menu');trigger.setAttribute('aria-expanded','false');trigger.append(icon('ellipsis'));
     const menu=document.createElement('div');menu.className='menu';menu.hidden=true;menu.setAttribute('role','menu');menu.setAttribute('aria-label',`Actions for ${connection.name}`);
     if(inventory.defaultId!==connection.id){const item=menuItem('Set default','star',async()=>{await request('/api/settings/default','PUT',{id:connection.id});await load('Default saved. Existing chats keep their provider.');});item.dataset.unavailable=String(!connection.available);item.disabled=!connection.available;menu.append(item);}
-    if(connection.auth==='chatgpt')menu.append(menuItem(connection.available?'Sign in again':'Sign in with ChatGPT','login',async()=>showLogin(await request(`/api/settings/connections/${encodeURIComponent(connection.id)}/login`,'POST',{expectedRevision:connection.revision}))));
+    if(authDefinition(connection.auth)?.browserLogin)menu.append(menuItem(connection.available?'Sign in again':`Sign in with ${loginName}`,'login',async()=>showLogin(await request(`/api/settings/connections/${encodeURIComponent(connection.id)}/login`,'POST',{expectedRevision:connection.revision}))));
     menu.append(menuItem('Edit','edit',()=>openEditor(connection,trigger),false));const separator=document.createElement('div');separator.className='menu-separator';separator.setAttribute('role','separator');const remove=menuItem('Remove','remove',()=>showRemoval(card,connection,trigger),false);remove.classList.add('menu-item-danger');menu.append(separator,remove);
     trigger.dataset.connectionId=connection.id;const openMenu=()=>{closeMenus();menu.hidden=false;trigger.setAttribute('aria-expanded','true');menu.querySelector('button:not(:disabled)')?.focus();};trigger.onclick=()=>{if(!menu.hidden)closeMenu(menu);else openMenu();};
     trigger.onkeydown=event=>{if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();openMenu();const items=[...menu.querySelectorAll('button:not(:disabled)')];(event.key==='ArrowDown'?items[0]:items.at(-1))?.focus();}};
@@ -100,7 +102,7 @@ function usageEntry(connection){
   else entry.connection={...connection};
   return entry;
 }
-function limitsSummary(entry){return summarizeProviderUsage(entry.usage,Date.now());}
+function limitsSummary(entry){return summarizeProviderUsage(entry.usage,Date.now(),undefined,definition.usage);}
 function paintUsage(entry){
   const view=usageViews.get(entry.key);if(!view||!currentUsageEntry(entry))return;
   const usage=entry.usage,summary=limitsSummary(entry),remaining=summary.remaining;
@@ -185,8 +187,8 @@ function paintUsageDialog(){
   if(usage.stale||usage.invalidated||limitsSummary(entry).reason?.includes('outdated')||limitsSummary(entry).reason?.includes('reset'))appendUsageText(root,'Last known values · may be outdated','badge usage-stale');
   for(const row of usage.rows){
     const section=document.createElement('div');section.className='usage-row';const heading=document.createElement('div');heading.className='usage-row-heading';
-    appendUsageText(heading,usageLabel(row,Date.now()),'usage-row-label','span');appendUsageText(heading,usageAmount(row),'usage-row-amount','span');section.append(heading);
-    if(row.unit==='percent'&&Number.isFinite(row.used)&&row.used>=0){const progress=document.createElement('progress');progress.max=100;progress.value=Math.min(100,row.used);progress.setAttribute('aria-label',usageLabel(row,Date.now())+' used');section.append(progress);}
+    appendUsageText(heading,usageLabel(row,Date.now(),definition.usage),'usage-row-label','span');appendUsageText(heading,usageAmount(row),'usage-row-amount','span');section.append(heading);
+    if(row.unit==='percent'&&Number.isFinite(row.used)&&row.used>=0){const progress=document.createElement('progress');progress.max=100;progress.value=Math.min(100,row.used);progress.setAttribute('aria-label',usageLabel(row,Date.now(),definition.usage)+' used');section.append(progress);}
     if(Number.isFinite(row.used)&&Number.isFinite(row.limit))appendUsageText(section,`${new Intl.NumberFormat(undefined,{maximumFractionDigits:2}).format(row.used)} / ${new Intl.NumberFormat(undefined,{maximumFractionDigits:2}).format(row.limit)} ${row.unit==='percent'?'% used':'used'}`);
     if(row.status)appendUsageText(section,'Status: '+String(row.status).replaceAll('_',' '));
     if(row.enabled===false)appendUsageText(section,'Additional usage is not enabled.');
@@ -204,8 +206,8 @@ function openEditor(connection=null,trigger=element('add-provider')){
 }
 function closeEditor(){if(busy)return;element('secret').value='';editing=null;element('editor').close();(editorTrigger?.isConnected?editorTrigger:element('add-provider')).focus();}
 async function showLogin(login,epoch=++loginEpoch){
-  if(stopped||epoch!==loginEpoch)return;clearTimeout(loginTimer);activeLogin=login;errorAt('login-error','');const pending=login.status==='pending';element('login-title').textContent=login.status==='complete'?'ChatGPT connected':'Sign in with ChatGPT';
-  element('login-description').textContent=pending?'Open ChatGPT in your browser, sign in, and enter this one-time code. You do not need the ChatGPT app.':login.status==='complete'?'Your provider is ready to select for a new chat.':login.message??'Sign-in cancelled. Try again from the provider menu.';
+  if(stopped||epoch!==loginEpoch)return;clearTimeout(loginTimer);activeLogin=login;errorAt('login-error','');const pending=login.status==='pending';element('login-title').textContent=login.status==='complete'?`${loginName} connected`:`Sign in with ${loginName}`;
+  element('login-description').textContent=pending?definition.login?.description??'Complete this account’s browser sign-in.':login.status==='complete'?'Your provider is ready to select for a new chat.':login.message??'Sign-in cancelled. Try again from the provider menu.';
   element('login-code-row').hidden=!pending;element('login-code').textContent=login.userCode??'Preparing…';element('copy-code').dataset.unavailable=String(!login.userCode);element('copy-code').disabled=!login.userCode;
   element('login-status').textContent=pending?'Waiting for confirmation…':'';element('login-close').textContent=pending?'Cancel sign-in':'Close';const link=element('login-open');link.hidden=true;link.removeAttribute('href');
   if(pending&&login.verificationUrl){try{const url=new URL(login.verificationUrl);if(['http:','https:'].includes(url.protocol)&&!url.username&&!url.password){link.href=url.href;link.hidden=false;}}catch{}}
@@ -220,10 +222,10 @@ async function closeLogin(){
   if(stopped||epoch!==loginEpoch)return;activeLogin=null;element('login-dialog').close();await load();focusAfterBusy=[...document.querySelectorAll('[data-connection-id]')].find(node=>node.dataset.connectionId===login?.connectionId)??element('add-provider');
 }
 element('connection-form').onsubmit=event=>{event.preventDefault();void act(async()=>{
-  const auth=element('auth').value,input={name:element('name').value,auth,...(editing?{expectedRevision:editing.revision}:{}),...(element('secret').value?{secret:element('secret').value}:{}),...(auth==='host-login'?{hostDirectory:element('hostDirectory').value}:{}),...(kind==='ollama'?{baseUrl:element('baseUrl').value}:{})};
+  const auth=element('auth').value,input={name:element('name').value,auth,...(editing?{expectedRevision:editing.revision}:{}),...(element('secret').value?{secret:element('secret').value}:{}),...(authDefinition(auth)?.hostDirectory?{hostDirectory:element('hostDirectory').value}:{}),...(definition.baseUrl?{baseUrl:element('baseUrl').value}:{})};
   const created=!editing,result=await request('/api/settings/connections'+(editing?'/'+encodeURIComponent(editing.id):''),editing?'PUT':'POST',input);
   element('secret').value='';element('editor').close();editing=null;await load('Provider saved. Existing chats keep their provider.');focusAfterBusy=element('add-provider');
-  if(created&&auth==='chatgpt'){const saved=result?.saved;if(typeof saved?.id!=='string'||typeof saved.revision!=='string')throw new Error('Provider saved. Refresh and choose Sign in with ChatGPT from its menu.');focusAfterBusy=null;await showLogin(await request(`/api/settings/connections/${encodeURIComponent(saved.id)}/login`,'POST',{expectedRevision:saved.revision}));}
+  if(created&&authDefinition(auth)?.browserLogin){const saved=result?.saved;if(typeof saved?.id!=='string'||typeof saved.revision!=='string')throw new Error(`Provider saved. Refresh and choose Sign in with ${loginName} from its menu.`);focusAfterBusy=null;await showLogin(await request(`/api/settings/connections/${encodeURIComponent(saved.id)}/login`,'POST',{expectedRevision:saved.revision}));}
 });};
 element('add-provider').onclick=()=>openEditor();element('clear').onclick=closeEditor;element('editor-close').onclick=closeEditor;
 element('editor').addEventListener('cancel',event=>{event.preventDefault();closeEditor();});

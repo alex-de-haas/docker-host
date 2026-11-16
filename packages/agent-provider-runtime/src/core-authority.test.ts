@@ -1,3 +1,4 @@
+import { fixtureCapabilities } from "./test-support/provider.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -32,9 +33,9 @@ it("normalizes the actual Core nullable introspection wire format without adding
 it("accepts an absent nullable digest but still rejects a supplied wrong configuration", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hosty-core-wire-")); roots.push(root);
   const store = new ProviderStore(path.join(root, "sessions"), provider); await store.initialize();
-  const connections = { binding: async () => ({ connectionId: "account", connectionRevision: 1, harnessKind: "ollama" }) } as never;
+  const connections = { binding: async () => ({ connectionId: "account", connectionRevision: 1, harnessKind: "fixture-engine" }) } as never;
   const authority = { skills: vi.fn(async () => { throw new Error("A plain request needs no library grant"); }) } as unknown as ProviderAuthority;
-  const controller = new ProviderController(store, authority, connections, "ollama"), start = vi.fn(async () => {});
+  const controller = new ProviderController(store, authority, connections, fixtureCapabilities), start = vi.fn(async () => {});
   controller.driver = { start, cancel: async () => {}, respond: async () => {}, control: async () => {}, synchronize: async () => {}, close: async () => {} };
   const id = randomUUID(), create = { configuration: { connection: { id: "account", revision: "1" } } }; await controller.createSession(id, create, JSON.stringify(create), actor);
   const input = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start" as const, input: { text: "Plain independent consumer" } };

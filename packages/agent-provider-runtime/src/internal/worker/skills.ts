@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, readFile, copyFile, lstat } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, lstat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import type { HarnessAdapter, HarnessRun, NativeHistoryHome } from "../harness/adapter.js";
+import type { HarnessAdapter, HarnessRun, HarnessStartOptions } from "../harness/adapter.js";
 
 /** Resolve only an app-scoped Core export ID, never a caller-provided host path. */
 export async function resolveSkillExport(root: string | undefined, id: string | undefined): Promise<string | undefined> {
@@ -12,47 +12,69 @@ export async function resolveSkillExport(root: string | undefined, id: string | 
   return selected;
 }
 
-export async function linkSkillDirectory(home: string, kind: "codex" | "claude" | "ollama", selected: string): Promise<void> {
-  const target = kind !== "claude" ? path.join(home, ".agents", "skills") : path.join(home, "skills");
+function skillLink(home: string, relativePath: string): string {
+  const target = path.resolve(home, relativePath), relative = path.relative(path.resolve(home), target);
+  if (!relative || relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative))
+    throw new Error("Native skill discovery must stay inside its owned directory.");
+  return target;
+}
+
+export async function linkSkillDirectory(home: string, relativePath: string, selected: string): Promise<void> {
+  const target = skillLink(home, relativePath);
   await mkdir(path.dirname(target), { recursive: true });
   await symlink(selected, target, process.platform === "win32" ? "junction" : "dir");
 }
 
-/** Only discovery HOME is per run. Codex retains the selected connection's CODEX_HOME/auth/history. */
-export async function skillAdapter(adapter: HarnessAdapter, home: string, kind: "codex" | "claude" | "ollama", selected: string, sessionHome?: string, historyHome?: NativeHistoryHome): Promise<HarnessAdapter> {
-  const durable = kind === "codex" && sessionHome !== undefined;
-  let root = durable ? sessionHome! : await mkdtemp(path.join(os.tmpdir(), "hosty-skills-"));
+export type SkillAdapterOptions = {
+  selected: string;
+  relativePath: string;
+  /** An application-owned durable directory; omitted for a temporary discovery home. */
+  directory?: string;
+  canonicalize?: boolean;
+  prepare?: (root: string) => Promise<Pick<HarnessStartOptions, "nativeConfigHome" | "nativeHistoryHome">>;
+  beforeProbe?: (root: string) => Promise<void>;
+  close?: (root: string) => Promise<void>;
+};
+
+/** Applications supply native layout and credential/history policy; this helper owns isolation lifetime. */
+export async function skillAdapter(adapter: HarnessAdapter, options: SkillAdapterOptions): Promise<HarnessAdapter> {
+  const durable = options.directory !== undefined;
+  let root = options.directory ?? await mkdtemp(path.join(os.tmpdir(), "hosty-skills-"));
+  let nativeOptions: Pick<HarnessStartOptions, "nativeConfigHome" | "nativeHistoryHome"> = {};
   try {
     await mkdir(root, { recursive: true, mode: 0o700 });
-    if (kind === "claude") root = await realpath(root);
-    const link = path.join(root, kind === "claude" ? "skills" : ".agents/skills");
-    if (durable) { const existing = await lstat(link).catch(() => null); if (existing && !existing.isSymbolicLink()) throw new Error("Unexpected native skill directory."); if (existing) await rm(link); }
-    await linkSkillDirectory(root, kind, selected);
-    if (kind === "claude") {
-      await mkdir(path.join(home, "projects"), { recursive: true });
-      const history = await realpath(path.join(home, "projects"));
-      if (historyHome && (historyHome.projects !== path.join(historyHome.home, "projects") || historyHome.projects !== history))
-        throw new Error("The selected native history binding changed.");
-      await symlink(history, path.join(root, "projects"), process.platform === "win32" ? "junction" : "dir");
+    if (options.canonicalize) root = await realpath(root);
+    const link = skillLink(root, options.relativePath);
+    if (durable) {
+      const existing = await lstat(link).catch(() => null);
+      if (existing && !existing.isSymbolicLink()) throw new Error("Unexpected native skill directory.");
+      if (existing) await rm(link);
     }
+    await linkSkillDirectory(root, options.relativePath, options.selected);
+    nativeOptions = await options.prepare?.(root) ?? {};
   } catch (error) { if (!durable) await rm(root, { recursive: true, force: true }); throw error; }
   let closed = false;
-  const close = async () => { if (closed) return; if (durable) {
-      const source = path.join(root, "auth.json"), target = path.join(home, "auth.json");
-      const info = await lstat(source).catch(() => null);
-      if (info) { if (!info.isFile() || info.size > 64000) throw new Error("Invalid native authorization file."); JSON.parse(await readFile(source, "utf8")); await copyFile(source, target); }
-    } else await rm(root, { recursive: true, force: true }); closed = true; };
+  const close = async () => {
+    if (closed) return;
+    await options.close?.(root);
+    if (!durable) await rm(root, { recursive: true, force: true });
+    closed = true;
+  };
   return {
-    name: adapter.name, capabilities: adapter.capabilities, probe: async () => { const health = await adapter.probe(); if (durable && health.available) { const source = path.join(home, "auth.json"); if (await lstat(source).catch(() => null)) await copyFile(source, path.join(root, "auth.json")); } return health; }, dispose: async () => { await adapter.dispose?.(); await close(); },
-    start: options => {
+    name: adapter.name, capabilities: adapter.capabilities,
+    probe: async () => { const health = await adapter.probe(); if (health.available) await options.beforeProbe?.(root); return health; },
+    dispose: async () => { try { await adapter.dispose?.(); } finally { await close(); } },
+    start: input => {
       let run: HarnessRun;
-      try { run = adapter.start({ ...options, nativeHome: root, ...(kind === "claude" ? { nativeHistoryHome: historyHome } : {}), ...(durable ? { nativeConfigHome: root } : {}) }); }
+      try { run = adapter.start({ ...input, nativeHome: root, ...nativeOptions }); }
       catch (error) { void close(); throw error; }
       const stop = async () => { if (run.stopAndWait) await run.stopAndWait(); else await run.stop(); await close(); };
       return { send: text => run.send(text), resolveApproval: (...args) => run.resolveApproval(...args),
         resolveQuestion: (...args) => run.resolveQuestion(...args), setMcpServers: value => run.setMcpServers(value),
         interrupt: () => run.interrupt(), stop, ...(run.stopAndWait ? { stopAndWait: stop } : {}),
-        disableSuggestions: run.disableSuggestions ? () => run.disableSuggestions!() : undefined, readUsage: run.readUsage ? () => run.readUsage!() : undefined };
+        disableSuggestions: run.disableSuggestions ? () => run.disableSuggestions!() : undefined,
+        finishSuggestions: run.finishSuggestions ? () => run.finishSuggestions!() : undefined,
+        readUsage: run.readUsage ? () => run.readUsage!() : undefined };
     },
   };
 }

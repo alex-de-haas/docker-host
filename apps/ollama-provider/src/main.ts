@@ -1,2 +1,3 @@
 import { startAgentProvider } from "@hosty/agent-provider-runtime";
-await startAgentProvider({ kind: "ollama", defaultPort: 3522 });
+import { ollamaEngine } from "./provider.js";
+await startAgentProvider({ engine: ollamaEngine, defaultPort: 3522 });

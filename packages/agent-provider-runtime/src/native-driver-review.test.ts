@@ -1,3 +1,4 @@
+import { fixtureCapabilities } from "./test-support/provider.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
@@ -25,9 +26,9 @@ async function fixture(skills = false) {
   const adapter: HarnessAdapter = { name: "isolated-sdk", capabilities: { questions: true, appMcp: true, liveReconfigure: true, autoAllow: true, denyReason: true }, probe: async () => ({ available: true }), start: options => {
     starts(options); return { send: () => options.onEvent({ type: "harness_session", harnessSessionId: "native-session" }), stop, stopAndWait: stop, interrupt: async () => {}, resolveApproval: () => true, resolveQuestion: () => true, setMcpServers: async () => true };
   } };
-  const connections = { binding: async () => ({ connectionId: "account", connectionRevision: 1, harnessKind: "claude" }), reserve: async () => () => {}, adapter: async () => adapter, executionHome: async () => home, shutdown: async () => {} } as unknown as AgentConnections;
+  const connections = { binding: async () => ({ connectionId: "account", connectionRevision: 1, harnessKind: "fixture-engine" }), reserve: async () => () => {}, prepareAdapter: async () => adapter, executionHome: async () => home, shutdown: async () => {} } as unknown as AgentConnections;
   const store = new ProviderStore(path.join(directory, "sessions"), provider); await store.initialize();
-  const controller = new ProviderController(store, authority, connections, "claude"), driver = new NativeExecution(controller, store, authority, connections, new AttachmentStore(path.join(directory, "assets"), provider), directory, () => "http://127.0.0.1:1");
+  const controller = new ProviderController(store, authority, connections, fixtureCapabilities), driver = new NativeExecution(controller, store, authority, connections, new AttachmentStore(path.join(directory, "assets"), provider), directory, () => "http://127.0.0.1:1");
   controller.driver = driver; await driver.initialize();
   let closed = false;
   const close = async () => { if (!closed) { closed = true; await controller.close(); } }; cleanup.push(close);
@@ -131,7 +132,7 @@ describe("native authority renewal and stop reconciliation", () => {
     expect(pending).toEqual({ requestId: expect.any(String), state: "pending" });
     await f.close();
     const store = new ProviderStore(path.join(f.directory, "sessions"), f.provider); await store.initialize();
-    const controller = new ProviderController(store, f.authority, f.connections, "claude");
+    const controller = new ProviderController(store, f.authority, f.connections, fixtureCapabilities);
     const driver = new NativeExecution(controller, store, f.authority, f.connections, new AttachmentStore(path.join(f.directory, "assets"), f.provider), f.directory, () => "http://127.0.0.1:1");
     controller.driver = driver; cleanup.push(() => controller.close()); await driver.initialize();
     expect(f.authority.workspace).toHaveBeenCalledTimes(1);
@@ -220,7 +221,7 @@ describe("native authority renewal and stop reconciliation", () => {
   it("requires durable SDK completion as well as sealed process receipts before reconciliation", async () => {
     const f = await fixture(), session = await f.store.load(f.sessionId), id = randomUUID(), run = f.store.makeRun(session, id, f.actor, "{}");
     run.snapshot.state = "unknown"; run.snapshot.phase = "interrupted"; session.runs[id] = run; session.session.activeRun = run.snapshot.ref; await f.store.save(session);
-    await f.driver.engine.journal.accept(id, { conversationId: f.sessionId, binding: { connectionId: "account", connectionRevision: 1, harnessKind: "claude" }, selection: { model: null, reasoningEffort: null }, resource: { kind: "conversation", id: f.sessionId }, input: "Previously accepted turn", options: {}, autoAllowedPrefixes: [] });
+    await f.driver.engine.journal.accept(id, { conversationId: f.sessionId, binding: { connectionId: "account", connectionRevision: 1, harnessKind: "fixture-engine" }, selection: { model: null, reasoningEffort: null }, resource: { kind: "conversation", id: f.sessionId }, input: "Previously accepted turn", options: {}, autoAllowedPrefixes: [] });
     await f.driver.engine.journal.update(id, "interrupted");
     const processes = await TrackedNativeProcesses.create(f.directory, id, run.snapshot.generation);
     expect(await processes.stop()).toMatchObject({ stopped: false, allClosed: true, sealed: true });

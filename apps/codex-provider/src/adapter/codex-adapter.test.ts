@@ -1,0 +1,728 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { setTimeout as realDelay } from "node:timers/promises";
+import os from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { CodexHarnessAdapter } from "./codex.js";
+import type { HarnessEvent, HarnessRun } from "@hosty/agent-provider-runtime/harness/adapter";
+
+// The adapter is exercised against test/fake-codex-server.mjs, which speaks the same dialect the
+// live spike observed and exits non-zero on a protocol violation (wrong sandbox shape, or an
+// approved_for_session reply). A regression in wire handling therefore fails here, not on a host.
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const fakeServer = path.join(here, "..", "..", "test", "fake-codex-server.mjs");
+// Each run gets a throwaway data dir: the API-key mode writes its isolated Codex home under it.
+const authDir = mkdtempSync(path.join(os.tmpdir(), "codex-auth-test-"));
+
+async function waitFor<T>(probe: () => T | null | undefined | false, what: string): Promise<T> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const value = probe();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+describe("codex harness adapter", () => {
+  let run: HarnessRun | null = null;
+  let events: HarnessEvent[] = [];
+
+  beforeEach(() => {
+    events = [];
+    // The adapter spawns `codex`; point it at the scripted stand-in. Node runs the .mjs directly
+    // via its shebang, so the command is the script itself.
+    process.env.HOSTY_HARNESS_CODEX_COMMAND = fakeServer;
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await run?.stop();
+    run = null;
+    delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
+    delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
+    delete process.env.HOSTY_TEST_AUTONOMY;
+    delete process.env.HOSTY_TEST_PREDICTION_VERSION;
+    delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
+    delete process.env.HOSTY_TEST_CONTEXT_CATALOG;
+    delete process.env.HOSTY_TEST_SKILL_ROOTS;
+    delete process.env.HOSTY_TEST_REJECT_SKILL_ROOTS;
+    delete process.env.HOSTY_TEST_STALLED_CODEX_RPC;
+    delete process.env.HOSTY_TEST_CODEX_RPC_RECEIPT;
+    delete process.env.HOSTY_TEST_CODEX_DENIAL_MODE;
+  });
+
+  function start(resumeHarnessSessionId?: string): HarnessRun {
+    const adapter = new CodexHarnessAdapter({ dataDir: authDir });
+    run = adapter.start({
+      sessionId: "s1",
+      cwd: process.cwd(),
+      resumeHarnessSessionId,
+      onEvent: (event) => events.push(event),
+    });
+    return run;
+  }
+
+  it.each([undefined, "existing-native-thread"])("registers selected skill roots before opening native context (%s) and retains the connection home", async resumeHarnessSessionId => {
+    const nativeHome = path.join(authDir, "selected-skills"), connectionHome = path.join(authDir, "connection");
+    mkdirSync(path.join(nativeHome, ".agents", "skills"), { recursive: true });
+    const roots = [realpathSync(path.join(nativeHome, ".agents", "skills"))];
+    process.env.HOSTY_TEST_SKILL_ROOTS = JSON.stringify(roots);
+    run = new CodexHarnessAdapter({ dataDir: authDir, codexHome: connectionHome }).start({ sessionId: "skills", cwd: process.cwd(),
+      nativeHome, skillExportId: "a".repeat(64), resumeHarnessSessionId, onEvent: event => events.push(event) });
+    run.send("native-skills");
+    await waitFor(() => events.find(event => event.type === "result" || event.type === "error"), "selected skill registration");
+    expect(events.filter(event => event.type === "error")).toEqual([]);
+    const reply = events.find(event => event.type === "assistant_text");
+    expect(reply?.type === "assistant_text" && JSON.parse(reply.text)).toEqual({ roots, home: nativeHome, codexHome: connectionHome,
+      thread: resumeHarnessSessionId ?? "thread-fake-1" });
+  });
+
+  it("leaves native skill roots unchanged when an isolated home has no skill export", async () => {
+    process.env.HOSTY_TEST_SKILL_ROOTS = "[]";
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "no-skills", cwd: process.cwd(),
+      nativeHome: path.join(authDir, "isolated-no-skills"), onEvent: event => events.push(event) });
+    run.send("native-skills");
+    await waitFor(() => events.find(event => event.type === "result" || event.type === "error"), "unmodified skill roots");
+    expect(events.filter(event => event.type === "error")).toEqual([]);
+    const reply = events.find(event => event.type === "assistant_text");
+    expect(reply?.type === "assistant_text" && JSON.parse(reply.text).roots).toEqual([]);
+  });
+
+  it("reports refused selected skill roots before dispatching a native thread", async () => {
+    const nativeHome = path.join(authDir, "refused-skills");
+    mkdirSync(path.join(nativeHome, ".agents", "skills"), { recursive: true });
+    process.env.HOSTY_TEST_SKILL_ROOTS = JSON.stringify([realpathSync(path.join(nativeHome, ".agents", "skills"))]);
+    process.env.HOSTY_TEST_REJECT_SKILL_ROOTS = "1";
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "refused-skills", cwd: process.cwd(),
+      nativeHome, skillExportId: "b".repeat(64), onEvent: event => events.push(event) });
+    run.send("native-skills");
+    const error = await waitFor(() => events.find(event => event.type === "error"), "skill registration failure");
+    expect(error).toMatchObject({ message: "fixture skill roots refused" });
+    expect(events.some(event => event.type === "harness_session" || event.type === "result")).toBe(false);
+  });
+
+  it("attaches local instruction/catalog estimates without changing native totals and refreshes on MCP replacement", async () => {
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(),
+      systemPrompt: "hello world", instructionSources: [{ source: "runtime", text: "hello world" }], onEvent: e => events.push(e) });
+    run.send("local-context");
+    const snapshot = () => events.filter(e => e.type === "context_usage").findLast(e => e.usage?.sources?.catalog.state === "complete");
+    const first = await waitFor(snapshot, "local context");
+    if (first.type !== "context_usage" || !first.usage) throw Error("Missing context");
+    expect(first.usage).toMatchObject({ usedTokens: 123, maxTokens: 1000, sources: { instructions: [{ source: "runtime", tokens: 2 }] } });
+    expect(first.usage.mcp?.tools.map(t => [t.server, t.name, t.inclusion])).toEqual([["first", "inspect", "unknown"], ["second", "inspect", "unknown"]]);
+    expect(JSON.stringify(first)).not.toContain("private definition");
+    expect(await run.setMcpServers({})).toBe(true);
+    events = []; run.send("local-context");
+    const second = await waitFor(snapshot, "reconfigured context");
+    expect(second).toMatchObject({ usage: { usedTokens: 123, sources: { instructions: [{ source: "runtime", tokens: 2 }] } } });
+  });
+
+  async function waitReal(probe: () => boolean): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (!probe()) { if (Date.now() > deadline) throw new Error("Fixture did not reach its controlled RPC."); await realDelay(10); }
+  }
+
+  it.each(["initialize", "turn/start"])("bounds the %s acknowledgement without leaking request data", async method => {
+    const marker = path.join(mkdtempSync(path.join(authDir, "rpc-")), "receipt.json");
+    process.env.HOSTY_TEST_STALLED_CODEX_RPC = method; process.env.HOSTY_TEST_CODEX_RPC_RECEIPT = marker;
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    start().send("private request text must not appear in diagnostics");
+    await waitReal(() => existsSync(marker));
+    await vi.advanceTimersByTimeAsync(29_999); expect(events.some(event => event.type === "error")).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events.find(event => event.type === "error")).toMatchObject({ message: `Codex ${method} acknowledgement timed out after 30000 ms.` });
+    expect(warning).toHaveBeenCalledWith("[codex] RPC acknowledgement timed out.", { method, timeoutMs: 30000 });
+    expect(JSON.stringify(warning.mock.calls)).not.toContain("private request");
+    vi.useRealTimers(); await run!.stopAndWait!(); warning.mockRestore();
+  });
+
+  it("bounds a polite interrupt acknowledgement independently from confirmed SDK stop", async () => {
+    const marker = path.join(mkdtempSync(path.join(authDir, "interrupt-")), "receipt.json");
+    process.env.HOSTY_TEST_STALLED_CODEX_RPC = "turn/interrupt"; process.env.HOSTY_TEST_CODEX_RPC_RECEIPT = marker;
+    start().send("write"); await waitReal(() => events.some(event => event.type === "approval_request"));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {}); let interrupted = false;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const pending = run!.interrupt().then(() => { interrupted = true; }); await waitReal(() => existsSync(marker));
+    await vi.advanceTimersByTimeAsync(1999); expect(interrupted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); await pending; expect(interrupted).toBe(true);
+    expect(warning).toHaveBeenCalledWith("[codex] RPC acknowledgement timed out.", { method: "turn/interrupt", timeoutMs: 2000 });
+    vi.useRealTimers(); await run!.stopAndWait!(); warning.mockRestore();
+  });
+
+  it.each(["write", "command-shutdown"])("drains the exact proposed %s terminal after shutdown denial before killing the real peer", async input => {
+    process.env.HOSTY_TEST_CODEX_DENIAL_MODE = "delayed";
+    start().send(input); await waitReal(() => events.some(event => event.type === "approval_request"));
+    const started = events.find(event => event.type === "native_effect" && event.state === "started");
+    expect(started).toBeDefined();
+    const before = events.length;
+    await run!.stopAndWait!();
+    const stopping = events.slice(before);
+    expect(stopping).toEqual([expect.objectContaining({ type: "native_effect", state: "settled", id: started?.type === "native_effect" ? started.id : "missing" })]);
+    // A denied proposal is not an executed file change. Foreign/new frames and root
+    // completion after shutdown cannot become transcript or exit evidence.
+    expect(stopping.some(event => event.type === "tool_use" || event.type === "result" || event.type === "approval_request")).toBe(false);
+  });
+
+  it.each(["none", "foreign-only"])("keeps the proposed effect unresolved when shutdown has %s terminal evidence", async mode => {
+    process.env.HOSTY_TEST_CODEX_DENIAL_MODE = mode;
+    start().send("write"); await waitReal(() => events.some(event => event.type === "approval_request"));
+    const before = events.length, began = Date.now();
+    await run!.stopAndWait!();
+    expect(Date.now() - began).toBeLessThan(4000);
+    expect(events.slice(before).some(event => event.type === "native_effect" && event.state === "settled")).toBe(false);
+    expect(events.slice(before).some(event => event.type === "result" || event.type === "tool_use")).toBe(false);
+  });
+
+  it("does not send an invalid polite interrupt when the active turn identity is unknown", async () => {
+    start(); await waitReal(() => events.some(event => event.type === "harness_session"));
+    // No turn has been submitted. The fake rejects an interrupt without both required IDs.
+    await run!.interrupt(); await realDelay(20);
+    expect(events.some(event => event.type === "error")).toBe(false);
+    await run!.stopAndWait!();
+  });
+
+  it("does not apply the RPC acknowledgement deadline to an admitted turn awaiting approval", async () => {
+    start().send("write"); await waitReal(() => events.some(event => event.type === "approval_request"));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); await vi.advanceTimersByTimeAsync(120_000);
+    expect(events.some(event => event.type === "error" || event.type === "result")).toBe(false);
+    vi.useRealTimers(); await run!.stopAndWait!();
+  });
+
+  it.each(["failed", "timeout"])("keeps native usage when MCP diagnostics are %s", async mode => {
+    process.env.HOSTY_TEST_CONTEXT_CATALOG = mode;
+    start().send("local-context");
+    await waitFor(() => events.some(e => e.type === "context_usage" && e.usage?.usedTokens === 123), "native total");
+    await vi.waitFor(() => expect(events.some(e => e.type === "context_usage" && e.usage?.sources?.catalog.state === "unavailable")).toBe(true), { timeout: 6500 });
+    expect(events.some(e => e.type === "error")).toBe(false);
+    await run!.stopAndWait!(); const length = events.length;
+    await new Promise(resolve => setTimeout(resolve, 30)); expect(events).toHaveLength(length);
+  }, 10000);
+
+  it("finishes the bounded catalog before worker-style teardown on the terminal result", async () => {
+    process.env.HOSTY_TEST_CONTEXT_CATALOG = "delayed";
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(), onEvent: e => {
+      events.push(e); if (e.type === "result") void run?.stop();
+    } });
+    run.send("local-context");
+    await waitFor(() => events.some(e => e.type === "result"), "terminal result");
+    const context = events.findLast(e => e.type === "context_usage");
+    expect(context).toMatchObject({ usage: { usedTokens: 123, sources: { catalog: { state: "complete" } }, mcp: { tools: expect.arrayContaining([expect.objectContaining({ name: "inspect" })]) } } });
+    expect(events.indexOf(context!)).toBeLessThan(events.findIndex(e => e.type === "result"));
+    const totals = events.filter(e => e.type === "context_usage").map(e => e.usage?.observedAt);
+    expect(new Set(totals).size).toBe(1);
+  });
+
+  it("does not resurrect a compacted observation when delayed catalog collection completes", async () => {
+    process.env.HOSTY_TEST_CONTEXT_CATALOG = "delayed";
+    start().send("compact-context");
+    await waitFor(() => events.some(e => e.type === "result"), "compaction");
+    await new Promise(resolve => setTimeout(resolve, 350));
+    expect(events.filter(e => e.type === "context_usage").at(-1)).toEqual({ type: "context_usage", usage: null });
+  });
+
+  it.each(["question-blocking", "question-nonblocking"])("delivers stable native question IDs and text answers (%s)", async prompt => {
+    const active = start(); active.send(prompt);
+    const asked = await waitFor(() => events.find(event => event.type === "question_request"), "question");
+    if (asked.type !== "question_request") throw new Error("Expected question");
+    expect(asked.blocking).toBe(prompt === "question-blocking");
+    expect(asked.questions.map(q => q.id)).toEqual(["first", "second"]);
+    expect(asked.questions[0]!.options.map(o => o.id)).toEqual(["o1", "o2"]);
+    expect(asked.questions[1]!.allowText).toBe(true);
+    expect(active.resolveQuestion(asked.questionId, { "Same wording": "ambiguous" })).toBe(false);
+    expect(active.resolveQuestion(asked.questionId, { first: "Same label — Second option", second: "Free text" })).toBe(true);
+    await waitFor(() => events.find(e => e.type === "result"), "native continuation");
+    expect(events.some(e => e.type === "assistant_text" && e.text.includes('"second":{"answers":["Free text"]}'))).toBe(true);
+    expect(active.resolveQuestion(asked.questionId, { first: "again", second: "again" })).toBe(false);
+  });
+
+  it("turns request_user_input_async messages into nonblocking message-delivered questions", async () => {
+    const active = start(); active.send("async-question");
+    await waitFor(() => events.find(e => e.type === "result"), "turn end");
+    const asked = events.filter(e => e.type === "question_request");
+    expect(asked).toHaveLength(1);
+    if (asked[0]?.type !== "question_request") throw new Error("Expected question");
+    expect(asked[0]).toMatchObject({ blocking: false, delivery: "message", native: { turnId: "async-turn", itemId: "async-call" } });
+    expect(asked[0].questions).toEqual([
+      { id: "q1", question: "Which branch?", header: "", multiSelect: false, allowText: true, options: [
+        { id: "o1", label: "Main", description: "" }, { id: "o2", label: "Main", description: "" }, { id: "o3", label: "Release", description: "" }] },
+      { id: "q2", question: "Anything else?", header: "", multiSelect: false, allowText: true, options: [] },
+    ]);
+    // The plain-text rendering of the same question is not repeated as an assistant message.
+    expect(events.filter(e => e.type === "assistant_text").map(e => e.text)).toEqual(["Independent work continued."]);
+    expect(active.resolveQuestion(asked[0].questionId, { q1: "Main", q2: "No" })).toBe(false);
+  });
+
+  it.each([["oversized", "Question 1"], ["options", "Pick a port"]])("keeps an unsupported async question (%s) visible as text", async (shape, text) => {
+    start().send(`async-question-${shape}`);
+    await waitFor(() => events.find(e => e.type === "result"), "turn end");
+    expect(events.some(e => e.type === "assistant_text" && e.text.includes(text))).toBe(true);
+    expect(events.some(e => e.type === "notice" && e.message.startsWith("Codex question shown as text:"))).toBe(true);
+    expect(events.some(e => e.type === "question_request")).toBe(false);
+  });
+
+  it("rejects secret native questions without storing their content as a question", async () => {
+    start().send("question-secret");
+    await waitFor(() => events.find(e => e.type === "result"), "secret rejection");
+    expect(events.some(e => e.type === "question_request")).toBe(false);
+    expect(events.some(e => e.type === "notice" && e.message.includes("secure credential setup"))).toBe(true);
+  });
+
+  it("does not answer a cancelled native question", async () => {
+    const active = start(); active.send("question-blocking");
+    const asked = await waitFor(() => events.find(e => e.type === "question_request"), "question");
+    if (asked.type !== "question_request") throw new Error("Expected question");
+    await active.stop();
+    expect(active.resolveQuestion(asked.questionId, { first: "Yes", second: "Text" })).toBe(false);
+  });
+
+  it.each(["text", "null", "failed", "unsupported"])("receives a bounded Codex prediction (%s) for the exact native turn", async shape => {
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(), promptSuggestions: true, onEvent: e => events.push(e) });
+    run.send(`suggestion-${shape}`);
+    await waitFor(() => events.find(e => e.type === "prompt_suggestion"), "prediction response");
+    expect(events.filter(e => e.type === "prompt_suggestion")).toEqual([{ type: "prompt_suggestion", text: shape === "text" ? "Review the changes" : null,
+      ...(shape === "failed" ? { reason: "unavailable" } : shape === "unsupported" ? { reason: "unsupported" } : {}) }]);
+    expect(events.filter(e => e.type === "result")).toHaveLength(1);
+    expect(events.filter(e => e.type === "tool_use")).toHaveLength(0);
+  });
+
+  it("detects an upgraded native runtime without a feature flag or repeated requests to the unsupported version", async () => {
+    for (const [version, prompt, reason] of [["1.0.0", "unsupported", "unsupported"], ["1.0.0", "text", "unsupported"], ["1.1.0", "text", undefined]] as const) {
+      process.env.HOSTY_TEST_PREDICTION_VERSION = version; events = [];
+      run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(), promptSuggestions: true, onEvent: e => events.push(e) });
+      run.send(`suggestion-${prompt}`);
+      await waitFor(() => events.find(e => e.type === "prompt_suggestion"), "version-aware native prediction");
+      expect(events.filter(e => e.type === "prompt_suggestion")).toEqual([{ type: "prompt_suggestion", text: reason ? null : "Review the changes", ...(reason ? { reason } : {}) }]);
+      await run.stop(); run = null;
+    }
+  });
+
+  it("returns unavailable and releases a diagnostic whose native process cannot spawn", async () => {
+    process.env.HOSTY_HARNESS_CODEX_COMMAND = "/tmp/hosty-missing-codex-usage-binary";
+    expect((await new CodexHarnessAdapter({ dataDir: authDir }).readUsage()).state).toBe("unavailable");
+  });
+
+  it("reads account limits without creating a thread and receives live multi-window updates", async () => {
+    const adapter = new CodexHarnessAdapter({ dataDir: authDir });
+    expect((await adapter.readUsage()).rows.map(row => row.used)).toEqual([12, 25]);
+    start().send("provider-usage");
+    await waitFor(() => events.find(event => event.type === "result"), "usage turn");
+    expect(events.filter(event => event.type === "provider_usage").some(event => event.usage.rows.some(row => row.used === 40))).toBe(true);
+  });
+
+  it("reports each MCP startup failure once until recovery or a changed cause", async () => {
+    const active = start();
+    active.send("startup-notices");
+    await waitFor(() => events.find(event => event.type === "result"), "first startup failure");
+    expect(events.filter(event => event.type === "notice")).toHaveLength(2);
+    events = [];
+    active.send("startup-notices recover");
+    await waitFor(() => events.find(event => event.type === "result"), "recovered startup failure");
+    const notices = events.filter(event => event.type === "notice");
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toMatchObject({ message: expect.stringContaining("HTTP 401") });
+    expect(notices[1]).toMatchObject({ message: expect.stringContaining("HTTP 503") });
+  });
+
+  it("applies model and effort on resumed native context and resets both to runtime defaults", async () => {
+    for (const selection of [{ model: "fixture-other", reasoningEffort: "xhigh" }, { model: null, reasoningEffort: null }]) {
+      events = [];
+      run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(),
+        resumeHarnessSessionId: "existing-native-thread", ...selection, onEvent: event => events.push(event) });
+      run.send("model-selection");
+      await waitFor(() => events.find(event => event.type === "result"), "selected model turn");
+      const reply = events.find(event => event.type === "assistant_text");
+      expect(reply?.type === "assistant_text" && JSON.parse(reply.text)).toEqual({ model: selection.model ?? "fixture-default", effort: selection.reasoningEffort ?? "medium", thread: "existing-native-thread" });
+      await run.stop(); run = null;
+    }
+  });
+
+  it("tracks current context, compaction and unknown limits while rejecting unrelated notifications", async () => {
+    start().send("context-usage");
+    await waitFor(() => events.find(e => e.type === "result"), "context turn");
+    expect(events.filter(e => e.type === "context_usage").map(e => e.usage && [e.usage.usedTokens, e.usage.maxTokens]))
+      .toEqual([[100, 1000], null, [20, 1000], [30, null], null]);
+  });
+
+  it("reports native live activity, concurrent calls and completion without retaining arguments or stale items", async () => {
+    start().send("activity");
+    await waitFor(() => events.find(e => e.type === "result"), "activity turn");
+    const states = events.filter(e => e.type === "activity").map(e => e.activity);
+    expect(states.map(a => [a.phase, a.tool?.toolName ?? null, a.toolCount])).toEqual([
+      ["working", null, 0], ["thinking", null, 0], ["working", null, 0],
+      ["working", "Command", 1], ["working", "mcp__app__read", 2],
+      ["working", "mcp__app__read", 1], ["working", null, 0], ["working", null, 0],
+    ]);
+    expect(JSON.stringify(states)).not.toMatch(/secret|private/);
+    expect(events.filter(e => e.type === "tool_use")).toHaveLength(2);
+  });
+
+  it.each(["normal", "autonomous"] as const)("applies %s policy on new and resumed threads and turns", async autonomy => {
+    process.env.HOSTY_TEST_AUTONOMY = autonomy;
+    for (const resumeHarnessSessionId of [undefined, "existing-native-thread"]) {
+      events = [];
+      run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(), autonomy, resumeHarnessSessionId, onEvent: e => events.push(e) });
+      run.send("hello");
+      await waitFor(() => events.find(e => e.type === "result"), "turn under selected policy");
+      expect(events.some(e => e.type === "error" || e.type === "approval_request")).toBe(false);
+      await run.stop(); run = null;
+    }
+  });
+
+  it.each(["normal", "autonomous"] as const)("preserves the native Local sandbox and %s approvals through the tracked transport", async autonomy => {
+    process.env.HOSTY_TEST_AUTONOMY = autonomy;
+    for (const resumeHarnessSessionId of [undefined, "existing-native-thread"]) {
+      events = [];
+      run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "docker", cwd: process.cwd(), autonomy,
+        resumeHarnessSessionId, onEvent: e => events.push(e),
+        processTransport: { spawn: (command, args, options) => spawn(command, args, { ...options, stdio: ["pipe", "pipe", "pipe"] }) } });
+      run.send("hello");
+      await waitFor(() => events.find(e => e.type === "result"), "tracked Local sandbox turn");
+      expect(events.some(e => e.type === "error")).toBe(false);
+      await run.stop(); run = null;
+    }
+  });
+
+  it("reports the harness session id from thread/start", async () => {
+    start();
+    const event = await waitFor(
+      () => events.find((candidate) => candidate.type === "harness_session"),
+      "harness_session",
+    );
+    expect(event).toMatchObject({ harnessSessionId: "thread-fake-1" });
+  });
+
+  it("reconfigures an idle run by resuming the same thread and can send its next turn", async () => {
+    const active = start();
+    await waitFor(() => events.find(event => event.type === "harness_session"), "initial thread");
+    expect(await active.setMcpServers({ notes: { type: "http", url: "http://localhost/mcp", headers: { authorization: "Bearer fixture" } } })).toBe(true);
+    expect(events.filter(event => event.type === "harness_session")).toEqual([
+      { type: "harness_session", harnessSessionId: "thread-fake-1" },
+      { type: "harness_session", harnessSessionId: "thread-fake-1" },
+    ]);
+    active.send("hello");
+    await waitFor(() => events.find(event => event.type === "result"), "resumed turn");
+    expect(events.some(event => event.type === "error")).toBe(false);
+  });
+
+  it("keeps the original run usable when replacement resume fails", async () => {
+    const active = start();
+    await waitFor(() => events.find(event => event.type === "harness_session"), "initial thread");
+    process.env.HOSTY_FAKE_CODEX_REJECT_RESUME = "1";
+    expect(await active.setMcpServers({})).toBe(false);
+    active.send("hello");
+    await waitFor(() => events.find(event => event.type === "result"), "original run still usable");
+    expect(events.some(event => event.type === "error")).toBe(false);
+  });
+
+  it("resumes an existing thread instead of starting a new one", async () => {
+    start("thread-from-before-restart");
+    const event = await waitFor(
+      () => events.find((candidate) => candidate.type === "harness_session"),
+      "harness_session",
+    );
+    expect(event).toMatchObject({ harnessSessionId: "thread-from-before-restart" });
+  });
+
+  it("streams deltas and the final assistant text, then completes the turn", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("say hello");
+
+    await waitFor(() => events.find((candidate) => candidate.type === "result"), "result");
+    const deltas = events.filter((event) => event.type === "assistant_delta").map((event) => event.text);
+    expect(deltas.join("")).toBe("hello");
+    expect(events.some((event) => event.type === "assistant_text" && event.text === "hello")).toBe(true);
+  });
+
+  it.each(["completed", "failed"])("lists %s MCP calls once, with their arguments, before the answer", async (status) => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send(`mcp ${status}`);
+
+    await waitFor(() => events.find((candidate) => candidate.type === "result"), "result");
+    // A start and a completion describe the same call; failed calls are still tool uses.
+    expect(events.filter((event) => event.type === "tool_use" || event.type === "assistant_text")).toEqual([
+      { type: "tool_use", toolName: "mcp__hosty-core__list_apps", input: {}, mcp: { server: "hosty-core", tool: "list_apps" } },
+      { type: "tool_use", toolName: "mcp__hosty-core__get_app", input: { app_id: "com.haas.demo-app" }, mcp: { server: "hosty-core", tool: "get_app" } },
+      { type: "assistant_text", text: status === "failed" ? "MCP calls failed" : "Apps checked" },
+    ]);
+  });
+
+  it("preserves MCP server and tool boundaries when both contain double underscores", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("mcp underscores");
+    await waitFor(() => events.find((candidate) => candidate.type === "result"), "result");
+    expect(events.find((event) => event.type === "tool_use")).toEqual({
+      type: "tool_use", toolName: "mcp__foo__bar__get__item", input: {},
+      mcp: { server: "foo__bar", tool: "get__item" },
+    });
+  });
+
+  // Codex reports a failed turn through turn/completed itself, with status "failed" and the reason
+  // on turn.error — there is no turn/failed notification. Reading only the method name reported the
+  // failure as a successful result, which is the worst available answer: the operator is told the
+  // turn worked.
+  it("reports a failed turn as a failure, with the reason", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("go boom");
+
+    const result = await waitFor(() => events.find((candidate) => candidate.type === "result"), "result");
+    expect(result).toMatchObject({ status: "failed" });
+    // The reason reaches the operator: `result` carries no message, so it rides on a notice.
+    expect(
+      events.some((event) => event.type === "notice" && event.message.includes("401 Unauthorized")),
+    ).toBe(true);
+  });
+
+  // A failed turn is not a dead harness: the live app-server accepts another turn afterwards
+  // (verified against 0.150.1 on 2026-09-07), and an `error` event would drop the run, unregister
+  // the session's proxy routes and mark the session failed.
+  it("keeps the run alive across a failed turn", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("go boom");
+    await waitFor(() => events.find((candidate) => candidate.type === "result"), "result");
+
+    expect(events.some((event) => event.type === "error")).toBe(false);
+
+    // And the next message still runs.
+    active.send("say hello");
+    await waitFor(
+      () => events.filter((candidate) => candidate.type === "result").length >= 2 || null,
+      "second result",
+    );
+    expect(events.some((event) => event.type === "assistant_text" && event.text === "hello")).toBe(true);
+  });
+
+  // Codex retries a recoverable failure and emits one `error` per attempt — ten for a single failed
+  // turn. Surfacing those would bury the operator in noise for a turn that may still succeed, and
+  // the terminal reason arrives on turn/completed regardless.
+  it("does not report retryable errors, and reports a terminal one only once", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("go boom");
+    await waitFor(() => events.find((candidate) => candidate.type === "result"), "result");
+
+    const notices = events.filter((event) => event.type === "notice");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.message).not.toContain("Reconnecting");
+  });
+
+  // Outside a turn there is no turn/completed to carry the reason, so the notification is the only
+  // place the operator can learn about it.
+  it("reports a terminal error that arrives with no turn running", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("idle-error please");
+
+    const notice = await waitFor(
+      () => events.find((candidate) => candidate.type === "notice"),
+      "notice",
+    );
+    expect(notice).toMatchObject({ message: expect.stringContaining("thread went sideways") });
+    expect(events.some((event) => event.type === "error")).toBe(false);
+  });
+
+  it("pauses on an approval request and executes only after allow", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("please write the file");
+
+    const approval = await waitFor(
+      () => events.find((candidate) => candidate.type === "approval_request"),
+      "approval_request",
+    );
+    expect(approval).toMatchObject({ toolName: "FileChange", input: {
+      changes: [{ path: "/tmp/x", kind: { type: "update" }, diff: "@@ -1 +1 @@\n-old\n+new\n" }],
+      grantRoot: null, reason: null,
+    } });
+    // Nothing ran while the approval was pending.
+    expect(events.some((event) => event.type === "tool_use")).toBe(false);
+
+    expect(active.resolveApproval(approval.approvalId, "allow")).toBe(true);
+    await waitFor(() => events.find((candidate) => candidate.type === "result"), "result after allow");
+    expect(events.find(event => event.type === "tool_use" && event.toolName === "FileChange")).toMatchObject({ cwd: process.cwd() });
+    expect(events.some((event) => event.type === "tool_use")).toBe(true);
+    expect(events.some((event) => event.type === "assistant_text" && event.text === "written")).toBe(true);
+  });
+
+  it.each(["missing", "wrong-thread", "wrong-turn", "wrong-item", "unscoped-item",
+    "wrong-request-turn", "unscoped-request", "completed", "completed-restarted", "oversized", "bounded-count", "bounded-bytes"])(
+    "does not attach an unavailable or mismatched file proposal (%s)", async scenario => {
+      const active = start();
+      await waitFor(() => events.find(event => event.type === "harness_session"), "handshake");
+      active.send(`file-proposal ${scenario}`);
+      const approval = await waitFor(() => events.find(event => event.type === "approval_request"), "file approval");
+      expect(approval).toMatchObject({ toolName: "FileChange", input: { changes: null } });
+      expect(active.resolveApproval(approval.approvalId, "deny")).toBe(true);
+      await waitFor(() => events.find(event => event.type === "result"), "denied turn completion");
+    });
+
+  it("does not reuse a consumed proposal after a duplicate item start", async () => {
+    const active = start();
+    await waitFor(() => events.find(event => event.type === "harness_session"), "handshake");
+    active.send("file-proposal consumed-restarted");
+    const approvals = await waitFor(() => {
+      const pending = events.filter(event => event.type === "approval_request");
+      return pending.length === 2 ? pending : null;
+    }, "two native requests");
+    expect(approvals[0]).toMatchObject({ input: { changes: [{ path: "/tmp/x" }] } });
+    expect(approvals[1]).toMatchObject({ input: { changes: null } });
+  });
+
+  it("retains earlier bounded proposals without evicting them for later items", async () => {
+    const active = start();
+    await waitFor(() => events.find(event => event.type === "harness_session"), "handshake");
+    active.send("file-proposal bounded-count-first");
+    const approval = await waitFor(() => events.find(event => event.type === "approval_request"), "bounded file approval");
+    expect(approval).toMatchObject({ input: { changes: [{ path: "/tmp/x", diff: "@@ -1 +1 @@\n-old\n+new\n" }] } });
+    expect(active.resolveApproval(approval.approvalId, "deny")).toBe(true);
+  });
+
+  it("clears the retained proposal budget between native turns", async () => {
+    const active = start();
+    await waitFor(() => events.find(event => event.type === "harness_session"), "handshake");
+    active.send("file-proposal retain-before-terminal");
+    await waitFor(() => events.find(event => event.type === "result"), "first turn completion");
+    active.send("file-proposal next-turn");
+    const approval = await waitFor(() => events.find(event => event.type === "approval_request"), "next turn approval");
+    expect(approval).toMatchObject({ input: { changes: [{ path: "/tmp/x", diff: "@@ -1 +1 @@\n-old\n+new\n" }] } });
+    expect(active.resolveApproval(approval.approvalId, "deny")).toBe(true);
+  });
+
+  it("denies without executing and reports an unknown approval id", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    active.send("write something");
+
+    const approval = await waitFor(
+      () => events.find((candidate) => candidate.type === "approval_request"),
+      "approval_request",
+    );
+    expect(active.resolveApproval(approval.approvalId, "deny")).toBe(true);
+
+    await waitFor(() => events.find((candidate) => candidate.type === "result"), "result after deny");
+    expect(events.some((event) => event.type === "tool_use")).toBe(false);
+    expect(events.some((event) => event.type === "assistant_text" && event.text === "skipped")).toBe(true);
+    // A second decision on the same approval is not accepted.
+    expect(active.resolveApproval(approval.approvalId, "allow")).toBe(false);
+  });
+
+  it("surfaces a harness error when the process dies mid-session", async () => {
+    const active = start();
+    await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");
+    // Kill the scripted server the way a crashing harness would go away.
+    (active as unknown as { active: { child: { kill: (signal: string) => void } } }).active.child.kill("SIGKILL");
+
+    const error = await waitFor(() => events.find((candidate) => candidate.type === "error"), "error event");
+    expect(error).toMatchObject({ type: "error" });
+  });
+
+  it("probes as unavailable with an actionable reason when the CLI is missing", async () => {
+    process.env.HOSTY_HARNESS_CODEX_COMMAND = path.join(here, "..", "test", "definitely-not-installed");
+    const availability = await new CodexHarnessAdapter({ dataDir: authDir }).probe();
+    expect(availability.available).toBe(false);
+    expect(availability.reason).toMatch(/could not be started/i);
+  });
+});
+
+describe("codex binary resolution", () => {
+  afterEach(() => {
+    delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
+    delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
+    delete process.env.HOSTY_TEST_AUTONOMY;
+    delete process.env.HOSTY_TEST_PREDICTION_VERSION;
+    delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
+    delete process.env.HOSTY_TEST_CONTEXT_CATALOG;
+  });
+
+  it("prefers the operator override over the pinned dependency", async () => {
+    const { resolveCodexCommand } = await import("./codex-binary.js");
+    process.env.HOSTY_HARNESS_CODEX_COMMAND = "/custom/codex";
+    expect(resolveCodexCommand()).toBe("/custom/codex");
+  });
+
+  it("resolves the pinned @openai/codex entry when no override is set", async () => {
+    const { resolveCodexCommand, isNodeEntry } = await import("./codex-binary.js");
+    const resolved = resolveCodexCommand();
+    // The pin is what the adapter's protocol handling and tests were written against; falling back
+    // to a PATH install is allowed, but on a workspace with the dependency installed it must win.
+    expect(resolved).toContain("@openai/codex");
+    expect(isNodeEntry(resolved)).toBe(true);
+  });
+});
+
+describe("codex auth modes", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(os.tmpdir(), "codex-auth-mode-"));
+    process.env.HOSTY_HARNESS_CODEX_COMMAND = fakeServer;
+  });
+
+  afterEach(() => {
+    delete process.env.HOSTY_HARNESS_CODEX_COMMAND;
+    delete process.env.HOSTY_FAKE_CODEX_REJECT_RESUME;
+    delete process.env.HOSTY_TEST_AUTONOMY;
+    delete process.env.HOSTY_TEST_PREDICTION_VERSION;
+    delete process.env.HOSTY_TEST_EXTERNAL_SANDBOX;
+    delete process.env.HOSTY_TEST_CONTEXT_CATALOG;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("signs Codex in with the configured API key, in a home of its own", async () => {
+    const availability = await new CodexHarnessAdapter({ apiKey: "sk-test-key", dataDir: dir }).probe();
+    expect(availability.available).toBe(true);
+    // The login landed in the app's own Codex home, never the operator's ~/.codex.
+    const authFile = path.join(dir, "codex-home", "auth.json");
+    expect(JSON.parse(readFileSync(authFile, "utf8")).key).toBe("sk-test-key");
+  });
+
+  it("re-authenticates when the operator rotates the key", async () => {
+    const config = { apiKey: "sk-first", dataDir: dir };
+    await new CodexHarnessAdapter(config).probe();
+    const authFile = path.join(dir, "codex-home", "auth.json");
+    expect(JSON.parse(readFileSync(authFile, "utf8")).key).toBe("sk-first");
+
+    await new CodexHarnessAdapter({ ...config, apiKey: "sk-second" }).probe();
+    expect(JSON.parse(readFileSync(authFile, "utf8")).key).toBe("sk-second");
+  });
+
+  it("uses the operator's own login when no key is configured", async () => {
+    const operatorHome = path.join(dir, "operator-codex");
+    mkdirSync(operatorHome, { recursive: true });
+    writeFileSync(path.join(operatorHome, "auth.json"), JSON.stringify({ chatgpt: true }));
+
+    const availability = await new CodexHarnessAdapter({ codexHome: operatorHome, dataDir: dir }).probe();
+    expect(availability.available).toBe(true);
+    // No isolated home was created: the interactive mode leaves credential handling to the host.
+    expect(existsSync(path.join(dir, "codex-home"))).toBe(false);
+  });
+
+  it("reports an actionable reason when neither mode is set up", async () => {
+    const availability = await new CodexHarnessAdapter({ codexHome: path.join(dir, "empty"), dataDir: dir }).probe();
+    expect(availability.available).toBe(false);
+    expect(availability.reason).toMatch(/codex login|API key in this app's settings/i);
+  });
+
+  it("tells the operator to sign in with the configured Codex home", async () => {
+    // A login run without this prefix writes credentials into the default home, which the harness
+    // never reads — the operator would sign in and still see the assistant as unavailable.
+    const home = path.join(dir, "custom-home");
+    const availability = await new CodexHarnessAdapter({ codexHome: home, dataDir: dir }).probe();
+    expect(availability.reason).toContain(`CODEX_HOME=${home} codex login`);
+  });
+
+  it("does not prefix the reason when the default Codex home is used", async () => {
+    const availability = await new CodexHarnessAdapter({ dataDir: dir }).probe();
+    expect(availability.reason).toContain("codex login");
+    expect(availability.reason).not.toContain("CODEX_HOME=");
+  });
+});

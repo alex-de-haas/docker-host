@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { durableMkdir } from "./internal/persistence.js";
 import { nativeEnvironment } from "./internal/runtime/environment.js";
 import type { AgentProcessTransport, AgentSpawnOptions } from "./internal/runtime/transport.js";
-import { resolveCodexCommand, isNodeEntry } from "./internal/harness/codex-binary.js";
 
 const producerNonce = randomUUID();
 type Manifest = { version: 1; runId: string; generation: string; sealed: boolean; spawns: string[]; producerPid: number; producerNonce: string; sdkStopConfirmed: boolean };
@@ -22,8 +21,8 @@ function durable(file: string, value: unknown): void {
   if (process.platform !== "win32") { const parent = openSync(path.dirname(file), "r"); try { fsyncSync(parent); } finally { closeSync(parent); } }
 }
 /** Native children receive selected provider credentials, never Hosty service/control credentials. */
-export function nativeProcessEnvironment(input: NodeJS.ProcessEnv, args: string[] = []): NodeJS.ProcessEnv {
-  const filtered = { ...nativeEnvironment(input, args), HOME: input.HOME, CODEX_HOME: input.CODEX_HOME, CLAUDE_CONFIG_DIR: input.CLAUDE_CONFIG_DIR };
+export function nativeProcessEnvironment(input: NodeJS.ProcessEnv, bearerVariables: readonly string[] = []): NodeJS.ProcessEnv {
+  const filtered = nativeEnvironment(input, bearerVariables);
   return Object.fromEntries(Object.entries(filtered).filter(([key]) => !/^(?:DOCKER_HOST_|CORE_|NODE_CHANNEL_|NODE_OPTIONS$)/i.test(key)));
 }
 /** All SDK starts must pass through this transport. Receipts contain identities and stop evidence only.
@@ -38,10 +37,7 @@ export class TrackedNativeProcesses {
   private constructor(private readonly root: string, private readonly manifest: Manifest) {
     this.transport = {
       stopProcess: child => this.stopProcess(child),
-      spawn: (provider, args, options) => {
-        const command = options.command ?? (provider === "codex" ? resolveCodexCommand() : "claude");
-        return this.launch(isNodeEntry(command) ? process.execPath : command, isNodeEntry(command) ? [command, ...args] : args, options);
-      },
+      spawn: (command, args, options) => this.launch(options.command ?? command, args, options),
       spawnTool: (args, options) => this.launch(options.command ?? process.execPath, args, options),
       spawnCommand: (command, args, options) => this.launch(command, args, options),
     };
@@ -65,7 +61,7 @@ export class TrackedNativeProcesses {
     durable(file, { version: 1, runId: this.manifest.runId, generation: this.manifest.generation, nonce, state: "intent", treeStopped: false });
     this.manifest.spawns.push(nonce); durable(path.join(this.root, "manifest.json"), this.manifest);
     const runner = fileURLToPath(new URL("./native-runner.mjs", import.meta.url));
-    const env = nativeProcessEnvironment(options.env, args);
+    const env = nativeProcessEnvironment(options.env, options.bearerVariables);
     const child = spawn(process.execPath, [runner], { cwd: options.cwd, env, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe", "ipc"] }) as ChildProcessWithoutNullStreams;
     this.children.add(child);
     let resolve!: () => void; const ended = new Promise<void>(accept => { resolve = accept; }); this.closed.add(ended);

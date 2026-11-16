@@ -1,7 +1,5 @@
 // Preserve the former Harness account-window summary and amount/reset presentation semantics.
 const freshnessMs = 12e4;
-const claudeGlobalGroups = /* @__PURE__ */ new Set(["claude:five_hour", "claude:seven_day"]);
-const claudeSpecializedGroups = /* @__PURE__ */ new Set(["claude:seven_day_oauth_apps", "claude:seven_day_opus", "claude:seven_day_sonnet"]);
 const unknown = (reason, row) => ({ remaining: null, reason, ...row ? { row } : {} });
 const isWindow = (row) => (row.kind === "quota" || row.kind === "rate_limit") && row.active !== false && row.enabled !== false && !row.unlimited && !row.currency && row.unit !== "credits" && row.unit !== "minor_currency" && row.unit !== "USD";
 const isFresh = (observedAt, now) => {
@@ -22,7 +20,7 @@ function remainingPercent(row) {
   if (!values.length) return null;
   return Math.max(0, Math.min(100, ...values));
 }
-function summarizeProviderUsage(usage, now = Date.now(), model) {
+function summarizeProviderUsage(usage, now = Date.now(), model, policy = {}) {
   if (!usage || usage.state !== "available") return unknown("Account limits are unavailable.");
   if (usage.invalidated) return unknown("Account limits need a new observation.");
   if (usage.stale || !Number.isFinite(now) || !isFresh(usage.observedAt, now)) return unknown("Account limits are outdated.");
@@ -36,7 +34,7 @@ function summarizeProviderUsage(usage, now = Date.now(), model) {
   } else {
     const candidates = usage.rows.filter(isWindow);
     if (!candidates.length) return unknown("No comparable account limit was reported.");
-    if (candidates.every((row) => row.group.startsWith("codex:"))) {
+    if (policy.grouping === "model") {
       const groups = /* @__PURE__ */ new Map();
       for (const row of candidates) groups.set(row.group, [...groups.get(row.group) ?? [], row]);
       const applicable = [];
@@ -49,11 +47,11 @@ function summarizeProviderUsage(usage, now = Date.now(), model) {
       }
       if (applicable.length !== 1) return unknown("The account limit scope is ambiguous.");
       windows = applicable[0];
-    } else if (candidates.every((row) => row.group.startsWith("claude:"))) {
-      if (candidates.some((row) => !row.scope && !claudeGlobalGroups.has(row.group) && !claudeSpecializedGroups.has(row.group) && !row.group.startsWith("claude:model:"))) {
+    } else if (policy.grouping === "account") {
+      if (candidates.some((row) => !row.scope && !policy.knownGroups?.includes(row.group) && !policy.scopedGroupPrefixes?.some(prefix => row.group.startsWith(prefix)))) {
         return unknown("The account limit scope is ambiguous.");
       }
-      windows = candidates.filter((row) => !row.scope && claudeGlobalGroups.has(row.group));
+      windows = candidates.filter((row) => !row.scope && policy.accountGroups?.includes(row.group));
       if (!windows.length) return unknown("No applicable account-wide limit was reported.");
     } else {
       if (candidates.some((row) => row.scope) || new Set(candidates.map((row) => row.group)).size !== 1) {
@@ -92,8 +90,8 @@ function usageAmount(row) {
   if (row.used !== void 0) return format(row.used) + unit + " used";
   return "Amount not reported";
 }
-function usageLabel(row, now) {
-  if (row.kind !== "quota" || !row.group.startsWith("codex:") || !row.resetsAt) return row.label;
+function usageLabel(row, now, policy = {}) {
+  if (row.kind !== "quota" || !policy.resetLabels || !row.resetsAt) return row.label;
   const reset = Date.parse(row.resetsAt);
   if (!Number.isFinite(reset)) return row.label;
   const name = row.label.replace(/ · (?:[\d.]+ (?:days?|hours?|min)|primary|secondary)$/, "");

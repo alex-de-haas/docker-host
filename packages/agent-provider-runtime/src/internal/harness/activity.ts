@@ -23,10 +23,8 @@ const bounded = (value: unknown): string | undefined => typeof value === "string
   ? value.replace(/[\s\u0000-\u001f]+/g, " ").trim().slice(0, 120) || undefined : undefined;
 
 /** Allowlisted display fields: never forward command strings, MCP arguments or result bodies. */
-export function activeTool(toolName: string, input?: unknown, mcp?: ActiveTool["mcp"]): ActiveTool {
-  const fields = input && typeof input === "object" ? input as Record<string, unknown> : {};
-  const detail = ["Read", "Write", "Edit", "MultiEdit"].includes(toolName)
-    ? bounded(fields.file_path) : undefined;
+export function activeTool(toolName: string, displayDetail?: string, mcp?: ActiveTool["mcp"]): ActiveTool {
+  const detail = bounded(displayDetail);
   return { toolName: bounded(toolName) ?? "Tool", ...(detail ? { detail } : {}),
     ...(mcp ? { mcp: { server: bounded(mcp.server) ?? "App", tool: bounded(mcp.tool) ?? "Tool" } } : {}) };
 }
