@@ -232,6 +232,14 @@ function handle(msg) {
 
   if (msg.method === "account/login/start") {
     if (msg.params?.type !== "chatgptDeviceCode" || !authFile) fail("expected isolated device login");
+    if (process.env.TEST_LOGIN_MODE === "reject-start") {
+      send({ id: msg.id, error: { code: -32603, message: "failed to request device code: device code request failed with status 403 Forbidden", data: { credential: "synthetic-private-login-detail" } } });
+      return;
+    }
+    if (process.env.TEST_LOGIN_MODE === "invalid-start") {
+      send({ id: msg.id, result: { verificationUrl: "https://unexpected.invalid/synthetic-private-login-detail", userCode: "synthetic-private-login-detail" } });
+      return;
+    }
     send({ id: msg.id, result: { type: "chatgptDeviceCode", loginId: "native-login", verificationUrl: "https://auth.openai.com/codex/device", userCode: "FAKE-CODE" } });
     if (process.env.TEST_LOGIN_MODE !== "pending") setTimeout(() => {
       writeFileSync(authFile, JSON.stringify({ tokens: { access_token: "synthetic-access", refresh_token: "synthetic-refresh", account_id: "synthetic-account" } }), { mode: 0o600 });
