@@ -15,7 +15,11 @@ internal sealed partial class CoreAgentExecution
     {
         if (input.Operation is not ("resolve" or "lease" or "activity" or "release" or "release_all") || input.Input is null)
             throw Invalid("Select a supported workspace operation.");
-        var record = await store.Get(input.AdmissionRef, ct);
+        return await store.WithWorkspaceLease(input.AdmissionRef, record => WorkspaceCore(provider, input, record, ct), ct);
+    }
+    private async Task<CoreAgentWorkspaceResult> WorkspaceCore(AppRecord provider, CoreAgentWorkspaceRequest input,
+        CoreAgentAuthorization record, CancellationToken ct)
+    {
         var value = input.Input;
         if (record.Request.Provider.AppId != provider.Id || record.Request.Provider.InstallationId != PanelIdentity.Installation(provider))
             throw new AppIdentityException("permission_denied", "The provider installation changed.");

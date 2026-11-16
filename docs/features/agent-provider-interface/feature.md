@@ -187,6 +187,11 @@ The provider's own Decisions permissions still govern its question records.
   authority also supports MCP-created workspaces. Durable lease intents precede workspace effects;
   cleanup releases only the admission's recorded lease UUIDs, including pre-effect crash recovery.
   It never scans and releases every lease belonging to a conversation.
+  Direct and agent-origin MCP lease creation and cleanup serialize within the same admission.
+  Cleanup persists a closing fence before releasing claims; the fence survives Core restart and
+  prevents later acquisition or replay of released UUIDs. Agent-MCP individual release verifies
+  the exact claim owner under the workspace mutation lock and retains its own recovery-safe
+  operation identity. Ordinary workspace administration keeps its existing authority.
 
 Before a new run, Harness reads current participation separately for every selected workspace
 under the original user or task attempt. A cached association or a missing revision cannot supply
@@ -429,6 +434,9 @@ releases and selected lock closures are described in the
 - Core HTTP tests cover an empty/independent app boundary, exact operation/hash/install binding,
   current original authority, task chains, revoked grants, selected tools, pinned skill availability,
   precise lease cleanup and retained Decision metadata without renewed native authority.
+- Lease interleaving tests hold real workspace mutation locks to verify direct/MCP acquisition,
+  cleanup and individual release. They cover durable closure, replay, cancelled waiters, unrelated
+  admissions, revocation recovery, foreign claim replacement and interrupted owned-release records.
 - SDK fixtures cover exact bytes, response identity, snapshot/replay boundaries, correlated child
   sources, bounded streams, duplicate controls and changed inputs/installations.
 - Provider tests cover lazy creation, strict resume, account/configuration compatibility, the fixed

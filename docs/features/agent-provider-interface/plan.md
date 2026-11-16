@@ -868,6 +868,7 @@ neither caching nor a universal inference API is a prerequisite to this provider
 - [x] D17. Align embedded Harness settings with the Shell settings width/header and propagate new conversation titles to the active header without a page reload, preserving manual renames and session-switch isolation.
 - [x] D18. Repair defects exposed by final acceptance: bound Claude's polite interrupt and complete stop wait, preserve authoritative child command outcomes through supported SDK observations during cancellation, and allow provider-owned Ollama MCP approvals to cross Core's credential TTL with finite SDK/HTTP deadlines and prompt cancellation; verify independent continuation with Harness stopped and real active-child cancellation.
 - [x] D19. Preserve the latest context observation in the provider snapshot and restore it after consumer disconnect/restart, with a sequence-bound nullable value and compatible SDK validation; verify the latest measurement against its actual model request without claiming an offline per-request telemetry ledger.
+- [x] D20. Fence direct and agent-origin MCP workspace lease acquisition against concurrent cleanup and replay, persist admission closure, preserve idempotent cleanup after expiry/revocation/restart, and verify real claims with deterministic interleavings.
 
 ### Implementation Order
 
@@ -1658,3 +1659,34 @@ requests against the exact two-field dictionary plus POST, path and content type
 dropped-response and fixed-ID recovery assertions. All 185 HostyKit tests pass in 25 suites, and
 an independent review confirms the test-only correction. No Swift shipping behavior or artifact
 version changes. The already-passing provider source and its verification remain unchanged.
+
+### Admission-Scoped Workspace Lease Fencing (2026-11-16)
+
+The next accepted review identifies a late-acquisition race between durable lease intent and
+actual workspace claim creation. D20 serializes direct workspace operations and complete
+agent-origin MCP prepare/acquire/release effects per admission, using a separate refcounted gate
+that is removed only after all holders and waiters leave. The global metadata-write gate does
+not span workspace effects. Cleanup persists a closing fence, including an empty intent list,
+before acknowledging release; closed admissions and already-released UUIDs reject acquisition.
+Cancelled/failed cleanup retains durable intents for exact retry after expiry, revocation or
+Core/store reconstruction.
+
+Agent-MCP individual release checks the retained session, UUID and actual claim owner under the
+existing workspace mutation locks. A distinct private release journal kind preserves the original
+request/command identity and prevents replay through ordinary broader workspace administration.
+Interrupted release remains unknown without replaying foreign removal. Ordinary non-agent MCP
+behavior and unrelated admissions remain independent.
+
+The exact final Core project builds with zero errors. The final expanded batch passes all 49
+cases: 13 lease interleaving/recovery cases plus the complete Core agent-provider and external
+workspace MCP HTTP suites. Controlled real-claim barriers cover all three acquisition origins,
+individual release, foreign reclaim, interrupted release, empty closure/reopen, cancelled waiters
+and lost-reply/revocation recovery. All nine source/test hashes remain unchanged during final
+verification and every owned test process exits. Independent source review finds no remaining
+material issue in the five production paths.
+
+The preceding reviewed head's hosted CI passes all 26 checks in 12 minutes 27 seconds, including
+Swift and Windows NativeAOT. A prior single Windows replacement-readiness failure lacks enough
+runner diagnostics to establish a cause and does not reproduce in that successful run; no timeout
+or production startup change is inferred from it. The new lease source still requires its own
+exact-head CI qualification. D5, D6 and D11 retain their remaining accepted scope.

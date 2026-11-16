@@ -21,13 +21,19 @@ internal sealed record CoreAgentInvocation(int Version, string UserId, string Ho
 internal sealed record CoreAgentAuthorization(string Id, CoreCallerAuthority Origin, string UserId, string PrincipalId,
     string CallerAppId, DateTimeOffset CallerInstallation, string? CallerRevision,
     CoreAgentAuthorizeRequest Request, string? ProviderRevision, DateTimeOffset ExpiresAt, bool Admitted = false,
-    CoreAgentLease[]? Leases = null, CoreAgentTaskAuthority? Authority = null);
+    CoreAgentLease[]? Leases = null, CoreAgentTaskAuthority? Authority = null, bool WorkspaceLeasesClosed = false);
 internal sealed record CoreAgentLease(string WorkspaceId, string WorktreeId, string SessionId, string LeaseId, string? RequestId = null, bool Released = false, long? Revision = null);
 
 // Only authorization metadata is retained. Prompts, native histories and bearer secrets never enter this store.
 internal sealed class CoreAgentAuthorizationStore(CoreDataPaths paths)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
+    private sealed class WorkspaceGate
+    {
+        internal readonly SemaphoreSlim Semaphore = new(1, 1);
+        internal int References;
+    }
+    private readonly Dictionary<string, WorkspaceGate> workspaceGates = new(StringComparer.Ordinal);
     private string File(string id)
     {
         if (!Regex.IsMatch(id ?? "", "^[a-f0-9]{64}$")) throw CoreAgentExecution.Invalid("Invalid admission reference.");
@@ -59,12 +65,42 @@ internal sealed class CoreAgentAuthorizationStore(CoreDataPaths paths)
         }
         finally { gate.Release(); }
     }
+    // This admission-scoped gate spans workspace effects; the metadata gate never does.
+    internal async Task<T> WithWorkspaceLease<T>(string id, Func<CoreAgentAuthorization, Task<T>> action, CancellationToken ct)
+    {
+        await Get(id, ct);
+        WorkspaceGate workspaceGate;
+        lock (workspaceGates)
+        {
+            if (!workspaceGates.TryGetValue(id, out workspaceGate!)) workspaceGates.Add(id, workspaceGate = new());
+            workspaceGate.References++;
+        }
+        var entered = false;
+        try
+        {
+            await workspaceGate.Semaphore.WaitAsync(ct); entered = true;
+            return await action(await Get(id, ct));
+        }
+        finally
+        {
+            if (entered) workspaceGate.Semaphore.Release();
+            // Count holders and queued/cancelled waiters before allowing a replacement gate.
+            lock (workspaceGates)
+                if (--workspaceGate.References == 0)
+                {
+                    workspaceGates.Remove(id);
+                    workspaceGate.Semaphore.Dispose();
+                }
+        }
+    }
     internal async Task<CoreAgentAuthorization> RecordLease(string id, CoreAgentLease lease, CancellationToken ct)
     {
         await gate.WaitAsync(ct);
         try
         {
             var value = await Get(id, ct);
+            if (value.WorkspaceLeasesClosed)
+                throw new CoreProviderException("execution_conflict", "This execution's workspace leases are closed.", 409);
             foreach (var file in Directory.EnumerateFiles(Path.GetDirectoryName(File(id))!, "*.json"))
             {
                 var other = await JsonStorage.ReadAsync<CoreAgentAuthorization>(file, ct);
@@ -78,7 +114,9 @@ internal sealed class CoreAgentAuthorizationStore(CoreDataPaths paths)
             {
                 if (previous.SessionId != lease.SessionId || previous.RequestId != lease.RequestId || previous.WorktreeId.Length > 0 && lease.WorktreeId.Length > 0 && previous.WorktreeId != lease.WorktreeId)
                     throw new CoreProviderException("execution_conflict", "Recover the original source lease intent.", 409);
-                if (previous.Released || lease.WorktreeId.Length == 0) return value;
+                if (previous.Released)
+                    throw new CoreProviderException("execution_conflict", "The recorded workspace lease was already released.", 409);
+                if (lease.WorktreeId.Length == 0) return value;
                 leases = leases.Select(l => l.LeaseId == lease.LeaseId ? lease : l).ToArray();
             }
             else
