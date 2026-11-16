@@ -366,6 +366,19 @@ executable; it does not install into the source checkout or prune another provid
 Older generations stay in place for their existing consumers. Source changes during preparation
 reject publication rather than mixing revisions.
 
+The three provider applications publish independent stable 0.1.0 releases through the
+[repository release model](../repository-release-model/feature.md). Public feeds select stable
+for new installations, retain the exact source commit and manifest assets, and require Core
+0.180.0 or newer. The catalog cards state the Git, Node.js 24/npm and account prerequisites;
+Ollama also requires an independently installed server and models.
+[Marketplace catalog membership](https://github.com/alex-de-haas/hosty-catalog/pull/26) includes all
+three providers. Fresh installs select their public stable feeds through Marketplace and the normal
+Core runtime/permission confirmation; authenticated settings work without Harness.
+
+Dependabot tracks all three provider applications and the shared runtime through the root npm
+workspace lockfile. Docker updates cover the production Harness coordinator; the retired embedded
+worker has no npm or Docker update target.
+
 Provider updates require operator-prepared quiescence: finish or cancel active runs through the
 provider API and wait for authoritative stop/effect confirmation before using Core lifecycle.
 Core's Local Stop forcibly terminates its app process group/job; it does not perform an SDK drain.

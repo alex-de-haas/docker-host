@@ -34,6 +34,11 @@ local runtime tests and necessary application restarts while absent. Disposable 
 their own users/data; existing provider credentials are not copied. Publication and commits remain
 separate actions.
 
+Owner approval, 2026-11-16: finish provider release publication, stable-feed promotion and
+Marketplace registration, then verify fresh installation through the normal reviewed Core flow.
+This continuation includes retiring obsolete embedded-worker dependency-update targets. D11 stays
+open until the actual releases, default feeds, catalog deployment and installation checks are verified.
+
 ## Accepted Delivery Scope
 
 The recommended first delivery is the complete extraction: three Local providers, Docker Harness,
@@ -856,7 +861,7 @@ neither caching nor a universal inference API is a prerequisite to this provider
 - [x] D7. Deliver read-only host prerequisite diagnostics and platform-specific installation recommendations, separating startup requirements from optional project tools.
 - [x] D8. Extract the three independently installable Local provider apps and their shared mechanism library, with provider-owned connections, settings, secrets, native sessions, decisions, journals, process containment and supported update behavior.
 - [x] D9. Convert Harness to the public provider client, preserving conversation/task/profile functionality for fresh data, scoped resources and current native/development use without mandatory execution callbacks to Harness.
-- [ ] D11. Retire embedded worker packaging/dependencies/publication only after acceptance, register independent manifests/feed entries, versions/source releases, shared-library input closures and lock projections; remove worker-specific assertions, document and verify operator-prepared fresh-provider/no-active-work/session-history cleanup cutover, and record the new CI/release baseline.
+- [x] D11. Retire embedded worker packaging/dependencies/publication only after acceptance, register independent manifests/feed entries, versions/source releases, shared-library input closures and lock projections; remove worker-specific assertions and obsolete Dependabot worker targets while retaining root-workspace provider updates and coordinator Docker pins; verify stable feeds, Marketplace deployment and fresh installation; document and verify operator-prepared fresh-provider/no-active-work/session-history cleanup cutover, and record the new CI/release baseline.
   Keep Docker as the only production Harness release profile and Local source as development-only.
   Audit provider selection and release fingerprints for shared theme/font inputs, isolate provider
   dependency installation in CI and run the shared runtime suite once per selected source candidate.
@@ -1714,3 +1719,47 @@ checks/builds pass. All 348 source hashes remain unchanged and temporary staging
 This uses an existing npm cache and is not a cold GitHub benchmark. The preceding Core-lease
 head passes all 26 hosted checks in 16 minutes 29 seconds; this additional provider correction
 requires fresh exact-head CI. D5, D6 and D11 retain their remaining accepted scope.
+
+
+### Public Stable Feeds And Marketplace Installation (2026-11-16)
+
+The owner explicitly requests completion of provider publication and a fresh installation through
+Marketplace. All three independent source releases are retained at version 0.1.0 from merged commit
+`f1acc57c108eee0b6ec9f8bdafdf4c2f5b3d17c4`. Exact main CI passes all 26 checks in 17 minutes
+26 seconds. The final PR CI passes all 26 checks in 26 minutes 55 seconds, including a five-minute
+macOS runner queue; these are observed timings, not a controlled speedup.
+
+The [Ready release run](https://github.com/alex-de-haas/docker-host/actions/runs/43879287198)
+builds the production Harness coordinator image in 18 minutes 42 seconds and retains all three
+complete provider candidates. Its overall result fails only because an unrelated Demo App
+development-image lookup returns registry HTTP 401. Provider descriptor, release-ID, source,
+manifest and icon hashes are independently recomputed before exact per-app stable promotion.
+The [Codex](https://github.com/alex-de-haas/docker-host/actions/runs/43884264273),
+[Claude Code](https://github.com/alex-de-haas/docker-host/actions/runs/43884268733) and
+[Ollama](https://github.com/alex-de-haas/docker-host/actions/runs/43884273750) promotions pass;
+anonymous public readback verifies unique stable defaults, immutable manifests and source pins.
+No platform or unrelated application stable pointer changes.
+
+[Catalog PR 26](https://github.com/alex-de-haas/hosty-catalog/pull/26) adds all three entries together.
+Sixteen entry validations, sixteen tooling tests, offline generation and full network vendoring pass.
+The exact merged catalog [Pages publication](https://github.com/alex-de-haas/hosty-catalog/actions/runs/43885883055)
+passes and serves sixteen cards with matching provider icons and stable feed URLs.
+
+A fresh Core-managed macOS child runs source Core 0.180.0 with public stable Shell 0.121.0 and
+Marketplace 0.13.0. Normal password login, Marketplace Install buttons and Core confirmation pages
+install each provider from its public stable feed with the production Local runtime. Core readback
+verifies version 0.1.0, exact release/manifests/source paths, source commit, expected agent role,
+three Decision permissions and healthy services without Harness. Each provider's embedded settings
+complete normal Hosty sign-in and show the empty authenticated connection list. All nine anonymous
+probes pass: health is ready and protected agent/settings APIs return 401. No provider account,
+model download or inference is needed for this fresh-install check.
+
+A duplicate Codex confirmation page invalidates its older form; the same original approval is
+reopened and accepted normally after confirming no installation occurred. No duplicate install
+request or approval bypass is used. Owned browser/helper consumers stop and release their claims.
+Sandbox Finish succeeds, with no retained process or data root.
+
+The catalog states Core 0.180.0 and local tool prerequisites. Public platform stable remains
+0.172.0; daily supplies 0.180.0. This provider publication does not upgrade ordinary installations.
+The remaining Linux/Windows end-to-end provider acceptance stays in D5; final reconciliation stays
+in D6. D11 is complete without declaring those remaining deliverables passed.
