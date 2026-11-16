@@ -12,3 +12,13 @@ README.md
 
 # Local production generations never belong in Docker build contexts.
 **/.local-runtime
+
+# Harness production stages compile shipped sources and static assets, never tests or prior exports.
+apps/harness/**/*.test.*
+apps/harness/**/*.spec.*
+apps/harness/**/__tests__
+apps/harness/test
+apps/harness/web/out-build
+packages/app-sdk/src/**/*.test.*
+packages/app-sdk/src/**/*.spec.*
+packages/app-sdk/src/**/__tests__

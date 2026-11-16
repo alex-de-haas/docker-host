@@ -30,6 +30,9 @@ internal sealed record CoreProviderPolicy(string Kind, string Operation, string 
         if (kind == "task-executor" && operation is "dispatch.options" or "dispatch.get" or "dispatch.accept" or "dispatch.cancel")
             return new(kind, operation, "task_action", [AccessTokenScopes.McpTasksRead, AccessTokenScopes.McpTasksWrite, AccessTokenScopes.McpTasksExecute],
                 [CoreAppPermissions.TaskProviders, CoreAppPermissions.TaskExecutors, CoreAppPermissions.TasksRead, CoreAppPermissions.TasksWrite, CoreAppPermissions.TasksExecute], Administrator: true);
+        if (kind == "task-executor" && operation == "session.workflow")
+            return new(kind, operation, "task_execution_get", [AccessTokenScopes.McpTasksRead],
+                [CoreAppPermissions.TaskExecutors], "session-workflow", Administrator: true);
         if (kind == "task-executor" && operation == "options")
             return new(kind, operation, "task_options", [AccessTokenScopes.McpTasksRead], [CoreAppPermissions.TaskExecutors, CoreAppPermissions.TasksRead]);
         if (kind == "agent-sessions")
@@ -89,11 +92,11 @@ internal sealed record CoreProviderPolicy(string Kind, string Operation, string 
 }
 internal sealed record CoreProviderClaims(int Version, string UserId, string PrincipalId, CoreCallerAuthority Origin,
     HostyProviderRef Provider, string? ProviderRevision, string Kind, string Operation, string Method, string Path,
-    string BodyHash, string[] ResourceIds, long Expires, CoreHistoryExportScope? Export = null, CoreTaskDispatchRef? TaskDispatch = null, CoreTaskExecutorDelegation? TaskDelegation = null);
+    string BodyHash, string[] ResourceIds, long Expires, CoreHistoryExportScope? Export = null, CoreTaskDispatchRef? TaskDispatch = null, CoreTaskExecutorDelegation? TaskDelegation = null, CoreAgentWorkflowGrant? AgentWorkflow = null);
 internal sealed record CoreProviderIntrospectionRequest(string Token, string Kind, string Key, string Operation,
     string Method, string Path, string BodyHash);
 internal sealed record CoreProviderInvocation(int Version, string UserId, string HostRole, string PrincipalId,
-    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, CoreHistoryExportScope? Export = null, CoreTaskDispatchRef? TaskDispatch = null, CoreTaskExecutorDelegation? TaskDelegation = null, CoreTaskWorkflowBinding? TaskWorkflow = null);
+    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, CoreHistoryExportScope? Export = null, CoreTaskDispatchRef? TaskDispatch = null, CoreTaskExecutorDelegation? TaskDelegation = null, CoreTaskWorkflowBinding? TaskWorkflow = null, CoreAgentWorkflowInvocation? AgentExecution = null);
 internal sealed record CoreProviderBinding(string Token, ProviderDescriptor Descriptor);
 internal sealed record CoreProviderError(string Code, string Message, bool Retryable, string? OperationRef = null);
 internal sealed record CoreProviderFailure(CoreProviderError Error);
@@ -104,7 +107,7 @@ internal sealed class CoreProviderException(string code, string message, int sta
 }
 
 internal sealed partial class CoreProviderMediation(AppRegistryStore apps, AppIdentityService identity, CoreCapabilityAuthorization authorization,
-    DelegatedTokenSigningKey signing, IClock clock, IHttpClientFactory clients, CoreProviderOperationStore operations, CoreHistoryExportStore historyExports)
+    DelegatedTokenSigningKey signing, IClock clock, IHttpClientFactory clients, CoreProviderOperationStore operations, CoreHistoryExportStore historyExports, IServiceProvider services)
 {
     internal const string Prefix = "hosty_provider.2.";
     internal const string ClientName = "core-provider";
@@ -181,6 +184,8 @@ internal sealed partial class CoreProviderMediation(AppRegistryStore apps, AppId
             || claims.Method != input.Method || claims.Path != input.Path || claims.BodyHash != input.BodyHash)
             throw new AppIdentityException("token_invalid", "The credential does not match this exact current provider operation.");
         var policy = CoreProviderPolicy.For(claims.Kind, claims.Operation);
+        if (claims.Operation == "session.workflow" || claims.AgentWorkflow is not null)
+            return await IntrospectSessionWorkflow(provider, claims, input, ct);
         if (claims.Kind == "task-executor" && claims.Operation.StartsWith("dispatch.", StringComparison.Ordinal)
             && (claims.TaskDelegation is null || claims.Origin.Kind != "task-dispatch"
                 || claims.TaskDelegation.Dispatch != claims.Origin.TaskDispatch))

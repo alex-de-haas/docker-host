@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-11-12
+updated: 2026-11-16
 summary: Independent OPUS-MT Big CPU translation app for English-to-Russian text and protected Markdown, with pinned native dependencies and verified model caching.
 components: [apps/opus]
 ---
@@ -9,9 +9,10 @@ components: [apps/opus]
 
 ## Application And Integration
 
-OPUS Translate (`hosty.opus`, version 0.1.0) is a headless native runtime app in `apps/opus`, with
-independent version, manifest, main feed and icon. It has local and development profiles, app-owned
-cache storage, logs and HTTP health. It has no
+OPUS Translate (`hosty.opus`, version 0.2.1) is a headless native runtime app in `apps/opus`, with
+independent version, manifest, main feed and icon. It is the repository’s sole supplied translation app;
+Harness, Codex Provider and Claude Code Provider do not provide translation. It has local and
+development profiles, app-owned cache storage, logs and HTTP health. It has no
 system role, app UI or requested Core permissions. Core discovers its ordinary version-one
 `translation` interface under key `default`; production code has no provider-specific Core branch.
 
@@ -81,8 +82,8 @@ autolinks, shortcut/collapsed reference labels, task states, list markers and de
 fixed. Ordinary link labels and headings translate. Entities, escaped punctuation and continuation
 lines are handled as prose; inline formatting remains structural. Plain text keeps line boundaries.
 
-A structural signature validates the reconstructed result before it is returned. Tests also compare
-against the existing Harness provider validator without modifying that validator. Empty, incomplete,
+A structural signature validates the reconstructed result before it is returned. Tests use an
+independent test-only structural oracle without importing Harness or an agent-provider runtime. Empty, incomplete,
 multiline fragment output or changed protected structure fails the request. These checks protect
 syntax and machine content, not the semantic accuracy of the model's prose.
 
@@ -98,7 +99,7 @@ The opt-in integration suite also verifies overlong-fragment refusal, cancellati
 usable worker, cache reuse without reconversion, and corrupted-cache reconstruction. No request text
 is retained in the test cache. Ordinary unit tests run without downloading model weights.
 
-Final checks pass: 15 Node app tests, three Python cache/archive tests, the real-model native suite,
+The recorded final checks passed: 15 Node app tests, three Python cache/archive tests, the real-model native suite,
 eight Core manifest tests, 44 CI-policy/workflow/launcher tests, 147 Documents tests, both app builds,
 version consistency, documentation validation and whitespace checks. The managed Python HTTPS probe
 receives HTTP 206 from the pinned archive endpoint. Initial Documents checks used stale dependencies
@@ -125,6 +126,6 @@ selection, user data or running Core was changed. Linux and Windows native infer
 - `node --test scripts/ci-policy.test.mjs scripts/ci-workflow.test.mjs scripts/test-integration.test.mjs`: component selection,
   required CI gate and opt-in native suite wiring. CI runs bounded Node and Python checks only.
 - `npm run documents:test` and `npm run documents:build`: existing consumer behavior and generic
-  provider diagnostics. Documents independently advances from 0.8.0 to 0.8.1; Core has no runtime change.
+  provider diagnostics. These consumer checks do not select a translator or change an installed app.
 - `node scripts/check-versions.mjs`, `node scripts/docs-index.mjs --check`, `git diff --check`:
   version, documentation and whitespace consistency.

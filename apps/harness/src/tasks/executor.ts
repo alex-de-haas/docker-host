@@ -5,6 +5,7 @@ import type { TaskActor, TaskExecutionInput, TaskExecutionReceipt, TaskResult, T
 import { taskExecutionTerminal } from "@hosty-sdk/app/tasks";
 import type { SessionManager } from "../sessions/manager.js";
 import { fingerprint, executionInput, taskError, taskResult, uuid, sameActor, TaskStore } from "./store.js";
+import { withAgentAuthority } from "../agent-providers/context.js";
 
 export type ExecutionAuthority = { actor: TaskActor; scope: string; credential?: string; principalId?: string; taskDispatch?: import("@hosty-sdk/app/providers").TaskDispatchRef; mediatedOperation?: string; taskWorkflow?: import("@hosty-sdk/app/providers").TaskWorkflowBinding; validate: () => Promise<void> };
 type Execution = {
@@ -104,8 +105,9 @@ export class HarnessTaskExecutor {
             configuration = { ...configuration, launchMode: "new", sessionId: undefined, adoption: undefined };
           }
         }
-        const session = configuration?.launchMode === "adopt" ? await this.manager.getSession(configuration.sessionId!) : await this.manager.createSession({ createdBy: authority.actor.userId, clientRequestId: key,
-          title: input.title, ...(configuration ? { taskConfiguration: configuration } : { profileId: value.selection?.id, profileRevision: value.selection?.revision }), taskExecutionId: id });
+        const session = configuration?.launchMode === "adopt" ? await this.manager.getSession(configuration.sessionId!) : await withAgentAuthority(async () => authority.taskDispatch
+          ? { kind: "task", dispatch: authority.taskDispatch, executionId: id } : authority.credential ?? "", () => this.manager.createSession({ createdBy: authority.actor.userId!, clientRequestId: key,
+          title: input.title, ...(configuration ? { taskConfiguration: configuration } : { profileId: value.selection?.id, profileRevision: value.selection?.revision }), taskExecutionId: id }));
         if (!session) return taskError("session_missing", "The original conversation is unavailable.", 404);
         if (configuration?.launchMode === "adopt") record.adoptionId = configuration.selection.id;
         if (!record.adoptionId && !session.agentProfile) return taskError("profile_required", "Select a Harness profile before starting a task.");
@@ -282,6 +284,7 @@ export class HarnessTaskExecutor {
       }
       if (!r.cancellation && r.launchRequested && r.launch && !r.launch.delivered && authority) {
         await authority.validate();
+        if (authority.taskDispatch) await this.manager.bindTaskDispatch(r.sessionId, r.receipt.executionId, authority.taskDispatch);
         // A crash before the session receipt is different from uncertain native admission.
         // Recheck current limits/source/mode only for a proven unstarted message; replay an
         // existing receipt unchanged so it can never become permission for a duplicate turn.
@@ -299,8 +302,9 @@ export class HarnessTaskExecutor {
         // Message receipts are written before dispatch. Reuse their original command and exact
         // prompt; an unknown receipt never permits another native turn.
         if (r.adoptionId) await this.manager.resumeTaskBarrier(r.sessionId, r.actor.userId!, r.launch.prompt, authority.credential);
-        else await this.manager.postMessage(r.sessionId, r.launch.prompt, authority.credential, [], { taskDispatch: true,
-          actorUserId: r.actor.userId!, clientRequestId: r.launch.commandId, expectedRevision: r.launch.contextRevision, selectionRevision: r.launch.selectionRevision });
+        else await withAgentAuthority(async () => authority.taskDispatch ? { kind: "task", dispatch: authority.taskDispatch, executionId: r.receipt.executionId } : authority.credential ?? "",
+          () => this.manager.postMessage(r.sessionId!, r.launch!.prompt, authority.credential, [], { taskDispatch: true,
+          actorUserId: r.actor.userId!, clientRequestId: r.launch!.commandId, expectedRevision: r.launch!.contextRevision, selectionRevision: r.launch!.selectionRevision }));
         r.launch.delivered = true; await this.save(key, r);
       }
       if (!r.cancellation && r.launchRequested) {
@@ -331,7 +335,7 @@ export class HarnessTaskExecutor {
         else if (session.status === "running") {
           r.receipt.state = "running"; r.receipt.nativeStopConfirmed = false; delete r.receipt.wait; delete r.receipt.error;
           // A native process lost across a Harness restart has no safe replacement.
-          if (!this.manager.worker && !this.manager.hasLiveTaskRun(r.sessionId)) {
+          if (!this.manager.hasLiveTaskRun(r.sessionId) && session.providerExecution?.run?.freshness !== "current") {
             r.receipt.state = "interrupted"; r.receipt.error = { code: "exit_unconfirmed", message: "Harness restarted; the native execution's exit is unconfirmed." };
           }
         } else if (session.taskRun?.exitConfirmed) {

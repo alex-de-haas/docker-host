@@ -1569,7 +1569,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var declaration in declarations)
             {
-                if (name is "assistant" or "speech-to-text" or "translation" or "tasks" or "task-executor" or "conversation-history" or "agent-sessions" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
+                if (name is "assistant" or "speech-to-text" or "translation" or "tasks" or "task-executor" or "conversation-history" or "agent-sessions" or "agent" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
                 {
                     var code = $"app_manifest_{name.Replace('-', '_')}_contract_required";
                     errors.Add(new(code, $"The {name} interface requires a positive integer version and a capabilities array.", path));

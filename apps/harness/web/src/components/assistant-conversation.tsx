@@ -55,7 +55,8 @@ import { WorkspaceDetails } from "@/components/workspace-details";
 import { useDevelopmentInventory, workflowIsActive } from "@/lib/development-api";
 import { SessionList, SessionTitleInput } from "@/components/session-list";
 import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages } from "@/lib/attachments";
-import { approvalDecisions, cancelledQuestions, ToolActivity, TranscriptEvent } from "@/components/transcript";
+import { approvalDecisions, cancelledQuestions, questionAnswers, transcriptDecisionId, ToolActivity, TranscriptEvent } from "@/components/transcript";
+import type { QuestionAnswers } from "../../../src/agent-providers/decision-identity";
 import { retryHandoff } from "@/lib/assistant-api";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, draftStorageText, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
@@ -112,6 +113,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [surfaceSessionId, setSurfaceSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<AssistantSession | null>(null);
   const sessionSnapshot = useRef<AssistantSession | null>(null);
+  const titleChanges = useRef(new Map<string, number>());
   useLayoutEffect(() => { sessionSnapshot.current = session; }, [session]);
   useEffect(() => {
     const route = new URL(window.location.href);
@@ -157,11 +159,16 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const openContextAfterMenu = useRef(false);
   const openTemplatesAfterMenu = useRef(false);
-  const onSessionChange = useCallback((record: AssistantSession) => {
+  const onSessionChange = useCallback((record: AssistantSession, titlePolicy: "snapshot" | "preserve" | { renameFrom: string | null } = "snapshot") => {
     const merge = (current: AssistantSession) => current.id !== record.id ? current : {
       ...((record.appContextRevision ?? 0) >= (current.appContextRevision ?? 0)
         && (record.selectionRevision ?? 0) >= (current.selectionRevision ?? 0) && activityTime(record) >= activityTime(current)
         && (record.lastEventSeq === undefined || current.lastEventSeq === undefined || record.lastEventSeq >= current.lastEventSeq) ? record : current),
+      ...(titlePolicy === "preserve" ? { title: current.title } : typeof titlePolicy === "object" ? {
+        // A newer status does not undo a successful rename. A newer independently observed
+        // title does: the delayed reply must not overwrite another window's accepted name.
+        title: current.title === titlePolicy.renameFrom || activityTime(record) > activityTime(current) ? record.title : current.title,
+      } : {}),
       lastEventSeq: Math.max(record.lastEventSeq ?? 0, current.lastEventSeq ?? 0) || undefined,
       updatedAt: activityTime(record) >= activityTime(current) ? record.updatedAt : current.updatedAt,
       // Admission is permanent even if a pre-admission mutation reply arrives before its status event.
@@ -512,9 +519,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     let latestModelRevision = record.selectionRevision ?? 0;
     const refreshSettings = () => {
       const revision = ++settingsRefresh;
+      const titleRevision = titleChanges.current.get(record.id) ?? 0;
       settingsPending = true;
       void getSession(record.id).then(value => {
-        if (!abort.signal.aborted && revision === settingsRefresh && activeSessionId.current === record.id) onSessionChange(value);
+        if (!abort.signal.aborted && revision === settingsRefresh && activeSessionId.current === record.id)
+          onSessionChange(value, titleRevision === (titleChanges.current.get(record.id) ?? 0) ? "snapshot" : "preserve");
       }).catch(() => {}).finally(() => { if (revision === settingsRefresh) settingsPending = false; });
     };
     streamAbortRef.current = abort;
@@ -538,9 +547,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (event.type === "session_profile_changed" || event.type === "session_provider_changed" || event.type === "session_autonomy_changed") {
           const settings: Partial<AssistantSession> = event.type === "session_autonomy_changed"
             ? (event.autonomy === "normal" || event.autonomy === "autonomous" ? { autonomy: event.autonomy } : {})
-            : typeof event.connectionId === "string" && typeof event.connectionRevision === "number"
-              && (event.harnessKind === "codex" || event.harnessKind === "claude") && typeof event.providerLocked === "boolean"
-              ? { connectionId: event.connectionId, connectionRevision: event.connectionRevision, harnessKind: event.harnessKind, providerLocked: event.providerLocked } : {};
+            : typeof event.connectionId === "string" && (typeof event.connectionRevision === "number" || typeof event.connectionRevision === "string")
+              && ["agent", "codex", "claude", "ollama"].includes(String(event.harnessKind)) && typeof event.providerLocked === "boolean"
+              ? { connectionId: event.connectionId, connectionRevision: event.connectionRevision, harnessKind: event.harnessKind as AssistantSession["harnessKind"], providerLocked: event.providerLocked } : {};
           const applySettings = (current: AssistantSession) => current.id === record.id && event.seq >= (current.lastEventSeq ?? 0) && activityTime({ updatedAt: event.ts }) >= activityTime(current)
             ? { ...current, ...settings, updatedAt: event.ts, lastEventSeq: event.seq } : current;
           // Profile notifications carry only a revision. Apply the fetched configuration atomically;
@@ -570,8 +579,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         // A status/context update can make an in-flight snapshot too old to merge. A live
         // status also rechecks any admission fence captured before normal dispatch settled.
         const liveStatus = event.type === "session_status" && event.historical !== true;
+        const unnamedMessage = event.type === "user_message" && !sessionSnapshot.current?.title
+          && event.seq > (record.lastEventSeq ?? 0);
         if (settingsPending && (event.type === "user_message" || event.type === "app_context_changed" || liveStatus)
-          || liveStatus && sessionSnapshot.current?.sourceAdmission) refreshSettings();
+          || liveStatus && sessionSnapshot.current?.sourceAdmission || unnamedMessage) refreshSettings();
         if (event.type === "user_message") {
           const lock = (current: AssistantSession) => current.id === record.id
             ? { ...current, ...(current.providerLocked !== undefined ? { providerLocked: true } : {}), ...(current.profileLocked !== undefined ? { profileLocked: true } : {}) } : current;
@@ -1149,13 +1160,20 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   const rename = useCallback(async (sessionId: string, title: string) => {
     setError(null);
+    const original = sessions.find(record => record.id === sessionId)
+      ?? (sessionSnapshot.current?.id === sessionId ? sessionSnapshot.current : null);
+    const renameFrom = original?.title ?? null;
+    const revision = (titleChanges.current.get(sessionId) ?? 0) + 1;
+    titleChanges.current.set(sessionId, revision);
     try {
       const record = await renameSession(sessionId, title);
-      onSessionChange(record);
+      if (titleChanges.current.get(sessionId) === revision) onSessionChange(record, { renameFrom });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (titleChanges.current.get(sessionId) === revision) titleChanges.current.set(sessionId, revision + 1);
     }
-  }, [onSessionChange]);
+  }, [onSessionChange, sessions]);
 
   const decide = useCallback(
     async (approvalId: string, decision: "allow" | "deny", message?: string) => {
@@ -1168,7 +1186,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   );
 
   const answer = useCallback(
-    async (questionId: string, answers: Record<string, string>) => {
+    async (questionId: string, answers: QuestionAnswers) => {
       if (!session) {
         return;
       }
@@ -1182,15 +1200,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   // Answered questions collapse to their chosen values, the same way a resolved approval collapses to
   // a badge — a replayed transcript must not offer buttons for a pause that is already over.
-  const answeredQuestions = useMemo(() => {
-    const answers = new Map<string, Record<string, string>>();
-    for (const event of events) {
-      if (event.type === "question_answered") {
-        answers.set(String(event.questionId), (event.answers ?? {}) as Record<string, string>);
-      }
-    }
-    return answers;
-  }, [events]);
+  const answeredQuestions = useMemo(() => questionAnswers(events), [events]);
 
   // Which message each uploaded file belongs to, so a claimed file is drawn under its message and
   // nowhere else.
@@ -1199,7 +1209,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
   const mcpActivity = useMemo(() => contextDetailsOpen ? observedMcpActivity(events) : EMPTY_MCP_ACTIVITY, [events, contextDetailsOpen]);
 
-  const pendingDecision = events.find(event => status === "awaiting_approval" && event.type === "approval_request" && !decidedApprovals.has(String(event.approvalId)) || status === "awaiting_question" && event.type === "question_request" && !cancelledQuestionIds.has(String(event.questionId)) && !answeredQuestions.has(String(event.questionId)));
+  const pendingDecision = events.find(event => status === "awaiting_approval" && event.type === "approval_request" && !decidedApprovals.has(transcriptDecisionId(event)) || status === "awaiting_question" && event.type === "question_request" && !cancelledQuestionIds.has(transcriptDecisionId(event)) && !answeredQuestions.has(transcriptDecisionId(event)));
 
   const createAppAction = fullPage ? session ? (
     <CreateApp key={`creation-${session.id}`} session={session} openOnMount={openAppCreation}
@@ -1219,6 +1229,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const workspaceToggle = fullPage && workspace && <Button size="icon-sm" variant="ghost" aria-label="Workspace details" title="Workspace details"
     aria-expanded={narrowWorkspace ? mobileDetails : workspaceVisible}
     onClick={() => { if (narrowWorkspace) { setMobileDetails(v => !v); setMobileSessions(false); } else setWorkspaceVisible(v => !v); }}><PanelRight aria-hidden /></Button>;
+  // Inventory reads can discover a title changed in another window. Use the same accepted
+  // metadata as navigation without replacing this chat's live execution/configuration state.
+  const listedSession = session ? sessions.find(record => record.id === session.id) : undefined;
+  const sessionTitle = listedSession && activityTime(listedSession) >= activityTime(session!)
+    && (listedSession.lastEventSeq ?? 0) >= (session?.lastEventSeq ?? 0) ? listedSession.title : session?.title;
 
   return (
     <div className={`harness-conversation flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
@@ -1244,7 +1259,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           <Button variant="outline" disabled={workspaceActions.busy || workspaceActions.retry || !workspace.participation || !workflowIsActive(workspace.workflow)} onClick={() => void workspaceActions.command("new")}>New session in workspace</Button>
         </div>}
         {error && <p role="alert" className="p-3 text-sm text-destructive-foreground">{error}</p>}
-      </div> : <div id="workspace-chat" role="region" aria-label={session?.title || "Session conversation"} className="flex min-h-0 flex-1 flex-col">
+      </div> : <div id="workspace-chat" role="region" aria-label={sessionTitle || "Session conversation"} className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap shrink-0 items-center gap-2 border-b px-3 py-2">
         {navigationToggle}
         {showSessions ? (
@@ -1256,14 +1271,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         ) : (
           <>
             <div className={cn("flex min-w-0 flex-1 items-center gap-2", fullPage && "basis-48")}>
-              {fullPage ? <>{session && renamingSessionId === session.id ? <SessionTitleInput key={session.id} title={session.title ?? ""} onCommit={async title => { setRenamingSessionId(null); await rename(session.id, title); }} onCancel={() => setRenamingSessionId(null)} /> : <><h1 className="min-w-0 truncate text-sm font-medium">{session ? session.title || "Untitled session" : "New session"}</h1>{session && <Button variant="ghost" size="icon-sm" aria-label="Rename session" onClick={() => setRenamingSessionId(session.id)}><Pencil className="size-3.5" /></Button>}</>}</> : <HostyNavigationBoundary><Sparkles className="h-4 w-4 shrink-0" aria-hidden /><span className="text-sm font-medium">Assistant</span></HostyNavigationBoundary>}
+              {fullPage ? <>{session && renamingSessionId === session.id ? <SessionTitleInput key={session.id} title={sessionTitle ?? ""} onCommit={async title => { setRenamingSessionId(null); await rename(session.id, title); }} onCancel={() => setRenamingSessionId(null)} /> : <><h1 className="min-w-0 truncate text-sm font-medium">{session ? sessionTitle || "Untitled session" : "New session"}</h1>{session && <Button variant="ghost" size="icon-sm" aria-label="Rename session" onClick={() => setRenamingSessionId(session.id)}><Pencil className="size-3.5" /></Button>}</>}</> : <HostyNavigationBoundary><Sparkles className="h-4 w-4 shrink-0" aria-hidden /><span className="text-sm font-medium">Assistant</span></HostyNavigationBoundary>}
             </div>
             <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
               {status !== "idle" && <StatusBadge value={status} />}
               {composerBlocked && (running || stopping || session?.sourceAdmission || session?.workerRun) && <Button type="button" variant="ghost" size="icon-sm" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
                 {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
               </Button>}
-              {session && <SessionExecutionIndicator executionMode={session.executionMode} />}
+              {session && <SessionExecutionIndicator harnessKind={session.harnessKind} />}
               {workspaceToggle}
               {session && (
                 <AppContextPicker key={session.id} ref={contextPickerRef} opener={addButtonRef} compact side="bottom" session={session} busy={sending || mentionSaving || providerSaving} onBusyChange={setContextSaving} running={running}
@@ -1366,9 +1381,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       feedbackCard={feedbackCardForEvent(item.event, feedbackTranscript.cards)}
                       feedbackLoading={feedbackTranscript.loading}
                       reviewContext={transcriptReviewContext}
-                      decision={item.event.type === "approval_request" ? decidedApprovals.get(String(item.event.approvalId)) ?? null : null}
-                      questionCancelled={item.event.type === "question_request" && cancelledQuestionIds.has(String(item.event.questionId))}
-                      answers={item.event.type === "question_request" ? answeredQuestions.get(String(item.event.questionId)) ?? null : null}
+                      decision={item.event.type === "approval_request" ? decidedApprovals.get(transcriptDecisionId(item.event)) ?? null : null}
+                      questionCancelled={item.event.type === "question_request" && cancelledQuestionIds.has(transcriptDecisionId(item.event))}
+                      answers={item.event.type === "question_request" ? answeredQuestions.get(transcriptDecisionId(item.event)) ?? null : null}
                       // Absent reads as "cannot": a reason box on a harness whose decline carries nothing
                       // would promise delivery the gateway then refuses.
                       denyReason={health?.capabilities?.denyReason === true}
@@ -1595,7 +1610,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       </div>}
       </main>
       {fullPage && workspace && <RetainedWorkspacePane narrow={narrowWorkspace} width={columns.widths.details} resizeHandle={<ColumnResizeHandle label="Resize workspace details" side="left" width={columns.widths.details} min={COLUMN_MIN.details} max={columns.maximum.details} defaultWidth={COLUMN_DEFAULTS.details} onResize={width => columns.resize("details", width)} />} open={mobileDetails} visible={workspaceVisible} reviewing={!!review} onClose={() => setMobileDetails(false)}>
-        <WorkspaceDetails onSessionPicked={id => pickSession({ id })} onDeleteSession={remove} sessionActions={workspaceActions} key={workspace.id} workspace={workspace} onSessionSelected={record => { setSessions(current => [record, ...current.filter(s => s.id !== record.id)]); pickSession(record); }} appMetadata={appIconMetadata} title={workspace.name || session?.title || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
+        <WorkspaceDetails onSessionPicked={id => pickSession({ id })} onDeleteSession={remove} sessionActions={workspaceActions} key={workspace.id} workspace={workspace} onSessionSelected={record => { setSessions(current => [record, ...current.filter(s => s.id !== record.id)]); pickSession(record); }} appMetadata={appIconMetadata} title={workspace.name || sessionTitle || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
       </RetainedWorkspacePane>}
       {review && <WorkspaceReview key={`${review.workspaceId}:${review.tree.id}`} workspaceId={review.workspaceId} tree={review.tree}
         choice={review.transcriptChoice ?? reviewChoices[review.tree.id] ?? { view: "session", path: "" }} onChoice={choice => {

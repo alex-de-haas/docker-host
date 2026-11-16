@@ -5,12 +5,12 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
-import { markdownParts, validateMarkdownTranslation } from "../../../apps/harness/src/translation/markdown.js";
-import { MARKDOWN_INSTRUCTIONS } from "../../../apps/harness/src/translation/native.js";
+import { markdownParts, validateMarkdownTranslation, MARKDOWN_INSTRUCTIONS } from "./local-contract.mjs";
 import { proseSpans, restoreProse } from "./local-markdown.mjs";
 
 const { values } = parseArgs({ options: {
   kind: { type: "string" }, output: { type: "string" },
+  "validate-only": { type: "boolean", default: false },
   python: { type: "string", default: "/tmp/hosty-local-translation-venv/bin/python" },
   "opus-root": { type: "string", default: "/tmp/hosty-local-translation-opus" },
   endpoint: { type: "string", default: "http://127.0.0.1:11555" },
@@ -20,15 +20,27 @@ const { values } = parseArgs({ options: {
   "max-segment": { type: "string", default: "16000" },
   "probe-only": { type: "boolean", default: false },
 } });
-if (!["opus", "hymt"].includes(values.kind ?? "") || !values.output) throw new Error("Supply --kind opus|hymt and --output.");
+if (!["opus", "hymt"].includes(values.kind ?? "") || (!values.output && !values["validate-only"])) throw new Error("Supply --kind opus|hymt and --output, or --validate-only.");
 if (![1, 2, 4].includes(Number(values.beam)) || ![4000, 16000].includes(Number(values["max-segment"]))) throw new Error("Unsupported probe setting.");
 const evidence = JSON.parse(await readFile("docs/features/translation-provider/benchmark-evidence.json", "utf8"));
 const samples = evidence.samples.map((sample: { name: string; inputText: string; inputSha256: string }) => {
   if (createHash("sha256").update(sample.inputText).digest("hex") !== sample.inputSha256) throw new Error("Source hash mismatch.");
   return { name: sample.name, source: sample.inputText, sha256: sample.inputSha256 };
 });
+if (values["validate-only"]) {
+  const checks = samples.map((sample: { name: string; source: string; sha256: string }) => {
+    const parts = markdownParts(sample.source, Number(values["max-segment"]));
+    if (parts.map(part => part.text).join("") !== sample.source) throw new Error("Experimental segmentation lost input bytes.");
+    validateMarkdownTranslation(sample.source, sample.source);
+    const spans = proseSpans(sample.source, !values["paragraph-spans"]);
+    validateMarkdownTranslation(sample.source, restoreProse(sample.source, spans, spans.map(span => span.text)));
+    return { name: sample.name, inputSha256: sample.sha256, segments: parts.filter(part => part.translate).length, proseSpans: spans.length };
+  });
+  console.log(JSON.stringify({ experimentVersion: 2, validationOnly: true, samples: checks }));
+  process.exit(0);
+}
 const reports: any[] = [];
-const report: any = { date: new Date().toISOString(), kind: values.kind,
+const report: any = { experimentVersion: 2, adapter: "standalone-local-contract", date: new Date().toISOString(), kind: values.kind,
   proseMode: values["paragraph-spans"] ? "paragraph" : "sentence",
   beam: Number(values.beam), maxSegment: Number(values["max-segment"]),
   sampleHashes: Object.fromEntries(samples.map((s: any) => [s.name, s.sha256])), reports };

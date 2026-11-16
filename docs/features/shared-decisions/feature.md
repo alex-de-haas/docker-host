@@ -1,8 +1,8 @@
 ---
 created: 2026-11-03
-updated: 2026-11-11
+updated: 2026-11-12
 summary: Core-owned private questions with immutable answers, source delivery receipts and a shared Harness Decisions view.
-components: [apps/core, apps/harness, packages/app-sdk, packages/app-sdk-dotnet]
+components: [apps/core, apps/harness, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
 
 # Shared Decisions And Human Response
@@ -40,7 +40,18 @@ received, not executed. Continuation progresses independently through `received`
 
 The operator API is `/api/decisions/v1`. Application servers use
 `/api/internal/apps/{appId}/decisions/v1` with the installation service token and a current
-`X-Hosty-User-Token`. There is no service-only or generic background-credential fallback.
+`X-Hosty-User-Token`. Ordinary app callers have no service-only or generic background-credential
+fallback.
+
+An independently installed agent provider uses its own service identity plus
+`X-Hosty-Agent-Execution`, naming an exact Core-admitted execution with its retained original actor.
+Core binds its question records to that admission, provider installation and current accessible user;
+the provider's current Decisions permissions remain required. Creating a question or resolving an
+answer requires current relevant authority. Reads, acknowledgements, withdrawals and continuation
+progress reports are metadata operations and can settle the provider's exact owned record after
+execution expiry. They admit no native operation, MCP call, lease acquisition or new continuation
+run. An expired reference cannot become a general user credential or access another admission's
+question. See [Agent provider execution](../agent-provider-interface/feature.md).
 
 | Operation | Route | App permission |
 | --- | --- | --- |
@@ -57,7 +68,9 @@ Normal operator sessions retain same-origin/CSRF checks for mutations. Scoped di
 use the separately reviewed `mcp:decisions` capability together with `mcp:read`. The nine MCP tools
 mirror the JSON operations except the event stream. TypeScript exports `@hosty-sdk/app/decisions`
 and `@hosty-sdk/app/decisions/server`; .NET exposes `HostyDecisionClient` and shared wire records.
-Clients obtain current user credentials per call and never implicitly retry mutations.
+Ordinary clients obtain current user credentials per call and never implicitly retry mutations.
+Provider source clients instead carry their exact admitted reference on each operation; persisted
+source command UUIDs and bytes recover uncertain delivery without creating another command.
 
 SSE sends only private `decisions.changed` hints and revalidates authority before delivery and on
 keep-alive. Entry, reconnect and visibility recovery reload authoritative state. Notifications link
@@ -89,7 +102,8 @@ inside the card instead of widening the options.
 Both native and Docker assistant instructions direct necessary operator questions and choices
 through the provider's available native question tool: Codex `request_user_input` or
 `request_user_input_async`, Claude `AskUserQuestion`, and Ollama `ask_user`. Harness turns those
-requests into shared Decisions and interactive chat cards. Agents continue independent work while
+requests into interactive chat cards; the independently installed native provider owns their Core
+Decision registration and answer delivery. Agents continue independent work while
 a nonblocking question is pending, keep required task input on `task_request_input`, and report
 an unavailable or rejected question tool explicitly. Answers remain separate from operation approvals.
 
@@ -102,42 +116,41 @@ stale actions without issuing replacement grants.
 
 ## Durable Native Waiting
 
-Harness saves a private wait before displaying a question. It contains the source question ID,
-provider/account/native context, input and instruction snapshot, task attempt when present,
-cancellation generation, registration UUID, durable response inbox and continuation command UUID.
-It contains no browser or provider credentials. Core receives only bounded question content and
-opaque references, not native thread IDs or private transcripts.
+The installed agent provider saves native question correlation, public run/generation and decision
+revision, Core registration identity, durable answer delivery and continuation receipts in its own
+session aggregate and execution journal. Core receives bounded question content and opaque
+references, not the SDK's native session identity or private transcript. Harness retains a public
+execution projection rather than a second native wait coordinator.
 
-A live blocking question receives its answer through the original Worker control. After five
-minutes without an answer, a blocking-only run can park: Worker persists intent, stops the native
-process and releases capacity only after confirmed exit. Unknown exit retains capacity and source
-protection. A container restart supplies its container-boundary exit proof; a local restart does
-not prove that an old native child stopped. Uncertain answer delivery never authorizes a second run.
+A live callback receives an answer through the provider's exact run response operation. A parked
+run has a provider-confirmed stopped segment; unknown native exit retains capacity and workspace
+protection. Consumer/API/container shutdown supplies no native-exit proof for the independent Local
+provider. Supported SDK stop-and-wait and provider-owned process evidence determine confirmation.
+An uncertain response acknowledgement never authorizes duplicate SDK delivery or another run.
 
-An answered parked wait resumes the same supported Codex or Claude context with a single stable
-message command and strict native resume. Provider/account, reviewed inputs, current authority and
-cancellation fences are checked before admission. Unknown admission remains blocked. A task retains
-its admitted execution ID and `awaiting_input` state; `nativeStopConfirmed` describes the parked
-segment separately from `stopConfirmed`, which remains false until the business execution ends.
-A new task result still requires the existing explicit result operation.
+The provider durably records the age of each blocking native callback. After five minutes it
+parks an execution blocked exclusively on those questions, using the original native frame,
+revision and stable control ID. Pending approvals, active/unknown effects, uncertain answer delivery
+and independent active child work prevent automatic parking. Public parking controls use the same
+confirmed boundary. After confirmed stop, the remaining question receives a new decision revision
+and `next_turn` delivery while retaining its Core question link. A saved answer for that stopped
+question reserves a public continuation identity and can report
+`awaiting_authorization`; a consumer supplies fresh exact authorization for that next attempt.
+Connection/account revision, configuration, supported native context, cancellation fences and
+current authority are checked again. Missing context fails strict resume instead of reconstructing
+history. Continuation reports distinguish blocked admission, running work, completion, failure and
+cancellation from the fact that an answer was stored.
 
-Nonblocking questions do not stop independent work. Unsupported secret inputs are refused before
-question persistence. A dead nonblocking callback, missing native checkpoint, changed account or
-uncertain stop exposes a recovery-needed outcome; automatic reconstruction or provider migration is
-not implemented. The pinned Codex 0.162.1 ordinary-mode runtime emits nonblocking questions;
-these support live answers but do not automatically park. Claude AskUserQuestion is blocking.
-Live acceptance with both actual providers verifies option/free-text delivery and same-conversation
-completion. Claude acceptance also verifies five-minute parking, a full child Core/Harness/Worker restart,
-and exactly one successful continuation of the same native session. Scripted protocol checks
-separately cover duplicate wording, unsupported inputs and worker crash boundaries.
+Nonblocking questions preserve independent work. Codex asynchronous question messages become
+provider-owned next-turn decisions; they have no surviving native callback. Their answer does not
+interrupt an active turn. Claude's native question callback is blocking. Capability/coverage metadata
+and explicit unsupported-input notices describe the actual adapter rather than promising identical
+native behavior for every engine.
 
-Codex `request_user_input_async` returns at once and publishes its questions on the agent message
-that follows. Harness shows them as a nonblocking Decision with positional question/option IDs and
-free text, in place of that message's plain-text rendering. A shape beyond the Decision limits stays
-visible as text with a notice. No native callback remains, so the Worker keeps no pending frame and
-the saved answer starts the next turn of the same native thread with strict resume. That turn starts
-only when the conversation has no running or waiting turn; an answer saved during a turn waits for
-it to end and never interrupts it.
+The provider creates and observes its own Core questions and renews admitted tool authority while
+Harness is unavailable. Original expiry/revocation still fences effects. The generic Decision
+metadata settlement exception does not bypass that fence. Harness-owned task/business tools retain
+their own availability dependency.
 
 ## Required Task Input
 
@@ -157,63 +170,53 @@ the inbox remains authoritative. Task-specific outcomes and removal are document
 ## Retention And Removal
 
 Pending questions and unresolved delivery/continuation receipts survive ordinary idle cleanup.
-Core and Harness prune completed content after 30 days while retaining replay and cancellation
-fences. Explicit source deletion closes the question, confirms relevant native consumers stopped,
-and removes retained question/answer content, including historical replay snapshots. This removal
-is separate from resolving a question and cannot revive cancelled work.
+Core prunes completed Decision content after 30 days while retaining correlation/replay fences;
+unreceived answers and unfinished continuations remain actionable. Explicit source withdrawal or
+invalidation closes a question without rewriting its accepted answer. Requested content removal
+also clears stored question/answer content and historical Decision replay snapshots.
 
-## Delivery And Verification
+Harness's task-input coordinator prunes its own completed wait content under its separate 30-day
+policy. Provider-native sessions, execution journals and replay have their own storage lifetime;
+Core Decision content removal does not erase SDK files or private provider history. Native stop,
+workspace cleanup, consumer conversation deletion and native-history cleanup are separate
+operations. None is proved by deleting another owner's data.
 
-The owner approved this bounded first delivery on 2026-11-03. Shared Decisions owns its original
-D1-D7 record, adapters, first inbox and question-continuation scope. General routines, application
-events, unattended authority, team routing and richer artifact composition retain their separate
-plans. The decision-only inbox and session/task waiting behavior are transferred from Harness Work
-Orchestration D3 and Durable Agent Jobs D4/D7; those broader deliverables remain unfinished.
+## Verification Boundary
 
-The 2026-11-03 managed acceptance uses normal password login, separate test data and explicitly
-connected Codex/Claude accounts. Both real providers accept an option and free text and complete
-the originating conversation. A real Claude wait survives parking plus Core/API/Worker restart;
-Codex cancellation withdraws its outstanding question and confirms native stop. Chromium verifies
-same-tab draft reload, independent-client conflict, two-view updates, existing task review, narrow
-layout and an actual answer inside Shell without document overflow. The scripted task journey
-retains the same admitted attempt across five-minute parking/restart and reports an explicit result.
-Both owned test environments are finished through their owners; child directories, containers and
-listeners are removed while the registered implementation workspace is retained.
+Core tests cover the generic question contract and the exact agent-source exception. Local
+regressions include delayed `cancelled`, `failed` and `completed` continuation reports after execution
+expiry, immutable replay, another source/admission/install refusal and denied old native admission,
+renewal and MCP authority. These are in-process contract checks, not real provider inference.
 
-Verification commands for this delivery:
-
-- `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --no-build`:
-  4,564 tests pass; five opt-in Docker/mixed-runtime/VPN cases are skipped by the normal suite.
-  The affected managed Harness/Decisions runtime checks run separately below.
-- `npm test --workspace @haas/hosty-harness`: 2,062 tests pass.
-- `npm test --workspace @hosty-sdk/app`: 766 tests pass.
-- `dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj`: 74 tests pass.
-- `npm run test:integration -- tasks`, with `HOSTY_TASKS_BROWSER=1`: managed API, Worker, task,
-  Decisions and Chromium checks pass, including owner-driven Finish and resource removal.
-- `scripts/tasks-browser-acceptance.mjs` additionally accepts the test Shell origin and verifies an
-  actual response inside its iframe. Test-only passwords are supplied on stdin, never in source.
-- Core/CLI, both Harness Docker images, the web bundle and both .NET SDK targets build. Harness
-  type checking, web lint, version consistency, document/link validation and `git diff --check` pass.
-  Existing SDK XML-documentation and unrelated web lint warnings remain unchanged.
+The pre-extraction 2026-11-03 acceptance exercised the former embedded native/worker deployment.
+Its paid-provider, container-restart and five-minute-wait results do not establish acceptance of the
+independent Local provider architecture. Current platform/runtime verification and remaining
+extraction acceptance belong to [Agent provider execution](../agent-provider-interface/feature.md).
+No new ordinary-host cleanup or paid-provider test is established by this documentation update.
 
 ## Testing Expectations
 
 - Core tests cover first-response races, replay after restart, immutable resolution, outbox/ack
   boundaries, current access, cross-user/install denial, source withdrawal, expiry, retention,
   explicit content removal and private SSE revocation.
+- Agent source tests cover exact retained actor/install/admission scope, current Decisions grants,
+  expired metadata-only settlement, immutable replay and refusal to create/answer/dispatch through
+  an expired execution reference.
 - SDK tests cover current-user transport, exact request identity, conflicts and missing credentials.
-- Harness tests cover stable native IDs, duplicate labels, free text, secret/nonblocking handling,
-  asynchronous Codex questions answered during a later turn,
-  durable inbox-before-ack, unknown native acceptance, same-attempt continuation, cancellation and
-  parking races, local/container exit proofs, shared drafts and uncertain submissions.
+- Provider tests cover the fixed five-minute boundary with a controlled clock, durable wait age,
+  confirmed-stop delivery revision changes, fresh continuation authority, active/unknown effect
+  guards, correlated native questions, duplicate labels, free text, secret/nonblocking handling, asynchronous answers in a later turn, durable delivery-before-ack, unknown native
+  acceptance/stop, cancellation and parking races without consumer-derived exit claims.
+- Harness tests cover task-input waits, same-attempt continuation, public provider stop checkpoints,
+  shared drafts and uncertain submissions.
 - Component tests cover the compact closed-question summary, including repeated labels and
   unanswered questions, the folded chat line, its blocked status and the originating-chat link.
 - The optional manual `npm run test:integration -- tasks` follows the
   [explicit selection policy](../ci-feedback-loop/feature.md#local-integration-checks), rather than
   running for every Decisions change or PR. When selected, it uses a disposable parent-managed
-  Core, normal test login, local-only Docker images and an explicitly scripted native provider. It exercises independent Core
-  answers, five-minute parking, restart, same task attempt, explicit result and the existing Tasks
-  journey. `HOSTY_TASKS_BROWSER=1` includes Chromium Tasks/Decisions acceptance; the existing
+  Core, normal test login, the Docker Harness API and independently installed Local providers with
+  an explicitly scripted native engine. It exercises independent Core answers, provider parking,
+  restart, same task attempt, explicit result and the existing Tasks journey. `HOSTY_TASKS_BROWSER=1` includes Chromium Tasks/Decisions acceptance; the existing
   `HOSTY_TASKS_PLAYWRIGHT_MODULE` override selects an installed Playwright module.
 - Real Codex/Claude checks require separately authorized test provider connections. Shell embedding,
   resource cleanup and missing-executor recovery remain explicit acceptance checks, never inferred

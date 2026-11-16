@@ -1,0 +1,42 @@
+{
+  "name": "@hosty/agent-provider-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "exports": {
+    ".": "./src/index.ts",
+    "./native": "./src/native.ts"
+  },
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hosty-sdk/app": "*",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "js-tiktoken": "1.0.21",
+    "undici": "^8.12.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/ws": "8.18.2",
+    "esbuild": "0.28.2",
+    "typescript": "^6.0.3",
+    "vitest": "^5.1.0",
+    "jsdom": "^30.1.2"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "*",
+    "@openai/codex": "*"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/claude-agent-sdk": {
+      "optional": true
+    },
+    "@openai/codex": {
+      "optional": true
+    }
+  }
+}

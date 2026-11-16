@@ -93,9 +93,16 @@ export class ProviderClient {
     try { return await read(await speechFetch(url, init)); }
     finally { await dispatcher.close(); }
   }
-  async translationCapabilities(provider: Pick<ProviderDescriptor, "appId" | "key">, signal?: AbortSignal): Promise<TranslationCapabilities> {
+  async translationCapabilities(provider: Pick<ProviderDescriptor, "appId" | "key">, signal?: AbortSignal,
+    options?: { connection: { id: string; revision: string } }): Promise<TranslationCapabilities> {
+    const connection = options?.connection;
+    if (options && (!connection || typeof connection.id !== "string" || !connection.id || connection.id.length > 200
+      || /[\u0000-\u001f\u007f]/.test(connection.id) || typeof connection.revision !== "string" || !/^(0|[1-9][0-9]{0,19})$/.test(connection.revision)))
+      throw new ProviderError("translation_connection_invalid", "Select an exact provider connection and decimal revision.", 400);
     const binding = await this.connect({ ...provider, kind: "translation" }, signal);
-    return read(await fetch(`${binding.url}/capabilities`, { redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${binding.token}` } }));
+    const url = new URL(`${binding.url}/capabilities`);
+    if (connection) { url.searchParams.set("connectionId", connection.id); url.searchParams.set("connectionRevision", connection.revision); }
+    return read(await fetch(url.href, { redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${binding.token}` } }));
   }
   /** Translate text or Markdown through the explicitly selected provider; never retries or falls back. */
   async translate(provider: Pick<ProviderDescriptor, "appId" | "key">, input: TranslationRequest, signal?: AbortSignal): Promise<TranslationResult> {
@@ -144,6 +151,13 @@ export class ProviderClient {
     if (invocation.version !== 2 || invocation.kind !== kind || invocation.key !== key || invocation.operation !== request.operation
       || !invocation.userId || !invocation.principalId || !Array.isArray(invocation.resourceIds))
       throw new ProviderError("token_invalid", "Core returned an invalid mediated invocation.", 401);
+    const execution = invocation.agentExecution;
+    const identity = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 512
+      && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
+    if (request.operation === "session.workflow" && (kind !== "task-executor" || !execution)
+      || execution && (!identity(execution.sessionId) || !identity(execution.runId)
+        || !execution.provider || !identity(execution.provider.appId) || !identity(execution.provider.installationId) || !identity(execution.provider.key)))
+      throw new ProviderError("token_invalid", "Core returned an invalid admitted agent workflow binding.", 401);
     return invocation;
   }
 

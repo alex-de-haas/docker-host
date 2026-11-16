@@ -10,6 +10,7 @@ import { coreWorkspaceSource, useWorkspaceSources, workspaceSource, type Activat
 
 import { DashboardStateFilters } from "./dashboard-state-filters";
 import { DashboardSandboxes } from "./dashboard-sandboxes";
+import { DashboardRoleIcons } from "./dashboard-role-icons";
 import { fetchCore } from "../core-transport.js";
 
 
@@ -28,13 +29,11 @@ import {
   Boxes,
   Check,
   CircleAlert,
-  Cog,
   Database,
   Download,
   LoaderCircle,
   MoreHorizontal,
   Package,
-  PanelsTopLeft,
   Play,
   Plus,
   RefreshCw,
@@ -127,8 +126,7 @@ export function DashboardPage({
   onOpenPanel,
 }: {
   coreOrigin: string;
-  // Runtime and system apps together, in Core's id order: one list with one command set, where a
-  // system app is told apart by its badge — not by which table it sits in.
+  // All installed apps share one list and command set; reviewed roles describe their interfaces.
   apps: CoreApp[];
   status: CoreStatus | null;
   coreUpdate: CoreUpdateStatus | null;
@@ -621,8 +619,7 @@ function InstalledAppRow({
                 className="truncate rounded-sm font-medium outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-brand">{app.displayName}</Link>
                 : <span className="truncate font-medium" title={`${app.displayName} · ${app.id}`}>{app.displayName}</span>}
 
-              {app.system && !isShell && <AppRoleIcon kind="system" />}
-              {isShell && <AppRoleIcon kind="shell" />}
+              <DashboardRoleIcons app={app} isShell={isShell} />
               <AppProblemIcons problems={problems} updateCheck={app.updateCheck} onPermissions={() => onOpenPanel(app, "settings", { settingsTab: "permissions" })} />
               {showRestartRequired && <Badge variant="secondary" className="border-warning/30 bg-warning-soft text-warning-foreground" title="Settings or mounts changed since this app started.">Restart required</Badge>}
             </div>
@@ -812,30 +809,6 @@ function VersionLine({
         </div>
       </TooltipContent>
     </Tooltip>
-  );
-}
-
-function AppRoleIcon({ kind }: { kind: "system" | "shell" }) {
-  const Icon = kind === "system" ? Cog : PanelsTopLeft;
-  const label = kind === "system" ? "System app" : "Shell interface";
-  const description = kind === "system"
-    ? "Provides host-level functionality. Access is limited to host administrators."
-    : "Provides the Hosty web interface for navigation, app access, and host management.";
-
-  return (
-    <TooltipProvider delayDuration={150}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span tabIndex={0} role="img" aria-label={label} className="inline-flex size-5 shrink-0 cursor-help items-center justify-center rounded-sm text-muted-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-brand focus-visible:ring-0">
-            <Icon aria-hidden="true" className="size-3.5" />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-64 space-y-1" sideOffset={4}>
-          <p className="font-medium">{label}</p>
-          <p>{description}</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
   );
 }
 

@@ -21,25 +21,17 @@ export interface GatewayConfig {
   serviceToken: string | null;
   retentionDays: number;
   harness: HarnessKind;
-  /** Codex API key (operator setting). Set = the gateway signs Codex in; empty = interactive login. */
-  codexApiKey?: string;
-  /** Explicit Codex credential directory for the interactive mode. */
-  codexHome?: string;
 }
 
 /** `fake` is the in-process test harness; it is deliberately not offered as an operator choice. */
-export type HarnessKind = "claude" | "codex" | "fake";
+export type HarnessKind = "agent" | "fake";
 
 export function resolveHarnessKind(value: string | undefined): HarnessKind {
   switch (value?.trim().toLowerCase()) {
-    case "codex":
-      return "codex";
     case "fake":
       return "fake";
     default:
-      // Unknown values fall back to the shipped default rather than failing startup: the setting
-      // is operator-entered free text, and a typo must not take the assistant down.
-      return "claude";
+      return "agent";
   }
 }
 
@@ -61,7 +53,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     serviceToken: env.HOSTY_APP_SERVICE_TOKEN?.trim() || null,
     retentionDays: Number.isFinite(retention) && retention > 0 ? retention : 30,
     harness: resolveHarnessKind(env.HOSTY_HARNESS_HARNESS),
-    codexApiKey: env.CODEX_API_KEY?.trim() || undefined,
-    codexHome: env.CODEX_HOME?.trim() || undefined,
   };
 }

@@ -13,6 +13,11 @@ const nextConfig: NextConfig = {
   // shipped once (a localhost origin frozen into static layouts).
   trailingSlash: true,
   images: { unoptimized: true },
+  // Production source preparation runs inside the app's bounded Core resource budget.
+  // Its Webpack worker exits before type checking; page generation stays serial too.
+  ...(process.env.HOSTY_HARNESS_BOUNDED_BUILD === "1" ? { experimental: {
+    cpus: 1, webpackBuildWorker: true, webpackMemoryOptimizations: true,
+  } } : {}),
 };
 
 export default nextConfig;

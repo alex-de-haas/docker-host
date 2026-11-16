@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import time
+from agent_provider_acceptance import execution_stopped
 
 
 def check(context, app_origin, link):
@@ -109,7 +110,8 @@ def check(context, app_origin, link):
         core_target = next(target for target in call(origin, '/api/core/agents')['targets'] if target['id'] == 'hosty:core')
         assert caps['appId'] in core_target['assistantIds'], 'The reviewed assistant has no current Core MCP grant'
         say('PASS: normal child administrator review grants this installed assistant Core MCP access')
-        connection = h('/connections', {'name':'Feedback acceptance', 'kind':'codex', 'auth':'api-key', 'secret':'synthetic-feedback-fixture-only'}, expected=201)
+        connection = context['agentProviders'].configure_for_harness(app_origin, call, 'codex',
+            'Feedback acceptance', secret='synthetic-feedback-fixture-only')
         h('/connections/'+connection['id']+'/test', {})
         profiles = h('/profiles')
         profiles = h('/profiles', {'expectedRevision':profiles['revision'], 'profile':{'name':'Feedback fixture', 'description':'Scripted acceptance', 'instructions':'Exercise the feedback contract.', 'connectionId':connection['id'], 'model':'fixture-default', 'reasoningEffort':'medium', 'skillIds':[]}}, expected=201)
@@ -140,7 +142,7 @@ def check(context, app_origin, link):
         assert attempt['messageSequence'] > 0 and len(attempt['outcomes'])==2
         say('PASS: one global batch, new chat/source workspace, screenshot tool, exact prompt and explicit per-report outcomes')
         session_id = attempt['input']['sessionId']
-        wait_for(lambda: not h('/sessions/'+session_id).get('workerRun'), 90)
+        wait_for(lambda: execution_stopped(h('/sessions/'+session_id)), 90)
         retained = h('/feedback')
         context['run']([context['cli'], '--data-root', context['root'], 'apps', 'restart', caps['appId']])
         wait_for(lambda: context['request']('/api/apps/'+caps['appId']+'/health')['status']=='healthy', 180)
@@ -165,14 +167,14 @@ def check(context, app_origin, link):
                     break
         assert any(e.get('type')=='result' for e in events), 'Historical feedback continuation has no terminal result'
         assert any(e.get('type')=='assistant_text' and e.get('text')=='Scripted historical feedback acceptance completed.' for e in events)
-        wait_for(lambda: not h('/sessions/'+session_id).get('workerRun'), 90)
+        wait_for(lambda: execution_stopped(h('/sessions/'+session_id)), 90)
         assert h('/feedback')==retained, 'Read-only continuation must preserve reports, dispatches and outcomes'
         say('PASS: after native restart, ordinary continuation reads the exact admitted batch and PNG evidence, refuses result writes, and preserves feedback state')
         followup = settle(dispatch([first], 'FEEDBACK_ACCEPTANCE:PARTIAL', session_id, workspace_id))
         assert report(first)['status']=='partial' and report(first)['currentAttemptId']==followup['id']
         third, _ = submit('Acceptance: unprocessed removed with workspace')
         h('/feedback/'+third, {'expectedRevision':report(third)['revision'], 'workspaceId':workspace_id})
-        wait_for(lambda: not h('/sessions/'+attempt['input']['sessionId']).get('workerRun'), 90)
+        wait_for(lambda: execution_stopped(h('/sessions/'+attempt['input']['sessionId'])), 90)
         deletion = {'requestId':str(uuid.uuid4())}
         h('/development-workspaces/'+workspace_id+'/delete', deletion)
         h('/development-workspaces/'+workspace_id+'/delete', deletion)

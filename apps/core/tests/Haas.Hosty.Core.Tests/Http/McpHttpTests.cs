@@ -55,8 +55,9 @@ public sealed class McpHttpTests
                 "prepare_workspace", "record_workspace_pull_requests", "refresh_workspace", "release_workspace_lease", "remote_connect",
                 "remote_fetch", "remote_push_base", "remote_status", "rename_workspace", "restart_app",
                 "restart_core", "search_audit", "select_app_execution_target", "select_workspace_execution", "start_app",
-                "stop_app", "tail_app_logs", "task_action", "task_create", "task_edit",
-                "task_get", "task_list", "task_options", "task_providers", "workflow_complete",
+                "stop_app", "tail_app_logs", "task_action", "task_adopt", "task_bind_workspace", "task_create", "task_delegate", "task_edit",
+                "task_execution_get", "task_executor_options", "task_fail", "task_get", "task_list", "task_options", "task_plan",
+                "task_prepare_executor", "task_providers", "task_request_input", "task_result", "task_wait", "workflow_complete",
                 "workflow_pause", "workflow_resume", "workflow_status", "workspace_activation",
             ],
             names);
@@ -353,7 +354,8 @@ public sealed class McpHttpTests
         string[] mutations = ["decision_acknowledge", "decision_continuation", "decision_create", "decision_invalidate", "decision_resolve", "decision_withdraw", "workflow_complete", "workflow_pause", "workflow_resume", "app_create", "pr_resolve_review", "pr_commit", "pr_configure", "pr_push", "pr_publish", "pr_link", "pr_ready", "pr_merge", "pr_complete", "pr_corrective", "remote_connect", "remote_fetch", "remote_push_base", "get_workspace_commit_review", "merge_workspace_upstream", "history_export_create", "history_export_acknowledge", "history_export_revoke", "history_share_create", "history_share_revoke", "task_create", "task_edit", "task_action", "agent_run_cancel", "environment_consumer_reconcile", "environment_consumer_register", "environment_consumer_release", "environment_api", "environment_create", "environment_finish", "environment_restart", "environment_setup", "environment_start", "environment_stop", "workspace_activation", "apply_app_dev_mode", "start_app", "stop_app", "restart_app", "restart_core", "plan_app_update", "apply_app_update", "plan_app_update_source", "apply_app_update_source", "apply_app_update_sources",
             "prepare_workspace", "refresh_workspace", "commit_workspace", "merge_workspace_target", "abort_workspace_merge",
             "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "rename_workspace", "delete_workspace",
-            "select_app_execution_target", "select_workspace_execution", "configure_workspace_runtime"];
+            "select_app_execution_target", "select_workspace_execution", "configure_workspace_runtime",
+            "task_adopt", "task_bind_workspace", "task_delegate", "task_fail", "task_plan", "task_prepare_executor", "task_request_input", "task_result", "task_wait"];
         var tools = await CallAsync(client, admin, "tools/list", new { });
         foreach (var tool in tools.GetProperty("tools").EnumerateArray())
         {

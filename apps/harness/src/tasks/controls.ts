@@ -32,14 +32,14 @@ export class TaskControls {
       if (!attempt || !id || attempt.receipt?.stopConfirmed || fingerprint(attempt.executor) !== fingerprint(this.store.provider)) continue;
       const session = await this.manager.getSession(id);
       if (!session || session.taskExecutionId !== attempt.executionId) return taskError("checkpoint_unavailable", "The original execution session is unavailable; the root remains paused.");
-      if (!session.taskRun?.started && !session.workerRun) continue;
+      if (!session.taskRun?.started && !session.providerExecution?.runId && !session.workerRun) continue;
       const barrier = session.taskBarrier;
-      if (session.workerRun || !session.taskRun?.exitConfirmed || barrier?.state !== "parked" || !barrier.nativeSessionId)
+      if (!session.taskRun?.exitConfirmed || barrier?.state !== "parked" || !(barrier.checkpointSessionId ?? barrier.nativeSessionId))
         return taskError("boundary_pending", "Wait for every original execution to confirm its retained checkpoint before resuming.");
       await this.orchestration.context(id);
-      if (this.manager.worker) {
-        const receipt = await this.manager.worker.request<import("../worker/contracts.js").WorkerReceipt>(`/v1/runs/${barrier.runId}`);
-        if (receipt.state !== "parked" || !receipt.exitConfirmed || receipt.snapshot?.nativeSessionId !== barrier.nativeSessionId)
+      if (session.providerExecution) {
+        const receipt = await this.manager.taskCheckpoint(id);
+        if (receipt?.phase !== "parked" || !receipt.stopConfirmed || receipt.ref.id !== barrier.runId || receipt.sessionId !== barrier.checkpointSessionId)
           return taskError("checkpoint_unavailable", "The original native checkpoint cannot be confirmed; the root remains paused.");
       }
     }
@@ -63,7 +63,7 @@ export class TaskControls {
       const key = "runtime-control:" + attempt.executionId;
       let control = await this.store.readJournal<Control>(key);
       if (reason && (!control || control.state === "resumed")) {
-        if (!session.workerRun || session.taskBarrier && session.taskBarrier.state !== "resuming") return;
+        if (!(session.providerExecution?.runId && !session.taskRun?.exitConfirmed || session.workerRun) || session.taskBarrier && session.taskBarrier.state !== "resuming") return;
         control = { id: randomUUID(), taskId: task.ref.id, executionId: attempt.executionId, sessionId, owner: session.createdBy, state: "boundary", reason };
         await this.store.writeJournal(key, control);
       }

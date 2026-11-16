@@ -1,9 +1,10 @@
 "use client";
 
-import type { AgentConnection } from "@/components/agent-providers";
+import type { AgentConnection } from "@/lib/agent-connection";
 import { appFetch, APP_SESSION_RESTORED } from "@hosty-sdk/app/browser-auth";
 import { openEventStream } from "./event-stream";
 import { loadBrowserAgentDefaults, type BrowserAgentDefaults } from "./browser-agent-preferences";
+import type { QuestionAnswers } from "../../../src/agent-providers/decision-identity";
 
 // App-local requests carry this document's app grant or same-origin cookie.
 // MCP delegation requires separate authority on the server.
@@ -44,8 +45,8 @@ export type AssistantSession = {
   handoffDispatch?: { id: string; state: string; error?: string };
   id: string;
   connectionId?: string;
-  connectionRevision?: number;
-  harnessKind?: "claude" | "codex" | "ollama";
+  connectionRevision?: string | number;
+  harnessKind?: "agent" | "claude" | "codex" | "ollama";
   providerLocked?: boolean;
   title: string | null;
   status: string;
@@ -229,13 +230,12 @@ export async function resolveApproval(
 }
 
 /**
- * Answers a pending question. `answers` is keyed by **question text**, which is the gateway's and
- * the harness's own keying — there is no index correlation anywhere in the chain.
+ * Answers use stable question/option IDs when supplied by the provider. Legacy text keys remain valid.
  */
 export async function resolveQuestion(
   sessionId: string,
   questionId: string,
-  answers: Record<string, string>,
+  answers: QuestionAnswers,
 ): Promise<void> {
   await call(`/sessions/${encodeURIComponent(sessionId)}/questions/${encodeURIComponent(questionId)}`, {
     method: "POST",
@@ -441,8 +441,8 @@ export async function setSessionModel(id: string, selection: NonNullable<Assista
   return (await call(`/sessions/${encodeURIComponent(id)}/model`, { method: "PUT", body: JSON.stringify({ selection, expectedRevision }) })).json() as Promise<AssistantSession>;
 }
 
-export type ExecutionRecoveryRequest = { requestId: string; runId: string; generation: string; expectedRevision: number; consumerExitConfirmed: true };
-export type ExecutionRecoveryReview = { runId: string; generation: string; expectedRevision: number; recoverable: boolean; sourceOnly?: boolean; pending?: ExecutionRecoveryRequest };
+export type ExecutionRecoveryRequest = { requestId: string; runId: string; generation: string; expectedRevision: string | number; consumerExitConfirmed: true };
+export type ExecutionRecoveryReview = { runId: string; generation: string; expectedRevision: string | number; recoverable: boolean; sourceOnly?: boolean; pending?: ExecutionRecoveryRequest };
 export async function getExecutionRecovery(id: string): Promise<ExecutionRecoveryReview | null> {
   return (await call(`/sessions/${encodeURIComponent(id)}/execution-recovery`)).json();
 }

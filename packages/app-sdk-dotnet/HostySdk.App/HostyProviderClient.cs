@@ -35,7 +35,7 @@ public sealed class HostyProviderException(string code, string message, int stat
 /// <summary>Server-side discovery, speech/translation consumption and provider authorization. Never expose its service token to clients.</summary>
 /// <param name="http">An HTTP client with automatic redirects disabled and a suitable inference timeout.</param>
 /// <param name="options">The consuming or providing app's Core credentials.</param>
-public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options)
+public sealed partial class HostyProviderClient(HttpClient http, HostyAppOptions options)
 {
     /// <summary>Use only the task's bound workspace; the response is its source/association or activity projection.</summary>
     public Task<JsonElement> TaskWorkspaceAsync(HostyTaskWorkspaceRequest input, CancellationToken cancellationToken = default)
@@ -109,6 +109,11 @@ public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options
         if (result.Version != 2 || result.Kind != kind || result.Key != key || result.Operation != input.Operation
             || string.IsNullOrWhiteSpace(result.UserId) || string.IsNullOrWhiteSpace(result.PrincipalId) || result.ResourceIds is null)
             throw new HostyProviderException("token_invalid", "Core returned an invalid mediated invocation.", 401);
+        if (input.Operation == "session.workflow" && (kind != "task-executor" || result.AgentExecution is not { } execution
+            || !Guid.TryParse(execution.SessionId, out _) || !Guid.TryParse(execution.RunId, out _)
+            || execution.Provider is null || string.IsNullOrWhiteSpace(execution.Provider.AppId) || string.IsNullOrWhiteSpace(execution.Provider.InstallationId)
+            || string.IsNullOrWhiteSpace(execution.Provider.Key)))
+            throw new HostyProviderException("token_invalid", "Core returned no exact native execution for this workflow.", 401);
         return result;
     }
 
@@ -240,7 +245,7 @@ public sealed class HostyProviderClient(HttpClient http, HostyAppOptions options
     }
     private static void RequireKind(string kind)
     {
-        if (kind is not ("speech-to-text" or "assistant" or "translation" or "tasks" or "task-executor" or "conversation-history" or "agent-sessions")) throw new ArgumentException("Unknown provider category.", nameof(kind));
+        if (kind is not ("speech-to-text" or "assistant" or "translation" or "tasks" or "task-executor" or "conversation-history" or "agent-sessions" or "agent")) throw new ArgumentException("Unknown provider category.", nameof(kind));
     }
 }
 
@@ -256,8 +261,20 @@ internal sealed record MediatedProviderValidation(string Token, string Kind, str
 public record HostyMediatedProviderRequest(string Operation, string Method, string Path, ReadOnlyMemory<byte> Body);
 /// <summary>The current original caller. Direct principals have no fabricated application identity.</summary>
 public record HostyMediatedProviderInvocation(int Version, string UserId, string HostRole, string PrincipalId,
-    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, HostyHistoryExportScope? Export = null, HostyTaskDispatchRef? TaskDispatch = null, HostyTaskExecutorDelegation? TaskDelegation = null, HostyTaskWorkflowBinding? TaskWorkflow = null);
+    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, HostyHistoryExportScope? Export = null, HostyTaskDispatchRef? TaskDispatch = null, HostyTaskExecutorDelegation? TaskDelegation = null, HostyTaskWorkflowBinding? TaskWorkflow = null, HostyAgentWorkflowInvocation? AgentExecution = null);
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+[JsonSerializable(typeof(HostyAgentWorkflowRequest))]
+[JsonSerializable(typeof(HostyAgentAuthorize))]
+[JsonSerializable(typeof(HostyAgentAuthorization))]
+[JsonSerializable(typeof(HostyAgentInvocation))]
+[JsonSerializable(typeof(HostyAgentIntrospection))]
+[JsonSerializable(typeof(HostyAgentAdmission))]
+[JsonSerializable(typeof(HostyAgentMcpTokenRequest))]
+[JsonSerializable(typeof(HostyAgentMcpToken))]
+[JsonSerializable(typeof(HostyAgentSkillSnapshotRequest))]
+[JsonSerializable(typeof(HostyAgentSkillSnapshot))]
+[JsonSerializable(typeof(HostyAgentWorkspaceRequest))]
+[JsonSerializable(typeof(HostyAgentWorkspace))]
 [JsonSerializable(typeof(ProviderList))]
 [JsonSerializable(typeof(TaskDispatchSelection))]
 [JsonSerializable(typeof(HostyTaskDispatchRequest))]

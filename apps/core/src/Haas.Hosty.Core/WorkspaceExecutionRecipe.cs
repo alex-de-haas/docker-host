@@ -23,10 +23,9 @@ internal sealed partial class CoreLifecycleService
         var tree = await DevWorkspaces.Read(request.WorktreeId, null, ct);
         if (tree.WorkspaceId != workspaceId)
             throw DevError("workspace_forbidden", "Select a worktree registered in this workspace.");
-        await DevWorkspaces.CheckDevTreeAsync(tree, app, WorkspaceOwner.ForExternal(userId, principal ?? "operator", request.RequestId, "Runtime recipe"), ct);
-        var installed = await manifests.LoadAsync(app.ManifestPath!, request.Runtime, ct);
-        if (!installed.RuntimeProfile.Development)
-            throw DevError("recipe_invalid", "Choose an installed development recipe for workspace source.");
+        var actor = WorkspaceOwner.ForExternal(userId, principal ?? "operator", request.RequestId, "Runtime recipe");
+        await DevWorkspaces.CheckDevTreeAsync(tree, app, actor, ct);
+        _ = await PrepareExecutionCandidateAsync(app, tree.Path, request.Runtime, new(userId, "workspace-recipe", actor), ct);
         var path = WorkspaceSelectionPath(app.Id, tree.WorkspaceId);
         var current = await ReadWorkspaceSelectionAsync(app.Id, tree.WorkspaceId, ct);
         var prior = current?.Receipts.FirstOrDefault(r => r.Request.RequestId == request.RequestId);

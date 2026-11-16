@@ -5,7 +5,7 @@ import { loadBrowserAgentDefaults } from "./browser-agent-preferences";
 
 vi.mock("@hosty-sdk/app/browser-auth", () => ({ appFetch: vi.fn(), APP_SESSION_RESTORED: "restored" }));
 vi.mock("./browser-agent-preferences", () => ({ loadBrowserAgentDefaults: vi.fn() }));
-const defaults = { models: { account: { model: "model", reasoningEffort: "high" } }, autonomy: "autonomous" as const };
+const defaults = { ownerId: "owner", connectionId: "account", models: { account: { model: "model", reasoningEffort: "high" } }, autonomy: "autonomous" as const };
 beforeEach(() => {
   vi.mocked(appFetch).mockImplementation(async () => Response.json({ id: "created", createdBy: "owner" }));
   vi.mocked(loadBrowserAgentDefaults).mockResolvedValue(defaults);

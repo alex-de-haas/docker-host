@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { ALL_JOBS, BASE_JOBS, fullPlan, evaluateGate } from './ci-policy.mjs';
 
 const workflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
@@ -50,4 +51,21 @@ test('GitHub workflows cannot schedule the removed local integration suites', ()
     assert.doesNotMatch(text, /check-workspace-activation\.py|check-docker-core-transport\.py|check-harness-worker\.mjs|HOSTY_WHISPER_INTEGRATION|npm run test:integration/, name);
   }
   assert.match(jobs['ci-policy'], /scripts\/test-integration\.test\.mjs/);
+});
+
+
+test('provider CI installs one isolated closure and runs the common suite once', () => {
+  assert.ok(jobs['agent-providers']);
+  for (const slug of ['codex-provider', 'claude-code-provider', 'ollama-provider']) assert.equal(jobs[slug], undefined);
+  assert.match(jobs['agent-providers'], /node scripts\/ci-agent-providers\.mjs/);
+  assert.match(jobs['agent-providers'], /CI_PLAN: \$\{\{ needs\.changes\.outputs\.plan \}\}/);
+  assert.match(jobs['agent-providers'], /Older qualified source/);
+  assert.doesNotMatch(jobs['agent-providers'], /continue-on-error/);
+});
+
+
+test('provider current-source and historical fallback shell is valid before either branch executes', () => {
+  const block = jobs['agent-providers'].match(/        run: \|\n([\s\S]*)/)[1].replace(/^ {10}/gm, '');
+  const result = spawnSync('bash', ['-n'], { input: block, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
 });

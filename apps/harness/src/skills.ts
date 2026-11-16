@@ -11,6 +11,7 @@ export interface SkillCatalog { skills: SharedSkill[] }
 export interface SkillExport { id: string; path: string; skills: SharedSkill[];
   platformIntroduction?: { skillId: string; coreVersion: string; path: string; text: string } | null;
 }
+export type PlatformSkillContext = { skillId: string; coreVersion: string; path: string; text: string };
 export const validSkillIds = (value: unknown): value is string[] =>
   // Core contributes two built-ins in addition to the 200-package managed library.
   Array.isArray(value) && value.length <= 202 && value.every(id => typeof id === "string" && /^[a-f0-9]{64}$/.test(id)) && new Set(value).size === value.length;
@@ -87,4 +88,27 @@ export async function prepareSkills(contextId: string, store: SettingsStore, sel
         skill.coreVersion === intro.coreVersion && skill.introductionPath === intro.path)))
     throw new Error("Core returned invalid platform context.");
   return result;
+}
+
+/** Harness explicitly selects platform guidance; independent provider callers have no such default. */
+export async function platformSkillContext(): Promise<PlatformSkillContext | undefined> {
+  if (!hasSkillLibrary()) return undefined;
+  const catalog = await skillRequest<SkillCatalog>("/");
+  const matches = catalog.skills.filter(skill => skill.sourceKind === "core" && skill.introductionPath);
+  if (matches.length !== 1) throw new Error("Core platform guidance is unavailable or ambiguous.");
+  const skill = matches[0]!;
+  if (!/^[a-f0-9]{64}$/.test(skill.id) || !skill.coreVersion || typeof skill.introductionPath !== "string")
+    throw new Error("Core returned invalid platform guidance metadata.");
+  const content = await skillRequest<{ skill: SharedSkill; path: string; content: string; files: string[] }>(
+    `/${skill.id}/content?path=${encodeURIComponent(skill.introductionPath)}`);
+  if (content.skill.id !== skill.id || content.skill.sourceKind !== "core" || content.skill.coreVersion !== skill.coreVersion
+    || content.skill.introductionPath !== skill.introductionPath || content.path !== skill.introductionPath
+    || typeof content.content !== "string" || !Array.isArray(content.files) || !content.files.includes(content.path))
+    throw new Error("Core platform guidance changed while preparing this conversation.");
+  const bytes = Buffer.from(content.content, "base64");
+  if (!bytes.length || bytes.length > 8000 || bytes.toString("base64") !== content.content)
+    throw new Error("Core returned invalid platform introduction bytes.");
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes).trim();
+  if (!text) throw new Error("Core returned an empty platform introduction.");
+  return { skillId: skill.id, coreVersion: skill.coreVersion, path: content.path, text };
 }

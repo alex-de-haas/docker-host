@@ -1,0 +1,18 @@
+Claude Spark logo
+
+Source: https://www.anthropic.com/press-kit
+Official archive: https://www-cdn.anthropic.com/ae59ca4ca194dac9c9dc3bc78c5829468cb0e8af.zip
+Archive member: Anthropic media resources/Anthropic logos/Claude logos/3 Claude Spark/SVG/Claude Spark - Clay.svg
+Retrieved: 2026-11-13
+vendor-logo.svg retains the official Claude Spark Clay SVG byte-for-byte.
+icon.svg presents its original mark on a 64 by 64 white rounded tile,
+with proportional fit and padding. The original paths, clay color and
+proportions are unchanged.
+
+Claude, Claude Code and the Claude Spark logo are trademarks of Anthropic.
+All rights in the logo remain with Anthropic. It identifies the supported
+Claude Code service in this independent Hosty integration. It does not imply
+sponsorship, endorsement or affiliation with Anthropic.
+
+Trademark guidelines: https://www.anthropic.com/legal/trademark-guidelines
+This third-party mark is not licensed under the repository's AGPL license.

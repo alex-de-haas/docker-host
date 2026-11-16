@@ -11,7 +11,6 @@ import { pullRequestsRoute, requestPullRequests } from "./pull-requests-proxy.js
 import { TaskService } from "./tasks/service.js";
 import { isSkillManagementRoute, manageSkills, migrateSkillSelection, validSkillIds } from "./skills.js";
 import { createHash } from "node:crypto";
-import { WorkerApiError } from "./worker/contracts.js";
 import { EventStreamTransport } from "./event-stream-transport.js";
 import type { ConnectionService } from "./connections/service.js";
 import { WorkerError } from "./runtime/errors.js";
@@ -20,13 +19,12 @@ import { createHostyUiResponse } from "@hosty-sdk/app/ui/server";
 import { readOwnPermissionNotice } from "@hosty-sdk/app/permissions/server";
 import { delegationCredential } from "./session-delegation.js";
 import { speechRoute } from "./speech.js";
-import { translationRoute } from "./translation/routes.js";
-import { isTranslationKind, TranslationService } from "./translation/service.js";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type ProviderInvocation } from "@hosty-sdk/app/providers";
 import { HandoffStore } from "./handoff/store.js";
 import { ConnectionError } from "./connections/errors.js";
-import type { AgentConnections } from "./connections/registry.js";
+import { AgentApiError } from "@hosty-sdk/app/agent";
+import { withAgentAuthority } from "./agent-providers/context.js";
 import { AppContextError, readContextApps, parseAppIds, captureContext, contextFromRoster } from "./sessions/app-context.js";
 import { AttachmentRefusedError, listAttachments, storeAttachment, type AttachmentRefusal } from "./sessions/attachments.js";
 import { pipeline } from "node:stream/promises";
@@ -89,10 +87,9 @@ export function createGatewayServer(
   const promptTemplates = new PromptTemplateStore(manager.store.dataDir);
   const handoffs = new HandoffStore(manager, settings, providers);
   const eventStreams = new EventStreamTransport(manager, Date.now, connections, tasks);
-  const translations = connections && settings ? new TranslationService(connections, settings) : null;
   const recovered = (async () => {
     const stages: Array<[string, () => Promise<unknown>]> = [
-      ["handoffs", () => handoffs.sweep()], ["runs", () => manager.recoverWorkerRuns()],
+      ["handoffs", () => handoffs.sweep()], ["runs", () => manager.recoverProviderRuns()],
       ["approvals", () => manager.recoverMcpApprovals()], ["queue", () => manager.recoverMessageQueues()],
     ];
     for (const [stage, recover] of stages) {
@@ -106,15 +103,19 @@ export function createGatewayServer(
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
   const server = createServer((request, response) => {
-    void recovered.then(async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, translations, eventStreams, tasks, feedback, history, execution, promptTemplates); }).catch((error) => {
+    void recovered.then(() => withAgentAuthority(async () => {
+      const credential = readAppCredential(request) ?? request.headers.authorization?.match(/^Bearer (\S+)$/)?.[1];
+      if (!credential) throw new AgentApiError("actor_required", "Sign in through Core before using a provider.", 401);
+      return credential;
+    }, async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, eventStreams, tasks, feedback, history, execution, promptTemplates); })).catch((error) => {
       if (response.destroyed) return;
-      if (error instanceof ProviderError || error instanceof FeedbackError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
+      if (error instanceof ProviderError || error instanceof AgentApiError || error instanceof FeedbackError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionStorageError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionBusyError) {
         sendJson(response, 409, { code: "session_busy", message: error.message });
         return;
       }
-      if (error instanceof DecisionError || error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError || error instanceof WorkerApiError) {
+      if (error instanceof DecisionError || error instanceof AppContextError || error instanceof ConnectionError || error instanceof WorkerError) {
         sendJson(response, error.status, { code: error.code, message: error.message });
         return;
       }
@@ -155,7 +156,6 @@ async function route(
   facade: McpFacade | null,
   connections: ConnectionService | null,
   handoffs: HandoffStore,
-  translations: TranslationService | null,
   eventStreams: EventStreamTransport,
   tasks: TaskService,
   feedback: FeedbackService,
@@ -173,7 +173,6 @@ async function route(
   }
 
   // This surface accepts only its exact Core provider credential, never operator cookies.
-  if (await translationRoute(request, response, url, translations)) return;
   if (await historyRoute(request, response, url, history)) return;
   if (await agentSessionRoute(request, response, url, execution)) return;
 
@@ -194,7 +193,8 @@ async function route(
   }
 
   if (method === "GET" && url.pathname === "/healthz") {
-    const health = connections ? await connections.summary() : { name: adapter.name, capabilities: { ...adapter.capabilities, appContext: true }, ...await adapter.probe() };
+    const health = connections?.remote ? { name: "Agent providers", available: true }
+      : connections ? await connections.summary() : { name: adapter.name, capabilities: { ...adapter.capabilities, appContext: true }, ...await adapter.probe() };
     sendJson(response, 200, {
       status: "ok",
       harness: health,
@@ -415,15 +415,6 @@ async function route(
 
   if (await speechRoute(request, response, url)) return;
 
-  if (url.pathname === "/api/settings/translation" && translations && method === "GET") {
-    sendJson(response, 200, await translations.configuration()); return;
-  }
-  const translationSetting = url.pathname.match(/^\/api\/settings\/translation\/(codex|claude)$/);
-  if (translationSetting && translations && method === "PUT" && isTranslationKind(translationSetting[1]!)) {
-    const body = await readJson(request);
-    sendJson(response, 200, await translations.configure(translationSetting[1], body.connectionId, body.model)); return;
-  }
-
   if (url.pathname === "/api/assistant/v1/handoffs" && method === "POST") {
     const prepared = await handoffs.prepare(actor.userId, await readJson(request), consumer);
     sendJson(response, prepared.created ? 201 : 200, prepared.value); return;
@@ -516,6 +507,7 @@ async function route(
 
   if (connections && url.pathname === "/api/connections") {
     if (method === "GET") { sendJson(response, 200, await connections.list()); return; }
+    if (connections.remote) throw new ConnectionError(409, "provider_owned", "Manage accounts in the provider application's Settings entry in Shell.");
     if (method === "POST") { sendJson(response, 201, await connections.update(await readJson(request))); return; }
   }
   if (connections && url.pathname === "/api/connections/default" && method === "PUT") {
@@ -523,12 +515,15 @@ async function route(
   }
   const loginMatch = url.pathname.match(/^\/api\/provider-logins\/([a-zA-Z0-9-]+)$/);
   if (connections && loginMatch) {
+    if (connections.remote) throw new ConnectionError(409, "provider_owned", "Sign in through the provider application's Settings entry in Shell.");
     if (method === "DELETE") await connections.cancelLogin(loginMatch[1]!);
     if (method === "GET" || method === "DELETE") { sendJson(response, 200, await connections.fetchLogin(loginMatch[1]!)); return; }
   }
   const connectionMatch = url.pathname.match(/^\/api\/connections\/([a-zA-Z0-9-]+)(\/test|\/login|\/prepare-docker)?$/);
   if (connections && connectionMatch) {
     const id = connectionMatch[1]!; const action = connectionMatch[2] ?? "";
+    if (connections.remote && (action !== "/test" || method !== "POST"))
+      throw new ConnectionError(409, "provider_owned", "Manage accounts in the provider application's Settings entry in Shell.");
     if (method !== "GET" && action !== "/test") await manager.assertWorkerProviderInactive(id);
     if (action === "/prepare-docker" && method === "POST") {
       await manager.assertWorkerProviderInactive(id);
@@ -1044,10 +1039,10 @@ async function route(
   const questionMatch = rest.match(/^\/questions\/([a-zA-Z0-9-]+)$/);
   if (questionMatch && method === "POST") {
     const body = await readJson(request);
-    if (!isStringRecord(body.answers) || Object.keys(body.answers).length === 0) {
+    if (!isQuestionAnswers(body.answers) || Object.keys(body.answers).length === 0) {
       sendJson(response, 400, {
         code: "answers_required",
-        message: "answers must be a non-empty object keyed by question text.",
+        message: "answers must be a non-empty object of text or selected option ID arrays keyed by question ID.",
       });
       return;
     }
@@ -1358,6 +1353,13 @@ function isStringRecord(value: unknown): value is Record<string, string> {
     !Array.isArray(value) &&
     Object.values(value).every((entry) => typeof entry === "string")
   );
+}
+
+function isQuestionAnswers(value: unknown): value is import("./agent-providers/decision-identity.js").QuestionAnswers {
+  return !!value && typeof value === "object" && !Array.isArray(value) && Object.entries(value).length <= 16
+    && Object.entries(value).every(([key, answer]) => key.length > 0 && key.length <= 256
+      && (typeof answer === "string" && answer.length <= 32768 || Array.isArray(answer) && answer.length > 0 && answer.length <= 64
+        && answer.every(item => typeof item === "string" && item.length > 0 && item.length <= 32768)));
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {

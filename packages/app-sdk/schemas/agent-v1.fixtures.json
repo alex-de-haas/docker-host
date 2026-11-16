@@ -1,0 +1,166 @@
+{
+  "schemaVersion": "agent-fixtures.1",
+  "provider": {
+    "appId": "org.example.unrelated",
+    "installationId": "installation-1",
+    "key": "execution"
+  },
+  "validRequests": [
+    {
+      "method": "PUT",
+      "path": "/sessions/11111111-1111-4111-8111-111111111111",
+      "body": {
+        "configuration": {
+          "connection": {
+            "id": "unrelated-account",
+            "revision": "1"
+          }
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/sessions/11111111-1111-4111-8111-111111111111/runs/22222222-2222-4222-8222-222222222222",
+      "body": {
+        "expectedSessionRevision": "1",
+        "configurationRevision": "1",
+        "continuation": "start",
+        "input": {
+          "text": "Independent consumer input"
+        },
+        "mcp": {
+          "targets": []
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/cancel",
+      "body": {
+        "requestId": "44444444-4444-4444-8444-444444444444",
+        "expectedGeneration": "33333333-3333-4333-8333-333333333333",
+        "expectedRevision": "1"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/cancel",
+      "body": {
+        "requestId": "44444444-4444-4444-8444-444444444444",
+        "fenceIfNotAdmitted": {
+          "sessionId": "11111111-1111-4111-8111-111111111111",
+          "startDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/responses",
+      "body": {
+        "requestId": "44444444-4444-4444-8444-444444444444",
+        "expectedGeneration": "33333333-3333-4333-8333-333333333333",
+        "expectedRevision": "1",
+        "decisionId": "question-1",
+        "decisionRevision": "1",
+        "response": {
+          "kind": "question",
+          "answers": {
+            "choice": "option-1"
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/controls",
+      "body": {
+        "requestId": "44444444-4444-4444-8444-444444444444",
+        "expectedGeneration": "33333333-3333-4333-8333-333333333333",
+        "expectedRevision": "1",
+        "command": "barrier",
+        "barrierId": "barrier-1",
+        "kind": "source_rebind",
+        "generation": "1",
+        "acknowledgedSequence": "8"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/attachments/44444444-4444-4444-8444-444444444444/chunks/0",
+      "body": {
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sizeBytes": 1,
+        "mediaType": "text/plain",
+        "count": 1,
+        "data": "YQ=="
+      }
+    }
+  ],
+  "invalidRequests": [
+    {
+      "method": "PUT",
+      "path": "/sessions/11111111-1111-4111-8111-111111111111",
+      "body": {
+        "configuration": {
+          "connection": {
+            "id": "unrelated-account",
+            "revision": "1"
+          }
+        },
+        "userId": "administrator"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/sessions/11111111-1111-4111-8111-111111111111/runs/22222222-2222-4222-8222-222222222222",
+      "body": {
+        "expectedSessionRevision": "1",
+        "configurationRevision": "1",
+        "continuation": "start",
+        "input": {
+          "text": "Independent consumer input"
+        },
+        "mcp": {
+          "targets": [
+            {
+              "target": {
+                "kind": "core"
+              },
+              "headers": {
+                "authorization": "not-authority"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/cancel",
+      "body": {
+        "requestId": "44444444-4444-4444-8444-444444444444",
+        "expectedGeneration": "33333333-3333-4333-8333-333333333333",
+        "expectedRevision": "1",
+        "fenceIfNotAdmitted": {
+          "sessionId": "11111111-1111-4111-8111-111111111111",
+          "startDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/responses",
+      "body": {
+        "requestId": "44444444-4444-4444-8444-444444444444",
+        "expectedGeneration": "33333333-3333-4333-8333-333333333333",
+        "expectedRevision": "1",
+        "decisionId": "question-1",
+        "decisionRevision": "1",
+        "response": {
+          "kind": "tool_result",
+          "output": "fabricated"
+        }
+      }
+    }
+  ]
+}

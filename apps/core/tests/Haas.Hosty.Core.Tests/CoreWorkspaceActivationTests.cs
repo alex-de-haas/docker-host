@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Haas.Hosty.Core;
 using Haas.Hosty.Launch;
 
@@ -17,6 +18,49 @@ public sealed partial class CoreLifecycleServiceTests
         await File.WriteAllTextAsync(project, "<Project />");
         await RunGitAsync(remote, ["add", "."]);
         await RunGitAsync(remote, ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "Core fixture"]);
+    }
+
+    private static async Task WriteActivationManifestAsync(LifecycleFixture f, string repository, string appId,
+        params string[] developmentProfiles)
+    {
+        var app = (await f.Apps.GetAppAsync(SourceTestApp))!;
+        var manifest = JsonNode.Parse(await File.ReadAllTextAsync(app.ManifestPath!))!.AsObject();
+        manifest["id"] = appId;
+        manifest["source"]!["repository"] = repository;
+        foreach (var key in developmentProfiles)
+        {
+            var local = key == "native";
+            manifest["runtimeProfiles"]!.AsArray().Add(new JsonObject
+            {
+                ["key"] = key, ["type"] = local ? "localCommand" : "docker", ["development"] = true
+            });
+            foreach (var service in manifest["services"]!.AsArray())
+            {
+                var runtime = service!["runtimes"]!["docker"]!.DeepClone().AsObject();
+                if (local)
+                {
+                    runtime.Remove("image");
+                    runtime["type"] = "localCommand";
+                    runtime["workingDirectory"] = ".";
+                    runtime["command"] = "node activation-fixture.mjs";
+                }
+                else
+                {
+                    runtime["image"] = "node:24";
+                    runtime["sourceMount"] = new JsonObject { ["path"] = ".", ["target"] = "/workspace", ["mode"] = "ro" };
+                    runtime["workingDirectory"] = ".";
+                    runtime["command"] = "node activation-fixture.mjs";
+                }
+                service["runtimes"]![key] = runtime;
+            }
+        }
+        manifest["data"] = new JsonObject { ["enabled"] = false };
+        var manifestPath = Path.Combine(repository, "manifest.json");
+        await File.WriteAllTextAsync(manifestPath, manifest.ToJsonString());
+        await new AppManifestService().LoadAsync(manifestPath, developmentProfiles.FirstOrDefault(), default, forceRead: true);
+        await File.WriteAllTextAsync(Path.Combine(repository, "activation-fixture.mjs"), "export {};\n");
+        await RunGitAsync(repository, ["add", "manifest.json", "activation-fixture.mjs"]);
+        await RunGitAsync(repository, ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "Activation recipes fixture"]);
     }
 
     [Fact]
@@ -51,6 +95,7 @@ public sealed partial class CoreLifecycleServiceTests
     public async Task Activation_UsesExplicitAppsAndRepositoryMatchedOptionalCore()
     {
         var (f, remote) = await SourceFixtureAsync();
+        await WriteActivationManifestAsync(f, remote, SourceTestApp, "dev");
         await AddCoreProject(remote);
         var git = new RemoteGitFixture(remote);
         var core = CoreSourceService(f, git);
@@ -174,7 +219,8 @@ public sealed partial class CoreLifecycleServiceTests
     [Fact]
     public async Task Activation_MultipleRepositoriesAndUnsupportedOrReinstalledBindingsStayExplicit()
     {
-        var (f, _) = await SourceFixtureAsync();
+        var (f, repository) = await SourceFixtureAsync();
+        await WriteActivationManifestAsync(f, repository, SourceTestApp, "dev");
         var core = CoreSourceService(f);
         var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
         var owner = ExternalOwner();
@@ -182,6 +228,7 @@ public sealed partial class CoreLifecycleServiceTests
         var app = (await f.Apps.GetAppAsync(SourceTestApp))!;
         await f.Apps.UpsertAppAsync(app with { RuntimeProfiles = [new("dev", "docker", false, true)] });
         var remote = await CreateGitRepositoryAsync(Path.Combine(f.Root, "second"));
+        await WriteActivationManifestAsync(f, remote, "example.second");
         await f.Apps.UpsertAppAsync(app with { Id = "example.second",
             SourceState = app.SourceState! with { Repository = remote, LocalOverridePath = remote },
             RuntimeProfiles = [] });
@@ -201,7 +248,8 @@ public sealed partial class CoreLifecycleServiceTests
     [Fact]
     public async Task Activation_SourceRebindingRequiresExplicitWorktreeChoice()
     {
-        var (f, _) = await SourceFixtureAsync();
+        var (f, repository) = await SourceFixtureAsync();
+        await WriteActivationManifestAsync(f, repository, SourceTestApp, "dev");
         var app = (await f.Apps.GetAppAsync(SourceTestApp))!;
         app = app with { RuntimeProfiles = [new("dev", "docker", false, true)] };
         await f.Apps.UpsertAppAsync(app);
@@ -209,6 +257,7 @@ public sealed partial class CoreLifecycleServiceTests
         var owner = ExternalOwner();
         var first = await service.PrepareAsync(owner, ExternalPrepare(), default);
         var remote = await CreateGitRepositoryAsync(Path.Combine(f.Root, "second-source"));
+        await WriteActivationManifestAsync(f, remote, SourceTestApp, "dev");
         await f.Apps.UpsertAppAsync(app with { SourceState = app.SourceState! with { Repository = remote, LocalOverridePath = remote } });
         var second = await service.PrepareAsync(owner, ExternalPrepare(), default);
         var planner = new WorkspaceActivationPlanner(service, new(service, f.Apps, f.Clock), f.Apps, CoreSourceService(f));
@@ -224,7 +273,8 @@ public sealed partial class CoreLifecycleServiceTests
     [Fact]
     public async Task Activation_AmbiguousProfilesRequireChoiceAndPreserveAppDataAndDirtySource()
     {
-        var (f, _) = await SourceFixtureAsync();
+        var (f, repository) = await SourceFixtureAsync();
+        await WriteActivationManifestAsync(f, repository, SourceTestApp, "dev", "native");
         var core = CoreSourceService(f);
         var app = (await f.Apps.GetAppAsync(SourceTestApp))!;
         await f.Apps.UpsertAppAsync(app with { RuntimeProfiles = [new("dev", "docker", false, true), new("native", "localCommand", false, true)] });
@@ -242,8 +292,9 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(app.SelectedRuntime, (await f.Apps.GetAppAsync(SourceTestApp))!.SelectedRuntime);
         Assert.Equal(app.RuntimeState, (await f.Apps.GetAppAsync(SourceTestApp))!.RuntimeState);
         Assert.Equal("unfinished", await File.ReadAllTextAsync(file));
+        // A declared release recipe reaches development-profile admission, rather than missing-manifest validation.
         await Assert.ThrowsAsync<ArgumentException>(() => planner.PlanAsync(tree.WorkspaceId, "admin",
-            new(Apps: [new(SourceTestApp, Runtime: "production")]), default));
+            new(Apps: [new(SourceTestApp, Runtime: "docker")]), default));
         await Assert.ThrowsAsync<ArgumentException>(() => planner.PlanAsync(tree.WorkspaceId, "admin",
             new(CoreWorktreeId: tree.Id), default));
         await Assert.ThrowsAsync<ArgumentException>(() => planner.PlanAsync(tree.WorkspaceId, "admin",

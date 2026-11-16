@@ -10,11 +10,12 @@ import { FakeHarnessAdapter } from "../harness/fake.js";
 import { AuditReporter } from "../audit.js";
 import type { ConnectionService } from "../connections/service.js";
 import type { AgentProfileConfig } from "./types.js";
+import { agentSelectionId } from "../agent-providers/directory.js";
 const skill = "a".repeat(64);
 const config = (name: string): AgentProfileConfig => ({ name, description: name, instructions: `Role: ${name}`, connectionId: "account", model: "model-one", reasoningEffort: "high", skillIds: [skill] });
 let dir: string, profiles: ProfileStore, settings: SettingsStore, store: SessionStore, adapter: FakeHarnessAdapter, manager: SessionManager;
 let missingProvider = false;
-const connections = { binding: async (id?: unknown) => { if (missingProvider) throw new Error("Provider removed"); return { connectionId: id ?? "account", connectionRevision: 1, harnessKind: "claude" }; },
+const connections = { list: async () => ({ connections: [], defaultId: null }), binding: async (id?: unknown) => { if (missingProvider) throw new Error("Provider removed"); return { connectionId: id ?? "account", connectionRevision: 1, harnessKind: "claude" }; },
   models: async () => ({ revision: "models", defaultModel: "model-one", models: [{ id: "model-one", label: "One", efforts: [{ id: "high", label: "High" }] }] }),
   reserve: async () => () => {}, adapter: async () => adapter } as unknown as ConnectionService;
 function open() { return new SessionManager(store, adapter, new AuditReporter(null, null, "hosty.harness"), dir, settings, null, null, null, null, null, connections, null, null, undefined, profiles); }
@@ -194,4 +195,120 @@ it("does not apply browser preferences to an admitted task session", async () =>
 it.each([undefined, "previous-account"])("ignores browser settings whose owner does not match the creator: %s", async ownerId => {
   const session = await manager.createSession({ createdBy: "admin", profileId: null, browserDefaults: { ...remembered, ownerId } });
   expect(session.executionSelection).toBeUndefined(); expect(session.autonomy).toBeUndefined();
+});
+
+
+it("uses the last qualified available provider and its model pair without configuring a shared default", async () => {
+  const directory = await profiles.read(); await profiles.setDefault(null, directory.revision);
+  const selection = { provider: { appId: "independent.agent", installationId: "installation-a", key: "coding" }, connection: { id: "personal-account", revision: "7" } };
+  const connectionId = agentSelectionId(selection);
+  const list = vi.spyOn(connections, "list").mockResolvedValue({ defaultId: null, connections: [
+    { id: connectionId, name: "Personal", kind: "agent", revision: "7", available: true },
+  ] });
+  const binding = vi.spyOn(connections, "binding").mockImplementation(async id => id === connectionId
+    ? { connectionId, connectionRevision: "7", harnessKind: "agent", selection } : null);
+  const before = await settings.read(), profileBefore = await profiles.read();
+  const session = await manager.createSession({ createdBy: "admin", browserDefaults: { ownerId: "admin", connectionId,
+    models: { [connectionId]: { model: "model-one", reasoningEffort: "high" } } } });
+  expect(session).toMatchObject({ agentProfile: null, connectionId, connectionRevision: "7", selection,
+    executionSelection: { model: "model-one", reasoningEffort: "high" } });
+  expect(await store.readRecord(session.id)).toMatchObject({ connectionId, selection });
+  expect(list).toHaveBeenCalledOnce(); expect(binding).toHaveBeenCalledExactlyOnceWith(connectionId);
+  expect(adapter.lastStart).toBeNull(); expect(await settings.read()).toEqual(before); expect(await profiles.read()).toEqual(profileBefore);
+});
+
+it("keeps default and explicit profiles, including inherited provider defaults, ahead of provider hints", async () => {
+  let directory = await profiles.read();
+  const original = directory.profiles[0]!;
+  directory = await profiles.save({ ...config("Inherited"), connectionId: null }, directory.revision, original.id);
+  const profile = directory.profiles.find(value => value.id === original.id)!;
+  const list = vi.spyOn(connections, "list");
+  for (const choice of [{}, { profileId: profile.id, profileRevision: profile.revision }]) {
+    const session = await manager.createSession({ createdBy: "admin", ...choice, browserDefaults: { ownerId: "admin", connectionId: "other" } });
+    expect(session).toMatchObject({ agentProfile: { id: profile.id, connectionId: null }, connectionId: "account" });
+  }
+  expect(list).not.toHaveBeenCalled();
+});
+
+it.each(["other", null])("preserves explicit provider choice %s instead of the remembered provider", async connectionId => {
+  const original = connections.binding.bind(connections);
+  vi.spyOn(connections, "binding").mockImplementation(async id => id === null ? null : original(id));
+  const list = vi.spyOn(connections, "list");
+  const session = await manager.createSession({ createdBy: "admin", connectionId,
+    browserDefaults: { ownerId: "admin", connectionId: "remembered" } });
+  expect(session.agentProfile).toBeNull();
+  expect(session.connectionId).toBe(connectionId ?? undefined);
+  expect(list).not.toHaveBeenCalled();
+});
+
+it.each([undefined, "another-user"])("does not use another identity's provider hint: %s", async ownerId => {
+  const list = vi.spyOn(connections, "list");
+  const session = await manager.createSession({ createdBy: "admin", profileId: null, browserDefaults: { ownerId, connectionId: "other" } });
+  expect(session.connectionId).toBe("account"); expect(list).not.toHaveBeenCalled();
+});
+
+it.each([null, 7, [], {}, "", "   ", "x".repeat(513)])("ignores a malformed optional provider hint: %j", async connectionId => {
+  const list = vi.spyOn(connections, "list");
+  const session = await manager.createSession({ createdBy: "admin", profileId: null, browserDefaults: { ownerId: "admin", connectionId } });
+  expect(session.connectionId).toBe("account"); expect(list).not.toHaveBeenCalled();
+});
+
+it.each(["unavailable", "missing", "directory-error"])("falls back to the existing default when the remembered provider is %s", async state => {
+  const list = vi.spyOn(connections, "list");
+  if (state === "directory-error") list.mockRejectedValue(new Error("Current directory denied"));
+  else list.mockResolvedValue({ defaultId: "account", connections: state === "missing" ? [] : [
+    { id: "remembered", name: "Remembered", kind: "agent", revision: "1", available: false },
+  ] });
+  const binding = vi.spyOn(connections, "binding");
+  const session = await manager.createSession({ createdBy: "admin", profileId: null, browserDefaults: { ownerId: "admin", connectionId: "remembered" } });
+  expect(session.connectionId).toBe("account"); expect(binding).toHaveBeenCalledExactlyOnceWith(undefined);
+});
+
+it.each(["account-revision", "provider-installation"])("never rebases an old provider hint after %s changes", async change => {
+  const old = { provider: { appId: "independent.agent", installationId: "first-installation", key: "coding" }, connection: { id: "same-account", revision: "1" } };
+  const replacement = structuredClone(old);
+  if (change === "account-revision") replacement.connection.revision = "2";
+  else replacement.provider.installationId = "replacement-installation";
+  const oldId = agentSelectionId(old), currentId = agentSelectionId(replacement);
+  expect(oldId).not.toBe(currentId);
+  vi.spyOn(connections, "list").mockResolvedValue({ defaultId: null, connections: [
+    { id: currentId, name: "Current account", kind: "agent", revision: replacement.connection.revision, available: true },
+  ] });
+  const binding = vi.spyOn(connections, "binding").mockResolvedValue(null);
+  const session = await manager.createSession({ createdBy: "admin", profileId: null, browserDefaults: { ownerId: "admin", connectionId: oldId } });
+  expect(session.connectionId).toBeUndefined(); expect(binding).toHaveBeenCalledExactlyOnceWith(undefined);
+});
+
+it("ignores provider hints for admitted task sessions", async () => {
+  const list = vi.spyOn(connections, "list");
+  const session = await manager.createSession({ createdBy: "admin", profileId: null, taskExecutionId: "prepared-attempt",
+    browserDefaults: { ownerId: "admin", connectionId: "other" } });
+  expect(session).toMatchObject({ connectionId: "account", taskExecutionId: "prepared-attempt" }); expect(list).not.toHaveBeenCalled();
+});
+
+it("replays the original accepted provider after the browser hint changes and discovery fails", async () => {
+  const list = vi.spyOn(connections, "list").mockResolvedValue({ defaultId: null, connections: [
+    { id: "remembered", name: "Remembered", kind: "agent", revision: "1", available: true },
+  ] });
+  const input = { createdBy: "admin", profileId: null, clientRequestId: "remembered-provider" };
+  const first = await manager.createSession({ ...input, browserDefaults: { ownerId: "admin", connectionId: "remembered" } });
+  list.mockRejectedValue(new Error("Discovery unavailable")); missingProvider = true;
+  const replay = await manager.createSession({ ...input, browserDefaults: { ownerId: "admin", connectionId: "different-provider" } });
+  expect(replay.id).toBe(first.id); expect(replay.connectionId).toBe("remembered"); expect(list).toHaveBeenCalledOnce();
+  expect(await store.listRecords()).toHaveLength(1);
+});
+
+it("falls back normally when a remembered provider changes after discovery but before binding", async () => {
+  vi.spyOn(connections, "list").mockResolvedValue({ defaultId: "account", connections: [
+    { id: "remembered", name: "Remembered", kind: "agent", revision: "1", available: true },
+  ] });
+  const original = connections.binding.bind(connections);
+  const binding = vi.spyOn(connections, "binding").mockImplementation(async id => {
+    if (id === "remembered") throw new Error("Provider installation/account authority changed");
+    return original(id);
+  });
+  const session = await manager.createSession({ createdBy: "admin", profileId: null,
+    browserDefaults: { ownerId: "admin", connectionId: "remembered" } });
+  expect(session.connectionId).toBe("account");
+  expect(binding.mock.calls).toEqual([["remembered"], [undefined]]);
 });

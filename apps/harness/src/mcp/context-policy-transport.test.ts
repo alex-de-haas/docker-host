@@ -7,11 +7,9 @@ import path from "node:path";
 import { DevelopmentMcp, DEVELOPMENT_PROVIDER, DEVELOPMENT_IDENTITY, developmentTools } from "../sessions/development.js";
 import { SettingsStore } from "../settings/store.js";
 import { McpToolPolicy, ruleKey, type ToolMode } from "./policy.js";
-import { toCodexMcpConfig, tokenEnvVar } from "../harness/codex-mcp.js";
 
-const cases = ["claude", "codex"].flatMap(provider => [false, true].flatMap(autonomous =>
-  (["ask", "run", "disabled"] as ToolMode[]).map(mode => ({ provider, autonomous, mode }))));
-it.each(cases)("keeps context tools session-bound for $provider with autonomous=$autonomous and mode=$mode", async ({ provider, autonomous, mode }) => {
+const cases = [false, true].flatMap(autonomous => (["ask", "run", "disabled"] as ToolMode[]).map(mode => ({ autonomous, mode })));
+it.each(cases)("keeps context HTTP tools session-bound with autonomous=$autonomous and mode=$mode", async ({ autonomous, mode }) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "hosty-context-policy-"));
   const invoked = vi.fn(async (_id, _action, _input, guard?: () => Promise<void>) => { await guard?.(); return { revision: 1, appIds: ["notes"] }; });
   const approvals: string[] = [];
@@ -22,10 +20,7 @@ it.each(cases)("keeps context tools session-bound for $provider with autonomous=
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const config = mcp.config("one", origin);
   const entry = config["hosty-workspaces"] as { url: string; headers: Record<string, string> };
-  // Claude uses the HTTP descriptor; Codex receives the same secret only through its environment.
-  const converted = toCodexMcpConfig(config);
-  const headers = provider === "claude" ? entry.headers : { authorization: "Bearer " + converted.env[tokenEnvVar("hosty-workspaces")] };
-  if (provider === "codex") expect(converted.args.join(" ")).toContain(JSON.stringify(entry.url));
+  const headers = entry.headers;
   const call = (url: string, id: number, method: string, name?: string) => fetch(url, { method: "POST", headers: { ...headers, "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id, method, params: { name, arguments: { appIds: ["notes"], expectedRevision: 0, requestId: "8c6b802d-ea6a-4bb7-9abb-342cc7a17156" } } }) });
   try {

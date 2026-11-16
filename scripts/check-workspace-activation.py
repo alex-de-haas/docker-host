@@ -2,7 +2,7 @@
 """Native Core activation/Return acceptance with isolated users, Git source and data.
 
 Build Core and CLI in Debug first, then run with repository path and optional scenario:
-return (default), stop-failure, auto, cancel, direct, catalog, documents, sessions, desktop. The catalog scenario verifies
+return (default), stop-failure, auto, cancel, direct, catalog, documents, sessions, desktop, agent-providers. The catalog scenario verifies
 read-only Core workspace discovery without an activation or runtime switch. The direct scenario verifies
 workspace-to-workspace handover, same-workspace restart continuity and baseline Return. --managed runs inside a parent-owned child
 Core and requires the local Docker engine for the supported child environment lifecycle.
@@ -233,6 +233,11 @@ try:
         if not source.is_file(): continue
         destination=remote/name; destination.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(source,destination)
+    if scenario == 'agent-providers':
+        # Commit a self-contained public-SDK consumer; its managed checkout needs no npm install
+        # or Harness/native-runtime modules to run before Harness is installed.
+        run(['node', workspace/'scripts/build-agent-consumer-fixture.mjs',
+            remote/'scripts/fixtures/agent-consumer/main.mjs'], workspace)
     if scenario == 'direct':
         # A separate native service verifies keep-apps adoption through each Core replacement.
         (remote/'acceptance-idle.cjs').write_text("require('node:fs').writeFileSync(process.argv[2], String(process.pid)); setInterval(()=>{}, 1000);\n")
@@ -340,7 +345,7 @@ try:
         check(globals())
         success = True
         sys.exit(0)
-    if scenario in ('harness-local', 'feedback'):
+    if scenario in ('harness-local', 'feedback', 'agent-providers'):
         assert managed, 'Harness local acceptance requires a managed child Core'
         import importlib.util
         sys.dont_write_bytecode = True

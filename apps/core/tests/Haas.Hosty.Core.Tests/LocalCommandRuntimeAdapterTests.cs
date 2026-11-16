@@ -6,24 +6,56 @@ namespace Haas.Hosty.Core.Tests;
 
 public sealed class LocalCommandRuntimeAdapterTests
 {
-    [Fact]
-    public async Task PrepareAsync_UsesScratchEnvironmentAndStartDoesNotRepeatSetup()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PrepareAsync_ScratchStorageDoesNotSuppressActualStorageSetup(bool legacyReceipt)
     {
         if (OperatingSystem.IsWindows()) return;
         var root = CreateTempDirectory();
         var (adapter, registry, context) = CreateSetupScenario(root,
-            "test -z \"$HOSTY_APP_SERVICE_TOKEN\" && test -z \"$PRIVATE_SETTING\" && echo prepared >> setup-count && echo scratch > \"$HOSTY_APP_DATA_DIR/marker\"", "sleep 30");
+            "if [ -z \"$HOSTY_APP_SERVICE_TOKEN\" ]; then test -z \"$PRIVATE_SETTING\" || exit 1; fi; echo prepared >> setup-count; echo marker > \"$HOSTY_APP_DATA_DIR/marker\"; echo bundle > \"$HOSTY_APP_CACHE_DIR/bundle\"",
+            "test -f \"$HOSTY_APP_CACHE_DIR/bundle\" && echo started > command-started && sleep 30", cacheEnabled: true);
         context = context with { DependencyUrls = new Dictionary<string, string> { ["PRIVATE_SETTING"] = "ordinary-secret" }, AppCachePath = Path.Combine(root, "cache") };
-        var scratch = context with { AppDataPath = Path.Combine(root, "scratch"), PreparationOnly = true };
+        var scratch = context with { AppDataPath = Path.Combine(root, "scratch", "data"), AppCachePath = Path.Combine(root, "scratch", "cache"), PreparationOnly = true };
         try
         {
             var prepared = await adapter.PrepareAsync(scratch, default);
             Assert.Null(registry.Get(context.App.Id, "app"));
             Assert.False(Directory.Exists(context.AppDataPath));
-            Assert.Equal("scratch\n", await File.ReadAllTextAsync(Path.Combine(scratch.AppDataPath, "marker")));
-            await adapter.StartAsync(context with { PreparedSetupServices = prepared.SetupServices });
-            Assert.Single(await File.ReadAllLinesAsync(Path.Combine(root, "setup-count")));
+            Assert.Equal("marker\n", await File.ReadAllTextAsync(Path.Combine(scratch.AppDataPath, "marker")));
+            Assert.Equal("bundle\n", await File.ReadAllTextAsync(Path.Combine(scratch.AppCachePath!, "bundle")));
+            Assert.Empty(prepared.SetupServices);
+            Assert.False(Directory.Exists(context.AppCachePath));
+            await adapter.StartAsync(context with { PreparedSetupServices = legacyReceipt ? ["app"] : prepared.SetupServices });
+            Assert.Equal(2, (await File.ReadAllLinesAsync(Path.Combine(root, "setup-count"))).Length);
+            Assert.Equal("bundle\n", await File.ReadAllTextAsync(Path.Combine(context.AppCachePath!, "bundle")));
+            Assert.Equal("marker\n", await File.ReadAllTextAsync(Path.Combine(context.AppDataPath, "marker")));
             Assert.NotNull(registry.Get(context.App.Id, "app"));
+        }
+        finally { await adapter.StopAsync(context); TryDeleteDirectory(root); }
+    }
+
+    [Fact]
+    public async Task PrepareAsync_ActualStorageSetupFailureNeverStartsTheCommand()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = CreateTempDirectory();
+        var (adapter, registry, context) = CreateSetupScenario(root,
+            "if [ -n \"$HOSTY_APP_SERVICE_TOKEN\" ]; then echo actual-storage-setup-failed; exit 42; fi; echo scratch > \"$HOSTY_APP_CACHE_DIR/bundle\"",
+            "echo should-not-start > command-started; sleep 30", cacheEnabled: true);
+        context = context with { AppCachePath = Path.Combine(root, "cache") };
+        var scratch = context with { AppDataPath = Path.Combine(root, "scratch", "data"), AppCachePath = Path.Combine(root, "scratch", "cache"), PreparationOnly = true };
+        try
+        {
+            var prepared = await adapter.PrepareAsync(scratch, default);
+            Assert.Empty(prepared.SetupServices);
+            var error = await Assert.ThrowsAsync<AppLifecycleException>(() => adapter.StartAsync(context with { PreparedSetupServices = prepared.SetupServices }));
+            Assert.Contains("actual-storage-setup-failed", error.Message);
+            Assert.Null(registry.Get(context.App.Id, "app"));
+            Assert.False(File.Exists(Path.Combine(root, "command-started")));
+            Assert.False(File.Exists(Path.Combine(context.AppCachePath!, "bundle")));
+            Assert.Equal("scratch\n", await File.ReadAllTextAsync(Path.Combine(scratch.AppCachePath!, "bundle")));
         }
         finally { await adapter.StopAsync(context); TryDeleteDirectory(root); }
     }

@@ -6,12 +6,15 @@ internal sealed record CoreCapabilityCaller(HostUserRecord User, string Principa
     IReadOnlyList<string>? Scopes, bool OperatorSession = false)
 {
     internal CoreCallerAuthority? Authority { get; init; }
+    internal string? AgentExecution { get; init; }
+    internal bool RetainedAgentObservation { get; init; }
+    internal IReadOnlyList<string>? EffectivePermissions { get; init; }
 
     internal void Require(string scope, string permission)
     {
         if (App is not null)
         {
-            if (!AppManagementAuthorization.HasPermission(App, permission))
+            if (EffectivePermissions is not null ? !EffectivePermissions.Contains(permission) : !AppManagementAuthorization.HasPermission(App, permission))
                 throw new AppIdentityException("app_permission_required", $"The application requires '{permission}'.");
         }
         else if (!OperatorSession && !AccessTokenScopes.Grants(Scopes, scope))
@@ -53,7 +56,7 @@ internal sealed partial class CoreCapabilityAuthorization(UserDirectoryStore use
                 var user = (await users.ReadAsync(ct)).Users.SingleOrDefault(u => u.Id == actor.UserId && !u.Disabled)
                     ?? throw new AppIdentityException("user_disabled", "The acting user is unavailable.");
                 caller = new(user, AppPrincipal(actor.Caller), actor.Caller, null)
-                { Authority = new("assistant", AppId: actor.Caller.Id, Installation: actor.Caller.InstalledAt, PermissionRevision: actor.Caller.PermissionRevision, Mcp: assistants.ReadVerifiedClaims(bearer), InvokedTool: CoreMcpCatalog.InvokedTool) };
+                { Authority = new("assistant", AppId: actor.Caller.Id, Installation: actor.Caller.InstalledAt, PermissionRevision: actor.Caller.PermissionRevision, Mcp: assistants.ReadVerifiedClaims(bearer), InvokedTool: CoreMcpCatalog.InvokedTool), EffectivePermissions = actor.EffectivePermissions, AgentExecution = actor.AgentExecution };
             }
             else if (bearer is not null && ScopedCredentials.Resolve(await users.ReadAsync(ct), bearer,
                          clock.UtcNow, settings.AuthLifetimes, AccessTokenScopes.CoreAudience) is { } credential)
@@ -106,9 +109,7 @@ internal sealed partial class CoreCapabilityAuthorization(UserDirectoryStore use
             throw new AppIdentityException("admin_required", "This operation requires a current administrator.");
         if (caller.App is { } app)
         {
-            foreach (var permission in permissions)
-                if (!AppManagementAuthorization.HasPermission(app, permission))
-                    throw new AppIdentityException("app_permission_required", $"The application requires '{permission}'.");
+            foreach (var permission in permissions) caller.Require("", permission);
         }
         else if (!caller.OperatorSession)
             foreach (var scope in scopes)

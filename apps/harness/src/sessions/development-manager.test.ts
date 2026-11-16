@@ -12,7 +12,6 @@ import { AuditReporter } from "../audit.js";
 import { AppContextError } from "./app-context.js";
 import { retentionBusy } from "./retention.js";
 import { McpProxy } from "../mcp/proxy.js";
-import { WorkerClient } from "../worker/client.js";
 import type { HarnessAdapter, HarnessEvent, HarnessStartOptions } from "../harness/adapter.js";
 let dir: string, manager: SessionManager, store: SessionStore, client: DevelopmentClient;
 let starts: HarnessStartOptions[], sent: string[];
@@ -20,7 +19,7 @@ const tree = { id: "a".repeat(64), path: "/owned/worktree", state: "active", app
 const adapter: HarnessAdapter = { name: "recording", capabilities: { questions: false, appMcp: true, liveReconfigure: true, autoAllow: false, denyReason: false },
   probe: async () => ({ available: true }), start: options => { starts.push(options); return { send: text => sent.push(text), stop: async () => {}, stopAndWait: async () => {}, finishSuggestions: async () => {}, interrupt: async () => {}, setMcpServers: async () => true, resolveApproval: () => false, resolveQuestion: () => false }; } };
 let directory: ProviderDirectory;
-const build = (proxy: McpProxy | null = null, worker: WorkerClient | null = null, harness = adapter) => new SessionManager(store, harness, new AuditReporter(null, null, "hosty.harness"), dir, null, directory, null, proxy, "http://127.0.0.1:3400", null, null, client, worker, worker ? "native" : undefined);
+const build = (proxy: McpProxy | null = null, _legacyExecution: unknown = null, harness = adapter) => new SessionManager(store, harness, new AuditReporter(null, null, "hosty.harness"), dir, null, directory, null, proxy, "http://127.0.0.1:3400", null, null, client, null, undefined);
 beforeEach(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "hosty-development-test-")); store = new SessionStore(dir, path.join(dir, "cache"));
   directory = new ProviderDirectory(null, null, "hosty.harness"); vi.spyOn(directory, "readApps").mockResolvedValue([{ id: "notes", displayName: "Notes", runtimeState: "stopped" }]);
@@ -1211,9 +1210,7 @@ describe("deferred canonical review with a registered Core proxy", () => {
   async function queued(kind: "return" | "selection" | "completion", revoke?: "provider" | "catalog" | "abort" | "authority", answer?: { suggestions: boolean; stop?: boolean }) {
     await manager.shutdown();
     const proxy = new McpProxy(async () => ({ token: "fixture-only", expiresAtMs: Date.now() + 60_000 }));
-    const worker = answer ? new WorkerClient("http://127.0.0.1:1", { version: 1, installation: "fixture", secret: "fixture" }) : null;
-    if (worker) vi.spyOn(worker, "capabilities").mockResolvedValue({ protocol: 2, capacity: 32 });
-    manager = build(proxy, worker);
+    manager = build(proxy);
     const bound = { ...tree, workspaceId: "b".repeat(64) };
     const original = DevelopmentClient.prototype.call.bind(client);
     vi.mocked(client.call).mockImplementation(async (id, token, action, input) =>
@@ -1256,8 +1253,7 @@ describe("deferred canonical review with a registered Core proxy", () => {
     if (revoke === "catalog") await manager.mcpPolicy.catalog("hosty:core", "replacement-installation", tools);
     if (revoke === "abort") abort.abort();
     if (answer) {
-      let sequence = 0;
-      const emit = (event: HarnessEvent) => starts.at(-1)!.onWorkerEvent!({ runId: starts.at(-1)!.workerRunId!, generation: "fixture-generation", sequence: ++sequence, event });
+      const emit = async (event: HarnessEvent) => { starts.at(-1)!.onEvent(event); await (manager as unknown as { serialize(id: string, action: () => Promise<void>): Promise<void> }).serialize(record.id, async () => {}); };
       await emit({ type: "answer_complete" });
       expect((await store.readRecord(record.id))!.status).toBe("suggesting");
       expect((await store.readRecord(record.id))!.developmentLease).toBeTruthy();
@@ -1309,9 +1305,7 @@ describe("deferred operations at task boundaries", () => {
   it.each(cases)("rechecks the $state boundary before a queued $transport $kind dispatch", async ({ kind, transport, state }) => {
     await manager.shutdown();
     const proxy = new McpProxy(async () => ({ token: "fixture-only", expiresAtMs: Date.now() + 60_000 }));
-    const worker = new WorkerClient("http://127.0.0.1:1", { version: 1, installation: "fixture", secret: "fixture" });
-    vi.spyOn(worker, "capabilities").mockResolvedValue({ protocol: 2, capacity: 32 });
-    manager = build(proxy, worker, { ...adapter, name: "codex" });
+    manager = build(proxy);
     const bound = { ...tree, workspaceId: "b".repeat(64) };
     vi.mocked(client.call).mockImplementation(async (_id, _token, action) => action === "list" ? { workspaces: [bound] } : bound);
     const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
@@ -1341,15 +1335,17 @@ describe("deferred operations at task boundaries", () => {
     expect(dispatch).not.toHaveBeenCalled();
 
     // Arm the boundary after review/queueing, before an ordinary result wins the parking race.
-    await manager.armTaskBarrier(record.id, "admin", randomUUID(), "child_wait", 1, "coordinator");
+    const retained = (await manager.getSession(record.id))!;
+    retained.taskBarrier = { id: randomUUID(), kind: "child_wait", generation: 1, owner: "admin", snapshot: "fixture-configuration",
+      runId: randomUUID(), state: "armed", commandId: randomUUID(), origin: "coordinator" };
+    await store.saveRecord(retained);
     if (state === "resuming") {
       // Seed the retained continuation state in this isolated fixture; its tools remain allowed.
       const resumed = (await manager.getSession(record.id))!;
       resumed.taskBarrier!.state = "resuming";
       await store.saveRecord(resumed);
     }
-    let sequence = 0;
-    const emit = (event: HarnessEvent) => starts.at(-1)!.onWorkerEvent!({ runId: starts.at(-1)!.workerRunId!, generation: "fixture-generation", sequence: ++sequence, event });
+    const emit = async (event: HarnessEvent) => { starts.at(-1)!.onEvent(event); await (manager as unknown as { serialize(id: string, action: () => Promise<void>): Promise<void> }).serialize(record.id, async () => {}); };
     await emit({ type: "answer_complete" });
     expect((await store.readRecord(record.id))!.status).toBe("suggesting");
     expect(dispatch).not.toHaveBeenCalled();

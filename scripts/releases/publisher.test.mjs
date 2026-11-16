@@ -108,3 +108,93 @@ test('build results must belong to the selected plan', () => {
   assert.equal(imageReceipt(plan, 'api', `sha256:${hash}`).receipt.buildSourceCommit, commit);
   assert.throws(() => imageReceipt(plan, 'other', `sha256:${hash}`), /Unexpected/);
 });
+
+
+test('local provider recipes pin source independently and never require a Harness worker image', () => {
+  const publisher = validatePublisher(JSON.parse(readFileSync(new URL('../../distribution/release-publisher.json', import.meta.url))));
+  assert.ok(!publisher.images.some(image => image.id === 'hosty-harness-worker'));
+  for (const component of ['codex-provider', 'claude-code-provider', 'ollama-provider']) {
+    const app = publisher.apps.find(app => app.id === `hosty.${component}`);
+    const manifest = JSON.parse(readFileSync(new URL(`../../apps/${component}/manifest.json`, import.meta.url)));
+    assert.deepEqual(app.profiles, ['local']); assert.ok(app.sourceInputs.includes('packages/agent-provider-runtime'));
+    assert.equal(app.sourceIgnoreOptionalPeers, true);
+    assert.ok(app.sourceInputs.includes('shared/web/hosty-theme.css'));
+    assert.ok(app.sourceInputs.includes('shared/web/fonts'));
+    const result = appRelease({ manifest, app, sourceCommit: commit, sourceFingerprint: hash, artifacts: [] });
+    assert.equal(result.descriptor.source.commit, commit);
+    assert.ok(result.descriptor.artifacts.every(artifact => artifact.type === 'source'));
+  }
+});
+
+test('source and image fingerprints ignore an unreachable native SDK lock entry but retain their own graph', () => {
+  const root = mkdtempSync(join(tmpdir(), 'hosty-independent-source-'));
+  try {
+    mkdirSync(join(root, 'apps/a'), { recursive: true }); mkdirSync(join(root, 'apps/b'), { recursive: true });
+    mkdirSync(join(root, 'packages/sdk'), { recursive: true });
+    const pkg = { workspaces: ['apps/a','apps/b','packages/sdk'], scripts: { build: 'workspace build' } }, lock = lockFixture();
+    for (const path of pkg.workspaces) writeFileSync(join(root, path, 'package.json'), JSON.stringify(lock.packages[path]));
+    writeFileSync(join(root, 'apps/a/manifest.json'), JSON.stringify({ id: 'a' }));
+    writeFileSync(join(root, 'package.json'), JSON.stringify(pkg));
+    writeFileSync(join(root, 'package-lock.json'), JSON.stringify(lock));
+    const recipe = { inputs: ['apps/a','package.json','package-lock.json'], dockerfile: 'apps/a/manifest.json', platforms: [], workspaces: ['apps/a'], retainRootScripts: true };
+    const paths = ['apps/a/package.json','apps/a/manifest.json','apps/b/package.json','packages/sdk/package.json','package.json','package-lock.json'];
+    const fingerprint = () => buildContext(root, recipe, { paths }).fingerprint;
+    const before = fingerprint(); lock.packages['node_modules/unrelated'].integrity = 'sha512-native-update';
+    writeFileSync(join(root, 'package-lock.json'), JSON.stringify(lock)); assert.equal(fingerprint(), before);
+    lock.packages['node_modules/x'].integrity = 'sha512-own-update';
+    writeFileSync(join(root, 'package-lock.json'), JSON.stringify(lock)); assert.notEqual(fingerprint(), before);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+
+test('explicit local provider projection ignores optional native peers while keeping direct SDK and ordinary recipe closure', () => {
+  const root=mkdtempSync(join(tmpdir(),'hosty-optional-native-'));
+  try {
+    const lock=lockFixture();
+    lock.packages['packages/sdk'].peerDependencies.unrelated='^1';
+    lock.packages['packages/sdk'].peerDependenciesMeta={unrelated:{optional:true}};
+    const pkg={workspaces:lock.packages[''].workspaces};
+    for(const workspace of pkg.workspaces) { mkdirSync(join(root,workspace),{recursive:true});writeFileSync(join(root,workspace,'package.json'),JSON.stringify(lock.packages[workspace])); }
+    writeFileSync(join(root,'apps/a/manifest.json'),'{}'); writeFileSync(join(root,'package.json'),JSON.stringify(pkg));
+    const paths=['package.json','package-lock.json','apps/a/package.json','apps/a/manifest.json','apps/b/package.json','packages/sdk/package.json'];
+    const recipe={inputs:['apps/a','package.json','package-lock.json'],dockerfile:'apps/a/manifest.json',platforms:[],workspaces:['apps/a']};
+    const fingerprint=ignoreOptionalPeers=>{writeFileSync(join(root,'package-lock.json'),JSON.stringify(lock));return buildContext(root,{...recipe,...(ignoreOptionalPeers?{ignoreOptionalPeers:true}:{})},{paths}).fingerprint;};
+    const provider=fingerprint(true), ordinary=fingerprint(false);
+    lock.packages['node_modules/unrelated'].integrity='sha512-other-native';
+    assert.equal(fingerprint(true),provider);assert.notEqual(fingerprint(false),ordinary);
+    lock.packages['node_modules/x'].integrity='sha512-direct-native';assert.notEqual(fingerprint(true),provider);
+  } finally {rmSync(root,{recursive:true,force:true});}
+});
+
+
+test('Harness publishes only its Docker production profile while retaining declared development profiles', () => {
+  const publisher = JSON.parse(readFileSync(new URL('../../distribution/release-publisher.json', import.meta.url)));
+  const app = publisher.apps.find(app => app.id === 'hosty.harness');
+  const manifest = JSON.parse(readFileSync(new URL('../../apps/harness/manifest.json', import.meta.url)));
+  assert.deepEqual(app.profiles, ['docker']);
+  const image = publisher.images.find(image => image.appId === app.id);
+  assert.ok(image.inputs.includes('scripts/npm-workspace.mjs'));
+  const artifacts = [{ service: 'api', profile: 'docker', repository: image.repository, digest: `sha256:${hash}`, platforms: image.platforms },
+    ...manifest.runtimeProfiles.filter(profile => profile.development && profile.type === 'docker').map(profile => ({ service: 'api', profile: profile.key, repository: 'node', digest: `sha256:${'c'.repeat(64)}`, platforms: image.platforms }))];
+  const result = appRelease({ manifest, app, sourceCommit: commit, sourceFingerprint: hash, artifacts });
+  assert.ok(!result.manifest.runtimeProfiles.some(profile => profile.key === 'local'));
+  assert.ok(result.manifest.runtimeProfiles.some(profile => profile.key === 'dev' && profile.development));
+  assert.ok(!result.descriptor.artifacts.some(artifact => artifact.type === 'source'));
+});
+
+test('provider settings theme and font bytes invalidate source release fingerprints', () => {
+  const root = mkdtempSync(join(tmpdir(), 'provider-shared-inputs-'));
+  try {
+    const publisher = JSON.parse(readFileSync(new URL('../../distribution/release-publisher.json', import.meta.url)));
+    for (const slug of ['codex-provider', 'claude-code-provider', 'ollama-provider']) {
+      const app = publisher.apps.find(app => app.id === `hosty.${slug}`);
+      const files = { [app.manifest]: '{}', 'shared/web/hosty-theme.css': 'theme', 'shared/web/fonts/font.woff2': 'font', 'shared/web/unrelated.tsx': 'component' };
+      for (const [file, content] of Object.entries(files)) { mkdirSync(join(root, file, '..'), { recursive: true }); writeFileSync(join(root, file), content); }
+      const recipe = { inputs: app.sourceInputs, dockerfile: app.manifest, platforms: [] }, paths = Object.keys(files);
+      const fingerprint = () => buildContext(root, recipe, { paths }).fingerprint;
+      const before = fingerprint(); writeFileSync(join(root, 'shared/web/unrelated.tsx'), 'different'); assert.equal(fingerprint(), before);
+      writeFileSync(join(root, 'shared/web/hosty-theme.css'), 'new theme'); assert.notEqual(fingerprint(), before);
+      const afterTheme = fingerprint(); writeFileSync(join(root, 'shared/web/fonts/font.woff2'), 'new font'); assert.notEqual(fingerprint(), afterTheme);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

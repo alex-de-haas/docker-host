@@ -70,7 +70,7 @@ internal sealed record ExternalWorkspaceMcpCaller(string UserId, string Principa
         : new(UserId, "app-mcp", App.Id, App.InstalledAt, PrincipalId,
             AppIdentityHash: Authority?.IdentityHash ?? Authority?.Mcp?.GrantHash,
             Mcp: Authority?.Mcp is { } mcp ? new(mcp.GrantHash, mcp.GrantRevision, mcp.SessionId,
-                Authority.InvokedTool ?? throw DeniedOrigin(), mcp.Expires, mcp.LeaseRevision) : null);
+                Authority.InvokedTool ?? throw DeniedOrigin(), mcp.Expires, mcp.LeaseRevision, mcp.AgentAdmissionRef, mcp.AgentTargetKey, mcp.AgentAllowedTools) : null);
     private static AppIdentityException DeniedOrigin() => new("workspace_authority_required", "The originating Core tool is required.");
 
     public WorkspaceOwner Owner(string taskId, string? label = null)

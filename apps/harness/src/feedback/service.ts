@@ -55,7 +55,7 @@ export class FeedbackService {
       if (receipt.state === "rejected") { await client.delivery(dispatch.id, { state: "rejected", error: receipt.error?.message }, token); return; }
       if (!receipt.eventSeq) return;
       const outcome = feedbackTurn(await this.manager.store.readEvents(session.id), receipt.eventSeq);
-      const orphan = !this.manager.worker && busy(session.status) && !this.manager.hasLiveTaskRun(session.id);
+      const orphan = busy(session.status) && !this.manager.hasLiveTaskRun(session.id) && session.providerExecution?.run?.freshness !== "current";
       const state = outcome?.state ?? (receipt.state === "accepted" && busy(session.status) && !orphan ? "accepted" : "unknown");
       // A new workspace created by this prompt becomes the single current binding. A later
       // unrelated prompt must never reassign an older batch during restart recovery.

@@ -1,6 +1,8 @@
 "use client";
 
 import { DecisionQuestion } from "./decision-question";
+import { transcriptDecisionId, type QuestionAnswers } from "../../../src/agent-providers/decision-identity";
+export { transcriptDecisionId };
 import { UserMessage } from "./user-message";
 import { PromptSuggestionCard } from "./prompt-suggestion";
 import { parseSuggestion, type PromptSuggestion } from "@/lib/prompt-suggestions";
@@ -59,7 +61,7 @@ export function approvalDecisions(events: readonly AssistantEvent[]): Map<string
   const decisions = new Map<string, ApprovalDecision>();
   const pending = new Set<string>();
   for (const event of events) {
-    const id = String(event.approvalId);
+    const id = transcriptDecisionId(event);
     if (event.type === "approval_request") {
       if (!decisions.has(id)) pending.add(id);
     } else if (event.type === "approval_decision") {
@@ -84,16 +86,23 @@ export function cancelledQuestions(events: readonly AssistantEvent[]): Set<strin
   const pending = new Set<string>();
   for (const event of events) {
     if (event.type === "question_request") {
-      pending.add(String(event.questionId));
+      pending.add(transcriptDecisionId(event));
     } else if (event.type === "question_answered") {
-      pending.delete(String(event.questionId));
-      cancelled.delete(String(event.questionId));
+      pending.delete(transcriptDecisionId(event));
+      cancelled.delete(transcriptDecisionId(event));
     } else if (event.type === "session_status" && event.status === "cancelled") {
       for (const id of pending) cancelled.add(id);
       pending.clear();
     }
   }
   return cancelled;
+}
+
+export function questionAnswers(events: readonly AssistantEvent[]): Map<string, QuestionAnswers> {
+  const answers = new Map<string, QuestionAnswers>();
+  for (const event of events) if (event.type === "question_answered")
+    answers.set(transcriptDecisionId(event), (event.answers ?? {}) as QuestionAnswers);
+  return answers;
 }
 
 export function TranscriptEvent({
@@ -113,12 +122,12 @@ export function TranscriptEvent({
 }: {
   event: AssistantEvent;
   decision: ApprovalDecision | null;
-  answers: Record<string, string> | null;
+  answers: QuestionAnswers | null;
   questionCancelled?: boolean;
   /** Whether the harness can deliver a deny reason; the card offers the box only when it can. */
   denyReason: boolean;
   onDecide: (approvalId: string, decision: "allow" | "deny", message?: string) => Promise<void>;
-  onAnswer: (questionId: string, answers: Record<string, string>) => Promise<void>;
+  onAnswer: (questionId: string, answers: QuestionAnswers) => Promise<void>;
   /** Display name per MCP server name; absent entries fall back to the wire name. */
   appNames?: Record<string, string>;
   /** Every upload in the log; absent, each upload simply draws its own row. */
@@ -184,7 +193,7 @@ export function TranscriptEvent({
     case "approval_request":
       return (
         <ApprovalCard
-          approvalId={String(event.approvalId)}
+          approvalId={transcriptDecisionId(event)}
           toolName={String(event.toolName ?? "action")}
           input={event.input}
           appNames={appNames}
@@ -199,7 +208,7 @@ export function TranscriptEvent({
       if (typeof event.decisionWaitId === "string") return <DecisionQuestion waitId={event.decisionWaitId} />;
       return (
         <QuestionCard
-          questionId={String(event.questionId)}
+          questionId={transcriptDecisionId(event)}
           questions={(event.questions ?? []) as AssistantQuestion[]}
           answers={answers}
           cancelled={questionCancelled}
@@ -615,8 +624,8 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
   questionId: string;
   questions: AssistantQuestion[];
   cancelled: boolean;
-  answers: Record<string, string> | null;
-  onAnswer: (questionId: string, answers: Record<string, string>) => Promise<void>;
+  answers: QuestionAnswers | null;
+  onAnswer: (questionId: string, answers: QuestionAnswers) => Promise<void>;
 }) {
   const [selected, setSelected] = useState<Record<string, string[]>>({});
   const [other, setOther] = useState<Record<string, string>>({});
@@ -626,12 +635,13 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
   const locked = useRef(false);
   const disabled = submitting || submitted;
   const collected = useMemo(() => {
-    const result: Record<string, string> = {};
+    const result: QuestionAnswers = {};
     for (const question of questions) {
       const picks = [...(selected[question.id ?? question.question] ?? [])];
       const free = (other[question.id ?? question.question] ?? "").trim();
       if (free) picks.push(free);
-      if (picks.length) result[question.id ?? question.question] = picks.join(", ");
+      if (picks.length) result[question.id ?? question.question] = question.options.some(option => option.id !== undefined)
+        ? question.multiSelect ? picks : picks[0]! : picks.join(", ");
     }
     return result;
   }, [questions, selected, other]);
@@ -668,10 +678,10 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
             : [label] }));
           if (!question.multiSelect) setOther(current => ({ ...current, [question.id ?? question.question]: "" }));
         };
-        const options = question.options.map((option, index) => <Field key={option.label} orientation="horizontal"
+        const options = question.options.map((option, index) => <Field key={option.id ?? option.label} orientation="horizontal"
           className="items-start rounded-md border p-2.5 has-data-[state=checked]:border-brand-strong has-data-[state=checked]:bg-brand-soft" data-disabled={disabled}>
-          {question.multiSelect ? <Checkbox id={`${baseId}-${index}`} checked={picks.includes(option.label)} disabled={disabled}
-            onCheckedChange={checked => choose(option.label, checked === true)} />
+          {question.multiSelect ? <Checkbox id={`${baseId}-${index}`} checked={picks.includes(option.id ?? option.label)} disabled={disabled}
+            onCheckedChange={checked => choose(option.id ?? option.label, checked === true)} />
             : <RadioGroupItem id={`${baseId}-${index}`} value={String(index)} disabled={disabled} />}
           <FieldContent className="min-w-0 gap-1">
             <FieldLabel htmlFor={`${baseId}-${index}`} className="wrap-anywhere">{option.label}</FieldLabel>
@@ -683,8 +693,8 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
           <FieldDescription className="text-xs">{question.multiSelect ? "Choose one or more, or add your own answer." : "Choose one, or write your own answer."}</FieldDescription>
           {question.multiSelect ? <div className="flex flex-col gap-2">{options}</div>
             : <RadioGroup aria-labelledby={`${baseId}-legend`} className="gap-2"
-              value={picks.length ? String(question.options.findIndex(option => option.label === picks[0])) : ""}
-              onValueChange={value => choose(question.options[Number(value)].label)}>{options}</RadioGroup>}
+              value={picks.length ? String(question.options.findIndex(option => (option.id ?? option.label) === picks[0])) : ""}
+              onValueChange={value => { const option = question.options[Number(value)]; if (option) choose(option.id ?? option.label); }}>{options}</RadioGroup>}
           {question.allowText !== false && <Field className="gap-1.5" data-disabled={disabled}>
             <FieldLabel htmlFor={`${baseId}-other`} className="text-xs">Your own answer</FieldLabel>
             <Input id={`${baseId}-other`} value={other[question.id ?? question.question] ?? ""} disabled={disabled} placeholder="Other…"
@@ -707,10 +717,18 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
 }
 
 /** A closed question folds to one line like a tool call: the answer first, the question on expansion. */
-function ClosedQuestion({ questions, answers }: { questions: AssistantQuestion[]; answers: Record<string, string> | null }) {
+function ClosedQuestion({ questions, answers }: { questions: AssistantQuestion[]; answers: QuestionAnswers | null }) {
   const [open, setOpen] = useState(false);
   const Chevron = open ? ChevronDown : ChevronRight;
-  const summary = answers ? questions.map(question => answers[question.id ?? question.question]).filter(Boolean).join("; ") : "";
+  const display = (question: AssistantQuestion) => {
+    const answer = answers?.[question.id ?? question.question];
+    if (answer === undefined) return;
+    return (Array.isArray(answer) ? answer : [answer]).map(value => {
+      const option = question.options.find(item => item.id === value);
+      return option ? question.options.filter(item => item.label === option.label).length > 1 ? `${option.label} [${option.id}]` : option.label : value;
+    }).join(", ");
+  };
+  const summary = answers ? questions.map(display).filter(Boolean).join("; ") : "";
   return <div className="min-w-0 text-xs text-muted-foreground" data-slot="question-card">
     <Button type="button" variant="ghost" size="sm" aria-expanded={open} onClick={() => setOpen(current => !current)}
       className="h-auto min-h-8 w-full min-w-0 justify-start gap-1.5 px-1 py-1 text-left text-xs text-muted-foreground hover:text-foreground">
@@ -722,7 +740,7 @@ function ClosedQuestion({ questions, answers }: { questions: AssistantQuestion[]
     </Button>
     {open && <dl className="flex min-w-0 flex-col gap-3 px-1 pt-1">{questions.map(question => <div key={question.id ?? question.question} className="min-w-0">
       <dt className="wrap-anywhere">{question.question}</dt>
-      <dd className="mt-1 text-sm whitespace-pre-wrap text-foreground wrap-anywhere">{answers?.[question.id ?? question.question] ?? (answers ? "—" : "The session stopped before this question was answered.")}</dd>
+      <dd className="mt-1 text-sm whitespace-pre-wrap text-foreground wrap-anywhere">{display(question) ?? (answers ? "—" : "The session stopped before this question was answered.")}</dd>
     </div>)}</dl>}
   </div>;
 }

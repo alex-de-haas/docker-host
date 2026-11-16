@@ -7,7 +7,8 @@ import { SessionManager } from "./manager.js";
 import { FakeHarnessAdapter } from "../harness/fake.js";
 import type { HarnessEvent, HarnessRun, HarnessStartOptions } from "../harness/adapter.js";
 import { AuditReporter } from "../audit.js";
-import { catalog } from "../worker/models.js";
+import type { ConnectionModelCatalog } from "../connections/types.js";
+const catalog = (models: ConnectionModelCatalog["models"], defaultModel?: string): ConnectionModelCatalog => ({ revision: "fixture-catalog", models, ...(defaultModel ? { defaultModel } : {}) });
 
 class ManualAdapter extends FakeHarnessAdapter {
   callbacks: Array<(event: HarnessEvent) => void> = [];

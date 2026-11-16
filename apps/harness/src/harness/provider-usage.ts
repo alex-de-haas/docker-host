@@ -28,7 +28,7 @@ export interface ProviderUsage {
   replaceGroups?: string[];
   stale?: boolean;
   invalidated?: boolean;
-  connectionRevision?: number;
+  connectionRevision?: string | number;
   sequence?: number;
   preservePrefixes?: string[];
   reason?: "not_reported" | "unsupported_auth" | "unsupported_sdk" | "temporarily_unavailable" | "busy" | "local";

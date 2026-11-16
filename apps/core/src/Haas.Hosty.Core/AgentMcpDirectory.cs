@@ -12,7 +12,7 @@ internal sealed record AgentPolicyDocument(IReadOnlyDictionary<string, AgentTarg
 internal sealed record AgentSkillStatus(string Key, string? Digest, string? ApprovedDigest, string? Markdown);
 internal sealed record AgentMcpInterface(string Key, string? Url, string? Service, string Readiness);
 internal sealed record AgentMcpTarget(string Id, string DisplayName, bool Offered, string RuntimeState,
-    IReadOnlyList<AgentMcpInterface> Interfaces, IReadOnlyList<AgentSkillStatus> Skills, DateTimeOffset? InstalledAt = null, IReadOnlyList<string>? AssistantIds = null, IReadOnlyList<string>? DeniedTools = null);
+    IReadOnlyList<AgentMcpInterface> Interfaces, IReadOnlyList<AgentSkillStatus> Skills, DateTimeOffset? InstalledAt = null, IReadOnlyList<string>? AssistantIds = null, IReadOnlyList<string>? DeniedTools = null, string? InstallationId = null);
 internal sealed record AgentDirectoryResponse(string Revision, IReadOnlyList<AgentMcpTarget> Targets, string? SettingsUrl = null, IReadOnlyList<AgentAssistant>? Assistants = null);
 internal sealed record AgentPolicyUpdate(string Revision, bool Offered, IReadOnlyDictionary<string, string>? ApproveSkills = null, IReadOnlyList<string>? AssistantIds = null);
 
@@ -93,7 +93,7 @@ internal sealed class AgentMcpDirectory(
                         ? (app.RuntimeState == "running" ? "ready" : "unavailable")
                         : health.Status != "running" ? "unavailable" : health.Health == "healthy" || health.Health is null ? "ready" : health.Health;
                     return new AgentMcpInterface(declaration.Key, declaration.Url, declaration.Service, readiness);
-                }).ToArray(), skills, record.InstalledAt, Granted(entry)));
+                }).ToArray(), skills, record.InstalledAt, Granted(entry), InstallationId: PanelIdentity.Installation(record)));
         }
         // Text is excluded so admin and consumer snapshots share one revision. Changes to MCP
         // policy, URLs, readiness, installation identity or any app's fleet state invalidate it.
@@ -194,8 +194,8 @@ internal sealed class AgentMcpDirectory(
         finally { mutex.Release(); }
     }
 
-    internal static bool IsAssistant(AppRecord app) => app.ConfirmedRoles?.Contains("assistant", StringComparer.Ordinal) == true
-        && app.Interfaces?.ContainsKey("assistant") == true;
+    internal static bool IsAssistant(AppRecord app) => (app.ConfirmedRoles?.Contains("assistant", StringComparer.Ordinal) == true
+        && app.Interfaces?.ContainsKey("assistant") == true) || AppManagementAuthorization.HasPermission(app, CoreAppPermissions.AgentProviders);
 
     internal async Task<AgentDirectoryResponse> ReadForAssistantAsync(string appId, CancellationToken ct)
     {

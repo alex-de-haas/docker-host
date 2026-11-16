@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-11-07
+updated: 2026-11-13
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -24,6 +24,10 @@ keeps its current name without becoming a selectable target. A recipe uses its d
 present, or the sole development profile; an explicit workspace selection can configure another
 recipe with `runtime`, which Core retains for that binding. An unresolved ambiguity has a concrete
 setup reason rather than guessing another worktree.
+Development recipes come from the bound workspace manifest, including new development profile keys
+absent from the installed package. Core validates the candidate app identity and source authority;
+selecting a recipe changes neither the installed manifest nor its retained package Return target.
+Invalid or unavailable workspace recipes leave that package choice available.
 `configure_workspace_runtime` or `POST /api/development/workspaces/{workspaceId}/execution-recipe`
 sets `{requestId, appId, worktreeId, runtime}` with source management authority. Core retains the
 chosen worktree and runtime for the logical workspace/app installation in one atomic selection
@@ -325,8 +329,11 @@ activation identity inside the owned app cache. Preparation, candidate start and
 that cache; Return selects the untouched previous runtime cache. No ordinary app data, identity token, configured settings or dependency
 credentials are injected into preparation. A build recipe is trusted code with its existing host/source
 access; this is not a sandbox. The manifest's declared setup/build is the preflight boundary: it does
-not promise to catch every later hot-reload or startup error. Successful setup is not repeated after
-Stop. Source observations are checked again before apply.
+not promise to catch every later hot-reload or startup error. Services with app data/cache bindings
+run setup again against their actual runtime storage after Stop; a scratch setup receipt cannot
+suppress that step, including receipts retained from an older Core. Scratch data and cache are never
+copied into ordinary storage. Services without those bindings reuse successful setup. Source
+observations are checked again before apply.
 
 `hosty --data-root <root> core activate-workspace <prepared-id>` admits a detached helper and returns
 its request ID and log path. The helper composes the local transition. It
@@ -626,7 +633,7 @@ pre-projection configuration checkpoint when recovering an interrupted native sn
   platform-specific coordinated handover and Harness/browser acceptance independently of unit tests.
 
 - Verify pre-stop setup/compile failures preserve running processes; verify repair leases, original-request retry, and explicit fresh review with the same ID after source repair. Reject selection/authority drift, stale review and review refresh beyond released preparation; retain accepted apply bodies through UI remounts. Verify cleanup ignores unrelated completed journals, preserves active operation ownership and resumes a partially released child without lifecycle effects.
-- Verify native and Docker setup use scratch data/cache context and target environment precedence; verify service scoping, missing cache refusal, mixed dependency order, selected app backups, stopped-Core snapshot hashes, exact replacement identity and retained unrelated processes.
+- Verify native and Docker setup use scratch data/cache context and target environment precedence; verify service scoping, missing cache refusal, mixed dependency order, selected app backups, stopped-Core snapshot hashes, exact replacement identity and retained unrelated processes. Confirm storage-bound setup runs again with actual storage, old preparation receipts cannot skip it, and a final setup failure prevents the command from starting.
 
 - Interrupt helpers after app apply, Core Stop and candidate Start; reconcile the original request without repeating completed effects or claiming readiness for a different target.
 - Verify cancellation boundaries, stale helper attempts, local-control authorization, dead previous-Core recovery and source/data preservation on isolated native instances.

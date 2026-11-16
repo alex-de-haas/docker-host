@@ -26,7 +26,7 @@ def check(context, app, app_origin, client, call, timed):
                     'text': 'Retain this accepted queued input after restart.', 'attachments': [attachment['name']]}}
     accepted = call(app_origin, queue_path+'/commands', command)
     assert accepted['queue']['paused'] and len(accepted['queue']['entries']) == 1
-    assert not call(app_origin, '/api/sessions/'+session_id).get('workerRun')
+    assert not call(app_origin, '/api/sessions/'+session_id).get('providerExecution', {}).get('runId')
     manifest = data/'conversation-history-v2'/'manifest.json'
     assert manifest.is_file()
     assert command['command']['text'] not in manifest.read_text()
@@ -37,8 +37,8 @@ def check(context, app, app_origin, client, call, timed):
     assert replay['queue']['entries'][0]['text'] == command['command']['text']
     with client.open(app_origin+queue_path+'/attachments/'+attachment['id'], timeout=30) as response:
         assert response.read() == b'durable synthetic attachment'
-    assert not call(app_origin, '/api/sessions/'+session_id).get('workerRun')
-    say('PASS: acknowledged queue input, immutable attachment, original UUID receipt and pause survive a real API/Worker restart without inference')
+    assert not call(app_origin, '/api/sessions/'+session_id).get('providerExecution', {}).get('runId')
+    say('PASS: acknowledged queue input, immutable attachment, original UUID receipt and pause survive a real consumer restart without inference')
 
     damaged = call(app_origin, '/api/sessions', {'title': 'Synthetic damaged storage'})
     run([context['cli'], '--data-root', root, 'apps', 'stop', app])
@@ -48,21 +48,18 @@ def check(context, app, app_origin, client, call, timed):
     evidence = record.with_name('fixture-original-record.json.evidence')
     evidence.write_bytes(original)
     record.write_bytes(b'\0'*64)
-    bad_run = data/'worker-service'/'runs'/'damaged-fixture.json'
-    bad_run.parent.mkdir(parents=True, exist_ok=True)
-    bad_run.write_bytes(b'{"torn":')
+    assert json.loads((data/'agent-consumer-format.json').read_text())['version'] == 1
     timed('start')
     issues = call(app_origin, '/api/storage-recovery')['issues']
     assert any(issue['sessionId'] == damaged['id'] for issue in issues)
     assert call(app_origin, '/api/sessions/'+session_id)['id'] == session_id
     healthy_queue = call(app_origin, queue_path)
     assert healthy_queue['paused'] and len(healthy_queue['entries']) == 1
-    assert not call(app_origin, '/api/sessions/'+session_id).get('workerRun')
+    assert not call(app_origin, '/api/sessions/'+session_id).get('providerExecution', {}).get('runId')
     try:
         call(app_origin, '/api/sessions/'+damaged['id'])
         raise AssertionError('Corrupt source record was treated as a usable or missing conversation')
     except urllib.error.HTTPError as error:
         assert error.code == 503 and json.load(error)['code'] == 'session_storage_corrupt'
     assert record.read_bytes() == b'\0'*64 and evidence.read_bytes() == original
-    assert bad_run.read_bytes() == b'{"torn":'
-    say('PASS: one corrupt session and Worker run remain fenced with intact evidence while healthy accepted input stays accessible')
+    say('PASS: one corrupt consumer conversation remains fenced with intact evidence while healthy accepted input stays accessible')

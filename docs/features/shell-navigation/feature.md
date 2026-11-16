@@ -1,6 +1,6 @@
 ---
 created: 2026-07-30
-updated: 2026-11-07
+updated: 2026-11-13
 summary: Shell routes, role-specific home, sidebar app launchers and phone navigation.
 components: [apps/shell]
 ---
@@ -185,8 +185,17 @@ header holds search, the filtered app count, aggregate CPU/RAM aligned above app
 actions. Update all is also a contextual shortcut when applicable. Check updates stays in App actions.
 The list and loading/empty states occupy the nested FramePanel. The page title remains in the top bar.
 
-Core has no Platform badge. System apps carry a cog role icon and the active Shell a panels icon,
-with explanatory tooltips. Runtime app rows and navigation use Core-resolved manifest icon assets;
+Core has no Platform badge. App rows show role icons only for Core-confirmed provider roles with a
+nonempty current interface declaration: Brain for agent execution, Bot for assistant conversations,
+AudioLines for speech-to-text, Languages
+for translation, and one ClipboardCheck for tasks and/or task execution. The task tooltip names only
+the confirmed, currently declared interfaces. Historical grants for removed interfaces have no mark;
+stopped or unavailable providers retain their declared marks without requiring a ready URL.
+Conversation-history and unknown roles have no icon. The explicitly selected Shell carries
+PanelsTopLeft; an arbitrary app entry point or settings UI does not establish
+that role. Each mark has a keyboard-accessible explanatory tooltip. System classification has no
+role icon, and app IDs, names, catalog metadata and brand icons do not establish roles. Runtime app
+rows and navigation use Core-resolved manifest icon assets;
 Core keeps its inline brand mark. No app-ID lookup overrides an app's supplied icon URL.
 
 Core and app rows have four shared columns: flexible identity, 188px status, 144px resources and
@@ -556,6 +565,11 @@ disabled optional permissions are not a problem. See [App permission management]
   by hover or ArrowDown, page navigation and the standalone link from it, and that hovering the rail does not
   steal focus from an embedded workspace.
 
+- Dashboard role-icon coverage uses unrelated app IDs, simultaneous confirmed roles, repeated roles,
+  task-storage/task-executor deduplication and accurate tooltips. Historical grants with removed or empty
+  interface declarations have no mark; declared stopped/unavailable interfaces remain marked. Unconfirmed capabilities, system
+  classification, familiar IDs, settings UI and catalog branding do not produce role marks.
+  Only the explicitly selected Shell gets the interface mark; conversation history stays unmarked.
 - Dashboard filter coverage includes running, transitional, stopped, unknown, failed, and missing
   states, plus an error clearing after recovery. Counts and filtering share the same predicate.
 - Browser verification covers selected filters, reset to all, zero attention visibility, and the

@@ -14,6 +14,8 @@ import { AuditReporter } from "./audit.js";
 import { FakeHarnessAdapter } from "./harness/fake.js";
 import { captureEnv } from "./test-env.js";
 import { AppContextError } from "./sessions/app-context.js";
+import { currentAgentAuthority } from "./agent-providers/context.js";
+import type { ConnectionService } from "./connections/service.js";
 
 const keys = generateKeyPairSync("ec", { namedCurve: "P-256" });
 const publicKey = keys.publicKey.export({ format: "der", type: "spki" }).toString("base64");
@@ -99,6 +101,28 @@ it("revalidates the captured actor credential, ignores upgrade cookies and consu
   expect(await refused(socketFor(admission))).toBe(401);
   const noTicket = new WebSocket(`${origin.replace(/^http/, "ws")}/api/event-stream`, ["hosty-events-v1"], { origin, headers: { cookie: "hosty_harness_identity=hostyg_owner" } });
   noTicket.on("error", () => {}); sockets.push(noTicket); expect(await refused(noTicket)).toBe(401);
+});
+
+it("retains ticket authority through real WebSocket upgrade and later remote usage sampling", async () => {
+  const admissions: string[] = [], samples: string[] = [];
+  const connections = {
+    get: vi.fn(async () => { admissions.push(String(await currentAgentAuthority())); return { id: "account", name: "Account", kind: "agent", revision: "1" }; }),
+    usage: vi.fn(async () => { samples.push(String(await currentAgentAuthority())); return { state: "unsupported", rows: [], observedAt: null }; }),
+  } as unknown as ConnectionService;
+  const extra = createGatewayServer(manager, new FakeHarnessAdapter(), null, null, null, null, connections); extras.push(extra);
+  const base = await listen(extra);
+  const issued = await fetch(base + "/api/event-stream-tickets", { method: "POST", headers: { authorization: "Bearer hostyg_owner", origin: base, "content-type": "application/json" },
+    body: JSON.stringify({ path: "/api/connections/account/usage/events" }) });
+  expect(issued.status).toBe(200);
+  const admission = await issued.json() as Admission, view = await connected(admission, base);
+  await vi.waitFor(() => expect(view.chunks.join("")).toContain('"state":"unsupported"'));
+  expect(admissions).toEqual(["hostyg_owner", "hostyg_owner"]); expect(samples).toEqual(["hostyg_owner"]);
+  await vi.waitFor(() => expect(samples).toHaveLength(2), { timeout: 3000 });
+  expect(samples).toEqual(["hostyg_owner", "hostyg_owner"]);
+  role = "host.user";
+  await vi.waitFor(() => expect(view.chunks.join("")).toContain('"state":"unavailable"'), { timeout: 3000 });
+  expect(samples).toHaveLength(2);
+  expect(credentials.every(value => value === "hostyg_owner")).toBe(true);
 });
 
 it("refuses an origin mismatch and a credential revoked after ticket admission", async () => {

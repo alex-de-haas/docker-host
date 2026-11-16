@@ -1,137 +1,93 @@
 ---
 created: 2026-10-15
-updated: 2026-10-26
-summary: Core translation discovery and scoped invocation, SDK clients, and two static Harness variants for translating text and Markdown plans.
-components: [apps/core, apps/harness, apps/documents, packages/app-sdk, packages/app-sdk-dotnet]
+updated: 2026-11-13
+summary: Generic Core-scoped translation contracts and Documents consumption, with OPUS Translate as the sole shipped supplier and retained historical benchmark evidence.
+components: [apps/core, apps/documents, apps/opus, packages/app-sdk, packages/app-sdk-dotnet]
 ---
 
 # Translation Providers
 
 ## Contract And Selection
 
-Core recognizes the confirmed supply role `translation` and category permission
-`providers.translation`. One app can expose several versioned interface entries with distinct keys.
-The provider is the installed supplier; the interface describes its callable contract. Consumers
-select `(appId, kind, key)`, so Harness supplies two translation choices without becoming two apps.
-The existing [provider authority protocol](../provider-consumption/feature.md) issues a credential
-for exactly that app/category/key and checks current grants on every invocation. Translation uses
-app authority, without an acting-user assistant session or tool delegation.
+OPUS Translate is the repository's sole supplied translation app. Harness, Codex Provider and
+Claude Code Provider do not expose translation interfaces or translation-account/model settings.
+[Local OPUS Translation](../local-translation/feature.md) owns its native model, cache and language
+support. Installing an agent provider does not install or configure a translator.
 
-Harness 0.54.0 declares static `codex` and `claude` entries at `/api/translation/v1/{key}`. Both
-are discoverable even when no agent connection is selected. The administrator selects an existing
-connection of the matching kind under **Settings → Translation providers**. A selection
-includes its credential revision and, for an existing Codex host login, an account fingerprint.
-Changing the chat default does not change translation. Removed/replaced accounts require explicit
-reselection; no alternate account, backend or provider is tried automatically.
+Core retains the generic confirmed supply role `translation`, category permission
+`providers.translation` and version-one SDK contract. It discovers reviewed interface declarations
+and current installation identities, without provider-name or application-ID rules. Consumers select
+an installed `(appId, installationId, kind, key)` reference. OPUS declares the `default` interface at
+`/api/translation/v1`; clients use the discovered interface rather than constructing its address.
 
-The dedicated settings tab presents one compact row each for Codex and Claude, with an always-visible
-model selector and an enable switch. Preset model changes and enable/disable actions save immediately;
-failed writes retain the last confirmed values. Disabling a variant preserves its model and remembers
-the account while the tab stays open. A sole connection is used only when the administrator enables
-translation. Multiple connections require an explicit account choice. Missing or changed selections
-remain visible and never silently switch to another account. When an account is reported as changed,
-model edits stay disabled until the administrator explicitly reconnects it.
-
-Each variant also has an independent translation model selection: **Agent default**, a static
-suggestion, or **Custom model ID** in a small dialog. Suggested Claude choices include explicit Haiku 5.5
-and Sonnet 5.5 versions as well as native aliases. Suggestions are not an account entitlement catalog. Aliases follow
-the installed native runtime; exact IDs pin the requested version. Model IDs accept 1–128 ASCII letters,
-digits, dots, underscores and hyphens, starting with a letter or digit. Availability is checked by the
-upstream inference request, with no Harness model fallback or retry.
-
-The administrator endpoint `PUT /api/settings/translation/{kind}` saves `connectionId` and optional
-`model`. A null model selects the native default; an omitted model preserves the previous choice for
-older clients. Existing settings without `translationModels` retain native defaults. The service
-snapshots the connection and model once per document, including all of its segments, and passes an
-explicit selection through Codex `--model` or Claude SDK `options.model`. Chat models, chat defaults
-and the consumer translation contract are independent of this setting. Reasoning effort remains low.
-
-The selection is host-wide and authorizes consumer apps already granted `providers.translation`
-to use that account's allowance or API billing. The UI states that text is sent to the selected
-external model provider. Configuration readiness does not prove remote login validity, quota or
-model entitlement; those failures are reported by the inference request.
+The [provider authority protocol](../provider-consumption/feature.md) issues an invocation credential
+for exactly the selected installation, category and key. Every invocation checks current grants.
+Translation uses app authority without an acting-user assistant session, agent run, MCP tools,
+provider account, or delegated chat credential. Consumer apps need their own reviewed translation
+permission. A selected installation that disappears or becomes unavailable is reported explicitly;
+consumers do not silently switch suppliers.
 
 | Operation | Request | Response |
 | --- | --- | --- |
-| `GET /capabilities` | Exact-key provider bearer credential | Version, formats, character/byte limits, timeout, backend, readiness and optional reason |
-| `POST /translations` | Same credential; JSON `text`, `targetLanguage`, optional `sourceLanguage` and `format` | `text`, requested `targetLanguage` and `sourceLanguage` |
+| `GET /capabilities` | Exact-interface provider invocation credential | Version, supported formats/languages, limits, timeout, backend, readiness and optional reason |
+| `POST /translations` | Same credential; JSON `text`, `targetLanguage`, optional `sourceLanguage` and `format` | Translated `text` and the requested source/target language tags |
 
 `sourceLanguage` defaults to `auto`; `format` defaults to `text` and also accepts `markdown`.
-Language values are bounded language tags such as `en`, `ru`, `pt-BR` or `zh-Hant`. `auto` is only
-a source-language option. The result echoes the requested source tag; it does not claim language
-detection. Capabilities contain `version: 1`, `formats`, `maxCharacters`, `maxSegmentCharacters`,
-`maxBytes`, `maxOutputBytes`, `timeoutSeconds`, `backend`, `ready`, and optionally `reason`.
+Language values use bounded language tags. `auto` is valid only as a source language. OPUS supports
+English to Russian, including regional tags, and treats `auto` as the fixed English source rather
+than claiming language detection. Its capabilities declare `sourceLanguages: [en]`,
+`targetLanguages: [ru]` and `autoSourceLanguage: en`.
+
+Capabilities contain `version: 1`, `formats`, `maxCharacters`, `maxSegmentCharacters`, `maxBytes`,
+`maxOutputBytes`, `timeoutSeconds`, `backend`, `ready` and an optional `reason`. Readiness describes
+the local worker/model; it does not grant authority or trigger a translation. OPUS has no cloud
+account, translation model selector or agent-account readiness extension.
 
 ## Markdown Plans
 
-Markdown plans are the primary translation input. The translator preserves the complete leading
-YAML frontmatter and uses a GFM syntax tree to check the resulting document. Heading levels, block
-and list structure, list markers/numbering, task checkbox states, deliverable IDs (`D1` etc.), table
-alignment, link destinations and reference identifiers must match. Code blocks, inline code, HTML,
-images and link definitions must remain byte-identical. Only prose changes. Structural changes
-produce `translation_markdown_changed` instead of a successful rewritten plan. The source file is
-never written by this API. Structural validation does not prove linguistic accuracy.
+The supplier owns document processing. OPUS parses CommonMark/GFM, extracts decoded prose and
+reconstructs the document while escaping generated Markdown punctuation. Leading YAML frontmatter,
+code, HTML, image markup, link destinations/reference identifiers, task states, list markers and
+deliverable IDs remain fixed. Ordinary link labels and headings translate. A structural signature
+rejects changed protected content; it does not establish linguistic accuracy.
 
-Markdown accepts up to 128,000 Unicode code points. It splits at block or list-item boundaries
-into segments of at most 16,000 code points, grouping small intervening code blocks with prose to
-avoid one model call per paragraph. Frontmatter and oversized code blocks are copied. An oversized
-indivisible prose block is refused with `translation_block_too_large`; it is never truncated.
-The complete result is validated after concatenation. Plain text accepts up to 16,000 code points.
-
-Request and document output each have a one MiB byte limit; each generated segment is bounded to
-128,000 UTF-8 bytes. A segment has a 120-second deadline and the request a 600-second deadline.
-The operation is non-streaming. Long plans need a waiting state and cancellation in the consumer.
+Markdown accepts at most 128,000 Unicode code points; plain text accepts 16,000. Request and output
+bodies are bounded at one MiB. OPUS accepts at most 8,192 prose fragments, batches up to 32 at a time,
+and refuses any fragment that exceeds its 512-model-token limit. Input and output are not silently
+truncated. Its capability `maxSegmentCharacters` is 16,000; the local fragment token limit is an
+additional model constraint. The source file is never written by the translation API.
 
 ## Execution And Failure Behavior
 
-Each request leases its selected connection exclusively. An open chat/reservation on that connection
-or another translation produces a busy error; a dedicated translation connection avoids that
-contention. The lease prevents credential replacement and native-token refresh races. Translations
-do not create Harness conversations or use chat history, MCP grants, custom prompts or source workspaces.
+OPUS owns a pinned resident CTranslate2 CPU worker and verified model cache. After model preparation,
+inference does not require a model-service network connection; each HTTP invocation still validates
+its credential with Core. No agent CLI, native agent session, source workspace, chat history, skill,
+MCP grant or chat prompt participates in translation.
 
-Codex uses the pinned 0.160.0 CLI's ephemeral exec mode, an empty working directory, isolated profile,
-read-only sandbox, disabled host tools/features, no project instructions/host skill discovery, and a
-strict single-field JSON output schema. Claude uses Agent SDK 0.3.288 with a temporary profile,
-no configured tools/skills/plugins/MCP/settings sources/hooks, denied tool requests, disabled
-session persistence, low effort, two turns and a USD 1 budget ceiling per segment. API-key connections
-use bare mode. Subscription OAuth connections use safe mode plus a restrictive hook-disable policy:
-[bare mode does not read subscription tokens](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token).
-The OAuth path checks the SDK's resolved settings before startup and refuses hosts with a managed
-settings source, because safe mode alone still permits managed hooks. It does not override that policy.
-An API-key connection supports bare mode on those hosts. This is native configuration isolation,
-not protection against an administrator changing machine policy concurrently with a request.
+One request owns the worker at a time; concurrent requests receive HTTP 429. Model initialization
+reports unavailable capabilities and translation returns 503 until ready. Requests have a 600-second
+deadline. Cancellation, client disconnection or timeout terminates active inference and reloads a
+clean worker. Requests are not queued, retried or replayed, and there is no model/provider fallback.
+Unexpected worker failure requires an app restart. Application shutdown stops the worker.
 
-The native policy probe observes the actual inference requests through a local fake endpoint:
-Codex advertises only its internal `request_user_input` (which exec cannot service); Claude advertises
-only `StructuredOutput` in both API-key and OAuth profiles. Host instruction sentinels remain absent
-from inference and test startup hooks do not execute. Neither profile advertises host filesystem, shell, browser or MCP tools.
-Codex tool event attempts are rejected. These controls describe the pinned versions, not arbitrary
-operator replacements of the native binary and not OS/container isolation for the whole Harness.
-
-Only the selected account credential enters the native environment/profile. Core/Harness service
-tokens and unrelated vendor overrides are excluded. Temporary profiles are removed after success,
-failure and cancellation. File-backed Codex login renewal is written back only while the original
-account document still matches; managed ChatGPT renewal is also persisted through Core secret storage.
-Keychain-only existing Codex logins are unavailable for translation. A renewal persistence failure
-requires reconnection. Harness does not persist translation input/output in chat history or logs.
-The selected upstream provider's account and retention terms apply to inference.
-
-Routes revalidate provider authority before consuming the body. Settings retain administrator and
-same-origin/CSRF checks. Ordinary operator session cookies alone cannot invoke the translation route.
-Disconnects cancel native execution, including the Codex process group. There is no request queue,
-retry or fallback. Typical failures are invalid input (400), missing/revoked authority (401/403),
-changed connection (409), oversized input (413), busy (429), invalid/model output (502), unavailable
-connection (503) and execution timeout (504).
+Routes validate current provider authority before consuming document input and disable response
+caching. Ordinary browser cookies alone cannot invoke translation. Invalid input or unsupported
+language pairs return 400, authority failures 401/403, bounds violations 413, busy capacity 429,
+invalid output 502, unavailable runtime 503 and deadline expiry 504. OPUS does not persist request
+text or translation output. Documents retains a temporary reading view rather than replacing source.
 
 ## SDK Usage
 
-TypeScript SDK 0.31.0 adds `translationCapabilities` and `translate` to the server-only client:
+The server-only TypeScript client keeps the generic discovery and invocation API:
 
 ```ts
 const client = new ProviderClient();
 const providers = await client.list("translation");
-const selected = providers.find(p => p.appId === chosenAppId && p.key === chosenKey);
+const selected = providers.find(p =>
+  p.appId === chosen.appId && p.installationId === chosen.installationId && p.key === chosen.key);
 if (!selected) throw new Error("The selected translator is not installed.");
+const capabilities = await client.translationCapabilities(selected, abortController.signal);
+if (!capabilities.ready) throw new Error(capabilities.reason ?? "The translator is not ready.");
 const result = await client.translate(selected, {
   text: markdownPlan,
   sourceLanguage: "en",
@@ -140,47 +96,55 @@ const result = await client.translate(selected, {
 }, abortController.signal);
 ```
 
-.NET SDK 0.10.0 exposes `TranslationCapabilitiesAsync` and `TranslateAsync` with
+The .NET SDK exposes `TranslationCapabilitiesAsync` and `TranslateAsync` with
 `HostyTranslationRequest`, `HostyTranslationResult` and `HostyTranslationCapabilities`. Supply an
-`HttpClient` with redirects disabled and a timeout of at least 610 seconds (or infinite with caller
-cancellation). Both clients check version one, keep service credentials inside Core calls and pass
-cancellation through to inference. Requested language tags must match the provider response.
+`HttpClient` with redirects disabled and a timeout of at least 610 seconds, or an infinite timeout
+with caller cancellation. Both SDKs check version one, retain service credentials inside Core calls,
+pass cancellation through and verify the response's requested language tags. Removing agent-backed
+suppliers does not remove the generic Core or SDK translation contract.
 
 ## Plans Consumer
 
-Plans 0.7.0 consumes the two variants through a **Translate** action above its selected Markdown
-document. It owns translator and target-language choices; Harness owns account and translation-only
-model settings. The original file, workflow metadata and workspace diff remain authoritative.
-Translations are temporary reading views with an original toggle and cancellation. Current source
-authorization, displayed-byte fingerprints and installation identity are checked before invocation.
-See [Plan Tracking](../documents-app/feature.md#translate-a-document-and-optional-permissions) for the UI and acceptance evidence.
+Documents offers **Translate** above the selected Markdown document. The user grants its optional
+translation permission and explicitly selects OPUS Translate and a supported target language.
+Documents owns that selection and its temporary original/translation view, cancellation and failure
+diagnostics. Current source authorization, displayed-byte fingerprints and installation identity
+are checked before invocation. Source documents, workflow metadata and workspace diffs remain
+authoritative. See [Plan Tracking](../documents-app/feature.md#translate-a-document-and-optional-permissions).
 
 ## Operator Preview Installation
 
-On 2026-10-16, the operator's existing local installation is updated for interactive acceptance.
-The preview is ported onto its installed release baseline `b996226e2c1574d6a34f0c0743147d54a3d98844`,
-preserving the newer Sandbox permissions and Harness execution-mode settings. A separate managed
-worktree named `plans-translation-preview` supplies Core 0.136.0, Harness 0.54.0 and Plans 0.7.0 in
-source development mode. Shell 0.103.1 and Workspaces 0.4.0 remain running at their existing versions.
-The worktree is an active runtime dependency, not disposable build output. No release is published.
+This dated record describes the pre-extraction 2026-10-16 preview, rather than current installation
+or credential setup. Its Worker image and embedded native runtime are retired.
 
-Harness translation settings select the existing Codex connection with `gpt-6-luna` and the existing
-Claude connection with `claude-haiku-5-5`. Chat defaults and native execution mode are preserved.
-Plans retains its existing optional grants and additionally receives `providers.translation`.
-Core creates pre-update backups for Harness and Plans. The local agent-worker image is rebuilt at
+On 2026-10-16, the operator's existing local installation was updated for interactive acceptance.
+The preview was ported onto its installed release baseline `b996226e2c1574d6a34f0c0743147d54a3d98844`,
+preserving the newer Sandbox permissions and Harness execution-mode settings. A separate managed
+worktree named `plans-translation-preview` supplied Core 0.136.0, Harness 0.54.0 and Plans 0.7.0 in
+source development mode. Shell 0.103.1 and Workspaces 0.4.0 remained running at their existing versions.
+The worktree was retained as a runtime dependency for that preview. No release was published.
+
+Harness translation settings selected the existing Codex connection with `gpt-6-luna` and the existing
+Claude connection with `claude-haiku-5-5`. Chat defaults and native execution mode were preserved.
+Plans retained its existing optional grants and additionally received `providers.translation`.
+Core created pre-update backups for Harness and Plans. The local agent-worker image was rebuilt at
 0.54.0 so the retained Docker execution option has the matching image available.
 
-A live browser check translates `docs/features/accent-presets/plan.md` from the tracked public branch
-to Russian through both variants. Both requests succeed and pass the production Markdown validator;
-headings, inline code, links, D1/D2 and unchecked tasks render correctly. **Show original** restores
-the English reading view. Plans service logs report complete HTTP request times of 8.6 seconds for
+A live browser check translated `docs/features/accent-presets/plan.md` from the tracked public branch
+to Russian through both variants. Both requests succeeded and passed the production Markdown validator;
+headings, inline code, links, D1/D2 and unchecked tasks rendered correctly. **Show original** restored
+the English reading view. Plans service logs reported complete HTTP request times of 8.6 seconds for
 Claude and 15.3 seconds for Codex, one run each; these include source validation and provider transport
-and are not a repeated latency benchmark. The plan also loads within Shell. Translation interaction
-is checked in the normally authenticated app window because the browser automation tool cannot click
+and were not a repeated latency benchmark. The plan also loaded within Shell. Translation interaction
+was checked in the normally authenticated app window because the browser automation tool could not click
 controls inside this Shell iframe; earlier isolated embedded-flow coverage remains recorded in
 [Plan Tracking](../documents-app/feature.md#translate-a-document-and-optional-permissions).
 
 ## Measured Behavior
+
+The following agent-backed results are historical measurements from October 2026. Those adapters
+and their executable benchmark/native-policy probes are retired. The tables and raw evidence remain
+for comparison; they do not describe current providers, account settings or reproduction commands.
 
 On 2026-10-15, macOS arm64, English to Russian, low effort, fresh isolated profiles per document,
 sequential segments, no Harness result cache. In the initial baseline, both backends use their native default model;
@@ -243,9 +207,9 @@ saved token into process memory and supplies it through the native environment; 
 prints it nor creates a credential file. Existing installation settings remain unchanged.
 
 [Raw measurements, synthetic inputs and reviewed output samples](benchmark-evidence.json) preserve
-the evidence. `scripts/experiments/translation/benchmark.mts` reproduces it with an explicitly supplied
-sample and credential. Reports contain timing metadata only unless `--include-output` is explicitly
-selected for synthetic sample review. `native-policy.mts` uses only fake local credentials.
+the evidence. The legacy `benchmark.mts` and `native-policy.mts` executables are retired with
+agent-backed translation. Their historical runs remain recorded here; current reproduction does not
+require agent accounts, credentials or deleted Harness modules.
 
 ### Explicit Model Comparison
 
@@ -291,17 +255,16 @@ For Haiku 5.5, profile preparation/cleanup takes 0–3 ms per phase. Small-plan 
 document remains dominated by remote response time, not profile preparation. API time includes the
 native structured-output protocol and network/provider latency, not just model computation.
 
-Use `--model <id>` with `scripts/experiments/translation/benchmark.mts` to reproduce a selection.
-`--continue-on-error` retains repeated failures; `--include-output` additionally retains synthetic
-segment output for diagnosis even when final Markdown validation rejects the document. Reports and
-source hashes are stored under `explicitModelComparison` in [the evidence](benchmark-evidence.json).
+Explicit-model selections and their failures are historical results of the retired agent benchmark.
+Reports, synthetic output and source hashes remain under `explicitModelComparison` in
+[the evidence](benchmark-evidence.json); there is no current agent translation command to rerun.
 
 ### Local Model Measurements
 
 An isolated experiment on 2026-10-15 compares two local models with the existing same-day Haiku 5.5
 baseline. It uses identical English→Russian synthetic plans (1,480 and 19,861 characters), verified by
 SHA-256, on an Apple M4 Pro with 14 CPU cores and 48 GiB memory. No additional cloud request or
-credential access is involved. Neither static Harness variant runs these local models.
+credential access is involved. The then-existing static Harness variants did not run these local models.
 
 The complete 26 local outputs, including failures, timings, model hashes and qualitative review are in
 [local benchmark evidence](local-benchmark-evidence.json). Original inputs and Haiku outputs remain in
@@ -383,6 +346,12 @@ short-plan latency and fails the long-plan test. Other candidates such as
 [NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-600M) have no measurements in this experiment.
 
 #### Reproduction
+
+The retained local-only experiment is independent of Harness and native agent runtimes. Current
+reports identify `experimentVersion: 2` and `adapter: standalone-local-contract`; its bounded Markdown
+chunker/oracle is experimental and is not the production OPUS codec. Historical JSON is unchanged.
+A model-free import/input check is available with `--kind opus --validate-only`. Running inference
+still requires explicitly prepared isolated models/dependencies; these commands do not install them.
 
 Scripts under `scripts/experiments/translation/` read the existing fixture evidence, verify its hashes
 and invoke the production Markdown validator. Model revisions, URLs, checksums and runtime versions
@@ -528,7 +497,10 @@ the registered worktree path. Model setup is in `setup_models.py`; the matched B
 WASM plus registry snapshots are retained in `firefox-engine/`. The bundle is local temporary
 storage, not a published or permanent benchmark dataset.
 
-## Testing Expectations
+## Historical Verification
+
+These dated commands/results record earlier implementations. Harness/native-agent paths and temporary
+preview bundles below are archival; they are not current installation or reproduction instructions.
 
 Expanded local evaluation verification on 2026-10-26:
 
@@ -543,7 +515,7 @@ Expanded local evaluation verification on 2026-10-26:
 - Application builds, Core-managed integration/browser checks and the full test suites are not run:
   the repository change is documentation-only; all model/adapter experiments remain outside it.
 
-- Settings UI coverage checks the separate translation tab, enable/disable persistence, models while
+- Historical settings UI coverage checked the separate translation tab, enable/disable persistence, models while
   disabled, multiple/missing/changed accounts, failed saves, and custom model validation.
 
 Compact settings verification on 2026-10-19 (Harness 0.59.1):
@@ -604,19 +576,39 @@ checking passed again. The native policy probe passed for Codex, Claude API-key 
 profiles. Core and SDK source are unchanged by model selection, so their earlier successful
 builds/tests above remain the applicable evidence rather than newly repeated checks.
 
-- Core manifest/provider tests cover both static keys, confirmed roles, category grants, exact-key
+- The retired implementation’s Core tests covered both static keys, confirmed roles, category grants, exact-key
   token isolation, actor-free translation and live revocation.
 - TypeScript/.NET SDK tests cover the request shape, credential separation, incompatible interfaces,
   refusal/invalid responses, cancellation and no retry/fallback.
-- Harness tests cover independent model persistence, legacy defaults/reset, invalid IDs, per-document
-  snapshots across segments, native model forwarding, and no retry on inference failure. They also
-  cover settings persistence/revision ownership, admin gates, request bounds, disconnect
-  cancellation, concurrency, native configuration, invalid output, cleanup and credential renewal races.
+- Historical Harness tests covered independent model persistence, defaults/reset, invalid IDs, per-document
+  snapshots across segments, qualified provider/model forwarding and no retry on inference failure.
+  They also cover settings persistence/revision ownership, admin gates, request bounds, disconnect
+  cancellation, concurrency and invalid output. Provider-runtime tests cover native configuration,
+  cleanup and credential renewal races.
 - Markdown tests round-trip every repository `plan.md` and reject altered frontmatter, code, links,
   deliverable IDs, checkboxes, list markers and table structure. The 2026-10-15 run covered 58 plans.
-- Browser verification uses normal password sign-in and a Core-managed Harness in a separate data root;
+- Historical browser verification used normal password sign-in and a Core-managed Harness in a separate data root;
   it verifies selected Codex/disabled Claude display, preset/custom model saving, and independent model
   values after reload, including explicit Haiku 5.5. The browser reports no warning/error console logs.
   The [settings screenshot](model-settings.png) records the test installation, not the operator's settings.
-- Re-run native policy probes when upgrading either pinned agent. Fixtures alone do not establish
-  real account availability, latency or translation quality.
+- The native-policy executable and agent translation adapters are retired. These dated results are
+  evidence for their recorded baselines, not current requirements or proof of OPUS linguistic quality.
+
+## Testing Expectations
+
+- Core tests cover confirmed roles, category permission, exact-interface/installation credentials,
+  actor-free translation and current revocation without a supplier-specific identity branch.
+- TypeScript/.NET SDK tests cover request/response validation, credential separation, incompatible
+  interfaces, readiness, refusal, cancellation and no retry or fallback.
+- `npm run opus:test` covers language/format/size limits, protected Markdown, capacity, HTTP authority,
+  cancellation and worker environment; its structural oracle is independent of Harness.
+- `npm run opus:build` checks the shipped app. Native model/cache acceptance belongs to
+  [Local OPUS Translation](../local-translation/feature.md#testing-expectations) and is opt-in.
+- Documents tests cover optional permission, explicit qualified selection, guarded source bytes,
+  original/translation views, cancellation and provider failure diagnostics.
+- `node --import tsx --test scripts/experiments/translation/local-*.test.mts` and
+  `node --import tsx scripts/experiments/translation/local-benchmark.mts --kind opus --validate-only`
+  verify the independent experimental codec and unchanged fixed input hashes without model access.
+- `node scripts/docs-index.mjs --check`, `node scripts/check-versions.mjs` and `git diff --check`
+  validate documentation, versions and whitespace. Historical commands above are records of their
+  dated baselines, not instructions to restore retired translation suppliers.

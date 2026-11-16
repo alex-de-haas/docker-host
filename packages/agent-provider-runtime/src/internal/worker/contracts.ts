@@ -1,0 +1,93 @@
+import { validInstructionTexts } from "../harness/context-sources.js";
+import type { HarnessEvent, HarnessStartOptions } from "../harness/adapter.js";
+import type { ConnectionBinding } from "../connections/registry.js";
+
+export const WORKER_PROTOCOL = 2;
+export const MAX_COMMAND_BYTES = 1024 * 1024;
+export const MAX_EVENT_BYTES = 64 * 1024 * 1024;
+export const REPLAY_MS = 7 * 24 * 60 * 60 * 1000;
+export type ExecutionSelection = { model: string | null; reasoningEffort: string | null };
+export type ModelChoice = { id: string; label: string; efforts: Array<{ id: string; label: string }>; defaultEffort?: string; suggested?: boolean; unavailableReason?: string };
+export type ModelCatalog = { revision: string; models: ModelChoice[]; defaultModel?: string; unavailableReason?: string };
+export type ResourceReference = { kind: "conversation"; id: string } | { kind: "worktree"; id: string; revision: string; path?: string };
+export type WorkerRunRequest = {
+  skillExportId?: string;
+  operation?: "chat" | "task";
+  conversationId: string;
+  binding: ConnectionBinding;
+  selection: ExecutionSelection;
+  resource: ResourceReference;
+  input: string;
+  options: Pick<HarnessStartOptions, "nativeTools" | "subagents" | "autonomy" | "systemPrompt" | "instructionSources" | "resumeHarnessSessionId" | "mcpServers" | "promptSuggestions" | "requireNativeResume">;
+  autoAllowedPrefixes: string[];
+};
+export type RunState = "accepted" | "running" | "awaiting_input" | "suggesting" | "parking" | "parked" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
+export type WorkerEvent = { runId: string; generation: string; sequence: number; event: HarnessEvent };
+export type WorkerRecovery = { requestId: string; generation: string; expectedRevision: number; consumerExitConfirmed: true; actorId: string; conversationId?: string };
+export type WorkerReceipt = {
+  runId: string; conversationId: string; generation: string; state: RunState; revision: number;
+  boundary?: "container" | "local"; exitConfirmed?: boolean;
+  recovery?: { requestId: string; actorId: string; confirmedAt: string };
+  pending?: WorkerEvent[];
+  barrier?: WorkerBarrier;
+  effects?: Record<string, "started" | "unknown">;
+  usage?: { sequence: number; activeMs: number; unknown: boolean };
+  selection: ExecutionSelection; snapshot?: { text?: string; nativeSessionId?: string; result?: HarnessEvent; contextUsage?: WorkerEvent }; createdAt: string; updatedAt: string; error?: string;
+};
+export type WorkerBarrier = { controlId: string; expectedRevision: number; kind: "task_adoption" | "child_wait" | "source_rebind" | "limits" | "human_input"; barrierId: string; generation: number; acknowledgedSequence: number; origin?: "coordinator" };
+export type WorkerPark = { controlId: string; eventId: number; expectedRevision: number; id: string };
+export type WorkerControl = { controlId: string; eventId: number; expectedRevision: number } & (
+  { kind: "approval"; id: string; decision: "allow" | "deny"; message?: string }
+  | { kind: "question"; id: string; answers: Record<string, string> }
+);
+export class WorkerApiError extends Error {
+  constructor(public readonly status: number, public readonly code: string, message: string) { super(message); }
+}
+export const safeIdentity = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9-]{1,100}$/.test(value);
+export const terminal = (state: RunState): boolean => ["completed", "failed", "cancelled", "interrupted", "parked"].includes(state);
+
+export function validateRun(value: unknown): asserts value is WorkerRunRequest {
+  const r = value as WorkerRunRequest;
+  if (!r || ![undefined, "chat", "task"].includes(r.operation) || !safeIdentity(r.conversationId) || !r.binding || !safeIdentity(r.binding.connectionId)
+    || !Number.isSafeInteger(r.binding.connectionRevision) || r.binding.connectionRevision < 1
+    || !["codex", "claude", "ollama"].includes(r.binding.harnessKind) || typeof r.input !== "string" || !r.input.trim()
+    || !r.selection || ![r.selection.model, r.selection.reasoningEffort].every(v => v === null || typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$/.test(v))
+    || !r.resource || !safeIdentity(r.resource.id) || !["conversation", "worktree"].includes(r.resource.kind)
+    || !r.options || ![undefined, "normal", "autonomous"].includes(r.options.autonomy)
+    || !Array.isArray(r.autoAllowedPrefixes) || r.autoAllowedPrefixes.some(p => typeof p !== "string" || !/^mcp__[A-Za-z0-9_-]+__$/.test(p)))
+    throw new WorkerApiError(400, "invalid_run", "Invalid worker run request.");
+  if (r.skillExportId !== undefined && (typeof r.skillExportId !== "string" || !/^[a-f0-9]{64}$/.test(r.skillExportId)))
+    throw new WorkerApiError(400, "invalid_skills", "Invalid skill export reference.");
+  if (Object.keys(r.options).some(key => !["nativeTools", "subagents", "autonomy", "systemPrompt", "instructionSources", "resumeHarnessSessionId", "mcpServers", "promptSuggestions", "requireNativeResume"].includes(key))
+    || r.options.systemPrompt !== undefined && typeof r.options.systemPrompt !== "string"
+    || r.options.instructionSources !== undefined && (!validInstructionTexts(r.options.instructionSources)
+      || r.options.instructionSources.map(block => block.text).join("\n\n") !== r.options.systemPrompt?.trim())
+    || r.options.resumeHarnessSessionId !== undefined && !safeIdentity(r.options.resumeHarnessSessionId)
+    || r.options.mcpServers !== undefined && (!r.options.mcpServers || typeof r.options.mcpServers !== "object" || Array.isArray(r.options.mcpServers)))
+    throw new WorkerApiError(400, "invalid_options", "Invalid provider options.");
+  if (r.options.requireNativeResume !== undefined && (typeof r.options.requireNativeResume !== "boolean" || r.options.requireNativeResume && !r.options.resumeHarnessSessionId))
+    throw new WorkerApiError(400, "invalid_resume", "Strict native resume requires its original thread identity.");
+  if (r.options.promptSuggestions !== undefined && typeof r.options.promptSuggestions !== "boolean"
+    || r.options.promptSuggestions === true && r.operation !== "chat")
+    throw new WorkerApiError(400, "invalid_suggestions", "Predictions require an interactive chat operation.");
+  if (r.options.mcpServers !== undefined) validateMcpServers(r.options.mcpServers);
+  if (r.resource.kind === "conversation" && r.resource.id !== r.conversationId)
+    throw new WorkerApiError(400, "invalid_resource", "Conversation resource does not match the run.");
+  if (r.resource.kind === "worktree" && (!/^[a-f0-9]{64}$/.test(r.resource.id) || typeof r.resource.revision !== "string"))
+    throw new WorkerApiError(400, "invalid_resource", "A versioned worktree reference is required.");
+}
+
+export function validateMcpServers(servers: unknown): asserts servers is Record<string, unknown> {
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) throw new WorkerApiError(400, "invalid_configuration", "MCP servers must be an object.");
+  for (const [name, value] of Object.entries(servers)) {
+    const server = value as { type?: unknown; url?: unknown; headers?: unknown };
+    if (!/^[A-Za-z0-9_-]+$/.test(name) || !server || typeof server !== "object" || Array.isArray(server)
+      || Object.keys(server).some(key => !["type", "url", "headers", "hostyPolicy"].includes(key))
+      || server.type !== "http" || typeof server.url !== "string") throw new WorkerApiError(400, "invalid_configuration", "Only declared HTTP MCP callbacks are supported.");
+    let url: URL; try { url = new URL(server.url); } catch { throw new WorkerApiError(400, "invalid_configuration", "Invalid MCP callback URL."); }
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.hash
+      || server.headers !== undefined && (!server.headers || typeof server.headers !== "object" || Array.isArray(server.headers)
+        || Object.values(server.headers).some(value => typeof value !== "string" || /[\r\n]/.test(value))))
+      throw new WorkerApiError(400, "invalid_configuration", "Invalid MCP callback configuration.");
+  }
+}

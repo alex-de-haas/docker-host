@@ -767,13 +767,14 @@ it("uses the existing Shell stop confirmation from the contextual shortcut", asy
 });
 
 it("places the restart badge after title icons and uses Restart as the single contextual action", async () => {
-  apps = [{ ...target, system: true, restartRequired: true, lastError: "Previous runtime operation failed" }];
+  apps = [{ ...target, system: true, confirmedRoles: ["agent"], interfaces: { agent: [{ key: "default", path: "/api/agent/v1", version: 1, url: null }] }, restartRequired: true, lastError: "Previous runtime operation failed" }];
   await mount(true);
   const identity = appRow().querySelector('.dashboard-identity')!;
   const title = identity.querySelector('a')!.parentElement!;
   const badge = title.querySelector('[data-slot="badge"]')!;
   expect(badge.textContent).toBe("Restart required");
-  expect(title.querySelector('[role="img"][aria-label="System app"]')).not.toBeNull();
+  expect(title.querySelector('[role="img"][aria-label="Agent provider"]')).not.toBeNull();
+  expect(title.querySelector('[role="img"][aria-label="System app"]')).toBeNull();
   expect(title.querySelector('[role="img"][aria-label*="problem"]')).not.toBeNull();
   for (const icon of title.querySelectorAll('[role="img"]')) {
     expect(icon.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

@@ -8,9 +8,14 @@ internal sealed class CoreDecisionService(CoreDecisionStore store, UserDirectory
 {
     private static void Require(CoreCapabilityCaller caller, string permission)
         => caller.Require(AccessTokenScopes.McpDecisions, permission);
+    private static void RequireExecutionEffects(CoreCapabilityCaller caller)
+    {
+        if (caller.RetainedAgentObservation) throw new AppIdentityException("permission_denied", "Retained question metadata does not authorize new decisions or answers.");
+    }
     private static string Source(CoreCapabilityCaller caller) => caller.App is null ? "user:" + caller.User.Id : CoreCapabilityAuthorization.AppPrincipal(caller.App);
     private static bool Own(HostyDecisionRecord row, CoreCapabilityCaller caller) => row.UserId == caller.User.Id
-        && row.SourceAppId == caller.App?.Id && row.SourceInstallation == caller.App?.InstalledAt;
+        && row.SourceAppId == caller.App?.Id && row.SourceInstallation == caller.App?.InstalledAt
+        && (caller.AgentExecution is null || row.Input?.WaitReference == caller.AgentExecution);
 
     // A current user cannot inherit another user's questions by becoming an administrator. A source
     // removal/reinstallation or assignment revocation also removes metadata and counts from queries.
@@ -20,7 +25,7 @@ internal sealed class CoreDecisionService(CoreDecisionStore store, UserDirectory
         var user = state.Users.SingleOrDefault(u => u.Id == caller.User.Id && !u.Disabled)
             ?? throw CoreDecisionValidation.Missing();
         var apps = (await registry.ListAppRecordsAsync(ct)).ToDictionary(a => a.Id, StringComparer.Ordinal);
-        return row => row.UserId == user.Id && (row.SourceAppId is null ||
+        return row => (caller.AgentExecution is null || Own(row, caller)) && row.UserId == user.Id && (row.SourceAppId is null ||
             (apps.TryGetValue(row.SourceAppId, out var app) && app.InstalledAt == row.SourceInstallation
              && AppAccessPolicy.CanAccessApp(state, user, app.Id, app.System)));
     }
@@ -28,7 +33,9 @@ internal sealed class CoreDecisionService(CoreDecisionStore store, UserDirectory
 
     internal async Task<HostyDecisionRecord> CreateAsync(CoreCapabilityCaller caller, HostyDecisionCreate input, CancellationToken ct = default)
     {
+        RequireExecutionEffects(caller);
         Require(caller, CoreAppPermissions.DecisionsRequest);
+        if (caller.AgentExecution is { } execution) input = input with { Input = input.Input with { WaitReference = execution } };
         var visible = await Visibility(caller, ct); await Expire(ct);
         var fingerprint = CoreDecisionValidation.Fingerprint(input);
         var key = ReplayKey(caller, input.RequestId);
@@ -144,6 +151,7 @@ internal sealed class CoreDecisionService(CoreDecisionStore store, UserDirectory
                 Continuation = row.Continuation?.State != "pending" ? row.Continuation : row.Continuation with {
                     State = "received", Revision = row.Continuation.Revision + 1, UpdatedAt = clock.UtcNow } };
         }, ct);
+    // Source-owned progress reporting changes Decision metadata only; it authorizes no native work.
     internal Task<HostyDecisionRecord> ContinueAsync(CoreCapabilityCaller caller, string id, HostyDecisionContinue input, CancellationToken ct = default)
         => Mutate(caller, id, input.RequestId, "continue:" + CoreDecisionValidation.Fingerprint(input), CoreAppPermissions.DecisionsRequest, true, row =>
         {
@@ -169,6 +177,7 @@ internal sealed class CoreDecisionService(CoreDecisionStore store, UserDirectory
     private async Task<HostyDecisionRecord> Mutate(CoreCapabilityCaller caller, string id, string requestId, string fingerprint,
         string permission, bool own, Func<HostyDecisionRecord, HostyDecisionRecord> change, CancellationToken ct)
     {
+        if (fingerprint.StartsWith("resolve:", StringComparison.Ordinal)) RequireExecutionEffects(caller);
         Require(caller, permission); var visible = await Visibility(caller, ct); await Expire(ct);
         var key = ReplayKey(caller, requestId); fingerprint = id + ":" + fingerprint;
         var result = await store.UpdateAsync(state =>

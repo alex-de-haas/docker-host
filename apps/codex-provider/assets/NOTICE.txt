@@ -1,0 +1,17 @@
+OpenAI Blossom logo
+
+Source: https://chatgpt.com/cdn/assets/favicon-c80e01a96037.svg
+Retrieved: 2026-11-13
+vendor-logo.svg retains OpenAI's official favicon byte-for-byte.
+icon.svg presents its original path on a 64 by 64 white rounded tile,
+with proportional fit and padding. The mark remains black on this white
+canvas; the source favicon's dark-mode white-fill rule is omitted only
+from the presentation asset. No path geometry is changed.
+
+OpenAI, Codex and the OpenAI logo are trademarks of OpenAI. All rights
+in the logo remain with OpenAI. It identifies the OpenAI Codex service
+supported by this independent Hosty integration; it does not indicate
+sponsorship, endorsement or affiliation with OpenAI.
+
+Brand guidelines and usage terms: https://openai.com/brand/
+This third-party mark is not licensed under the repository's AGPL license.

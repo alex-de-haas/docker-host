@@ -3,12 +3,14 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile, readdir, lstat, stat, copyFile, rename, rm, rmdir, readlink } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { cp } from "node:fs/promises";
+import { projectNpm } from "../../../scripts/npm-workspace.mjs";
 
 export const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const inputs = [
   "package.json", "package-lock.json", "apps/harness/manifest.json", "apps/harness/package.json",
   "apps/harness/tsconfig.json", "apps/harness/scripts/local-runtime.mjs",
-  "apps/harness/scripts/build-local.mjs", "apps/harness/src", "apps/harness/shared",
+  "apps/harness/scripts/build-local.mjs", "apps/harness/scripts/stage-runtime.mjs", "scripts/npm-workspace.mjs", "apps/harness/src", "apps/harness/shared",
   "apps/harness/web/package.json", "apps/harness/web/next.config.ts", "apps/harness/web/tsconfig.json",
   "apps/harness/web/postcss.config.mjs", "apps/harness/web/src", "apps/harness/web/public",
   "packages/app-sdk/package.json", "packages/app-sdk/src", "shared/web",
@@ -61,7 +63,7 @@ export async function completeBundle(directory, key) {
         await stat(resolved);
       } else if (!info.isFile() || info.size !== size) return false;
     }
-    return ["api.mjs", "worker.mjs", "web/index.html", "web/assistant/index.html"]
+    return ["api.mjs", "web/index.html", "web/assistant/index.html"]
       .every(file => receipt.files.some(([entry]) => entry === file));
   } catch { return false; }
 }
@@ -132,9 +134,9 @@ export function buildEnvironment() {
   return { ...env, NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1" };
 }
 
-export async function run(command, args, cwd) {
+export async function run(command, args, cwd, { boundedBuild = false } = {}) {
   await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env: buildEnvironment(), stdio: "inherit",
+    const child = spawn(command, args, { cwd, env: { ...buildEnvironment(), ...(boundedBuild ? { HOSTY_HARNESS_BOUNDED_BUILD: "1" } : {}) }, stdio: "inherit",
       shell: process.platform === "win32" && command === "npm" });
     child.once("error", reject);
     child.once("exit", (code, signal) => code === 0 ? resolve() :
@@ -147,22 +149,45 @@ export function runtimePackage(app, sdk, rootPackage, sourceLock, sdkImports = [
   if (!Array.isArray(sdkImports) || sdkImports.length > 256
     || sdkImports.some(value => typeof value !== "string" || value.length > 2048))
     throw new Error("Invalid compiled SDK runtime import inventory.");
-  // Keep declared application dependencies, including providers spawned dynamically. Only SDK
+  // Keep the coordinator application dependencies. Native providers install independently. Only SDK
   // dependencies actually left external by the backend compiler belong in this standalone runtime.
   const sdkDependencies = Object.fromEntries(Object.entries(sdk.dependencies ?? {})
     .filter(([name]) => sdkImports.some(value => value === name || value.startsWith(name + "/"))));
   const dependencies = { ...sdkDependencies, ...app.dependencies };
   delete dependencies["@hosty-sdk/app"];
   delete dependencies.tsx;
-  const manifest = { name: "hosty-harness-local", version: app.version, private: true,
-    type: "module", license: app.license, dependencies, overrides: rootPackage.overrides };
+  const manifest = { name: "hosty-harness-runtime", version: app.version, private: true,
+    type: "module", license: app.license, scripts: { start: "node api.mjs" }, dependencies, overrides: rootPackage.overrides };
   // Keep the exact resolved versions/integrities and nested dependency paths from the reviewed
   // lock. npm ci validates this standalone root and installs only its reachable runtime graph.
-  const lock = { ...sourceLock, name: manifest.name, version: manifest.version,
+  const candidate = { ...sourceLock, name: manifest.name, version: manifest.version,
     packages: { "": { name: manifest.name, version: manifest.version, dependencies },
       ...Object.fromEntries(Object.entries(sourceLock.packages)
-        .filter(([name, entry]) => name.startsWith("node_modules/") && !entry.link)) } };
-  return { manifest, lock };
+        .filter(([name, entry]) => name.startsWith("node_modules/") && !entry.link)
+        .map(([name, entry]) => [name, { ...entry }])) } };
+  const projected = projectNpm(manifest, candidate, [], { ignoreOptionalPeers: true });
+  delete projected.lock.packages[""].workspaces;
+  for (const entry of Object.values(projected.lock.packages)) {
+    // The standalone graph is entirely runtime-reachable, including dependencies used only by
+    // compiled SDK code that the monorepo originally reached through a development workspace.
+    delete entry.dev; delete entry.devOptional;
+  }
+  return { manifest, lock: projected.lock };
+}
+
+/** The same minimal launch payload serves Docker production and cached source development. */
+export async function stageRuntime(snapshot, output) {
+  const json = async file => JSON.parse(await readFile(path.join(snapshot, file), "utf8"));
+  const runtime = runtimePackage(await json("apps/harness/package.json"), await json("packages/app-sdk/package.json"),
+    await json("package.json"), await json("package-lock.json"), await json("runtime-sdk-imports.json"));
+  const api = path.join(snapshot, "api.mjs"), web = path.join(snapshot, "apps/harness/web/out-build");
+  for (const file of [api, path.join(web, "index.html"), path.join(web, "assistant/index.html")]) await stat(file);
+  await mkdir(output, { recursive: true });
+  if (path.resolve(api) !== path.resolve(output, "api.mjs")) await copyFile(api, path.join(output, "api.mjs"));
+  await cp(web, path.join(output, "web"), { recursive: true });
+  await writeFile(path.join(output, "package.json"), JSON.stringify(runtime.manifest, null, 2) + "\n");
+  await writeFile(path.join(output, "package-lock.json"), JSON.stringify(runtime.lock, null, 2) + "\n");
+  return runtime;
 }
 export async function build(snapshot) {
   await run("npm", ["ci", "--include=dev", "--no-audit", "--no-fund",
@@ -171,13 +196,8 @@ export async function build(snapshot) {
   await run(process.execPath, ["apps/harness/scripts/build-local.mjs"], snapshot);
   // Reinstall only runtime dependencies from the same lock. The build snapshot is disposable;
   // neither the original checkout's node_modules nor a previous generation is mutated.
-  const json = async file => JSON.parse(await readFile(path.join(snapshot, file), "utf8"));
-  const runtime = runtimePackage(await json("apps/harness/package.json"), await json("packages/app-sdk/package.json"),
-    await json("package.json"), await json("package-lock.json"), await json("runtime-sdk-imports.json"));
-  await writeFile(path.join(snapshot, "package.json"), JSON.stringify(runtime.manifest, null, 2) + "\n");
-  await writeFile(path.join(snapshot, "package-lock.json"), JSON.stringify(runtime.lock, null, 2) + "\n");
-  await run("npm", ["ci", "--omit=dev", "--no-audit", "--no-fund"], snapshot);
-  await rename(path.join(snapshot, "apps/harness/web/out-build"), path.join(snapshot, "web"));
+  await stageRuntime(snapshot, snapshot);
+  await run("npm", ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], snapshot);
   for (const directory of ["apps", "packages", "shared"])
     await rm(path.join(snapshot, directory), { recursive: true, force: true });
 }
@@ -226,7 +246,7 @@ export async function prepare({ root = repository, store = path.join(root, "apps
 }
 
 export async function start(service, root = repository) {
-  if (!["api", "worker"].includes(service)) throw new Error("Expected api or worker.");
+  if (service !== "api") throw new Error("Expected api; native execution belongs to an installed agent provider.");
   const key = await fingerprint(root, await sourceFiles(root));
   const generation = path.join(root, "apps/harness/.local-runtime", key);
   if (!await completeBundle(generation, key))
@@ -238,9 +258,9 @@ export async function start(service, root = repository) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
-    if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Harness local production requires Node.js 24 or newer.");
+    if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Harness cached development requires Node.js 24 or newer.");
     if (process.argv[2] === "prepare") await prepare();
     else if (process.argv[2] === "start") await start(process.argv[3]);
-    else throw new Error("Usage: node scripts/local-runtime.mjs prepare | start <api|worker>");
+    else throw new Error("Usage: node scripts/local-runtime.mjs prepare | start api");
   } catch (error) { console.error("[local-runtime] " + error.message); process.exitCode = 1; }
 }

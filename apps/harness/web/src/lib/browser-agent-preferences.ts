@@ -6,6 +6,7 @@ import type { AssistantSession } from "./assistant-api";
 export type BrowserAgentDefaults = {
   /** Bound to the current identity when loading creation hints; never persisted. */
   ownerId?: string;
+  connectionId?: string;
   models?: Record<string, { model: string | null; reasoningEffort: string | null }>;
   autonomy?: "normal" | "autonomous";
 };
@@ -34,6 +35,10 @@ function decode(raw: string | null): BrowserAgentDefaults | undefined {
   try { value = JSON.parse(raw); } catch { return undefined; }
   if (!isObject(value)) return undefined;
   const defaults: BrowserAgentDefaults = {};
+  if (value.connectionId !== undefined) {
+    if (!validId(value.connectionId)) return undefined;
+    defaults.connectionId = value.connectionId;
+  }
   if (value.models !== undefined) {
     if (!isObject(value.models)) return undefined;
     const pairs = Object.entries(value.models);
@@ -48,7 +53,7 @@ function decode(raw: string | null): BrowserAgentDefaults | undefined {
     if (value.autonomy !== "normal" && value.autonomy !== "autonomous") return undefined;
     defaults.autonomy = value.autonomy;
   }
-  return defaults.models || defaults.autonomy ? defaults : undefined;
+  return defaults.connectionId || defaults.models || defaults.autonomy ? defaults : undefined;
 }
 
 /** localStorage supplies origin isolation; the key supplies authenticated owner isolation. */
@@ -80,6 +85,13 @@ function remember(record: AssistantSession, update: (defaults: BrowserAgentDefau
   } catch {
     // A blocked/quota-limited browser store must never affect the confirmed chat setting.
   }
+}
+
+/** Call only after the server confirms an explicit provider choice, never default adoption. */
+export function rememberManualProvider(record: AssistantSession): void {
+  const connectionId = record.connectionId;
+  if (!validId(connectionId)) return;
+  remember(record, defaults => { defaults.connectionId = connectionId; });
 }
 
 /** Call only after a successful explicit model save, including a manual choice on a profile chat. */

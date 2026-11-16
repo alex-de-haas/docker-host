@@ -26,6 +26,47 @@ public sealed class AgentSkillLibraryTests : IDisposable
         ], name);
 
     [Fact]
+    public async Task PinnedAvailabilityChecksAvoidPayloadReadsAndObserveAppRemoval()
+    {
+        await library.ReplaceAppAsync("source", "1", new Dictionary<string, AgentSkillPackage> { ["first"] = Package("first") }, default);
+        var selection = new[] { new CoreAgentSkillSelection(AgentSkillLibrary.Id("app", "source", "first")) };
+        var pinned = await library.SnapshotAsync("app:provider", "fixed-context", selection, default);
+        // Share denial detects an accidental second payload decode, while file metadata remains
+        // readable for the availability revision check on every renewal.
+        await using (var payload = new FileStream(Path.Combine(root, "core/skills/library.json"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            Assert.Equal(pinned.Digest, (await library.SnapshotAsync("app:provider", "fixed-context", selection, default)).Digest);
+            Assert.Equal(pinned.Digest, (await library.SnapshotAsync("app:provider", "fixed-context", selection, default)).Digest);
+        }
+        await library.ReplaceAppAsync("source", "2", new Dictionary<string, AgentSkillPackage>(), default);
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => library.SnapshotAsync("app:provider", "fixed-context", selection, default));
+        Assert.Equal("skill_not_found", error.Code);
+    }
+
+    [Fact]
+    public async Task ProviderSnapshotRetainsPinnedBytesAcrossLibraryChangesAndCoreRecovery()
+    {
+        await library.ReplaceAppAsync("source", "1", new Dictionary<string, AgentSkillPackage> { ["first"] = Package("first", "pinned") }, default);
+        var id = AgentSkillLibrary.Id("app", "source", "first");
+        var selection = new[] { new CoreAgentSkillSelection(id) };
+        var snapshot = await library.SnapshotAsync("app:unrelated.provider", "session/configuration/request", selection, default);
+        await library.ReplaceAppAsync("source", "2", new Dictionary<string, AgentSkillPackage> { ["first"] = Package("first", "updated") }, default);
+        await library.RecoverExportsAsync(default);
+        var replay = await library.SnapshotAsync("app:unrelated.provider", "session/configuration/request", selection, default);
+        Assert.Equal(snapshot.Id, replay.Id);
+        Assert.Equal(snapshot.Digest, replay.Digest);
+        Assert.Equal("pinned", await File.ReadAllTextAsync(Path.Combine(snapshot.Path, "first/references/result.txt")));
+        var next = await library.SnapshotAsync("app:unrelated.provider", "next-request", selection, default);
+        Assert.NotEqual(snapshot.Digest, next.Digest);
+        Assert.Equal("updated", await File.ReadAllTextAsync(Path.Combine(next.Path, "first/references/result.txt")));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => library.SnapshotAsync("app:unrelated.provider", "session/configuration/request", [], default));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => library.SnapshotAsync("app:unrelated.provider", "stale", [new(id, snapshot.Skills[0].Digest)], default));
+        await library.ReplaceAppAsync("source", "3", new Dictionary<string, AgentSkillPackage>(), default);
+        var removed = await Assert.ThrowsAsync<AppLifecycleException>(() => library.SnapshotAsync("app:unrelated.provider", "session/configuration/request", selection, default));
+        Assert.Equal("skill_not_found", removed.Code);
+    }
+
+    [Fact]
     public async Task CorePackagesWorkWithoutAppsOrGitAndKeepTheDevelopmentSkillOptional()
     {
         git.Fail = true;

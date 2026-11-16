@@ -1,7 +1,7 @@
 import { appendFileSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { pendingNativeRelease, nativeReleaseRequest } from './native-release.mjs';
-import { ALL_JOBS, COMPONENTS, evaluateGate } from '../../../scripts/ci-policy.mjs';
+import { ALL_JOBS, COMPONENTS, AGENT_PROVIDERS, evaluateGate } from '../../../scripts/ci-policy.mjs';
 
 // Retained format-1 evidence can describe checks removed from today's workflow.
 // Exact-SHA and successful-attempt validation still happens before this schema check.
@@ -29,14 +29,19 @@ export function validateSelection(manifest, sourceSha) {
       throw new Error('Invalid CI selection manifest: inconsistent historical profile ' + job);
     }
   }
+  const legacyProviders = AGENT_PROVIDERS.filter(job => plan.required.includes(job));
+  if (legacyProviders.length && (plan.required.includes('agent-providers')
+    || AGENT_PROVIDERS.some(component => plan.components.includes(component) !== legacyProviders.includes(component))))
+    throw new Error('Invalid CI selection manifest: inconsistent historical provider checks.');
   const current = { ...plan,
     profiles: plan.profiles.filter(job => !historicalProfiles.has(job)),
-    required: plan.required.filter(job => !historicalProfiles.has(job)),
+    required: plan.required.filter(job => !historicalProfiles.has(job) && !AGENT_PROVIDERS.includes(job))
+      .concat(legacyProviders.length ? ['agent-providers'] : []),
   };
   // Reuse the CI gate's own component/profile/required consistency rules. These synthetic results
   // only validate schema: the preceding gate already verifies the real successful CI attempt.
   const needs = Object.fromEntries(ALL_JOBS.map(job => [job,
-    { result: Array.isArray(plan.required) && plan.required.includes(job) ? 'success' : 'skipped' }]));
+    { result: current.required.includes(job) ? 'success' : 'skipped' }]));
   const errors = evaluateGate(current, needs);
   if (errors.length) throw new Error(`Invalid CI selection manifest: ${errors.join('; ')}`);
   return plan;

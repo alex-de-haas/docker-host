@@ -18,8 +18,11 @@ internal sealed class ExternalWorkspaceMcpTools
         {
             DevelopmentWorkspaceService.ValidateWorkspaceName(name!);
             var owner = caller.Owner(taskId, label);
-            var result = await workspaces.PrepareAsync(owner,
-                new WorkspacePrepare(requestId, taskId, appId, navigationPath, targetBranch, leaseId, label, Name: name), cancellationToken);
+            var agent = caller.Authority?.Mcp?.AgentAdmissionRef is not null ? accessor.HttpContext!.RequestServices.GetRequiredService<CoreAgentExecution>() : null;
+            Task<DevelopmentWorkspace> Prepare() => workspaces.PrepareAsync(owner,
+                new WorkspacePrepare(requestId, owner.SessionId, appId, navigationPath, targetBranch, leaseId, label, Name: name), cancellationToken);
+            var result = agent is null ? await Prepare()
+                : await agent.McpLease(caller.Authority, caller.UserId, owner, requestId, leaseId, Prepare, cancellationToken);
             await AuditAsync(audit, clock, caller, result, requestId, "prepare");
             return CoreJson.Text(await workspaces.SessionProjectionAsync(result, owner, cancellationToken));
         }, authorization, accessor, cancellationToken);
@@ -180,7 +183,16 @@ internal sealed class ExternalWorkspaceMcpTools
         IHttpContextAccessor accessor, AuditStore audit, IClock clock, CancellationToken ct)
         => ExecuteAsync(async caller =>
         {
-            var result = await workspaces.CommandAsync(id, await OwnerAsync(id, caller, workspaces, ct), kind, command, ct);
+            var owner = await OwnerAsync(id, caller, workspaces, ct);
+            var agent = caller.Authority?.Mcp?.AgentAdmissionRef is not null ? accessor.HttpContext!.RequestServices.GetRequiredService<CoreAgentExecution>() : null;
+            Task<DevelopmentWorkspace> Command() => kind == "release-lease" && agent is not null
+                ? workspaces.ReleaseAgentLeaseCommandAsync(id, owner, command, ct)
+                : workspaces.CommandAsync(id, owner, kind, command, ct);
+            var result = kind == "lease" && agent is not null
+                ? await agent.McpLease(caller.Authority, caller.UserId, owner, command.RequestId, command.LeaseId!, Command, ct)
+                : kind == "release-lease" && agent is not null
+                    ? await agent.McpRelease(caller.Authority, caller.UserId, owner, id, command.RequestId, command.LeaseId!, Command, ct)
+                    : await Command();
             await AuditAsync(audit, clock, caller, result, command.RequestId, kind);
             return CoreJson.Text(await workspaces.SessionProjectionAsync(result, caller.Owner(result.Owner.SessionId), ct));
         }, authorization, accessor, ct);
@@ -197,7 +209,7 @@ internal sealed class ExternalWorkspaceMcpTools
         ExternalWorkspaceMcpAuthorization authorization, IHttpContextAccessor accessor, CancellationToken ct)
     {
         try { return await action(await authorization.RequireAsync(accessor.HttpContext, ct)); }
-        catch (Exception ex) when (ex is AppIdentityException or AppLifecycleException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is AppIdentityException or AppLifecycleException or CoreProviderException or IOException or UnauthorizedAccessException)
         { return CoreJson.Text(new McpError(ex.Message)); }
     }
 

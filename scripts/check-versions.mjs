@@ -148,13 +148,12 @@ expectEqual("documents version", {
 expectEqual("documents feed identity", { manifest: documentsManifest.id, feeds: json("apps/documents/feeds.json").appId });
 if (json("apps/documents/feeds.json").schemaVersion !== "app-feeds.0.1") problems.push("documents feeds schema must be app-feeds.0.1");
 
-// Harness coordinator and worker images ship with the application.
+// Harness ships only its coordinator image; native engines version with independent Local apps.
 expectEqual("harness version", {
   manifest: json("apps/harness/manifest.json").version,
   packageJson: json("apps/harness/package.json").version,
   webPackage: json("apps/harness/web/package.json").version,
   coordinatorImage: json("apps/harness/manifest.json").services[0].runtimes.docker.image.split(":").at(-1),
-  workerDeclaration: json("apps/harness/manifest.json").services.find(service => service.key === "worker").runtimes.docker.image.split(":").at(-1),
 });
 
 // channels: the rolling channel (releaseTag cli-dev tracks main HEAD) must advertise the platform version.
@@ -168,10 +167,13 @@ for (const channel of channels) {
   }
 }
 
-// The worker ships with Harness, and uses the exact same provider protocol versions.
-expectEqual("Harness worker version", { harness: json("apps/harness/manifest.json").version, worker: json("apps/harness/worker/package.json").version, workerLock: json("apps/harness/worker/package-lock.json").packages[""].version });
-for (const provider of ["@openai/codex", "@anthropic-ai/claude-agent-sdk"]) {
-  expectEqual(`worker ${provider}`, { harness: json("apps/harness/package.json").dependencies[provider], worker: json("apps/harness/worker/package.json").dependencies[provider] });
+// Each independently installable Local provider owns its version and feed identity.
+for (const component of ["codex-provider", "claude-code-provider", "ollama-provider"]) {
+  const manifest = json(`apps/${component}/manifest.json`);
+  const feeds = json(`apps/${component}/feeds.json`);
+  expectEqual(`${component} version`, { manifest: manifest.version, packageJson: json(`apps/${component}/package.json`).version });
+  expectEqual(`${component} feed identity`, { manifest: manifest.id, feeds: feeds.appId });
+  if (feeds.schemaVersion !== "app-feeds.0.1") problems.push(`${component} feeds schema must be app-feeds.0.1`);
 }
 
 if (problems.length > 0) {

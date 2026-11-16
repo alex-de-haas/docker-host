@@ -216,6 +216,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
     {loading && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4" />Loading tools…</p>}
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
     {base.discovery !== "ok" && <Alert><AlertDescription>Core is unavailable. Existing access choices are unchanged.</AlertDescription></Alert>}
+    <p className="text-sm text-muted-foreground">Task workflow rules apply to the next provider turn. General Core and application tool connections keep their supported live updates.</p>
     <Field orientation="horizontal"><FieldLabel>All enabled tools</FieldLabel><ModeSelect label="Approval for all enabled tools" disabled={busy || loading || !enabled.length}
       value={new Set(allModes).size > 1 ? "mixed" : allModes[0] ?? "ask"} change={value => bulk(enabled.map(p => p.appId), value)} /></Field>
     {groups.map(group => <section key={group.title} aria-label={group.title} className="flex flex-col gap-3">

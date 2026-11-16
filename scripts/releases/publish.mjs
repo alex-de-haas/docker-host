@@ -114,7 +114,8 @@ export async function publishApps({ root, plan, artifacts, store, verify = verif
     }
     for (const service of selected.manifest.services) for (const [profile, runtime] of Object.entries(service.runtimes)) {
       if ((!app.profiles.includes(profile) && !selected.manifest.runtimeProfiles.find(p => p.key === profile)?.development) || runtime.type !== 'docker' || !runtime.image) continue;
-      const recipe = plan.config.images.find(i => i.appId === app.id && i.services.includes(service.key));
+      const recipe = app.profiles.includes(profile) && runtime.artifact !== 'source'
+        ? plan.config.images.find(i => i.appId === app.id && i.services.includes(service.key)) : undefined;
       if (recipe) artifactsForApp.push({ type: 'image', service: service.key, profile, ...receipts.get(recipe.id) });
       else {
         const reference = imageReference(runtime.image);

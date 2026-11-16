@@ -6,7 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { connectionModels, type AgentProfileConfig, type ProfileSkill } from "@/lib/profiles-api";
 import type { ModelCatalog } from "@/lib/assistant-api";
-import type { AgentConnection } from "./agent-providers";
+import type { AgentConnection } from "@/lib/agent-connection";
 
 /** Controlled fields reusable by profiles and future personalized-agent composition. */
 export function AgentProfileForm({ value, onChange, connections, defaultConnectionId, skills, skillsError, disabled = false }: {

@@ -1,322 +1,351 @@
 ---
 created: 2026-09-17
-updated: 2026-11-04
-summary: Named Claude, Codex and external Ollama agent connections with provider selection, scoped tools and durable conversation state.
-components: [apps/harness]
+updated: 2026-11-13
+summary: Harness discovers independent local agent providers and pins qualified accounts while provider applications own credentials, native execution and history.
+components: [apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime]
 ---
 
 # Hosty Harness Provider Connections
 
 ## Behavior
 
-The Gateway owns named agent connections in **Settings → Hosty Harness**, in the **Providers** tab.
-Administrators add, edit, test, remove and choose a default connection. The first connection added
-to an empty registry becomes the default automatically; adding another connection preserves that choice. Multiple connections can use
-the same provider. Configuration changes require no Gateway restart. Connections are shared by the
-host's administrators, consistent with the operator assistant; a connection name is not a user boundary.
-Adding and editing a connection use a modal form with provider-specific fields. Errors remain inside
-the form; Cancel, Escape and the close button dismiss it and clear unsaved credentials.
-Each row keeps its actions in a three-dot menu: test, edit, remove, set default and ChatGPT sign-in
-where applicable. Device sign-in opens a modal with a copy-code button, browser link, status and
-cancellation; closing a pending modal cancels that attempt without replacing a working credential.
+Codex Provider, Claude Code Provider and Ollama Provider are independently installed Local
+applications. Each owns its Settings surface, account registry, native authentication, execution
+processes and native-session data. Their Local and development profiles run on the host. Harness is
+a consumer of the [public agent interface](../agent-provider-interface/feature.md); its application
+runtime does not determine where a provider executes.
 
-The same tab has independent **Codex translation** and **Claude translation** selections. Each binds
-an existing connection/revision explicitly, without following the chat default. These supply the two
-static [translation interfaces](../translation-provider/feature.md) to authorized apps. Translation
-leases a connection exclusively to protect native credential renewal; an open chat on that account
-requires a dedicated translation connection or stopping the chat before translating.
+An operator installs and starts a compatible provider through Hosty and opens that application's
+Settings entry in Shell to configure an account. Provider Settings use normal Core password/app-code
+identity and require an authorized host administrator. Provider credentials are separate from that
+browser identity. No native login, credentials or conversations are imported from Harness or an
+operator's CLI environment at startup.
 
-| Provider | Authentication | Setup |
+Harness discovers connections for its conversation provider selector and agent profiles; it has no
+Providers settings tab. Account editing and sign-in belong to the provider application's Settings
+entry. Setup guidance names that entry without constructing a client-specific navigation URL.
+Provider settings load on entry and after actions without periodically overwriting operator edits.
+
+Each provider Settings page presents a compact Providers heading, an Add provider button and its
+connection list. Embedded content uses the full settings-frame width, aligned with Shell's page
+heading and App details action. Standalone pages retain their own heading and responsive padding.
+The app icons use consistent square white tiles with proportional, padded vendor marks: OpenAI's
+Blossom for Codex, Claude Spark for Claude Code, and the Ollama llama. Original vendor SVGs and
+attribution remain beside the presentation assets. The white tiles remain legible in dark themes
+and highlighted rows; Shell resolves the declared assets without provider-specific styling.
+
+Each provider has its own account default; the first account in an empty provider registry becomes
+that provider's default. Harness stores a separate, explicitly chosen default in
+`agent-provider-preferences.json`. It does not select the first discovered provider automatically.
+Adding an account or changing a provider's default does not change an existing Harness selection.
+Harness has no translation provider interface, translation account/model configuration or
+translation settings tab. The distribution's dedicated translation provider is
+[Opus](../translation-provider/feature.md). Agent account selection remains independent of that
+translation service. Retired Harness translation selections remain inert in existing settings files;
+unrelated saves preserve them without exposing or executing them.
+
+## Provider Accounts
+
+| Provider | Authentication | Setup in the provider application |
 | --- | --- | --- |
-| Codex | ChatGPT sign-in | Open the supplied OpenAI browser link and enter the displayed device code. No ChatGPT app or callback to the Hosty host is needed. |
-| Codex | API key | Enter an OpenAI API key; the native login receives it over stdin. |
-| Codex | Existing host login | Select an absolute Codex home accessible to the OS user running Core. The native login remains operator-owned. |
-| Claude | API key | Enter an Anthropic API key. |
-| Claude | Claude Code token | Enter the token produced by `claude setup-token`; replace it when it expires. |
-| Ollama | None | Connect to an already running Ollama server by URL and choose an installed tool-capable model. |
+| Codex | ChatGPT sign-in | Use the supplied browser link and device code; the provider drives the dedicated native login process. |
+| Codex | API key | Enter an OpenAI API key; native login receives it over stdin. |
+| Codex | Existing host login | Explicitly select an absolute Codex home accessible to the provider's OS user. The external home remains operator-owned. |
+| Claude Code | API key | Enter an Anthropic API key. |
+| Claude Code | Claude Code token | Enter the token from `claude setup-token` and replace it when required. |
+| Ollama | None | Select an existing Ollama server by URL and an installed tool-capable model. |
 
-There is no custom Claude OAuth login flow. Provider type and authentication method are fixed for
-an existing connection; create another connection to change them. Secret fields are write-only.
-For Codex/Claude, **Test** checks local adapter/credential setup, not paid inference or remote API entitlements. Ollama Test checks server reachability from Worker. The
-first real turn can still report an expired credential, denied model access or upstream outage.
-Managed conversation directories use junctions on Windows so setup does not require symbolic-link
-privileges; other hosts use directory symlinks. Recognized filesystem failures report their error
-code and storage guidance without exposing paths or credentials.
+Accounts are shared within their provider application under its administrator boundary; an account
+name is not a user boundary. Account type and authentication method are fixed after creation.
+Secrets are write-only. Replacing credentials, changing an endpoint or changing an existing-login
+directory advances the account revision; renaming alone does not. Editing or removing an existing
+account requires its current decimal-string revision. Active executions prevent account mutation;
+changing the provider's default only affects later selections.
 
-ChatGPT sign-in uses the pinned Codex app-server's `account/login/start` with `chatgptDeviceCode`.
-The Gateway waits for `account/login/completed`, stores the native renewable auth document in Core,
-and reports success only after publishing its secret reference. Cancellation uses the native cancel
-request and terminates the dedicated login process. Pending attempts expire after 15 minutes and
-terminal status remains queryable for 10 minutes. A failed sign-in keeps an existing credential.
+ChatGPT sign-in uses the provider's Codex app-server `account/login/start` with
+`chatgptDeviceCode`. Success is reported after the native completion and Core secret publication.
+Cancellation sends the native cancel request and closes the login process. Pending attempts expire
+after 15 minutes; terminal status is retained for 10 minutes. A failed attempt preserves an existing
+working credential. Claude has no custom OAuth flow.
 
-Gateway declares one `ui.settings` surface at `/settings`. It owns three internal tabs:
-**Providers**, **System prompt**, and **MCP access**. The last tab includes MCP provider permissions
-and changed app instructions. Switching tabs preserves unsaved form state. The existing
-`/settings/providers`, `/settings/prompt`, and `/settings/access` URLs open this same tabbed page
-with the corresponding initial selection. The full-workspace iframe keeps modal overlays over all
-Gateway settings content, including its tabs.
-MCP access uses a searchable application list and a detail panel for the selected application.
-Hosty Core appears first. Each entry shows its confirmed access state and marks instruction updates
-that need review. The detail panel groups the access switch and approval dropdown into labelled
-rows; changes save immediately and failed saves retain the confirmed values. Save/approval feedback
-is scoped to the originating application, including when selection or search changes during a request. Approval semantics
-remain provider-specific. Changed instructions appear in the selected application's panel with the
-full text and its existing approval action. Pending instructions remain reachable even when app
-discovery cannot return their provider. On narrow screens the list sits above the detail panel.
+Configured readiness does not prove paid inference, remote model entitlement or Ollama server
+reachability. Model discovery and the first execution can report a missing server, removed model,
+expired credential or upstream failure. Optional quota diagnostics distinguish unavailable,
+unsupported and not-applicable data from an account's execution readiness.
 
-## Chats and capabilities
+Each provider resolves its own pinned runtime dependencies. Codex and Claude native execution
+belongs to their respective applications. Ollama Provider connects to an operator-managed server;
+it does not install/start Ollama, download model weights or change the server's environment.
 
-A new chat takes the configured default unless its creation request names a connection. An empty
-chat applies a dropdown selection immediately, without a separate Select button. The provider field
-lives inside the shared [Agent settings panel](../harness-composer-controls/feature.md), alongside
-profile, model and reasoning controls, and marks the default connection. An unbound empty chat
-adopts the available default on its initial provider read; recovery reads do not select an account.
-The first accepted message locks its choice, shown as a read-only row in the panel. Saving a selection disables sending; a
-failed save keeps the previous provider and displays the error. Before the first message, reselecting
-the current provider refreshes its binding when its credential revision has changed. A
-started chat persists connection id, credential revision, adapter kind and native session id.
-Changing the default does not rebind existing chats or creation retries. Removing a connection
-preserves its chat history and prevents further dispatch; there is no fallback to another provider.
+## Chats And Capabilities
 
-Each connection has its own credential environment and native home. Parallel Claude/Codex chats
-and parallel accounts of one type do not change the Gateway's global environment. Capabilities
-and readiness used by a chat come from its bound provider. Aggregate health is available when any
-configured connection is usable; it is not permission to substitute that connection for a chat.
+Harness connection entries expose a neutral `agent` kind, an opaque selection ID, display name,
+readiness and declared capabilities. A binding contains the provider app ID, installation ID and
+interface key together with the provider account ID and decimal-string revision. Neither names,
+vendor-looking IDs nor native paths select a provider or confer authority. Reinstalling a provider
+or replacing an account requires a current qualified selection.
 
-Credential replacement advances the connection revision; renaming does not. Old chats cannot
-resume under a replacement account. An existing host login also records a non-secret account
-fingerprint in each chat; a change outside Hosty is detected before another message is dispatched.
-Stop the connection's open chats before replacing credentials, signing in again or removing it.
-The chat's **Stop** button releases its native process and preserves history. A send reserves its
-connection until dispatch, preventing a concurrent credential edit from racing session creation.
+A new chat takes the explicitly configured Harness default unless its creation request or profile
+selects another connection. The composer applies an empty chat's dropdown selection immediately
+inside the shared [Agent settings panel](../harness-composer-controls/feature.md). A pending save
+disables sending; failure preserves the confirmed selection. Before admission, selecting the
+current account again can refresh a changed revision. A profile applies provider, model, effort,
+role and skills together; see [Shared Agent Profiles](../agent-profiles/feature.md).
 
-## Storage and recovery
+The first admitted message locks the provider/profile selection. The conversation retains its
+qualified account binding and public provider session/run references. Native SDK session IDs,
+processes and discovery homes remain provider-owned. Model and reasoning changes between turns
+use the selected provider's current catalog and declared capabilities. Missing providers, changed
+accounts and unavailable models fail explicitly; aggregate readiness never authorizes substituting
+another connection.
 
-`connections.json` in Gateway data contains versioned connection metadata, the default, import
-markers and a cleanup journal of secret references. Credentials live in Gateway's namespace in
-the [Core App Secrets Store](../app-secrets-store/feature.md), under opaque `agent.<uuid>` keys.
-The Gateway accesses Core with its service token; browser APIs never return credential values or
-that service token. The plain Node backend implements the same internal HTTP contract as the SDK.
+Harness explicitly captures Core-provenanced platform introduction text and adds the platform
+package before its first provider configuration, alongside the operator's optional profile skills.
+The captured text and selection survive consumer restart. This is Harness's own caller default;
+the public provider interface does not impose it on an independent consumer's empty selection.
 
-Managed native homes are `<cache>/agent-providers/<connection>/<revision>/`. Only the native
-conversation directories are linked to durable `<data>/provider-sessions/<connection>/<revision>/`:
-Codex `sessions` and `archived_sessions`, Claude `projects`. Auth/config files and pending-login
-homes stay in cache. API-key auth is recreated there from Core; ChatGPT's refreshed native auth
-is synchronized back to Core every five seconds, at adapter resolution and at orderly shutdown.
-A synchronization error is reported and prevents further dispatch until storage works again.
-A crash between native refresh and synchronization can require sign-in again.
+Core authorizes each public operation. A new session/configuration pins its selected skills as an
+immutable Core snapshot with content digests. Resuming that configuration revalidates the same pin;
+a library update does not silently replace package bytes. Deleted selections, missing native state
+or a changed snapshot block execution rather than reconstructing a different session. Profiles
+store references and instruction snapshots, while providers own the resulting native state.
 
-Core's secret must exist before cached ChatGPT auth can be synchronized: missing secrets are a
-reconnection requirement, never recreated from cache. Secret rotation writes a new reference before
-publishing metadata. Unreferenced secrets are journaled before writes and cleanup retries after
-failures. Connection deletion removes its secret before metadata and removes managed credential
-copies. Native conversation directories remain with chat history. External host login directories
-are never removed; directories inside Gateway's data tree are refused for that mode.
+The provider atomically owns account capacity and execution admission. Harness persists exact
+request IDs and command bodies before delivery. Uncertain admission/control outcomes remain
+fenced; retries keep their original bytes and identity. A response requiring another native turn
+uses the provider's reserved continuation run and the original decision-response reference under
+fresh Core authorization. It does not become an ordinary text message or a new random attempt.
 
-App backups contain metadata and conversation state, excluding Core secrets and cache auth files.
-A same-host restore uses surviving Core secrets; restoring elsewhere requires reconnecting. Restoring
-an old registry cannot resurrect a deleted secret. Core secrets currently use owner-only plaintext
-files: this is backup separation, not encryption or protection against host compromise.
+## Storage And Recovery
 
-## Fresh Harness installation
+Harness stores its conversation transcript, qualified preferences, public execution outbox and
+committed replay watermark. Provider applications store their own public session/run journal,
+native session bindings, account metadata and native conversation history. An app restart or
+backup therefore operates on that app's state; a Harness backup does not include another
+application's native history or credentials.
 
-`hosty.harness` has a separate app identity and data/secret namespace. Startup does not import the
-former Gateway's environment credentials, settings, grants or conversations. Configure connections
-anew in Harness settings. Explicitly selecting the host's native login remains an operator choice;
-it is not an automatic migration. See [replacement order](../hosty-harness-rename/feature.md#operator-transition).
+Each provider's `connections.json` contains account metadata and its secret cleanup journal.
+Managed credentials use that provider's namespace in the
+[Core App Secrets Store](../app-secrets-store/feature.md). Provider browser APIs return no secret
+values or service tokens. Managed cache homes reconstruct API-key authorization from Core and
+link native history to provider data. Renewable ChatGPT authorization synchronizes back to Core;
+missing Core secrets are a reconnection requirement, never recreated from cache. Rotation journals
+unreferenced secrets before publication, and cleanup retries after failed writes.
 
-Old chat records contain no reliable adapter provenance. Their UI requires explicit confirmation of
-the original connection/account before binding and resuming. Claude adoption copies only the named
-native session and its subagent directory from the operator's previous default Claude home. Codex
-uses the migrated session directories or the explicitly selected host login. A missing native Codex
-session produces an error instead of silently starting a replacement conversation.
+Native history is retained separately from managed cache authorization. Removing cache does not
+remove native conversations. Removing an account deletes managed credential copies and secret
+references while preserving retained history. An explicitly selected external Codex home is not
+deleted. Restoring another host requires reconnecting accounts; restoring old metadata cannot
+resurrect a removed Core secret. This is backup separation, not encryption or protection against
+the host OS user.
+
+Restarting Harness detaches observation and leaves provider execution independent. Reattachment
+reads an authoritative snapshot and follows its committed cursor, with stable message/tool/
+decision identities preventing duplicate transcript entries. Temporary projection failures retry
+within a bounded policy; sealed or corrupt consumer storage requires recovery.
+
+Stop cancels the exact public execution, including any reserved decision continuation. A result,
+closed stream or client assertion does not prove native exit. Providers retain capacity and source
+leases until their own supported stop operation and process-tree evidence confirm termination.
+Unknown effects or missing proof remain fenced against replacement work and deletion. Provider
+restart uses its own durable journal and evidence; it does not replay accepted input to discover
+whether the earlier work happened.
+
+## Fresh Harness Installation
+
+The extraction release requires a clean cutover. Initial startup refuses legacy or unreadable
+conversation inventories without deleting them. Legacy private-worker/native histories are not
+imported, copied or rebound through a connection selector. After verified initialization, a
+damaged consumer conversation remains isolated by its own storage recovery fence. The
+[agent interface](../agent-provider-interface/feature.md) defines the current public ownership and
+recovery boundary.
 
 ## API
 
-All routes below use the existing administrator authentication and cookie CSRF gates:
+Harness routes use its existing administrator identity, same-origin mutation checks and
+conversation ownership rules:
 
-- `GET/POST /api/connections`: list metadata/readiness or create a connection.
-- `PUT/DELETE /api/connections/:id`: edit or remove a connection.
-- `PUT /api/connections/default`: choose `connectionId`, or `null` to clear it.
-- `POST /api/connections/:id/test`: local readiness and capabilities.
-- `POST /api/connections/:id/login`: start/reuse a pending ChatGPT sign-in.
-- `GET/DELETE /api/provider-logins/:id`: poll/cancel sign-in.
-- `PUT /api/sessions/:id/provider`: select an empty chat's connection; `confirmLegacy` explicitly
-  acknowledges the account for an older unbound chat.
-- `GET /api/health?sessionId=:id`: the selected chat's capabilities/readiness.
+| Route | Behavior |
+| --- | --- |
+| `GET /api/connections` | Read discovered metadata/readiness and the Harness default. |
+| `PUT /api/connections/default` | Select `connectionId`; null clears the Harness default. |
+| `POST /api/connections/:id/test` | Read the selected provider's advertised readiness/capabilities. |
+| `GET /api/connections/:id/models` | Read the public provider model/effort catalog. |
+| `GET /api/connections/:id/usage` | Read optional provider-declared usage diagnostics. |
+| `PUT /api/sessions/:id/provider` | Select a current connection before the conversation locks. |
+| `GET /api/health?sessionId=:id` | Read the bound chat's readiness and capabilities. |
 
-The MCP application-provider controls are separate from native provider connections. The shipped
-tool-level Ask / Run unprompted / Disabled policy is documented in
-[Assistant MCP Approval Rules](../assistant-approval-rules/feature.md).
+Credential CRUD, native login and the former Prepare for Docker routes are rejected by the remote
+consumer facade. Account administration belongs to the provider's own authenticated
+`/api/settings/connections`, `/api/settings/default` and login routes. Its public agent operations
+use the versioned HTTP/SSE interface and fresh Core credentials, rather than the browser Settings
+cookie.
 
-## Verification
+Browser usage updates use one-use stream tickets. WebSocket admission and later metadata reads
+retain the ticket's validated actor rather than upgrade cookies or the HTTP request's transient
+scope. Sampling caches are separate for different app grants, revalidate the current credential
+before reads and stop when their last subscriber leaves or the stream expires.
 
-Acceptance checks on 2026-09-17 used the Core-managed development app and Shell embedding. Real
-Claude-token, external Codex login and managed ChatGPT connections each completed a minimal turn
-and resumed the same native conversation after stopping. The owner completed ChatGPT device login.
-A separate copy of durable data also resumed the real Codex conversation from an empty cache, using
-credentials reconstructed from the secret store. The Core-created backup contained native history
-and no managed credential values or credential files. Synthetic tests cover API-key setup, token
-refresh, concurrent accounts, partial failures, migration and same-/fresh-host restore behavior.
+MCP application permissions remain separate from agent account selection. Harness owns its
+logical MCP preferences and the [Ask / Run unprompted / Disabled policy](../assistant-approval-rules/feature.md).
+Core authorizes the selected targets; the provider owns its execution proxy. Supported policy-only
+updates retain the admitted logical target set. Adding an interface requires declared full live
+configuration or a fresh turn. UI search does not change permissions.
 
-Browser checks cover the provider action menu, sign-in modal, copy confirmation and cancellation,
-and the default connection and persisted provider override in an empty chat.
-Gateway version: **0.29.0 → 0.30.0**; Core and SDK contracts are unchanged.
+Harness composes its optional task workflow separately from general Core MCP. The invoking
+consumer binds its task-executor interface, logical conversation and a fixed set of task operations
+to the provider admission. The provider's local workflow tool adapter calls Core's bounded business
+API; Core mediates the original actor and exact public provider session/run to Harness. It does not
+create general Core MCP access or change a disabled Core connection. Without the optional
+task-executor permission, ordinary conversations omit task instructions and workflow tools;
+task-bound admission reports the missing setup before starting native work. A disabled required
+`task_result` tool also prevents task admission.
+The selected provider must declare `workflow.consumer`; Harness checks it before fresh and
+resumed workflow turns and retains that requirement in the immutable prepared run command.
+
+Workflow invocation rules are immutable for the admitted turn and apply to the next turn when
+changed. Explicit task-specific Disabled rules remain disabled, and Run requires the same tool
+definition. General Core defaults and Autonomous mode do not silently grant workflow calls.
+Current Core permissions and the original actor remain subject to revalidation on each dispatch.
+Signed workflow replies retain the original action/input UUID acknowledgement across response
+loss and consumer restart.
+
+Question and approval cards use conversation-local IDs qualified by the immutable public run.
+Reusing a provider decision ID in a later turn does not reuse its previous answer or approval.
+Public question answers preserve stable option IDs and multiple selections as arrays, including
+permitted free text; completed cards display the option labels. Replay closes an answered card
+only from its authoritative response, rather than inferring an answer from process completion.
 
 ## Docker Connections
 
-The [shared Docker runtime](../assistant-shared-docker-runtime/feature.md) uses the same connection
-selection, revision and account binding. It maintains a separate managed Docker home, mounts only
-that connection's history and imports only selected portable Codex host-login authorization. Host
-configuration and unrelated sessions are not copied. Native and Docker refresh synchronization keeps
-Core's secret authoritative; removed authorization requires reconnecting. Native probes do not execute
-container-written configuration. A persisted unreconciled worker blocks credential changes until
-Stop/recovery confirms termination.
-
-Docker and Local are application profiles selected in Core. Managed connections retain their
-binding and durable history across profile changes. A host-login connection offers
-**Prepare for Docker** in Local (`POST /api/connections/:id/prepare-docker`); only its selected
-portable authorization is imported. The Docker coordinator uses the saved import and reports
-missing/revoked authorization through normal connection diagnostics. Translation can use the same
-import and saves renewed authorization back to Core. No host directory is mounted to satisfy login.
-
+Harness can consume an independently installed Local provider through the same public interface
+while Harness itself uses Docker. Provider credentials, native processes and history remain in
+the provider application. No private execution-worker image or native login directory is part of
+the Harness consumer. Docker transport uses Core's authorized provider origin; it does not import
+accounts or change the selected provider's runtime.
 
 ## Ollama Agent Adapter
 
-Ollama connections use the server already installed by the operator. Harness calls its native
-HTTP API directly and runs its own serial agent/tool loop in Worker. Neither Codex nor Claude
-is an Ollama runtime dependency. Harness does not install/start Ollama, download models, change
-`OLLAMA_HOST` or `OLLAMA_MODELS`, or store model weights in app data, cache or Docker volumes.
+Ollama Provider owns the serial model/tool loop and its durable checkpoint. Codex and Claude are
+not Ollama runtime dependencies. The default URL is `http://127.0.0.1:11434` on the provider host;
+an explicit override remains explicit. HTTP(S) URLs reject embedded credentials, queries,
+fragments and redirects. Reachability is measured from the provider, not Harness's browser or
+container. The application does not alter listeners or firewalls.
 
-The modal offers **Ollama**, **No authentication** and an optional **Ollama server URL**.
-An empty URL uses `http://127.0.0.1:11434` in Local or
-`http://host.docker.internal:11434` in Docker. An explicit override stays explicit, including
-loopback. The address is resolved by Worker, not the browser. HTTP(S) URLs cannot contain embedded
-credentials, queries or fragments; redirects are refused. A Docker host mapping does not make a
-loopback-only Linux service reachable. Connection failures ask the operator to correct reachability;
-the adapter does not change the listener, firewall or runtime.
-
-**Test connection** probes `/api/version` from Worker. Catalog discovery uses bounded
-`/api/tags` and `/api/show` requests. Exact installed model tags are retained. Models without
-completion/tool support and cloud-backed entries remain unavailable with a reason. Profiles and
-chat selection use the same catalog; removal of a selected model fails explicitly. Thinking controls
-come from advertised model metadata, including boolean Off, rather than a hard-coded vendor list.
-Ollama does not provide the Codex/Claude translation interfaces or prompt suggestions.
-
-Connections have the existing revision and busy protections. No secret is created for a no-auth
-connection. Endpoint changes cannot silently rebind an old conversation. Ollama does not adopt
-legacy Claude/Codex sessions.
+Catalog discovery uses bounded `/api/tags` and `/api/show` requests and retains exact installed
+model tags. Models lacking completion/tools support and cloud-backed entries remain unavailable
+with reasons. Thinking controls use advertised metadata, including boolean Off. Removing a
+selected model fails explicitly. Ollama does not expose prompt suggestions.
 
 ### Tools, Context And Decisions
 
-The adapter streams `/api/chat`, validates complete responses and dispatches complete tool calls
-serially. Streaming deltas update the live view; each fully received assistant message also emits
-completed text for the durable transcript before tool dispatch or turn completion. Partial/truncated
-responses never dispatch actions. Available local tools read/list/search
-text, apply an exact unique replacement or create a file, run a command, ask a question, read an
-exported skill and discover authorized MCP tools. Tool search exposes up to eight matching MCP
-schemas on the next step; it changes model context, not access. The existing scoped MCP proxy and
-Ask / Run unprompted / Disabled rules remain authoritative. The discovery catalog holds up to
-4,096 tools across authorized servers, independently of the eight-schema model selection. Its
-serialized tool definitions have a combined 16 MiB UTF-8 budget; the per-schema limit and repeated
-pagination-cursor checks remain in place. Exceeding a catalog budget fails explicitly without
-silently omitting tools.
+The loop streams `/api/chat` and dispatches only complete, validated tool calls, one at a time.
+Completed assistant text enters the durable transcript before tool dispatch or final completion.
+Local tools read/list/search text, inspect/apply an exact patch, run commands, ask questions, read
+selected skills and discover authorized MCP tools. Search exposes up to eight matching schemas
+on the next model step without granting access. The discovery catalog supports up to 4,096 tools
+and a combined 16 MiB definition budget, with per-schema and pagination checks; excess fails
+explicitly rather than silently dropping tools.
 
-Normal mode requires approval for patches and commands. Approvals/questions bind to their stored
-identity; stale or duplicate answers do not authorize another action. Patches verify the original
-content hash at proposal and immediately before replacement, and insert replacement text literally,
-including dollar sequences used in shell and JavaScript source. Dedicated file operations reject
-workspace/path/symlink escapes. Newly encountered nested `AGENTS.md` instructions require the
-model to propose the action again. Native shell commands have the selected OS identity's authority;
-path guards on file tools do not sandbox arbitrary shell code. Docker tool children use the selected
-unprivileged execution UID, isolated home and existing Git workspace configuration, without control
-or other provider credentials.
+Normal mode asks before patches and commands. Decisions retain their original identities.
+Patches check the original content hash both at proposal and immediately before replacement and
+preserve replacement text literally. File tools reject workspace and symlink escapes. Newly
+encountered nested `AGENTS.md` instructions require a fresh proposal. Shell commands retain the
+provider's OS user authority; file path guards do not contain arbitrary shell code. Owned command
+processes receive the selected execution environment without Hosty control credentials.
 
-Common/profile instructions, applicable repository instructions and the explicitly exported skill
-index enter each turn. Skill contents are read on demand within the exported package. Text
-attachments are snapshotted as user-provided data, including when conversation uploads and the active
-worktree are different directories. Their combined limit is 32,000 UTF-8 bytes. Images and binary
-documents are rejected before message dispatch; model vision metadata alone does not enable images.
+Instructions, selected immutable skill packages, applicable repository instructions, pending
+decisions and effect receipts remain distinct inputs. Public Ollama execution accepts bounded
+UTF-8 text attachments and rejects images/binary documents; its current per-attachment text limit
+is 32,000 bytes. A vision-capable model alone does not enable image delivery.
 
-Execution is bounded to 32 model steps, 64 tool calls and 15 active minutes per turn, excluding
-decision waits. A model request has a five-minute deadline; commands default to two minutes and
-allow at most five. Command output is bounded and marked when truncated. The supervisor stops
-and verifies the owned process group before returning a result or releasing execution. Failed
-cleanup retains the claim. This is ordinary process-group ownership, not a new OS containment
-boundary for deliberately detached processes.
-
-Effective model context is at most 32,768 tokens and no greater than the advertised limit; missing
-metadata falls back to 8,192. Requests send that `num_ctx`, reserve output space and estimate input
-conservatively. Older complete turns are compacted in bounded fragments without silently dropping
-their tail. Current instructions, pending decisions and effect receipts remain structured separately.
-An oversized current turn or failed compaction stops with a visible error. Observed prompt usage is
-reported only when supplied; it is distinct from the local context estimate.
+Execution has limits of 32 model steps, 64 tool calls and 15 active minutes per turn, excluding
+decision waits. Model requests have a five-minute deadline; commands default to two minutes and
+allow at most five. Output is bounded and marked when truncated. Effective context is at most
+32,768 tokens and no greater than the model's advertised limit, with an 8,192 fallback. Requests
+reserve output space and compact older complete turns without dropping their tail. Oversized
+current input or failed compaction stops explicitly; reported model usage remains distinct from
+local estimates.
 
 ### Durable Continuation
 
-Ollama state lives under
-`<data>/provider-sessions/<connection>/<revision>/ollama/<session>.json`.
-Versioned atomic checkpoints bind conversation, resource and selected model, and retain messages,
-summaries and correlated action receipts. Resource identity excludes the changing Git revision. A conversation can enter its first authorized\nworktree on the next turn, with fresh repository instructions and explicit separation of earlier\nrelative paths. Preparing a worktree mid-turn requires finishing that turn before local tools use\nthe new directory; explicit workspace attachment retains Harness's normal context-reset behavior.\nOne writer owns a session. Action intent is saved before
-dispatch and its result before the next model call. Cache removal does not remove this state.
+Provider-owned checkpoints bind the public session's native continuation, resource and model and
+retain messages, summaries and correlated action receipts. Effects with no durable result remain
+unknown; completed tools are not replayed. Cache removal preserves this data. A provider restart
+interrupts active execution and a later turn uses the retained checkpoint after required stop/
+effect reconciliation. Preparing a different worktree mid-turn takes effect on a subsequent
+authorized turn, with fresh repository instructions and explicit separation of earlier relative
+paths.
 
-After Worker restart, a new turn continues from the checkpoint. Completed tools are not replayed.
-Interrupted proposed decisions become denied; an action with no durable result remains unknown and
-requires explicit operator reconciliation before continuation. A lost remote response is not proof
-that its effect failed. Stop aborts inference and awaits local command cleanup. Existing
-[Worker receipts](../assistant-shared-docker-runtime/feature.md) govern reconnect and claim retention.
-The adapter currently runs inside Worker; restarting Worker interrupts active execution.
+## Verification
+
+The following evidence predates independent provider applications and describes the then-current
+Gateway/Worker architecture. It does not verify the extracted providers or their release packages.
+
+On 2026-09-17, a Core-managed development app and Shell embedding completed real Claude-token,
+external Codex-login and managed ChatGPT turns and resumed their native conversations. The account
+owner completed device login. Empty-cache restoration reconstructed managed credentials from Core,
+and the Core backup contained native history without those credentials. That release was
+Gateway 0.29.0 → 0.30.0.
 
 ### Ollama Verification
 
-The 2026-10-28 checks cover direct streaming, tool validation, approvals/refusal, questions, changed
-permissions, scoped MCP reconnect, patch races, instructions/skills, compaction, attachments, unknown
-effects, model removal and child-process cleanup. A Core-managed child with separate test identity/data
-verifies normal password login, browser connection administration, a registered source worktree with repository instructions,
-file/command decisions, MCP,
-durable continuation after restart and production bundle recovery. The parent Finish operation
-confirms child/resource removal.
+The 2026-10-28 Ollama checks covered streaming, tools/decisions, MCP, literal patch races,
+instructions/skills, compaction, attachments, unknown effects, model removal and process cleanup.
+A disposable Core-managed child checked normal password identity, browser administration,
+registered worktrees, durable continuation and production bundle recovery. A real Mac Ollama
+0.40.12/`qwen3.8:27b-mlx` turn was a connectivity/streaming smoke check. Docker Desktop 29.9.2
+Linux arm64 fixtures checked the former container transport and execution UID; Windows native
+execution was not exercised. The recorded Harness 0.76.0 → 0.77.0 run passed 1,861 tests in
+170 files and the then-current native integration commands.
 
-An authenticated Harness turn against the existing Mac Ollama 0.40.12 and
-`qwen3.8:27b-mlx` produces a real model response. This is a connectivity/streaming smoke check,
-not a general coding-quality benchmark. Docker fixtures verify the same tool loop and execution
-UID without vendor credentials. Docker Desktop 29.9.2 (Linux arm64) reaches the host server through
-`host.docker.internal:11434`. Native Windows execution is not exercised by these checks.
-
-`npm run harness:lint` passes with one pre-existing React hook warning in `tasks.tsx`.
-`npm test --workspace @haas/hosty-harness` passes all 1,861 tests in 170 files; the final targeted adapter suite passes all 25 tests, including two additional resource-continuation regressions.
-`npm run test:integration -- worker` and the Ollama-enabled `harness-local` suite pass; the latter
-builds the production API, Worker and static web application. Version consistency, documentation
-index/links and whitespace checks pass.
-
-Harness version: **0.76.0 → 0.77.0**. Core and SDK versions are unchanged.
-Named connections expose optional quota/credit diagnostics independently of connection health.
-See [Harness Provider Usage Limits](../harness-provider-usage-limits/feature.md) for authentication
-boundaries, account invalidation and the Providers settings control.
+Current extraction coverage is owned by the
+[agent interface](../agent-provider-interface/feature.md) and
+[CI feedback loop](../ci-feedback-loop/feature.md) testing contracts. Synthetic native peers verify
+protocol handling and process ownership; they do not establish installed vendor CLI compatibility
+or model quality.
 
 ## Testing Expectations
 
-- MCP access selection and search do not mutate permissions. Switching applications during a save
-  keeps the original target, failed saves retain confirmed values, and harness-specific disabled
-  controls remain disabled. Pending instruction reviews remain reachable during discovery failure
-  and approve the complete displayed text. Check desktop, narrow layouts, and empty search results.
+- Harness declares no translation role/interface/consumer permission, exposes no translation settings
+  or provider route, and renders no translation settings tab. Existing ignored selection bytes survive
+  unrelated settings saves without appearing in the active settings response.
 
-- Windows storage setup succeeds without symlink privileges for both providers; removing cache
-  preserves durable history, and recognized storage errors contain no paths or credentials.
-- Test registry CRUD, idempotent import, failure between secret and metadata changes, cleanup retry,
-  cancelled/failed device sign-in, native token refresh, cache loss and old/fresh-host restores.
-- Assert secret absence in settings responses and backed-up data, with successful native auth as
-  the positive control. Test native conversation survival independently of credential reconstruction.
-- Exercise concurrent provider types and accounts, defaults/creation retries, empty-chat changes,
-  started-chat locks, per-chat capabilities, restart resume, missing/removed credentials and explicit
-  legacy binding. Wait for a resumed turn to finish before asserting that a rejected follow-up
-  leaves its transcript unchanged. Native protocol stand-ins supplement, not replace, real-provider acceptance checks.
-- Verify settings and chat selection through a Core-managed app and Shell. Real ChatGPT authorization
-  requires the account owner to complete the browser step; never insert test credentials into a real
-  account or expose credentials in test output.
-
-- Cover catalogs larger than 128 tools across pages and servers, discovery and dispatch of a tool
-  beyond that boundary, the eight-schema model limit, aggregate byte/count budgets and catalog reloads. Verify completed
-  assistant text before tool dispatch and final completion, including after durable resume.
-- Keep Ollama contract fixtures deterministic and separate from real model smoke checks. Cover native/Docker execution identity, tool schema and resource guards, pending decision revocation, literal patch replacement, cancellation, unknown receipts, continuation, context limits and UTF-8 attachment refusal.
-- Run `HOSTY_OLLAMA_ACCEPTANCE=1 npm run test:integration -- harness-local` for the managed adapter journey. Add `HOSTY_OLLAMA_BROWSER=1` with an installed Playwright module (or `HOSTY_OLLAMA_PLAYWRIGHT_MODULE`) for browser administration. Set `HOSTY_OLLAMA_URL` only for an authorized existing server smoke check; no models are downloaded.
+- Verify provider-owned Settings through normal Core/app-code identity and its administrator
+  boundary. Cover account CRUD with string-revision checks, failed/cancelled device login,
+  secret rotation, synchronization failures, cache loss and same-/fresh-host restore behavior.
+- Assert secret absence from browser responses and consumer backups. Exercise credential
+  reconstruction separately from native-history survival and preserve external login directories.
+- Discover unrelated provider app IDs and interface keys. Pin installation/account/revision
+  references without vendor inference, implicit defaults or fallback after account replacement.
+- Cover concurrent provider types/accounts, explicit defaults, creation/message retries,
+  pre-admission selection, locked conversations, current capabilities and model catalogs.
+- Verify consumer restart reattachment without resubmission or provider restart, stable output
+  identities and append-before-cursor failure recovery. Keep unknown admission/control bytes
+  fenced and retry the exact original command.
+- Separate available results from confirmed native exit. Verify known descendant cleanup,
+  stop during admission, reserved decision cancellation, provider restart, unknown effects and
+  deletion/lease retention when stop proof is absent.
+- Reuse native question/approval IDs across public runs and consumer restart without reusing
+  old answers or controls. Exercise duplicate option labels, stable multi-select IDs and free
+  text containing commas through the public manager and rendered UI.
+- Verify optional task workflow authority independently of general Core MCP selection; omit
+  unavailable workflow instructions for ordinary chats and reject task admission before native
+  start when permission or the required completion tool is missing. Recover exact workflow
+  acknowledgements after lost responses without redispatching completed business work.
+- Reject legacy private-worker history adoption and startup cutover over an unreadable inventory;
+  preserve healthy conversations after the verified format marker exists.
+- Verify immutable skill pins per provider configuration, including empty selections, resumed
+  sessions, missing packages, snapshot changes and changes to provider/account identity.
+- Keep Ollama model fixtures deterministic. Cover catalogs beyond 128 tools, eight-schema search,
+  aggregate budgets, completed text/tool/command persistence, decisions and revocation, literal
+  patches, repository instructions, resource changes, cancellation, compaction and UTF-8 refusal.
+- Run `node scripts/check-agent-provider-native.mjs` for disposable fake CLI/process/tool checks.
+  Installed CLI metadata probes are the explicit `--installed-clis` variant and do not submit a
+  model turn. Real account or model smoke checks require their own authorized fixture.
+- Exercise `npm run test:integration -- agent-providers` for normal login, three independently
+  installed Local providers and public Codex session/recovery behavior in a managed child.
+  `HOSTY_OLLAMA_ACCEPTANCE=1 npm run test:integration -- harness-local` enables the deterministic
+  Ollama model/tool journey; browser variants retain their separately selected prerequisites.
+- Verify Harness and provider selections through Core/Shell with separate test data. Scope claims
+  to the actual runtime/OS exercised and Finish managed children through their owner.

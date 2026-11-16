@@ -65,7 +65,8 @@ internal static class McpEndpoints
                         .ValidateAsync(bearer, AgentMcpDirectory.CoreId, http.RequestAborted);
                     if (actor is null) return CoreJson.Json(new ErrorResponse("mcp_access_denied", "Assistant MCP access is no longer valid."), 403);
                     CoreApiRequest.Authenticate(actor.Caller);
-                    bool Has(string permission) => AppManagementAuthorization.HasPermission(actor.Caller, permission);
+                    bool Has(string permission) => actor.EffectivePermissions is not null
+                        ? actor.EffectivePermissions.Contains(permission) : AppManagementAuthorization.HasPermission(actor.Caller, permission);
                     // Tool names are protocol input, never authority. Unknown tools fail closed.
                     if (HttpMethods.IsPost(http.Request.Method))
                     {

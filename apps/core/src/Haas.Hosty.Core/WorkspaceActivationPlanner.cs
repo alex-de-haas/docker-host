@@ -64,12 +64,31 @@ internal sealed class WorkspaceActivationPlanner(DevelopmentWorkspaceService wor
                 catch (Exception ex) when (ex is AppLifecycleException or ArgumentException or IOException)
                 { error = "Application source is unavailable; refresh its workspace binding."; }
             }
-            var profiles = (app?.RuntimeProfiles ?? []).Where(p => p.Development && p.Type is "docker" or "localCommand" or "mixed")
-                .Select(p => p.Key).Distinct().Order(StringComparer.Ordinal).ToArray();
+            string[] profiles = [];
+            if (error is null && selected is not null && app is not null)
+            {
+                try
+                {
+                    await workspaces.CheckDevTreeAsync(selected, app, selected.Owner, ct);
+                    await workspaces.RequireExternalSourceAsync(selected, ct, localOnly: true);
+                    var manifestPath = MountPathPolicy.ResolveRealPath(Path.Combine(path!, "manifest.json"));
+                    if (!DevelopmentWorkspaceService.IsUnder(selected.Path, manifestPath))
+                        throw new ArgumentException("The workspace manifest escapes its registered worktree.");
+                    var manifestService = new AppManifestService();
+                    profiles = (await manifestService.ReadRuntimeProfilesAsync(manifestPath, ct))
+                        .Where(p => p.Development && p.Type is "docker" or "localCommand" or "mixed")
+                        .Select(p => p.Key).Distinct().Order(StringComparer.Ordinal).ToArray();
+                    var candidate = await manifestService.LoadAsync(manifestPath, choice?.Runtime ?? profiles.FirstOrDefault(), ct, forceRead: true);
+                    if (candidate.Manifest.Id != app.Id)
+                        throw new ArgumentException("The workspace manifest describes another application.");
+                }
+                catch (Exception ex) when (ex is AppLifecycleException or AppManifestException or ArgumentException or IOException or UnauthorizedAccessException)
+                { profiles = []; error = "Workspace development recipes are unavailable; inspect its manifest and source access."; }
+            }
             var runtime = choice?.Runtime ?? (profiles.Length == 1 ? profiles[0] : null);
-            if (choice?.Runtime is not null && !profiles.Contains(choice.Runtime))
-                throw new ArgumentException("The selected runtime is not an installed development profile.");
-            error ??= profiles.Length == 0 ? "No supported development profile is installed."
+            if (error is null && choice?.Runtime is not null && !profiles.Contains(choice.Runtime))
+                throw new ArgumentException("The selected runtime is not a supported workspace development profile.");
+            error ??= profiles.Length == 0 ? "No supported development profile exists in this workspace."
                 : runtime is null ? "Choose a development profile." : null;
             var observation = await ObserveAsync(selected, error, ct);
             error ??= observation.Error;

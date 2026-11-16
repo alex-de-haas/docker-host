@@ -1,0 +1,14 @@
+Ollama logo
+
+Source: https://raw.githubusercontent.com/ollama/ollama/main/docs/ollama-logo.svg
+Retrieved: 2026-11-13
+vendor-logo.svg retains the official SVG byte-for-byte.
+icon.svg presents its original black mark on a 64 by 64 white rounded tile,
+with proportional fit and padding. The original paths, geometry, colors
+and proportions are unchanged.
+
+Copyright (c) Ollama. Distributed with the repository's MIT license;
+see LICENSE-OLLAMA.txt in this directory.
+
+Ollama and its logo identify the supported Ollama service. This independent
+Hosty integration does not imply sponsorship or endorsement by Ollama.

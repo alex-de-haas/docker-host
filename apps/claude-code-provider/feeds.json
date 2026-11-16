@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "app-feeds.0.1",
+  "appId": "hosty.claude-code-provider",
+  "feeds": [
+    {
+      "id": "main",
+      "manifestRef": "https://raw.githubusercontent.com/alex-de-haas/docker-host/main/apps/claude-code-provider/manifest.json",
+      "default": true
+    }
+  ]
+}

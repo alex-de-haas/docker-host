@@ -4,23 +4,23 @@ import path from "node:path";
 import type { DecisionCreate, DecisionRecord, DecisionContinue, DecisionWithdraw } from "@hosty-sdk/app/decisions";
 import type { HarnessEvent } from "../harness/adapter.js";
 import type { SessionRecord } from "../sessions/store.js";
-import type { WorkerControl, WorkerPark } from "../worker/contracts.js";
 
 export type QuestionEvent = Extract<HarnessEvent, { type: "question_request" }> & { workerRunId?: string; workerSequence?: number };
 export type DecisionWait = {
-  version: 1; id: string; sessionId: string; owner: string; questionId: string; event: QuestionEvent;
+  version: 2; id: string; sessionId: string; owner: string; questionId: string; event: QuestionEvent;
   createdAt: string; snapshot: string; cancellationGeneration: number;
-  native: { sessionId: string | null; connectionId?: string; connectionRevision?: number; connectionIdentity?: string; kind?: string; workerRunId?: string };
+  native: { sessionId: string | null; connectionId?: string; connectionRevision?: string | number; connectionIdentity?: string; kind?: string; workerRunId?: string };
   create: DecisionCreate; core?: DecisionRecord; inbox?: { resolutionRevision: number; receivedAt: string };
   commandId: string; acknowledgementId: string; state: "registering" | "waiting" | "parking" | "parked" | "received" | "delivering" | "admitted" | "running" | "completed" | "blocked" | "cancelled";
   notificationRetryAt?: number;
   taskInput?: { requestHash: string; barrierId: string; reason: string };
-  park?: WorkerPark; control?: WorkerControl; continuation?: DecisionContinue; withdrawal?: DecisionWithdraw;
+  continuation?: DecisionContinue; withdrawal?: DecisionWithdraw;
   invalidateRequested?: boolean; deleteRequested?: boolean; contentRemovedAt?: string; resumeRequested?: boolean; cancellationSettled?: boolean; resumedRunId?: string; error?: string; reason?: string; answeredEvent?: boolean;
 };
 export function decisionSnapshot(record: SessionRecord): string {
   return hash([record.createdBy, record.harnessKind, record.connectionId, record.connectionRevision, record.connectionIdentity,
     record.harnessSessionId, record.instructionSnapshot, record.skillIds, record.executionSelection, record.selectionRevision ?? 0,
+    record.providerExecution?.selection, record.providerExecution?.session?.configurationDigest,
     record.autonomy, record.appIds, record.appContextRevision ?? 0, record.taskExecutionId, record.taskDecisionReference, record.taskWorkspace]);
 }
 export const waitId = (sessionId: string, questionId: string): string => hash([sessionId, questionId]);
@@ -30,7 +30,7 @@ export function newWait(record: SessionRecord, event: QuestionEvent): DecisionWa
   const questions = event.questions.map((q, index) => ({ id: q.id ?? `q${index + 1}`, question: q.question, header: q.header,
     options: q.options.map((o, i) => ({ id: o.id ?? `o${i + 1}`, label: o.label, description: o.description })),
     allowText: q.allowText !== false, multiple: q.multiSelect }));
-  return { version: 1, id, sessionId: record.id, owner: record.createdBy, questionId: event.questionId, event,
+  return { version: 2, id, sessionId: record.id, owner: record.createdBy, questionId: event.questionId, event,
     createdAt: new Date().toISOString(), snapshot: decisionSnapshot(record), cancellationGeneration: record.decisionGeneration ?? 0,
     native: { sessionId: record.harnessSessionId, connectionId: record.connectionId, connectionRevision: record.connectionRevision,
       connectionIdentity: record.connectionIdentity, kind: record.harnessKind, workerRunId: event.workerRunId ?? record.workerRun?.id },
@@ -44,7 +44,7 @@ export function newWait(record: SessionRecord, event: QuestionEvent): DecisionWa
 export class DecisionWaitStore {
   private tail: Promise<unknown> = Promise.resolve();
   private readonly directory: string;
-  constructor(dataDir: string) { this.directory = path.join(dataDir, "decision-waits"); }
+  constructor(dataDir: string) { this.directory = path.join(dataDir, "task-decision-waits-v2"); }
   private file(id: string): string {
     if (!/^[a-f0-9]{64}$/.test(id)) throw new Error("Invalid decision wait identity.");
     return path.join(this.directory, id + ".json");
@@ -52,7 +52,7 @@ export class DecisionWaitStore {
   async read(id: string): Promise<DecisionWait | null> {
     try {
       const row = JSON.parse(await readFile(this.file(id), "utf8")) as DecisionWait;
-      if (row.version !== 1 || row.id !== id) throw new Error("Invalid decision wait record.");
+      if (row.version !== 2 || row.id !== id || !row.taskInput) throw new Error("Invalid decision wait record.");
       return row;
     } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
   }
@@ -77,7 +77,8 @@ export class DecisionWaitStore {
       } finally { await rm(temp, { force: true }); }
       return row;
     });
-    this.tail = work; return work;
+    // The caller observes its command failure; it must not poison later commands or shutdown.
+    this.tail = work.catch(() => undefined); return work;
   }
   async prune(now: number): Promise<void> {
     for (const wait of await this.list()) {
@@ -86,7 +87,7 @@ export class DecisionWaitStore {
       await this.update(wait.id, current => ({ ...current!, contentRemovedAt: new Date(now).toISOString(),
         create: { requestId: current!.create.requestId, input: { correlationKey: current!.id, title: "", questions: [] } },
         event: { type: "question_request", questionId: current!.questionId, questions: [] }, native: { sessionId: null },
-        control: undefined, park: undefined, error: undefined,
+        error: undefined,
         core: current!.core ? { ...current!.core, input: null, reason: null,
           resolution: current!.core.resolution ? { ...current!.core.resolution, answers: {} } : null,
           continuation: current!.core.continuation ? { ...current!.core.continuation, outcome: null } : null } : undefined,

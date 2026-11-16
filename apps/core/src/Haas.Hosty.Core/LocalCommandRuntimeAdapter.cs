@@ -203,7 +203,9 @@ internal sealed partial class LocalCommandRuntimeAdapter(
         CancellationToken cancellationToken)
     {
         var setup = service.Runtime.Setup;
-        if (string.IsNullOrWhiteSpace(setup) || context.PreparedSetupServices?.Contains(service.Key) == true)
+        // Older receipts may list setup that initialized scratch rather than actual app storage.
+        if (string.IsNullOrWhiteSpace(setup) || context.PreparedSetupServices?.Contains(service.Key) == true
+            && RuntimeServiceStorage.Resolve(context.Manifest, service).Count == 0)
         {
             return;
         }

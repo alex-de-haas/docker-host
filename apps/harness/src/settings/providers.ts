@@ -8,12 +8,14 @@ export interface McpProvider {
   appId: string;
   policyIdentity?: string;
   installationIdentity?: string;
+  installationId?: string;
   deniedTools?: string[];
   displayName: string;
   url: string | null;
   running: boolean;
   offered?: boolean;
   interfaces: Array<{ key: string; url: string }>;
+  declarations?: string[];
 }
 export interface AppDirectoryEntry {
   icon?: unknown; iconUrl?: unknown; description?: unknown; version?: unknown;
@@ -21,6 +23,7 @@ export interface AppDirectoryEntry {
   runtimeState?: unknown; interfaces?: unknown;
 }
 interface AgentTarget {
+  installationId?: string | null;
   installedAt?: string | null;
   deniedTools?: string[];
   id: string; displayName: string; offered: boolean; runtimeState: string;
@@ -126,8 +129,10 @@ export class ProviderDirectory {
       policyIdentity: JSON.stringify([target.id, target.installedAt ?? "core", interfaces]),
       installationIdentity: this.installationIdentity(target), deniedTools: target.deniedTools ?? [],
       appId: target.id, displayName: target.displayName, offered: target.offered === true,
+      ...(target.installationId ? { installationId: target.installationId } : {}),
       url: interfaces.find(item => item.key === "default")?.url ?? interfaces[0]?.url ?? null,
       running: interfaces.length > 0, interfaces,
+      declarations: target.interfaces.map(item => item.key),
     };
   }
 

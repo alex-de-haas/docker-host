@@ -1,3 +1,5 @@
+import { projectNpm } from '../npm-workspace.mjs';
+export { projectNpm } from '../npm-workspace.mjs';
 import { dockerInputs } from './docker-inputs.mjs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -20,55 +22,6 @@ export function relativePath(value) {
   return value;
 }
 
-/** Keep the lock's actual installation paths, optional platforms and peer closure. Nothing is re-resolved. */
-export function projectNpm(rootPackage, lock, initialWorkspaces) {
-  if (lock.lockfileVersion !== 3 || !lock.packages?.['']) throw new Error('A complete npm lockfileVersion 3 is required.');
-  const packages = lock.packages, included = new Set(['']), workspaces = new Set(initialWorkspaces), queue = [...initialWorkspaces];
-  const resolveDependency = (from, name) => {
-    if (!/^(?:@[^/]+\/)?[^/]+$/.test(name)) throw new Error(`Invalid dependency name ${name}`);
-    let directory = from;
-    while (true) {
-      const candidate = posix.join(directory, 'node_modules', name);
-      if (Object.hasOwn(packages, candidate)) return candidate;
-      if (!directory) return null;
-      directory = posix.dirname(directory); if (directory === '.') directory = '';
-    }
-  };
-  // Root dependencies/overrides/engines can influence every workspace. Do not discard them.
-  queue.push('');
-  const visited = new Set();
-  while (queue.length) {
-    const path = queue.shift(); if (visited.has(path)) continue; visited.add(path); included.add(path);
-    const entry = packages[path]; if (!entry) throw new Error(`Missing locked workspace/dependency: ${path}`);
-    if (entry.link) {
-      relativePath(entry.resolved); workspaces.add(entry.resolved); queue.push(entry.resolved); continue;
-    }
-    if (entry.inBundle) {
-      const parent = path.slice(0, path.lastIndexOf('/node_modules/'));
-      if (!packages[parent]?.integrity && !packages[parent]?.inBundle) throw new Error(`Unpinned bundled package: ${path}`);
-      queue.push(parent);
-    }
-    if (path.includes('node_modules/') && !entry.inBundle && (!entry.integrity || !/^https:\/\//.test(entry.resolved ?? ''))) {
-      throw new Error(`Dependency has no integrity-pinned HTTPS archive: ${path}`);
-    }
-    const dependencies = { ...entry.dependencies, ...entry.optionalDependencies, ...entry.peerDependencies,
-      ...(!path.includes('node_modules/') ? entry.devDependencies : {}) };
-    for (const name of Object.keys(dependencies)) {
-      const target = resolveDependency(path, name);
-      if (target) queue.push(target);
-      else if (!Object.hasOwn(entry.optionalDependencies ?? {}, name) && !entry.peerDependenciesMeta?.[name]?.optional) {
-        throw new Error(`Cannot prove locked dependency closure for ${path || '<root>'}: ${name}`);
-      }
-    }
-  }
-  // npm links each selected workspace, even when it is only an explicit --workspace target.
-  for (const [path, entry] of Object.entries(packages)) if (entry.link && workspaces.has(entry.resolved)) included.add(path);
-  const projectedPackage = { ...rootPackage, workspaces: [...workspaces].sort() };
-  delete projectedPackage.scripts; // All release Dockerfiles invoke workspace scripts directly.
-  const projectedLock = { ...lock, packages: Object.fromEntries([...included].sort().map(path => [path, packages[path]])) };
-  projectedLock.packages[''] = { ...packages[''], workspaces: projectedPackage.workspaces };
-  return { package: projectedPackage, lock: projectedLock, workspaces: [...workspaces].sort() };
-}
 
 export function trackedPaths(root) {
   return [...new Set(execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).split('\0').filter(Boolean))].sort();
@@ -82,7 +35,8 @@ export function buildContext(root, recipe, { paths = trackedPaths(root) } = {}) 
   const inputs = [...recipe.inputs, ...docker.inputs, recipe.dockerfile, '.dockerignore'];
   const generated = new Map();
   if (recipe.workspaces?.length && !docker.fallback) {
-    const projection = projectNpm(JSON.parse(readFileSync(join(root, 'package.json'))), JSON.parse(readFileSync(join(root, 'package-lock.json'))), recipe.workspaces);
+    const projection = projectNpm(JSON.parse(readFileSync(join(root, 'package.json'))), JSON.parse(readFileSync(join(root, 'package-lock.json'))), recipe.workspaces, { ignoreOptionalPeers: recipe.ignoreOptionalPeers === true });
+    if (recipe.retainRootScripts) projection.package.scripts = JSON.parse(readFileSync(join(root, 'package.json'))).scripts;
     inputs.push(...projection.workspaces);
     generated.set('package.json', Buffer.from(canonical(projection.package) + '\n'));
     generated.set('package-lock.json', Buffer.from(canonical(projection.lock) + '\n'));

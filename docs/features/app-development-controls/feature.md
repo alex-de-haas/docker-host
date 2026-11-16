@@ -1,6 +1,6 @@
 ---
 created: 2026-10-18
-updated: 2026-11-06
+updated: 2026-11-13
 summary: Core-owned execution selection runs installed packages or registered workspace manifests on ordinary app data, with scoped access review and recoverable lifecycle operations.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -36,6 +36,10 @@ transitions still undergo the same access classification; application IDs must m
 an admitted execution snapshot in its private development journal directory; its raw JSON retains
 unknown extension fields. The registry projects the active execution contract while preserving the
 installed package version and original install/update source.
+A development recipe can exist only in the workspace manifest. Discovery, recipe configuration,
+individual selection and group activation validate that candidate rather than requiring its key in
+the installed package. Access classification compares the matching installed recipe when present,
+or the retained package runtime otherwise; the installed package remains the Return baseline.
 
 Manifest classification follows actual authority:
 
@@ -82,6 +86,10 @@ Harmless changes refresh the separate admitted execution snapshot and registry p
 additional-access change is refused before replacement until its concrete review succeeds. Setup
 and preparation use the admitted recipe; manifest changes after preparation cannot silently replace
 the prepared candidate. Unchanged environment images retain their immutable artifact locks.
+Preparation runs setup with isolated scratch data/cache. A service with declared app data or cache
+bindings runs setup again against actual storage on Start, even when an older preparation receipt
+lists it as complete; scratch storage is never promoted into ordinary app data. Final setup must
+succeed before the service command starts.
 
 Core retains the last launched manifest separately from an admitted replacement. Stop, logs and
 health use that launched snapshot even if live JSON is invalid, a service was renamed/removed, or a
@@ -186,6 +194,11 @@ also retains its normal tool approval/dispatch records. Neither an accepted oper
 record substitutes for observed runtime readiness and browser verification.
 
 ## Testing Expectations
+
+- Cover candidate-only development recipes across discovery, configuration, exact access review,
+  individual and group activation, restart and Return. Invalid source must not hide the installed
+  package target. Return compares serialized source values, including inspection-path lists, while
+  rejecting actual source drift.
 
 - Classify metadata, command/environment/topology changes and optional declarations without new
   authority; require exact review for rights, devices/capabilities, mounts, source writes and exposure.

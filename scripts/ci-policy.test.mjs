@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { ALL_JOBS, BASE_JOBS, COMPONENTS, PROFILES, classifyPaths, evaluateGate, fullPlan, planOutputs, versionOnlyBuildProps } from "./ci-policy.mjs";
+import { ALL_JOBS, BASE_JOBS, COMPONENTS, PROFILES, classifyPaths, evaluateGate, fullPlan, planOutputs, versionOnlyBuildProps, nodeDependencyChanges, componentJob } from "./ci-policy.mjs";
 
 const script = fileURLToPath(new URL("./ci-policy.mjs", import.meta.url));
 const core = name => `apps/core/src/Haas.Hosty.Core/${name}`;
@@ -17,7 +17,7 @@ function assertSelection(paths, components, profiles = [], extra = []) {
   const plan = classifyPaths(paths);
   assert.deepEqual(plan.components, COMPONENTS.filter(job => components.includes(job)));
   assert.deepEqual(plan.profiles, PROFILES.filter(job => profiles.includes(job)));
-  assert.deepEqual(plan.required, ALL_JOBS.filter(job => [...BASE_JOBS, ...components, ...profiles, ...extra].includes(job)));
+  assert.deepEqual(plan.required, ALL_JOBS.filter(job => [...BASE_JOBS, ...components.map(componentJob), ...profiles, ...extra].includes(job)));
   for (const job of plan.required) assert.ok(plan.reasons[job]?.length, `missing reason for ${job}`);
   return plan;
 }
@@ -30,7 +30,16 @@ test("documentation validates its actual Documents parser dependency without nat
 test("web changes select their consumers and do not compile Core", () => {
   assertSelection(["apps/shell/src/app/page.tsx"], ["shell"]);
   assertSelection(["shared/web/workspace-activation.tsx"], ["shell", "harness"]);
+  for (const path of ["shared/web/hosty-theme.css", "shared/web/fonts/plex-sans-latin.woff2"])
+    assertSelection([path], ["codex-provider", "claude-code-provider", "ollama-provider", "shell", "harness"]);
   assertSelection(["apps/harness/web/src/components/chat.tsx"], ["harness"]);
+});
+
+test("local agent changes select only their provider and shared runtime fans out independently", () => {
+  for (const component of ["codex-provider", "claude-code-provider", "ollama-provider"])
+    assertSelection([`apps/${component}/src/main.ts`], [component]);
+  assertSelection(["packages/agent-provider-runtime/src/native/codex.ts"], ["codex-provider", "claude-code-provider", "ollama-provider"]);
+  assertSelection(["apps/harness/src/provider-selection.ts"], ["harness"]);
 });
 
 test("ordinary Core production changes add AOT without every native scenario", () => {
@@ -56,10 +65,12 @@ test("local integration fixtures select their bounded component checks", () => {
   assertSelection(["scripts/check-workspace-activation.py"], ["core", "cli"], []);
 });
 
-test("worker and speech consumer inputs retain component tests without native acceptance", () => {
+test("provider and speech consumer inputs retain component tests without native acceptance", () => {
   assertSelection(["apps/harness/src/runtime/worker.ts"], ["harness"], []);
   assertSelection(["apps/harness/src/sessions/manager.ts"], ["harness"], []);
-  assertSelection(["scripts/check-harness-worker.mjs"], ["harness"], []);
+  assertSelection(["scripts/check-agent-provider-native.mjs"], ["codex-provider", "claude-code-provider", "ollama-provider"], []);
+  assertSelection(["scripts/check-harness-worker.mjs"], ["codex-provider", "claude-code-provider", "ollama-provider"], []);
+  assertSelection(["scripts/agent_provider_acceptance.py"], ["codex-provider", "claude-code-provider", "ollama-provider", "harness"], []);
   assertSelection(["apps/harness/src/worker/engine.ts"], ["harness"], []);
   assertSelection(["apps/harness/test/worker-native-controls.mjs"], ["harness"], []);
   assertSelection(["apps/harness/worker/Dockerfile"], ["harness"], []);
@@ -71,8 +82,25 @@ test("OPUS source and native fixtures retain offline component checks", () => {
     assertSelection([path], ["opus"]);
 });
 
+test("a provider-only locked SDK change does not select Harness after dependency closure proof", () => {
+  const workspaces = ["apps/harness", "apps/harness/web", "apps/codex-provider"];
+  const root = { workspaces };
+  const lock = { lockfileVersion: 3, packages: { "": { workspaces },
+    "apps/harness": { dependencies: { shared: "1" } }, "apps/harness/web": {},
+    "apps/codex-provider": { dependencies: { native: "1" } },
+    "node_modules/shared": { version: "1", integrity: "sha512-shared", resolved: "https://example.test/shared.tgz" },
+    "node_modules/native": { version: "1", integrity: "sha512-native", resolved: "https://example.test/native.tgz" } } };
+  const changed = structuredClone(lock); changed.packages["node_modules/native"].version = "2";
+  const selected = nodeDependencyChanges(root, lock, root, changed);
+  assert.ok(selected.includes("codex-provider")); assert.ok(!selected.includes("harness"));
+  assert.ok(!classifyPaths(["package-lock.json"], { nodeDependencyComponents: selected }).components.includes("harness"));
+  changed.packages["node_modules/shared"].integrity = "sha512-changed";
+  assert.ok(nodeDependencyChanges(root, lock, root, changed).includes("harness"));
+  assert.ok(nodeDependencyChanges(root, lock, root, { lockfileVersion: 0 }).includes("harness"));
+});
+
 test("Node dependency changes fan out only to Node consumers", () => {
-  const node = ["opus", "shell", "desktop", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
+  const node = ["codex-provider", "claude-code-provider", "ollama-provider", "opus", "shell", "desktop", "app-sdk", "demo-app", "marketplace", "documents", "harness", "telemetry-ui"];
   assertSelection(["package-lock.json"], node);
   assertSelection(["packages/app-sdk/src/session.ts"], node);
   assertSelection([".npmrc"], node);
@@ -327,4 +355,53 @@ test("release publisher protocol changes run their fixture suite independently o
   assertSelection(["distribution/release-publisher.json"], [], [], []);
   assertSelection([".github/workflows/promote-release.yml"], [], [], ["actionlint"]);
   assertSelection([".github/workflows/platform-bridge.yml"], ["core", "cli"], ["core-aot"], ["actionlint"]);
+});
+
+
+test('shared npm projection validates provider and Harness packaging with publisher fixtures', () => {
+  const plan = assertSelection(['scripts/npm-workspace.mjs'], ['codex-provider','claude-code-provider','ollama-provider','harness']);
+  for (const job of ['agent-providers', 'harness']) {
+    const skipped = results(plan);
+    skipped[job] = { result: 'skipped' };
+    assert.ok(evaluateGate(plan, skipped).some(error => error.includes(job)));
+  }
+});
+
+
+test('provider optional native peers do not fan a Codex SDK pin into Claude or Ollama', () => {
+  const workspaces = ['apps/harness','apps/harness/web','apps/codex-provider','apps/claude-code-provider','apps/ollama-provider','packages/agent-provider-runtime'];
+  const archive = { version:'1',resolved:'https://example.test/native.tgz',integrity:'sha512-native' };
+  const packages = { '':{workspaces},'apps/harness':{},'apps/harness/web':{},
+    'apps/codex-provider':{dependencies:{runtime:'*',codex:'1'}},
+    'apps/claude-code-provider':{dependencies:{runtime:'*',claude:'1'}},
+    'apps/ollama-provider':{dependencies:{runtime:'*'}},
+    'packages/agent-provider-runtime':{peerDependencies:{codex:'*',claude:'*'},peerDependenciesMeta:{codex:{optional:true},claude:{optional:true}}},
+    'node_modules/runtime':{link:true,resolved:'packages/agent-provider-runtime'},
+    'node_modules/codex':{...archive},'node_modules/claude':{...archive} };
+  const root={workspaces}, lock={lockfileVersion:3,packages}, changed=structuredClone(lock);
+  changed.packages['node_modules/codex'].integrity='sha512-new-codex';
+  const selected=nodeDependencyChanges(root,lock,root,changed);
+  assert.deepEqual(selected.filter(id=>['codex-provider','claude-code-provider','ollama-provider','harness'].includes(id)),['codex-provider']);
+  changed.packages['node_modules/claude'].integrity='sha512-new-claude';
+  assert.ok(nodeDependencyChanges(root,lock,root,changed).includes('claude-code-provider'));
+});
+
+
+test("legacy history cleanup validates its isolated fixtures without app deployment", () => {
+  for (const path of ["scripts/cleanup-legacy-harness-history.mjs", "scripts/cleanup-legacy-harness-history.test.mjs"])
+    assertSelection([path], [], [], ["ci-policy"]);
+});
+
+
+test("provider components share one required job and cannot bypass it", () => {
+  const plan = classifyPaths(["packages/agent-provider-runtime/src/store.ts"]);
+  assert.deepEqual(plan.components, ["codex-provider", "claude-code-provider", "ollama-provider"]);
+  assert.deepEqual(plan.required, [...BASE_JOBS, "agent-providers"]);
+  assert.equal(planOutputs(plan).agent_providers, "true");
+  for (const result of ["failure", "skipped", "cancelled", undefined]) {
+    const needs = results(plan); needs["agent-providers"] = { result };
+    assert.ok(evaluateGate(plan, needs).some(error => error.includes("agent-providers")));
+  }
+  assert.ok(evaluateGate({ ...plan, required: BASE_JOBS }, results(plan)).length);
+  assert.ok(evaluateGate({ ...plan, components: [] }, results(plan)).length);
 });

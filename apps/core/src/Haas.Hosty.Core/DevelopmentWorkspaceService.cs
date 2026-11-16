@@ -506,6 +506,10 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     public Task<DevelopmentWorkspace> CommandAsync(string id, WorkspaceOwner? owner, string kind, WorkspaceCommand input, CancellationToken ct)
         => Locked("workspace-participation", () => CommandCoreAsync(id, owner, kind, input, ct), ct);
 
+    // A separate retained kind prevents recovery through the broader administrative release path.
+    internal Task<DevelopmentWorkspace> ReleaseAgentLeaseCommandAsync(string id, WorkspaceOwner actor, WorkspaceCommand input, CancellationToken ct)
+        => Locked("workspace-participation", () => CommandCoreAsync(id, actor, "release-agent-lease", input, ct), ct);
+
     private async Task<DevelopmentWorkspace> CommandCoreAsync(string id, WorkspaceOwner? owner, string kind, WorkspaceCommand input, CancellationToken ct)
     {
         var workspace = await Read(id, owner, ct);
@@ -530,7 +534,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 await RequireDevConsumerIdleAsync(w, ct);
             }
             if (kind == "lease") await RequireDevConsumerIdleAsync(w, ct, writer: true);
-            if (kind is not ("release-lease" or "refresh")) await RequireOpenWorkflow(w.Owner, ct);
+            if (kind is not ("release-lease" or "release-agent-lease" or "refresh")) await RequireOpenWorkflow(w.Owner, ct);
             if (w.State != "active") throw Error("not_active", "The workspace is not active.");
             if (w.Operations.Any(o => o.State == "pending")) throw Error("operation_pending", "Recover the previous operation with its original request ID first.");
             await ValidateTree(w, ct);
@@ -547,10 +551,13 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                     case "lease":
                         if (!Guid.TryParse(input.LeaseId, out _)) throw Error("lease_invalid", "Lease ID must be a UUID.");
                         w = ClaimLease(w, owner ?? w.Owner, input.LeaseId!); break;
+                    case "release-agent-lease":
                     case "release-lease":
                         if (!Guid.TryParse(input.LeaseId, out _)) throw Error("lease_invalid", "Lease ID must be a UUID.");
-                        // Explicit release is authorized by workspace management permission.
-                        // The recorded claim remains attribution, not an access restriction.
+                        if (kind == "release-agent-lease" && w.Leases.Contains(input.LeaseId))
+                            RequireLeaseOwner(w, owner!, input.LeaseId!);
+                        // Ordinary workspace administration can release any lease; admitted agents
+                        // release only their exact consumer under these same mutation locks.
                         w = w with { Leases = w.Leases.Where(l => l != input.LeaseId).ToArray(),
                             LeaseClaims = w.LeaseClaims?.Where(c => c.Id != input.LeaseId).ToArray() }; break;
                     case "refresh":

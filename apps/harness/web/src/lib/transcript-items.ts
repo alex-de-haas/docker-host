@@ -1,4 +1,5 @@
 import type { AssistantEvent } from "./assistant-api";
+import { transcriptDecisionId } from "../../../src/agent-providers/decision-identity";
 import { isListedToolUse } from "./tool-display";
 import { commandOutcome, commandResultId, isCommandTool, type CommandOutcome } from "./transcript-activity";
 import { canShowToolOutput, recordedToolOutput, type ToolOutput } from "./tool-output";
@@ -10,6 +11,25 @@ export type TranscriptItem =
 const identity = commandResultId;
 const turnBoundary = (event: AssistantEvent) => ["user_message", "session_created", "result", "error"].includes(event.type)
   || event.type === "session_status" && ["idle", "cancelled", "failed", "abandoned"].includes(String(event.status));
+type FailedObservation = { runId: string; generation: string; seq: number };
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function failedObservation(event: AssistantEvent): FailedObservation | undefined {
+  const value = event.providerObservation;
+  if (event.type !== "session_status" || event.status !== "failed" || !value || typeof value !== "object" || Array.isArray(value)) return;
+  const observation = value as Record<string, unknown>;
+  if (observation.stopConfirmed === false && typeof observation.runId === "string" && uuid.test(observation.runId)
+    && typeof observation.generation === "string" && uuid.test(observation.generation))
+    return { runId: observation.runId, generation: observation.generation, seq: event.seq };
+}
+function observedCalls(calls: Map<string, AssistantEvent[]>, observation?: FailedObservation): Map<string, AssistantEvent[]> {
+  return observation ? new Map([...calls].filter(([, candidates]) => candidates.every(call => call.providerGeneration === observation.generation
+    && typeof call.providerEventId === "string" && call.providerEventId.startsWith(`${observation.runId}:tool:`)))) : new Map();
+}
+function sameObservedCall(call: AssistantEvent, result: AssistantEvent, observation: FailedObservation, kind: "command" | "output"): boolean {
+  const scope = String(call.providerEventId).slice(`${observation.runId}:tool:`.length);
+  return result.providerGeneration === observation.generation && typeof result.providerEventId === "string"
+    && result.providerEventId.startsWith(`${observation.runId}:${kind}:${scope}:`);
+}
 /** Pair an approval with the one listed call of its recorded turn that carries the same identity. */
 function approvalCalls(events: readonly AssistantEvent[]) {
   const pairs = new Map<string, number>();
@@ -18,7 +38,7 @@ function approvalCalls(events: readonly AssistantEvent[]) {
     for (const [id, [request, ...others]] of requests) {
       const [call, ...more] = calls.get(id) ?? [];
       // Either side repeating its identity is ambiguous; such a card stays on its own.
-      if (request && call && !others.length && !more.length && isListedToolUse(String(call.toolName ?? "tool"))) pairs.set(String(request.approvalId), call.seq);
+      if (request && call && !others.length && !more.length && isListedToolUse(String(call.toolName ?? "tool"))) pairs.set(transcriptDecisionId(request), call.seq);
     }
     calls = new Map(); requests = new Map();
   };
@@ -35,10 +55,11 @@ function approvalCalls(events: readonly AssistantEvent[]) {
 function commandResults(events: readonly AssistantEvent[]) {
   const results: Record<number, CommandOutcome> = {}, matched = new Set<number>();
   let calls = new Map<string, AssistantEvent[]>();
+  let observation: FailedObservation | undefined;
   const outcomes = new Map<number, string>();
   const matchedByCall = new Map<number, number[]>();
   for (const event of events) {
-    if (turnBoundary(event)) calls = new Map();
+    if (turnBoundary(event)) { observation = failedObservation(event); calls = observedCalls(calls, observation); }
     const id = identity(event); if (!id) continue;
     if (isCommandTool(event)) {
       const prior = calls.get(id) ?? []; prior.push(event); calls.set(id, prior);
@@ -48,6 +69,7 @@ function commandResults(events: readonly AssistantEvent[]) {
       const candidates = calls.get(id); if (candidates?.length !== 1) continue;
       const call = candidates[0], outcome = commandOutcome(event), fingerprint = JSON.stringify(outcome);
       if (!call) continue;
+      if (observation && call.seq < observation.seq && !sameObservedCall(call, event, observation, "command")) continue;
       const old = outcomes.get(call.seq);
       results[call.seq] = results[call.seq]?.conflict || old && old !== fingerprint ? { status: "unknown", conflict: true } : outcome;
       outcomes.set(call.seq, old ?? fingerprint); matched.add(event.seq);
@@ -60,9 +82,10 @@ function commandResults(events: readonly AssistantEvent[]) {
 export function toolResults(events: readonly AssistantEvent[]) {
   const results: Record<number, ToolOutput> = {}, matched = new Set<number>();
   let calls = new Map<string, AssistantEvent[]>();
+  let observation: FailedObservation | undefined;
   const outcomes = new Map<number, string>(), matchedByCall = new Map<number, number[]>();
   for (const event of events) {
-    if (turnBoundary(event)) calls = new Map();
+    if (turnBoundary(event)) { observation = failedObservation(event); calls = observedCalls(calls, observation); }
     const id = identity(event); if (!id) continue;
     if (event.type === "tool_use") {
       const prior = calls.get(id) ?? []; prior.push(event); calls.set(id, prior);
@@ -71,6 +94,7 @@ export function toolResults(events: readonly AssistantEvent[]) {
       const candidates = calls.get(id), output = recordedToolOutput(event);
       if (candidates?.length !== 1 || !output) continue;
       const call = candidates[0];
+      if (observation && call.seq < observation.seq && !sameObservedCall(call, event, observation, "output")) continue;
       if (!canShowToolOutput(String(call.toolName ?? "tool"))) { matched.add(event.seq); continue; }
       const fingerprint = JSON.stringify(output), old = outcomes.get(call.seq);
       results[call.seq] = results[call.seq]?.conflict || old && old !== fingerprint ? { status: "unknown", output: "", conflict: true } : output;
@@ -96,7 +120,7 @@ export function transcriptItems(events: AssistantEvent[], claimed: ReadonlySet<s
   let activity: Extract<TranscriptItem, { kind: "activity" }> | undefined;
   for (const event of events) {
     if (event.type === "command_result" && joined.matched.has(event.seq) || event.type === "tool_result" && outputs.matched.has(event.seq)) continue;
-    if (["approval_request", "approval_decision"].includes(event.type) && foldedIds.has(String(event.approvalId))
+    if (["approval_request", "approval_decision"].includes(event.type) && foldedIds.has(transcriptDecisionId(event))
       || event.type === "session_status" && ["running", "awaiting_approval"].includes(String(event.status))) continue;
     if (event.type === "tool_use") {
       if (!isListedToolUse(String(event.toolName ?? "tool"))) continue;

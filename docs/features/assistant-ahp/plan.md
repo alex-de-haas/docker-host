@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-27
+updated: 2026-11-12
 summary: Evaluate AHP as a replaceable external client interface over Hosty's existing session implementation.
 components: [apps/harness]
 ---
@@ -15,12 +15,28 @@ evaluate AHP as a replaceable external client interface. This supersedes the ear
 internal-foundation/web-cutover direction. Run a bounded integration spike before committing to
 protocol adoption; other Hosty session features do not depend on adopting AHP.
 
-Hosty's SessionManager and SessionStore remain responsible for sessions, execution and persistence.
+Harness's SessionManager and SessionStore retain conversation, transcript and consumer-side
+coordination ownership. Native execution and provider journals move to independent applications
+under the [provider extraction plan](../agent-provider-interface/plan.md).
 The existing `record.json` and append-only `events.ndjson` are the starting point, extended for
 product requirements rather than replaced with upstream protocol state. The
 [Action Summary D4](../assistant-action-summary/plan.md#deliverables) owns correlated journal events;
 [Durable Agent Jobs D7](../durable-agent-jobs/plan.md#deliverables) owns common session recovery.
 This plan owns only the AHP projection, inbound command adapter, connection authorization and external-client interoperability. It remains Draft pending scope approval.
+
+## HTTP/SSE Foundation Coordination (Owner Decision, 2026-11-12)
+
+The owner selects a Hosty HTTP JSON/SSE API for independently installed agent providers. AHP
+remains an optional later adapter above Hosty operations and events. It translates commands and
+projects snapshots/actions while reusing the same authorization, durable identities, journals and
+execution ownership. A separately hosted adapter uses the public client; an in-process adapter may
+call the same application services without a loopback HTTP hop. No second runtime or editable
+transcript is introduced.
+
+This plan's external Harness adapter presents Harness conversations and coordination. A possible
+provider-facing AHP adapter would present provider sessions/runs and is a separate scope decision;
+it is not silently added here. Neither adapter is required for the initial provider extraction.
+The API choice is accepted; this AHP plan remains Draft and does not authorize implementation.
 
 ## Architecture And Ownership
 
@@ -28,9 +44,9 @@ Both client paths call the same Hosty application services:
 
 ```text
 Existing web/Shell -- REST/SSE -----------+
-                                         +-- Hosty session services -- native agent adapters
-Swift / other clients -- AHP adapter ----+            |
-                                               Hosty session store
+                                         +-- Harness session services -- provider API client
+Swift / other clients -- AHP adapter ----+            |                       |
+                                               Harness session store   Local provider apps
 ```
 
 AHP is client-to-host communication; clients do not exchange authoritative state peer to peer.

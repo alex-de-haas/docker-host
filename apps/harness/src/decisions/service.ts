@@ -6,10 +6,8 @@ import { DecisionError, type DecisionClient, type DecisionRecord, type DecisionR
 import { DecisionServerClient } from "@hosty-sdk/app/decisions/server";
 import type { SessionManager } from "../sessions/manager.js";
 import type { SessionRecord } from "../sessions/store.js";
-import { terminal, type WorkerReceipt } from "../worker/contracts.js";
 import { DecisionWaitStore, newWait, waitId, nativeAnswers, type DecisionWait, type QuestionEvent } from "./waits.js";
 
-const PARK_AFTER_MS = 5 * 60_000;
 const closed = (wait: DecisionWait) => ["completed", "cancelled"].includes(wait.state);
 export class DecisionsService {
   readonly waits: DecisionWaitStore;
@@ -22,7 +20,7 @@ export class DecisionsService {
   private stopped = false;
   private ticking = false;
   constructor(private readonly manager: SessionManager, private readonly clientFactory = (token: () => string): DecisionClient => new DecisionServerClient(token),
-    private readonly now = () => Date.now(), private readonly parkingMs = PARK_AFTER_MS) {
+    private readonly now = () => Date.now()) {
     this.waits = new DecisionWaitStore(manager.store.dataDir);
     this.stopObserving = manager.store.observeChanges?.(async id => {
       const record = await manager.store.readRecord(id);
@@ -43,9 +41,7 @@ export class DecisionsService {
   }
   private changed(owner: string): void { this.listeners.get(owner)?.forEach(listener => listener()); }
   async register(record: SessionRecord, event: QuestionEvent): Promise<DecisionWait> {
-    const initial = newWait(record, event);
-    const wait = await this.waits.update(initial.id, previous => previous ?? initial);
-    this.changed(wait.owner); this.kick(); return wait;
+    throw new DecisionError("provider_owned_decision", "Native agent questions belong to the selected provider application.", 409);
   }
   /** Task questions have a durable tool boundary, independent of native question support. */
   async registerTask(record: SessionRecord, input: Record<string, unknown>, title?: string): Promise<DecisionWait> {
@@ -156,11 +152,7 @@ export class DecisionsService {
       if (!session || session.createdBy !== wait.owner || (session.decisionGeneration ?? 0) !== wait.cancellationGeneration || ["cancelled", "abandoned"].includes(session.status)) {
         await this.cancel(wait, "The originating work was cancelled or deleted."); return;
       }
-      // Resource parking is independent of answer delivery and expiring browser authority.
-      if (!wait.taskInput && wait.event.blocking !== false && !wait.control && !wait.resumeRequested
-        && this.now() - Date.parse(wait.createdAt) >= this.parkingMs) {
-        await this.park(wait); wait = (await this.waits.read(id))!;
-      }
+      if (!wait.taskInput) throw new DecisionError("unsupported_resume", "Only task-input waits are coordinated by Harness.", 409);
       wait = await this.acknowledge(wait);
       if (!wait.core) {
         try {
@@ -206,101 +198,29 @@ export class DecisionsService {
         wait = await this.update(id, { answeredEvent: true });
       }
       if (closed(wait)) return;
-      if (wait.taskInput) { await this.continueTaskInput(wait); return; }
-      if (wait.state === "running" || wait.state === "admitted" || wait.resumeRequested) { await this.observeContinuation(wait); return; }
-      if (wait.event.delivery === "message") {
-        // The native request returned with its turn; the answer starts the next turn in the same thread.
-        await this.manager.checkDecision(wait);
-        if (!await this.manager.decisionTurnAvailable(wait)) return;
-        wait = await this.report(wait, "admitted");
-        wait = await this.update(id, { state: "admitted", resumeRequested: true });
-        await this.observeContinuation(wait); return;
-      }
-      if (wait.park && wait.native.workerRunId && this.manager.worker) {
-        const receipt = await this.manager.worker.request<WorkerReceipt>(`/v1/runs/${wait.native.workerRunId}`);
-        if (receipt.state === "parking") { await this.park(wait); return; }
-        if (!receipt.exitConfirmed) throw new DecisionError("unknown_stop", "The previous native execution has no confirmed exit. The answer is retained.", 409);
-      }
-      await this.manager.checkDecision(wait);
-      const receipt = wait.native.workerRunId && this.manager.worker
-        ? await this.manager.worker.request<WorkerReceipt>(`/v1/runs/${wait.native.workerRunId}`) : null;
-      if (wait.control) {
-        // An applied control is never sent through a new native segment, even after a lost response.
-        const outcome = await this.manager.worker?.request<{ state: string }>(`/v1/runs/${wait.native.workerRunId}/controls/${wait.control.controlId}`);
-        if (outcome?.state === "applied") { wait = await this.update(id, { state: "running" }); await this.report(wait, "running"); return; }
-        if (outcome?.state === "unknown") throw new DecisionError("unknown_admission", "Native answer delivery is uncertain. Reconcile the original run before resuming.", 409);
-      }
-      if (receipt && !terminal(receipt.state)) {
-        if (receipt.state === "parking" || receipt.state === "cancelling") throw new DecisionError("unknown_stop", "Wait for the original execution to stop.", 409);
-        const frame = receipt.pending?.find(frame => frame.event.type === "question_request" && frame.event.questionId === wait!.questionId);
-        if (!frame) throw new DecisionError("unsupported_resume", "The native callback is no longer pending. Review the saved answer before recovery.", 409);
-        if (!wait.control || wait.control.expectedRevision !== receipt.revision) wait = await this.update(id, { control: { controlId: wait.commandId, kind: "question", id: wait.questionId,
-          answers: nativeAnswers(wait), eventId: frame.sequence, expectedRevision: receipt.revision } });
-        wait = await this.report(wait, "admitted");
-        await this.update(id, { state: "delivering" });
-        await this.manager.deliverDecision(wait);
-        wait = await this.update(id, { state: "running", error: undefined, reason: undefined });
-        await this.report(wait, "running"); return;
-      }
-      if (wait.control) throw new DecisionError("unknown_admission", "A previous native answer command must be reconciled before a new segment can start.", 409);
-      if (!receipt?.exitConfirmed || receipt.state !== "parked") throw new DecisionError("unknown_stop", "The original question execution must be confirmed parked before automatic resume.", 409);
-      if (!wait.native.sessionId || !["codex", "claude"].includes(wait.native.kind ?? "")) throw new DecisionError("unsupported_resume", "This provider has no supported saved native continuation. The answer is retained.", 409);
-      wait = await this.report(wait, "admitted");
-      wait = await this.update(id, { state: "admitted", resumeRequested: true });
-      await this.manager.resumeDecision(wait, this.credentials.get(wait.owner)!);
-      const currentSession = await this.manager.getSession(wait.sessionId);
-      wait = await this.update(id, { state: "running", resumedRunId: currentSession?.decisionRunIds?.[wait.commandId], error: undefined, reason: undefined });
-      await this.report(wait, "running");
+      await this.continueTaskInput(wait);
     } catch (error) { if (wait) await this.problem(wait, error); }
     finally { this.busy.delete(id); }
   }
-  private async park(wait: DecisionWait): Promise<void> {
-    if (!wait.native.workerRunId || !this.manager.worker || wait.event.blocking === false) return;
-    const receipt = await this.manager.worker.request<WorkerReceipt>(`/v1/runs/${wait.native.workerRunId}`);
-    if (receipt.state === "parked" && receipt.exitConfirmed) { await this.update(wait.id, { state: wait.inbox ? "received" : "parked" }); return; }
-    if (terminal(receipt.state)) return;
-    if (wait.park && receipt.state !== "parking") {
-      const outcome = await this.manager.worker.request<{ state: string }>(`/v1/runs/${wait.native.workerRunId}/controls/${wait.park.controlId}`);
-      if (outcome.state === "unknown") throw new DecisionError("unknown_stop", "Parking admission is uncertain.", 409);
-      if (outcome.state === "missing" && wait.park.expectedRevision !== receipt.revision) wait = await this.update(wait.id, { park: undefined });
-    }
-    if (!wait.park) {
-      const frame = receipt.pending?.find(f => f.event.type === "question_request" && f.event.questionId === wait.questionId);
-      if (!frame || receipt.pending?.some(f => f.event.type !== "question_request" || f.event.blocking === false)) return;
-      wait = await this.update(wait.id, { state: "parking", park: { controlId: randomUUID(), id: wait.questionId, expectedRevision: receipt.revision, eventId: frame.sequence } });
-    }
-    await this.manager.parkDecision(wait);
-    await this.update(wait.id, { state: wait.inbox ? "received" : "parked", error: undefined, reason: undefined });
-  }
   private async observeContinuation(wait: DecisionWait): Promise<void> {
-    if (!this.manager.worker) throw new DecisionError("missing_provider", "The original Worker is unavailable.", 503);
-    if (wait.resumeRequested && !wait.resumedRunId) {
-      // Only an explicit not-found receipt proves admission has not happened. Network/read errors
-      // must never be treated as absence, and an unknown receipt never permits a new command.
-      const receipt = await this.manager.messageReceipt(wait.sessionId, wait.commandId, wait.owner).catch(error => {
-        if (error.code === "message_request_not_found") return null; throw error;
-      });
-      if (!receipt) {
-        await this.manager.checkDecision(wait);
-        if (!await this.manager.resumeDecision(wait, this.credentials.get(wait.owner)!)) return;
-      } else if (receipt.state !== "accepted") throw new DecisionError("unknown_admission", "Continuation admission needs reconciliation. A second run was not started.", 409);
-      const session = await this.manager.getSession(wait.sessionId);
-      const resumedRunId = session?.decisionRunIds?.[wait.commandId];
-      if (!resumedRunId || resumedRunId === wait.native.workerRunId) throw new DecisionError("unknown_admission", "Continuation run identity is unavailable.", 409);
-      wait = await this.update(wait.id, { state: "running", resumedRunId, error: undefined, reason: undefined });
-      wait = await this.report(wait, "running");
+    if (!wait.resumedRunId) throw new DecisionError("unknown_admission", "Continuation run identity is unavailable.", 409);
+    const receipt = await this.manager.taskCheckpoint(wait.sessionId);
+    if (!receipt || receipt.ref.id !== wait.resumedRunId)
+      throw new DecisionError("unknown_admission", "The exact provider continuation needs reconciliation. A second run was not started.", 409);
+    if (receipt.freshness !== "current") throw new DecisionError("unknown_stop", "The provider continuation observation is unavailable.", 409);
+    const session = await this.manager.getSession(wait.sessionId);
+    const handedOff = receipt.phase === "parked" && (session?.taskBarrier?.id !== wait.taskInput!.barrierId
+      || receipt.pending.some(decision => decision.kind === "question" && decision.id !== wait.questionId));
+    if ((receipt.state === "succeeded" || handedOff) && receipt.stopConfirmed) {
+      wait = await this.report(wait, "running"); await this.report(wait, "completed");
+      await this.update(wait.id, { state: "completed", error: undefined, reason: undefined });
+      await this.manager.finishDecision(wait); return;
     }
-    const runId = wait.resumedRunId ?? wait.native.workerRunId;
-    if (!runId) throw new DecisionError("unsupported_resume", "This question has no durable native execution identity.", 409);
-    const receipt = await this.manager.worker.request<WorkerReceipt>(`/v1/runs/${runId}`);
-    if ((receipt.state === "completed" || receipt.state === "parked" && (receipt.barrier?.barrierId !== undefined && receipt.barrier.barrierId !== wait.taskInput?.barrierId || receipt.pending?.some(frame => frame.event.type === "question_request" && frame.event.questionId !== wait.questionId))) && receipt.exitConfirmed) {
-      wait = await this.report(wait, "running"); wait = await this.report(wait, "completed");
-      await this.update(wait.id, { state: "completed", error: undefined, reason: undefined }); await this.manager.finishDecision(wait); return;
-    }
-    if (terminal(receipt.state) && receipt.state !== "parked") {
-      if (!receipt.exitConfirmed) throw new DecisionError("unknown_stop", "The continuation stopped without confirmed native exit.", 409);
-      wait = await this.report(wait, receipt.state === "cancelled" ? "cancelled" : "failed", receipt.state === "cancelled" ? "cancelled" : "provider_failed");
-      await this.update(wait.id, { state: "completed", error: "Continuation ended before successful completion." }); await this.manager.finishDecision(wait);
+    if (["failed", "cancelled", "unknown"].includes(receipt.state)) {
+      if (!receipt.stopConfirmed) throw new DecisionError("unknown_stop", "The continuation has no confirmed provider process-tree exit.", 409);
+      await this.report(wait, receipt.state === "cancelled" ? "cancelled" : "failed", receipt.state === "cancelled" ? "cancelled" : "provider_failed");
+      await this.update(wait.id, { state: "completed", error: "Continuation ended before successful completion." });
+      await this.manager.finishDecision(wait);
     }
   }
   private async continueTaskInput(wait: DecisionWait): Promise<void> {

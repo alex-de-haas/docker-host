@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { OpusWorker } from '../src/worker.js';
 import { TranslationService } from '../src/service.js';
-import { validateMarkdownTranslation } from '../../harness/src/translation/markdown.js';
+import { validateMarkdownTranslation } from './markdown-structure.js';
 
 // Native model inference is explicitly selected locally; ordinary CI never downloads model weights.
 test('real OPUS model, protected documents, refusal, cancellation and verified cache reuse', {

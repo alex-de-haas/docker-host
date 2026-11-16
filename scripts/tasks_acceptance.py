@@ -15,12 +15,13 @@ def check(context):
     base, root, workspace = (context[k] for k in ('base','root','workspace'))
     run, request, say, wait_for = (context[k] for k in ('run','request','say','wait_for'))
     origin, password, cli = (context[k] for k in ('origin','password','cli'))
+    from agent_provider_acceptance import ProviderAcceptance
+    providers = context.get('agentProviders') or ProviderAcceptance(context).install_all(scripted_codex=True)
     app = 'hosty.harness'
     manifest = json.loads((workspace/'apps/harness/manifest.json').read_text())
     manifest['source']['repository'] = context['repository']
-    for service in manifest['services']:
-        if service['key'] in ['api', 'worker']: service['runtimes']['docker']['image'] = os.environ.get('HOSTY_TASKS_'+service['key'].upper()+'_IMAGE','hosty-harness-'+service['key']+'-acceptance:local')
-    next(s for s in manifest['services'] if s['key']=='worker')['runtimes']['docker']['environment']['HOSTY_HARNESS_CODEX_COMMAND'] = '/repo/apps/harness/test/fake-codex-server.mjs'
+    assert [service['key'] for service in manifest['services']] == ['api']
+    manifest['services'][0]['runtimes']['docker']['image'] = os.environ.get('HOSTY_TASKS_API_IMAGE', 'hosty-harness-api-acceptance:local')
     for permission in ['providers.tasks','providers.task-executor','core.tasks.read','core.tasks.write','core.tasks.execute','providers.conversation-history','providers.agent-sessions']:
         manifest['optionalCorePermissions'].remove(permission); manifest['corePermissions'].append(permission)
     target = base/'harness-manifest.json'; target.write_text(json.dumps(manifest))
@@ -101,8 +102,10 @@ def check(context):
     restored=action(removed,'restore',removalScope=[{'taskRef':removed['ref'],'revision':removed['revision']}])
     assert not restored.get('removed') and restored['attempts']==task['attempts']
     say('PASS: human assignment, review/rework, cancellation and recoverable removal with exact scope and replay')
-    connection=h('/connections',{'name':'Scripted acceptance connection','kind':'codex','auth':'api-key','secret':'synthetic-task-fixture-only'},expected=201)
-    h('/connections/'+connection['id']+'/test',{})
+    connection=providers.configure_for_harness(app_origin, call, 'codex',
+        'Scripted task acceptance connection', secret='synthetic-task-fixture-only')
+    assert connection['available'] and connection['kind']=='agent'
+    h('/connections/default', {'connectionId':connection['id']}, 'PUT')
     profiles=h('/profiles'); config={'name':'Acceptance writer','description':'Scripted native adapter','instructions':'Complete the requested task.','connectionId':connection['id'],'model':'fixture-default','reasoningEffort':'medium','skillIds':[]}
     profiles=h('/profiles',{'expectedRevision':profiles['revision'],'profile':config},expected=201)
     profile=next(p for p in profiles['profiles'] if p['name']==config['name'])
@@ -124,7 +127,13 @@ def check(context):
                             if not (isinstance(details,tuple) and details[1]==409 and details[2].get('code')=='approval_not_pending'): raise
                             # Settlement removes the durable UI projection asynchronously.
                             # A repeated answer is not admission evidence; keep observing the task.
-            if last['status']==wanted: return True
+            if last['status']==wanted:
+                if wanted in ['Done','Cancelled'] and last['attempts']:
+                    sid=((last['attempts'][-1].get('receipt') or {}).get('sessionRef') or {}).get('id')
+                    if sid:
+                        execution=h('/sessions/'+sid).get('providerExecution') or {}
+                        if execution.get('runId') and (execution.get('run') or {}).get('stopConfirmed') is not True: return False
+                return True
             if last['status']=='Blocked' and last.get('blocked',{}).get('reason')=='execution_failed' and wanted!='Blocked': raise AssertionError(('Execution failed',last))
             return False
         try: wait_for(ready,timeout)
@@ -138,7 +147,7 @@ def check(context):
                         root_observation=h('/task-orchestration/v1/roots/'+last['rootTaskRef']['id'])
                         say('Source observation: '+json.dumps(root_observation.get('source')))
                     except Exception as error: say('Source observation unavailable: '+str(error))
-                    say('Execution observation: '+json.dumps({key:observation.get(key) for key in ['status','harnessKind','taskExecutionId','taskRun','taskBarrier','workerRun','taskWorkspace','mcpPendingApprovals']}))
+                    say('Execution observation: '+json.dumps({key:observation.get(key) for key in ['status','harnessKind','taskExecutionId','taskRun','taskBarrier','providerExecution','taskWorkspace','mcpPendingApprovals']}))
                     try:
                         history=call(origin,'/api/history/v1/entries/query',{'conversation':{'provider':provider,'id':failed_session}})
                         say('Execution history: '+json.dumps(history))
@@ -162,7 +171,7 @@ def check(context):
     assert bad['blocked']['reason']=='execution_failed' and bad['attempts'][0]['receipt']['stopConfirmed']
     waiting=settle(action(create('Cancel running work',assignee,markdown='TASK_ACCEPTANCE:WAIT'),'ready'),'InProgress',False)
     assert settle(action(waiting,'cancel'),'Cancelled',False)['attempts'][0]['receipt']['stopConfirmed']
-    say('PASS: Worker/native protocol, task-scoped MCP approval/result, ordinary-turn refusal and confirmed cancellation')
+    say('PASS: independent provider protocol, task-scoped MCP approval/result, ordinary-turn refusal and confirmed cancellation')
     # Source and delegated task tools use the assistant's reviewed canonical Core access.
     review_path='/install/agents/'+urllib.parse.quote(app,safe='')+'/hosty:core'
     with client.open(origin+review_path,timeout=30) as response:
@@ -262,18 +271,30 @@ def check(context):
     invocation.update(operation='get')
     wait_for(lambda: call(fixture_origin,'/invoke',invocation,extra={'X-Hosty-User-Token':identity})['stopConfirmed'],30)
     say('PASS: independent SDK producer/executor, cross-app conversation URL, attributed Core tokens and cancel-before-accept fencing')
-    recovering=settle(action(create('Interrupted native work',assignee,markdown='TASK_ACCEPTANCE:WAIT'),'ready'),'InProgress',False)
+    recovering=settle(action(create('Work survives consumer restart',assignee,markdown='TASK_ACCEPTANCE:WAIT'),'ready'),'InProgress',False)
     recovery_id=recovering['attempts'][0]['executionId']
+    recovery_session=recovering['attempts'][0]['receipt']['sessionRef']['id']
+    def active_provider_run():
+        execution=h('/sessions/'+recovery_session).get('providerExecution') or {}
+        snapshot=execution.get('run') or {}
+        return execution if execution.get('runId') and snapshot.get('freshness')=='current' and snapshot.get('state')=='running' and snapshot.get('phase')=='executing' and not snapshot.get('stopConfirmed') else None
+    original=wait_for(active_provider_run,30)
+    original_run=original['runId']; original_generation=original['run']['generation']
     run([cli,'--data-root',root,'apps','restart',app]); wait_for(lambda: request('/api/apps/'+app+'/health')['status']=='healthy',180); login_app()
-    recovering=settle(recovering,'Blocked',False)
+    recovering=settle(recovering,'InProgress',False)
+    observed=wait_for(active_provider_run,30)
     assert len(recovering['attempts'])==1 and recovering['attempts'][0]['executionId']==recovery_id
-    say('PASS: restart during execution retains one attempt and exposes interruption without replacement')
+    assert observed['runId']==original_run and observed['run']['generation']==original_generation
+    cancelled=settle(action(recovering,'cancel'),'Cancelled',False)
+    assert cancelled['attempts'][0]['receipt']['stopConfirmed']
+    assert cancelled['attempts'][0]['executionId']==recovery_id
+    say('PASS: Harness restart reattaches the same provider run and attempt; explicit cancellation confirms native stop')
     assert read(task)['status']=='Done' and first_id in json.dumps(h('/tasks/v1/tasks'))
     with client.open(app_origin+'/tasks/',timeout=30) as response: html=response.read().decode()
     assets=re.findall(r'(?:src|href)="(/_next/[^"]+)"',html); assert assets
     for asset in assets:
         with client.open(app_origin+asset,timeout=30) as response: assert response.status==200 and response.read()
-    say('PASS: API/Worker restart preserves task history/IDs and serves compiled Tasks UI')
+    say('PASS: Harness API restart preserves task history/IDs and serves compiled Tasks UI')
     # Browser checks receive the synthetic password through stdin only; never save credentials.
     if os.environ.get('HOSTY_TASKS_BROWSER'):
         import subprocess

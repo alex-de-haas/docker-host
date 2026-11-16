@@ -48,7 +48,7 @@ jobs:
         id: validation
         with:
           token: ${{ github.token }}
-          components: core,cli,shell,desktop,documents,marketplace,harness,telemetry-backend,telemetry-ui,demo-app,opus
+          components: core,cli,shell,desktop,documents,marketplace,harness,telemetry-backend,telemetry-ui,demo-app,opus,codex-provider,claude-code-provider,ollama-provider
       - uses: actions/checkout@v7
         with:
           ref: ${{ steps.validation.outputs.source-sha }}

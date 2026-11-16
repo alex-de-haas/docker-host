@@ -6,8 +6,8 @@ namespace Haas.Hosty.Core;
 
 internal sealed record AssistantMcpTokenRequest(string TargetAppId, string? SessionId = null);
 internal sealed record AssistantMcpClaims(string Caller, string Audience, string UserId, string GrantHash,
-    DateTimeOffset CallerInstallation, DateTimeOffset? TargetInstallation, string GrantRevision, long Expires, string? SessionId = null, string? LeaseRevision = null, bool DiscoveryOnly = false, CoreTaskMcpBinding? Task = null);
-internal sealed record AssistantMcpActor(string UserId, string Role, AppRecord Caller, bool DiscoveryOnly = false, IReadOnlyList<string>? AllowedTools = null, IReadOnlyList<string>? DeniedTools = null);
+    DateTimeOffset CallerInstallation, DateTimeOffset? TargetInstallation, string GrantRevision, long Expires, string? SessionId = null, string? LeaseRevision = null, bool DiscoveryOnly = false, CoreTaskMcpBinding? Task = null, string? AgentAdmissionRef = null, string? AgentTargetKey = null, string[]? AgentAllowedTools = null);
+internal sealed record AssistantMcpActor(string UserId, string Role, AppRecord Caller, bool DiscoveryOnly = false, IReadOnlyList<string>? AllowedTools = null, IReadOnlyList<string>? DeniedTools = null, IReadOnlyList<string>? EffectivePermissions = null, string? AgentExecution = null);
 
 // A separate signed format is never accepted by session, delegated-token or app API validators.
 // Receiving MCP handlers introspect every call, so policy and parent-session revocation apply online.
@@ -130,6 +130,8 @@ internal sealed class AssistantMcpAccess(AppRegistryStore apps, AppServiceTokenS
         try
         {
             if (claims.Audience != audience || !retainedOperation && claims.Expires <= clock.UtcNow.ToUnixTimeSeconds()) return null;
+            if (claims.AgentAdmissionRef is not null)
+                return runtime is null ? null : await runtime.GetRequiredService<CoreAgentExecution>().ValidateMcp(claims, ct);
             var link = await RequireLinkAsync(claims.Caller, audience, ct, claims.DiscoveryOnly);
             if (link.Caller.InstalledAt != claims.CallerInstallation || link.Target?.InstalledAt != claims.TargetInstallation
                 || link.Grant.Revision != claims.GrantRevision) return null;

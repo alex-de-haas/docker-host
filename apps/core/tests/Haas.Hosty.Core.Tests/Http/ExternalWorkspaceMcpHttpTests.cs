@@ -518,7 +518,7 @@ public sealed class ExternalWorkspaceMcpHttpTests
         string[] expected = ["get_workspace_participants", "get_workspace_commit_review", "merge_workspace_upstream", "workspace_activation", "prepare_workspace", "list_workspaces", "get_workspace", "rename_workspace",
             "get_workspace_diff", "refresh_workspace", "commit_workspace", "merge_workspace_target", "abort_workspace_merge",
             "acquire_workspace_lease", "release_workspace_lease", "record_workspace_pull_requests", "delete_workspace",
-            "select_workspace_execution", "get_workspace_execution_selection", "configure_workspace_runtime"];
+            "select_workspace_execution", "get_workspace_execution_selection", "configure_workspace_runtime", "task_bind_workspace"];
         Assert.Equal(expected.Order(StringComparer.Ordinal), tools.Select(tool => tool.GetProperty("name").GetString()!).Order(StringComparer.Ordinal));
         var commitSchema = tools.Single(tool => tool.GetProperty("name").GetString() == "commit_workspace").GetProperty("inputSchema");
         Assert.True(commitSchema.GetProperty("properties").TryGetProperty("reviewId", out _));

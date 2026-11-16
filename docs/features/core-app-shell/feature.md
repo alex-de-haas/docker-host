@@ -1,6 +1,6 @@
 ---
 created: 2026-05-19
-updated: 2026-10-27
+updated: 2026-11-13
 summary: Shell is the Core-managed browser UI app that authenticates users and embeds app pages.
 components: [apps/shell]
 ---
@@ -109,7 +109,12 @@ for isolation, ownership and recovery contracts.
 ## Installed apps
 
 Dashboard is the administrator management surface for installed apps. System and ordinary apps
-share one table; system and active-Shell role icons retain their explanatory tooltips.
+share one table. Core-confirmed agent, assistant, speech-to-text, translation and tasks/task-executor
+roles with a current nonempty interface declaration have explanatory icons; the two task roles share
+one icon whose tooltip describes the confirmed interfaces. Historical grants do not mark retired interfaces; stopped providers retain their declared
+marks without requiring a ready URL. The explicitly selected Shell has the interface icon. System
+classification, conversation history, branding and an arbitrary settings UI do not produce a role mark. See
+[Shell Navigation](../shell-navigation/feature.md) for the icon mapping.
 
 Core and app rows share four columns: flexible identity, 188px status, 144px resources and 136px
 actions. Version/source and runtime sit under the name. Narrow layouts use the available container
@@ -448,6 +453,9 @@ verified against a Core-managed Shell rather than a standalone app without Hosty
 - Icon coverage includes manifest-declared names without catalog metadata for both live and compiled
   runtimes, unknown names, image priority, and recovery after a failed URL changes.
 
+- Dashboard role marks use confirmed provider roles and the explicit active Shell selection, with
+  accurate keyboard-accessible tooltips. Cover unrelated IDs, multiple roles, task-role deduplication,
+  and absence of inferred roles from system classification, branding or settings surfaces.
 - Dashboard component checks keep runtime selection visible, select package/workspace targets directly,
   preserve multiple development runtime choices, distinguish source folders from registered workspaces
   with one source/workspace/package label, hide menus without an available alternative, and

@@ -1,0 +1,216 @@
+// The harness adapter contract (docs/features/ai-gateway/plan.md): a small internal surface —
+// start / send / approve / answer / interrupt / stop — so the concrete harness stays replaceable.
+// The adapter reports what happened through a single event callback; the session manager owns
+// persistence, status transitions, and SSE fan-out.
+
+export interface HarnessAvailability {
+  available: boolean;
+  /** Operator-facing reason when unavailable ("assistant unavailable" state in Shell). */
+  reason?: string;
+}
+
+// What a given harness can actually do, so the gateway degrades loudly instead of silently.
+// Both flags exist because the harnesses genuinely differ, and a UI that claims one behavior for
+// both would be lying about one of them.
+export interface HarnessCapabilities {
+  /** Native next-message predictions; account availability is determined by the native response. */
+  promptSuggestions?: boolean;
+  /** The harness can ask the operator a question and receive the answer back as a tool result. */
+  usage?: { snapshots: boolean; events: boolean; kinds: import("./provider-usage.js").UsageKind[] };
+  questions: boolean;
+  /**
+   * The harness can be given app MCP servers at all. False means enabled providers reach it in no
+   * form — not that updates are deferred — so a UI must say the toggle has no effect there rather
+   * than implying a delay.
+   */
+  appMcp: boolean;
+  /**
+   * Configuration changes can be applied to a running session. The Claude SDK exposes
+   * setMcpServers/toggleMcpServer/reconnectMcpServer. Codex has no mid-turn equivalent;
+   * its adapter can instead prepare a resumed process between turns.
+   */
+  liveReconfigure: boolean;
+  /**
+   * App tool calls pass through the gateway's auto-allow predicate before an approval is raised.
+   * False means the per-provider approval mode has no effect on this harness — it pauses or runs
+   * by its own rules — so the settings UI must say so rather than offer a choice that does nothing.
+   */
+  autoAllow: boolean;
+  /**
+   * A denied approval can carry the operator's reason to the model. False means the harness's
+   * decline carries nothing — the reason would be recorded and never delivered — so the card must
+   * not offer to send one and the API refuses one rather than storing a message nobody received.
+   */
+  denyReason: boolean;
+}
+
+// One question the harness wants answered. Mirrors the Claude SDK's AskUserQuestionInput shape
+// (verified against the shipped types, not assumed) so nothing is lost in translation: 1-4
+// questions, each with 2-4 options carrying a label and a description.
+export interface HarnessQuestion {
+  /** Stable within the native request; absent only in legacy persisted events. */
+  id?: string;
+  allowText?: boolean;
+  question: string;
+  /** Very short chip label, max ~12 chars. */
+  header: string;
+  multiSelect: boolean;
+  options: Array<{ id?: string; label: string; description: string; preview?: string }>;
+}
+
+/** Provider-private native correlation; the public projection replaces native IDs with opaque handles. */
+export type HarnessEventSource = { agentId: string; parentAgentId?: string; parentToolCallId?: string };
+export function readHarnessEventSource(value: unknown): HarnessEventSource | undefined {
+  if (value === undefined) return undefined;
+  const source = value as Partial<HarnessEventSource> | null;
+  const id = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 512 && !/[\u0000-\u001f\u007f]/.test(v);
+  if (!source || !id(source.agentId) || source.parentAgentId !== undefined && !id(source.parentAgentId) || source.parentToolCallId !== undefined && (!id(source.parentToolCallId) || !source.parentAgentId)) throw new TypeError("Invalid native event source.");
+  return { agentId: source.agentId, ...(source.parentAgentId ? { parentAgentId: source.parentAgentId } : {}), ...(source.parentToolCallId ? { parentToolCallId: source.parentToolCallId } : {}) };
+}
+export const nativeEventIdentity = (source: HarnessEventSource | undefined, id: string): string => source && source.agentId !== "root" ? JSON.stringify(["agent", source.agentId, id]) : id;
+export type HarnessEvent = (
+  | import("./prompt-suggestion.js").PromptSuggestion
+  | { type: "answer_complete" }
+  /** Private execution evidence used only for task barriers, never transcript display. */
+  | { type: "native_effect"; id: string; state: "started" | "settled" | "unknown" }
+  | { type: "agent_status"; agentId: string; parentAgentId?: string; parentToolCallId?: string; state: "running" | "waiting_for_input" | "succeeded" | "failed" | "cancelled" | "unknown"; stopConfirmed?: boolean }
+  | { type: "execution_parked"; runId: string; barrier?: import("../worker/contracts.js").WorkerBarrier }
+  | { type: "provider_usage"; usage: import("./provider-usage.js").ProviderUsage }
+  | { type: "context_usage"; usage: import("./context-usage.js").ContextUsage | null }
+  | { type: "execution_model"; requested: { model: string | null; reasoningEffort: string | null }; reported: { model: string | null; reasoningEffort: string | null } }
+  | { type: "activity"; activity: import("./activity.js").HarnessActivity }
+  /** The harness-native session id became known; persisted for resume-after-restart. */
+  | { type: "harness_session"; harnessSessionId: string }
+  | { type: "assistant_delta"; text: string }
+  | { type: "assistant_text"; text: string }
+  /** Bounded tool content for the expandable transcript; separate from command metadata. */
+  | import("./tool-result.js").ToolResult
+  | { type: "tool_use"; toolName: string; input: unknown; toolUseId?: string; cwd?: string; mcp?: { server: string; tool: string } }
+  /** Bounded command completion metadata. Absence or unknown never establishes success. */
+  | { type: "command_result"; toolUseId: string; status: "completed" | "failed" | "cancelled" | "unknown"; exitCode?: number; durationMs?: number; summary?: string }
+  /**
+   * A proposed write is paused inside the harness until resolveApproval is called.
+   *
+   * `title` is the harness's own sentence for the prompt and `reason` its explanation for raising
+   * it, each only when the harness offers one; the card shows them over anything reconstructed from
+   * name and input, and falls back to that reconstruction when they are absent.
+   *
+   * `toolUseId` names the transcript call being paused, only when the adapter can identify exactly
+   * one; the transcript then folds a decided card into that call's row.
+   */
+  | {
+      type: "approval_request";
+      approvalId: string;
+      toolName: string;
+      input: unknown;
+      title?: string;
+      reason?: string;
+      toolUseId?: string;
+    }
+  /**
+   * The harness is asking the operator, paused until resolveQuestion is called. Deliberately not an
+   * approval: approving the act of being asked a question is nonsense, and the resolution carries
+   * answers rather than a verdict.
+   *
+   * `delivery: "message"` marks a question whose native request already returned (Codex
+   * request_user_input_async): there is no callback to answer, and the saved answer starts a later
+   * turn in the same native thread instead.
+   */
+  | { type: "question_request"; questionId: string; questions: HarnessQuestion[]; blocking?: boolean; delivery?: "message"; native?: { threadId?: string; turnId?: string; itemId?: string } }
+  | {
+      type: "result";
+      status: string;
+      costUsd?: number;
+      usage?: { inputTokens?: number; outputTokens?: number };
+    }
+  /**
+   * Something degraded that the operator should see, with the run still alive.
+   *
+   * Separate from `error` because the manager treats an error as a dead harness: it drops the run,
+   * unregisters the session's proxy routes and marks the session failed. One optional MCP provider
+   * failing to start must not do that to an otherwise healthy session and its remaining tools.
+   */
+  | { type: "notice"; message: string; incomplete?: Array<"tools" | "messages"> }
+  | { type: "error"; message: string }) & { source?: HarnessEventSource };
+
+/** Registry-owned durable history, separate from credential cache and per-run skill discovery. */
+export interface NativeHistoryHome { home: string; projects: string }
+
+export interface HarnessStartOptions {
+  nativeTools?: "provider_default" | "none";
+  nativeConfigHome?: string;
+  subagents?: { enabled: boolean; maxConcurrency?: number };
+  promptSuggestions?: boolean;
+  operation?: "chat" | "task";
+  skillExportId?: string;
+  /** Worker-owned isolated discovery home; never supplied by an API caller. */
+  nativeHome?: string;
+  nativeHistoryHome?: NativeHistoryHome;
+  workerRunId?: string;
+  onWorkerUsage?: (runId: string, usage: NonNullable<import("../worker/contracts.js").WorkerReceipt["usage"]>) => void | Promise<void>;
+  onWorkerEvent?: (frame: import("../worker/contracts.js").WorkerEvent) => Promise<void>;
+  onWorkerPending?: (events: import("../worker/contracts.js").WorkerEvent[]) => Promise<void>;
+  model?: string | null;
+  reasoningEffort?: string | null;
+  resource?: import("../worker/contracts.js").ResourceReference;
+  processTransport?: import("../runtime/transport.js").AgentProcessTransport;
+  autonomy?: "normal" | "autonomous";
+  sessionId: string;
+  cwd: string;
+  /** Operator-authored instructions, appended to the harness's own sources — never replacing them. */
+  systemPrompt?: string;
+  instructionSources?: import("./context-sources.js").InstructionText[];
+  /** Enabled app MCP providers, already carrying a token scoped to each app. */
+  mcpServers?: Record<string, unknown>;
+  /**
+   * Whether an app MCP tool may run without an approval card.
+   *
+   * A predicate rather than a set, so a provider toggle changing mid-session needs no new harness
+   * method: the session manager owns the state and this reads it live.
+   */
+  isAutoAllowed?: (toolName: string) => boolean;
+  /** Harness-native session id to resume after a gateway restart, when the harness supports it. */
+  resumeHarnessSessionId?: string;
+  /** Refuse a missing native thread; never silently reconstruct a decision continuation. */
+  requireNativeResume?: boolean;
+  onEvent: (event: HarnessEvent) => void;
+}
+
+export interface HarnessRun {
+  /** Wait only for durable remote admission, independently of coordinator event callbacks. */
+  waitForAdmission?(): Promise<void>;
+  /** Cancel optional collection and observe confirmed completion, outside the coordinator queue. */
+  finishSuggestions?(): Promise<void>;
+  disableSuggestions?(): Promise<void>;
+  readUsage?(): Promise<import("./provider-usage.js").ProviderUsage>;
+  send(text: string): void;
+  /** Returns false when the approval id is unknown (already resolved or never issued). */
+  resolveApproval(approvalId: string, decision: "allow" | "deny", message?: string): boolean | Promise<boolean>;
+  /**
+   * Answers a pending question by stable question ID (legacy events retain text keys). Returns false when
+   * the id is unknown — already answered, or never asked.
+   */
+  resolveQuestion(questionId: string, answers: Record<string, string>): boolean | Promise<boolean>;
+  /**
+   * Replaces the MCP servers of a running session. Returns false when the harness cannot be
+   * reconfigured at this point, in which case the manager reports a fallback to the next
+   * session rather than silently doing nothing.
+   */
+  setMcpServers(servers: Record<string, unknown>): Promise<boolean>;
+  interrupt(): Promise<void>;
+  stop(): Promise<void>;
+  /** Confirm native execution exit before a queued ordinary-runtime transition releases source. */
+  stopAndWait?(): Promise<void>;
+  /** Stop observing a remote run without cancelling it. */
+  detach?(): Promise<void>;
+}
+
+export interface HarnessAdapter {
+  readonly name: string;
+  readonly capabilities: HarnessCapabilities;
+  probe(): Promise<HarnessAvailability>;
+  dispose?(): Promise<void>;
+  readUsage?(): Promise<import("./provider-usage.js").ProviderUsage>;
+  models?(): Promise<import("../worker/contracts.js").ModelCatalog>;
+  start(options: HarnessStartOptions): HarnessRun;
+}

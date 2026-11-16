@@ -12,34 +12,24 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
-it("shows native host access without claiming elevated OS privileges", async () => {
-  await act(async () => root.render(<SessionExecutionIndicator executionMode="native" />));
+it("describes provider ownership without inferring an operating-system boundary", async () => {
+  await act(async () => root.render(<SessionExecutionIndicator harnessKind="agent" />));
   const badge = container.querySelector<HTMLElement>('[data-slot="session-execution"]')!;
   expect(badge.textContent).toBe("");
-  expect(badge.getAttribute("aria-label")).toBe("Session execution: Local · Host access");
-  expect(badge.className).toContain("text-destructive-foreground");
+  expect(badge.getAttribute("aria-label")).toBe("Session execution: Provider-owned execution");
   expect(badge.hasAttribute("title")).toBe(false);
   expect(container.querySelector("button")).toBeNull();
   await act(async () => badge.focus());
   const tooltip = document.querySelector('[role="tooltip"]')?.textContent ?? "";
-  expect(tooltip).toContain("Local · Host access");
-  expect(tooltip).toContain("native Harness process permissions");
+  expect(tooltip).toContain("Provider-owned execution");
+  expect(tooltip).toContain("selected agent provider application's environment");
   expect(tooltip).toContain("MCP tools retain their own granted access and approval rules");
-  expect(tooltip).not.toMatch(/elevated|administrator|root user/i);
+  expect(tooltip).not.toMatch(/elevated|administrator|root user|Docker worker|unprivileged user|native Harness process/i);
 });
 
-it("describes Docker limits without promising isolation between sessions", async () => {
-  await act(async () => root.render(<SessionExecutionIndicator executionMode="docker" />));
-  const badge = container.querySelector<HTMLElement>('[data-slot="session-execution"]')!;
-  expect(badge.textContent).toBe("");
-  expect(badge.getAttribute("aria-label")).toBe("Session execution: Docker · Limited access");
-  expect(badge.className).not.toContain("text-destructive-foreground");
-  await act(async () => badge.focus());
-  const tooltip = document.querySelector('[role="tooltip"]')?.textContent;
-  expect(tooltip).toContain("Docker · Limited access");
-  expect(tooltip).toContain("unprivileged user in the shared Docker worker");
-  expect(tooltip).toContain("not isolation between sessions");
-  expect(tooltip).toContain("Core and app MCP tools retain their own granted access");
+it("does not describe legacy native identity as a current execution boundary", async () => {
+  await act(async () => root.render(<SessionExecutionIndicator harnessKind="codex" />));
+  expect(container.querySelector('[data-slot="session-execution"]')).toBeNull();
 });
 
 it("does not guess native execution when the mode has not been reported", async () => {

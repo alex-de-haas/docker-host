@@ -119,3 +119,43 @@ test('publication manifest preserves all commits in the actual push selection', 
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+
+test('actual push and PR selection prove a lock-only vendor change without consulting dirty working files', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hosty-ci-locked-vendor-')), previous = process.cwd();
+  const command = (...args) => execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const node = ['codex-provider','claude-code-provider','ollama-provider','opus','shell','desktop','demo-app','marketplace','documents','harness','telemetry-ui'];
+  const workspaces = [...node.map(id => `apps/${id}`), 'apps/harness/web', 'packages/app-sdk', 'packages/agent-provider-runtime'];
+  const packages = { '': { workspaces } }, pkg = { workspaces };
+  for (const workspace of workspaces) {
+    const name = workspace === 'packages/app-sdk' ? 'sdk' : workspace === 'packages/agent-provider-runtime' ? 'runtime' : workspace.replaceAll('/', '-');
+    packages[workspace] = { name }; packages['node_modules/' + name] = { link: true, resolved: workspace };
+  }
+  packages['packages/agent-provider-runtime'].dependencies = { sdk: '*' };
+  packages['packages/agent-provider-runtime'].peerDependencies = { codex: '1', claude: '1' };
+  packages['packages/agent-provider-runtime'].peerDependenciesMeta = { codex: { optional: true }, claude: { optional: true } };
+  for (const [slug, vendor] of [['codex-provider','codex'],['claude-code-provider','claude']])
+    packages[`apps/${slug}`].dependencies = { runtime: '*', [vendor]: '1' };
+  packages['apps/ollama-provider'].dependencies = { runtime: '*' };
+  for (const vendor of ['codex','claude']) packages['node_modules/' + vendor] = { version: '1', resolved: `https://example.test/${vendor}.tgz`, integrity: 'sha512-original' };
+  const lock = { lockfileVersion: 3, packages };
+  try {
+    command('init', '-q'); command('config','user.email','ci@example.invalid'); command('config','user.name','CI test');
+    writeFileSync(join(directory, 'package.json'), JSON.stringify(pkg)); writeFileSync(join(directory, 'package-lock.json'), JSON.stringify(lock));
+    command('add','.'); command('commit','-qm','initial locked graph'); const base = command('rev-parse','HEAD');
+    lock.packages['node_modules/codex'].integrity = 'sha512-updated-codex';
+    writeFileSync(join(directory,'package-lock.json'),JSON.stringify(lock)); command('commit','-qam','Codex archive pin'); const head = command('rev-parse','HEAD');
+    process.chdir(directory);
+    writeFileSync(join(directory,'package-lock.json'),'uncommitted invalid metadata is not the tested revision');
+    for (const [event, payload] of [['push',{ before: base }],['pull_request',{ pull_request: { base: { sha: base } } }]]) {
+      const selection = select(event,payload,{ GITHUB_SHA: head });
+      assert.deepEqual(selection.plan.components,['codex-provider']);
+      assert.ok(selection.plan.required.includes('agent-providers')); assert.ok(!selection.plan.required.includes('harness'));
+      assert.equal(selection.head,head); assert.equal(selection.base,base);
+    }
+    writeFileSync(join(directory,'package-lock.json'),JSON.stringify({ lockfileVersion: 0 })); command('commit','-qam','unprovable locked graph');
+    const fallback = select('push',{ before: head },{ GITHUB_SHA: command('rev-parse','HEAD') });
+    assert.ok(fallback.plan.components.includes('harness')); assert.ok(fallback.plan.components.includes('claude-code-provider'));
+    assert.ok(fallback.plan.components.includes('app-sdk')); assert.ok(!fallback.plan.components.includes('core'));
+  } finally { process.chdir(previous); rmSync(directory,{ recursive:true,force:true }); }
+});

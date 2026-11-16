@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { authenticateProvider, createProviderConnection, harnessProviderConnection } from './provider-browser.mjs';
 const { chromium } = await import(process.env.HOSTY_QUEUE_PLAYWRIGHT_MODULE || 'playwright');
 let input = ''; for await (const chunk of process.stdin) input += chunk;
 const config = JSON.parse(input); input = '';
@@ -113,7 +114,9 @@ try {
   const exchange = await context.request.post(config.harness + '/api/auth/app-code', { headers: { Origin: config.harness }, data: { code: (await issued.json()).code, codeVerifier: verifier } }); assert.equal(exchange.status(), 200);
   preference = await api('/preferences/prompt-suggestions');
   if (preference.enabled) await api('/preferences/prompt-suggestions', 'PUT', { enabled: false, revision: preference.revision });
-  const connection = await api('/connections', 'POST', { name: 'Controlled queue acceptance ' + token, kind: 'ollama', auth: 'none', baseUrl: `http://127.0.0.1:${address.port}` });
+  await authenticateProvider(context, config.core, csrf.token, config.provider);
+  const account = await createProviderConnection(context, config.provider, { name: 'Controlled queue acceptance ' + token, auth: 'none', baseUrl: `http://127.0.0.1:${address.port}` });
+  const connection = await harnessProviderConnection(context, config.harness, config.provider, account.name);
   assert.equal((await api('/connections/' + connection.id + '/test', 'POST', {})).available, true);
   assert.equal((await api('/connections/' + connection.id + '/models')).defaultModel, model);
   const createSession = title => api('/sessions', 'POST', { title, connectionId: connection.id, profileId: null, skillIds: [], appIds: [], clientRequestId: randomUUID() });
@@ -200,21 +203,21 @@ try {
 
   const background = await createSession('Queue background dispatch acceptance');
   await page.setViewportSize({ width: 1280, height: 900 }); await open(page, background);
-  const prompts = [`First controlled worker turn ${token}`, `Second after closed tab ${token}`, `Third FIFO turn ${token}`];
+  const prompts = [`First controlled provider turn ${token}`, `Second after closed tab ${token}`, `Third FIFO turn ${token}`];
   await fill(page, prompts[0]); await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await wait(() => requests.length, value => value === 1, 'first actual Worker Ollama request');
+  await wait(() => requests.length, value => value === 1, 'first actual provider Ollama request');
   await fill(page, prompts[1]); await file(page, 'background.txt', 'background attachment bytes'); await page.getByRole('button', { name: 'Send', exact: true }).click(); await expectText(page, '');
   await fill(page, prompts[2]); await page.getByRole('button', { name: 'Send', exact: true }).click();
   await wait(() => queue(background), value => value.entries.length === 2 && value.entries.every(entry => entry.state === 'queued'), 'FIFO behind running turn');
   await page.getByRole('button', { name: 'Pause queue', exact: true }).click(); await wait(() => queue(background), value => value.paused, 'pause running queue');
   await page.getByRole('button', { name: 'Resume queue', exact: true }).click(); await wait(() => queue(background), value => !value.paused, 'resume running queue');
   await page.close(); releaseFirst();
-  await wait(() => requests.length, value => value === 3, 'background Worker drained all messages with no open page');
+  await wait(() => requests.length, value => value === 3, 'background provider drained all messages with no open page');
   await wait(() => api('/sessions/' + background.id), value => value.status === 'idle', 'background conversation idle');
   assert.equal((await queue(background)).entries.length, 0);
   for (let index = 0; index < prompts.length; index++) {
     const lastUser = requests[index].messages.filter(message => message.role === 'user').at(-1);
-    assert.ok(lastUser?.content.includes(prompts[index]), 'Worker request order changed.');
+    assert.ok(lastUser?.content.includes(prompts[index]), 'Provider request order changed.');
   }
   assert.ok(requests[1].messages.some(message => message.role === 'user' && message.content.includes('background attachment bytes')));
   const reopened = await context.newPage(); watch(reopened); await open(reopened, background);
@@ -223,7 +226,7 @@ try {
   assert.equal(await reopened.getByRole('region', { name: 'Message queue', exact: true }).count(), 0);
   assert.ok(states.has('queued') && states.has('editing') && states.has('sending'), 'Real queue stream did not report queued/editing/sending states.');
   assert.deepEqual(fixtureErrors, []); assert.deepEqual(pageErrors, []);
-  console.log('PASS: normal Core password login and app PKCE; real paused FIFO queue, editable composer during upload, server attachment bytes, reload/recover/edit/save/cancel/stash, reorder/delete, independent multi-tab row blobs, 360px dark layout, real queued/editing/sending stream states, and three actual Worker requests in order after closing the last tab (owned deterministic Ollama HTTP fixture; no external inference).');
+  console.log('PASS: normal Core password login and app PKCE; real paused FIFO queue, editable composer during upload, server attachment bytes, reload/recover/edit/save/cancel/stash, reorder/delete, independent multi-tab row blobs, 360px dark layout, real queued/editing/sending stream states, and three actual provider requests in order after closing the last tab (owned deterministic Ollama HTTP fixture; no external inference).');
 } finally {
   releaseFirst();
   if (preference) {
