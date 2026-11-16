@@ -167,7 +167,7 @@ export async function prepare({ root = repository, slug, cache = process.env.HOS
   try {
     const previous = await generationFor(store, key);
     if (previous && await completeBundle(previous, key, slug)) { log('[provider-runtime] Reusing ' + slug + ' ' + key.slice(0,12)); return previous; }
-    // A full hash here pushes the packaged Codex executable past Windows CreateProcess limits.
+    // A full hash here pushes packaged native executables past Windows CreateProcess limits.
     // The pointer and bundle receipt still retain the full source/toolchain fingerprint.
     const id = randomUUID(), staging = path.join(store, '.build-' + id), generation = path.join(store, 'g-' + id);
     await mkdir(staging);
