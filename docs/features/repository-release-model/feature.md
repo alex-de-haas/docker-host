@@ -227,9 +227,20 @@ compiled Node API, static UI and projected production dependencies; build tools,
 vendor SDKs and the former worker image are absent. Docker development retains its separately
 verified Node base image rather than inheriting the production image's digest.
 
-The previously published app feeds and the platform feed are seeded. Provider recipes and
-checked-in feed entry files do not by themselves establish publication or promotion of those new
-provider feeds. The [initial publisher](https://github.com/alex-de-haas/docker-host/actions/runs/41800939028)
+The previously published app feeds and the platform feed are seeded. Codex Provider, Claude Code
+Provider and Ollama Provider also publish stable 0.1.0 Local source releases from commit
+`f1acc57c108eee0b6ec9f8bdafdf4c2f5b3d17c4`. Their public feed documents select stable for fresh
+installation and retain independently verified manifest and icon digests. The exact
+[Codex](https://github.com/alex-de-haas/docker-host/actions/runs/43884264273),
+[Claude Code](https://github.com/alex-de-haas/docker-host/actions/runs/43884268733) and
+[Ollama](https://github.com/alex-de-haas/docker-host/actions/runs/43884273750) promotions reuse the
+completed candidates without rebuilding. These apps require Core 0.180.0 or newer; the platform
+stable default remains 0.172.0 and the daily feed supplies 0.180.0. Provider publication does not
+change that platform selection. [Catalog PR 26](https://github.com/alex-de-haas/hosty-catalog/pull/26)
+and its [Pages deployment](https://github.com/alex-de-haas/hosty-catalog/actions/runs/43885883055)
+list these three feeds and vendor their immutable icons. A fresh managed macOS Core 0.180.0
+installation verifies Marketplace-to-Core approval, production Local startup and authenticated
+settings for each app without Harness. The [initial publisher](https://github.com/alex-de-haas/docker-host/actions/runs/41800939028)
 retains the nine complete app releases present at that baseline, including the since-retired Whisper
 app, and the four native Core/CLI pairs. Explicit initial stable
 promotions publish both entries with stable as the fresh-install default; every promotion revalidates
