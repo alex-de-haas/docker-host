@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS dependencies
+FROM node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS dependencies
 WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY apps/harness/package.json apps/harness/package.json
