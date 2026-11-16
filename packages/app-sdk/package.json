@@ -53,12 +53,12 @@
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",
-    "lucide-react": "^1.70.0",
+    "lucide-react": "^1.72.0",
     "server-only": "^0.0.1",
     "undici": "^8.12.4"
   },
   "peerDependencies": {
-    "next": "^16.4.5",
+    "next": "^16.4.6",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
@@ -81,7 +81,7 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "typescript": "^6",
-    "vite": "^8.3.7",
+    "vite": "^8.3.8",
     "vitest": "^5.1.0"
   },
   "repository": {
