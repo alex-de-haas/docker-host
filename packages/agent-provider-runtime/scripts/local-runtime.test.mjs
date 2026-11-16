@@ -1,9 +1,10 @@
 import { afterEach, expect, it } from 'vitest';
 import { launchModeBootstrapScript } from '@hosty-sdk/app';
 import { themeBootstrapScript } from '@hosty-sdk/app/theme';
-import { mkdtemp, mkdir, readFile, writeFile, rm, readdir, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, readdir, symlink, rename, copyFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 import { prepare, inputSnapshot, repository, fingerprint, completeBundle, buildEnvironment, start } from './local-runtime.mjs';
@@ -43,6 +44,50 @@ it('prepares once under the provider cache, serializes callers and never mutates
   expect(values[0].startsWith(f.cache + path.sep)).toBe(true);
   expect(await readFile(path.join(f.root, 'node_modules/other-provider'), 'utf8')).toBe('keep');
   expect(await readdir(f.root)).toEqual(['input','node_modules']);
+});
+it('keeps the native Windows executable path short while retaining the complete fingerprint', async () => {
+  const f = await fixture(), prepared = await prepare(f.options), key = fingerprint(await f.options.snapshot());
+  const directory = path.basename(prepared), store = path.dirname(prepared);
+  expect(directory).toMatch(/^g-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
+  expect(JSON.parse(await readFile(path.join(store,key+'.json'),'utf8'))).toEqual({ key,directory });
+  expect(JSON.parse(await readFile(path.join(prepared,'bundle.json'),'utf8')).key).toBe(key);
+  const windowsStore = String.raw`C:\Users\haas\.hosty\core\apps\hosty.codex-provider\cache\provider-runtime\codex-provider`;
+  const binary = String.raw`node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe`;
+  expect(path.win32.join(windowsStore,key+'-'+directory.slice(2),binary).length).toBeGreaterThanOrEqual(260);
+  expect(path.win32.join(windowsStore,directory,binary).length).toBeLessThan(260);
+});
+it('reuses a complete legacy hash-prefixed generation without moving its consumers', async () => {
+  const f = await fixture(), prepared = await prepare(f.options), key = fingerprint(await f.options.snapshot());
+  const store = path.dirname(prepared), directory = key+'-'+path.basename(prepared).slice(2), legacy = path.join(store,directory);
+  await rename(prepared,legacy); await writeFile(path.join(store,key+'.json'),JSON.stringify({ key,directory }));
+  expect(await prepare(f.options)).toBe(legacy); expect(f.builds()).toBe(1);
+  expect(await completeBundle(legacy,key,f.options.slug)).toBe(true);
+});
+it.each(['g-not-a-uuid','../outside-generation','g-00000000-0000-0000-0000-000000000000/../nested-generation'])
+  ('does not adopt a complete bundle through malformed generation pointer %s', async directory => {
+    const f = await fixture(), prepared = await prepare(f.options), key = fingerprint(await f.options.snapshot()), store = path.dirname(prepared);
+    const invalid = path.join(store,directory); await mkdir(path.dirname(invalid),{recursive:true}); await rename(prepared,invalid);
+    await writeFile(path.join(store,key+'.json'),JSON.stringify({ key,directory }));
+    expect(await completeBundle(invalid,key,f.options.slug)).toBe(true);
+    const replacement = await prepare(f.options);
+    expect(replacement).not.toBe(invalid); expect(f.builds()).toBe(2);
+    expect(await completeBundle(invalid,key,f.options.slug)).toBe(true);
+  });
+it('does not reuse a valid generation when the pointer fingerprint belongs to other source', async () => {
+  const f = await fixture(), prepared = await prepare(f.options), key = fingerprint(await f.options.snapshot());
+  await writeFile(path.join(path.dirname(prepared),key+'.json'),JSON.stringify({ key:'0'.repeat(64),directory:path.basename(prepared) }));
+  expect(await prepare(f.options)).not.toBe(prepared); expect(f.builds()).toBe(2);
+  expect(await completeBundle(prepared,key,f.options.slug)).toBe(true);
+});
+it.skipIf(process.platform !== 'win32')('starts a packaged native executable from its published Windows generation', async ({ skip }) => {
+  const f = await fixture(), relative = 'node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe';
+  const prepared = await prepare({ ...f.options,buildBundle:async (...args) => {
+    await f.options.buildBundle(...args); const binary = path.join(args[0],relative);
+    await mkdir(path.dirname(binary),{recursive:true}); await copyFile(process.execPath,binary);
+  } });
+  const binary = path.join(prepared,relative);
+  if (binary.length >= 260) skip('The system temporary-directory prefix alone exceeds the native probe path budget.');
+  expect((await promisify(execFile)(binary,['--version'])).stdout.trim()).toBe(process.version);
 });
 it('keeps concurrently prepared providers in independent generations and preserves the first native package', async () => {
   const f = await fixture();
@@ -155,7 +200,7 @@ it('copies canonical CSS, font subsets and license notices into every provider b
   }
 });
 
-it('starts only its private prepared executable and ignores unrelated lock entries in the generation key', async () => {
+it.each(['compact','legacy'])('starts only its private prepared %s executable and ignores unrelated lock entries in the generation key', async format => {
   const f = await fixture(); await copySnapshot(f.root);
   const key = fingerprint(await inputSnapshot(f.root,'codex-provider'));
   const lockFile = path.join(f.root,'package-lock.json'), lock = JSON.parse(await readFile(lockFile,'utf8'));
@@ -167,8 +212,20 @@ it('starts only its private prepared executable and ignores unrelated lock entri
     await writeFile(path.join(output,'main.mjs'),'export const executable = import.meta.url;');
     for(const file of bundleAssets.filter(file=>file!=='main.mjs'))await writeFixtureOutput(output,file,'fixture');
   } };
-  const prepared=await prepare(options), before=process.env.NODE_ENV;
-  try { expect((await start(options)).executable).toContain(prepared); }
+  let prepared=await prepare(options); const before=process.env.NODE_ENV;
+  if (format === 'legacy') {
+    const store=path.dirname(prepared), directory=key+'-'+path.basename(prepared).slice(2), legacy=path.join(store,directory);
+    await rename(prepared,legacy); await writeFile(path.join(store,key+'.json'),JSON.stringify({key,directory})); prepared=legacy;
+  }
+  try {
+    const directory=path.basename(prepared), pointer=path.join(path.dirname(prepared),key+'.json');
+    for (const alias of ['./'+directory,directory+'/../'+directory]) {
+      await writeFile(pointer,JSON.stringify({key,directory:alias}));
+      await expect(start(options)).rejects.toThrow('Provider bundle is absent or incomplete');
+    }
+    await writeFile(pointer,JSON.stringify({key,directory}));
+    expect(fileURLToPath((await start(options)).executable)).toBe(path.join(prepared,'apps/codex-provider/dist/main.mjs'));
+  }
   finally { if(before===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=before; }
   expect(await readFile(path.join(f.root,'node_modules/other-provider'),'utf8')).toBe('keep');
 });

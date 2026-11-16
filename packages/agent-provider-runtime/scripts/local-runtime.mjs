@@ -152,8 +152,12 @@ function cacheStore(cache, root, slug) {
 async function generationFor(store, key) {
   try {
     const pointer = JSON.parse(await readFile(path.join(store, key + '.json'), 'utf8'));
-    if (pointer.key !== key || !new RegExp('^' + key + '-[a-f0-9-]{36}$').test(pointer.directory)) return null;
-    return path.join(store, pointer.directory);
+    // Retain old hash-prefixed generations without adding that hash to every native binary path.
+    const uuid = '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
+    const directory = typeof pointer.directory === 'string'
+      ? new RegExp('(?:g|' + key + ')-' + uuid).exec(pointer.directory)?.[0] : undefined;
+    if (pointer.key !== key || !directory || directory !== pointer.directory) return null;
+    return path.join(store, directory);
   } catch { return null; }
 }
 export async function prepare({ root = repository, slug, cache = process.env.HOSTY_APP_CACHE_DIR,
@@ -163,7 +167,9 @@ export async function prepare({ root = repository, slug, cache = process.env.HOS
   try {
     const previous = await generationFor(store, key);
     if (previous && await completeBundle(previous, key, slug)) { log('[provider-runtime] Reusing ' + slug + ' ' + key.slice(0,12)); return previous; }
-    const id = randomUUID(), staging = path.join(store, '.build-' + id), generation = path.join(store, key + '-' + id);
+    // A full hash here pushes packaged native executables past Windows CreateProcess limits.
+    // The pointer and bundle receipt still retain the full source/toolchain fingerprint.
+    const id = randomUUID(), staging = path.join(store, '.build-' + id), generation = path.join(store, 'g-' + id);
     await mkdir(staging);
     try {
       for (const file of files) {
