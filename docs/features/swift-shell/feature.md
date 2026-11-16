@@ -1,6 +1,6 @@
 ---
 created: 2026-07-29
-updated: 2026-11-04
+updated: 2026-11-16
 summary: A native SwiftUI client for iOS, iPadOS and macOS that manages a host's installed apps.
 components: [apps/shell-swift]
 ---
@@ -573,7 +573,9 @@ Distribution is by local Xcode build; nothing packages or publishes this app.
   covered without a live host. Account confirmation rejects another, disabled or anonymous user;
   temporary primary credentials remain independent from the device client, and workspace cleanup
   drains/logout only its own retained primary sessions once.
-- Core update tests cover exact offer/request payloads, uncertain retries, retained recovery IDs, legacy verdict refusal and operation status reads.
+- Core update tests require both retry requests to preserve the exact offer/request ID fields, POST
+  path and content type. They cover uncertain retries, retained recovery IDs, legacy verdict refusal
+  and operation status reads independently of JSON object key ordering.
 - The loopback predicate covers `localhost`, `127.0.0.1`, another `127.0.0.0/8` address and `[::1]`;
   an operator-configured public origin is never flagged, a loopback URL read *on* the host is never
   flagged, and an unparseable URL is not reported as unreachable — guessing there would replace a

@@ -1646,3 +1646,15 @@ type checking pass; an independent review confirms the correction.
 The exact test-only cleanup candidate passes the isolated all-provider helper in 121.820 seconds:
 726 tests pass, three Windows-only cases skip, and shared type checking plus all three provider
 checks/builds pass. All 348 source hashes remain unchanged and temporary staging is removed.
+
+### Swift Update Identity Gate Correction (2026-11-16)
+
+The next full CI attempt passes the provider job but exposes an unrelated existing Swift client
+assertion that compares retry JSON bytes. A bounded reproduction using the actual immutable
+CoreUpdateAttempt model produces two 93-byte encodings across 128 encodes while every decoded
+identity remains identical. Core binds a retained update by request ID and offer ID after JSON
+deserialization; property order has no idempotency meaning. The corrected test checks both
+requests against the exact two-field dictionary plus POST, path and content type, retaining the
+dropped-response and fixed-ID recovery assertions. All 185 HostyKit tests pass in 25 suites, and
+an independent review confirms the test-only correction. No Swift shipping behavior or artifact
+version changes. The already-passing provider source and its verification remain unchanged.

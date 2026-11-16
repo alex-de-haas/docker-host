@@ -499,7 +499,7 @@ struct CoreClientTests {
                 operationId: nil, readiness: "ready"), requestID: UUID(uuidString: "12345678-1234-5678-1234-567812345678")!)
         }
 
-        @Test("A dropped Core update reply reuses the exact request and offer")
+        @Test("A dropped Core update reply reuses the same request and offer IDs")
         func coreUpdateRetryIdentity() async throws {
             let attempt = try coreUpdateAttempt()
             let api = try client()
@@ -511,11 +511,17 @@ struct CoreClientTests {
             await #expect(throws: CoreError.self) { try await api.applyCoreUpdate(attempt) }
             let accepted = try await api.applyCoreUpdate(attempt)
             #expect(accepted.status == "accepted")
-            #expect(StubURLProtocol.requests[0].body == StubURLProtocol.requests[1].body)
-            let body = try #require(StubURLProtocol.requests[1].body)
-            let fields = try #require(JSONSerialization.jsonObject(with: body) as? [String: String])
-            #expect(fields == ["offerId": String(repeating: "a", count: 32), "requestId": "12345678123456781234567812345678"])
-            #expect(StubURLProtocol.requests[1].request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+            let requests = StubURLProtocol.requests
+            try #require(requests.count == 2)
+            // Core binds the two IDs; JSON object key order is not part of its retry identity.
+            for posted in requests {
+                let body = try #require(posted.body)
+                let fields = try #require(JSONSerialization.jsonObject(with: body) as? [String: String])
+                #expect(fields == ["offerId": String(repeating: "a", count: 32), "requestId": "12345678123456781234567812345678"])
+                #expect(posted.request.httpMethod == "POST")
+                #expect(posted.request.url?.path == "/api/core/update")
+                #expect(posted.request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+            }
             #expect(try await api.coreUpdateOperation(requestID: attempt.requestId).status == "completed")
             #expect(StubURLProtocol.requests.last?.request.url?.path == "/api/core/updates/12345678123456781234567812345678")
         }
