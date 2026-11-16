@@ -4,7 +4,7 @@ import { trackedAdapter } from "./tracked-adapter.js";
 import { questionAnswers } from "./decision-answers.js";
 import { syncDecisionDeliveries } from "./decision-continuation.js";
 import { randomUUID, createHash } from "node:crypto";
-import { mkdir, readFile, readdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentResponseInput, AgentRunControlInput, AgentPendingDecision, AgentQuestionResponse, AgentAuthorizationRequest } from "@hosty-sdk/app/agent";
 import { AgentApiError } from "@hosty-sdk/app/agent";
@@ -12,8 +12,8 @@ import type { DecisionAnswers, DecisionRecord } from "@hosty-sdk/app/decisions";
 import { WorkerEngine } from "./internal/worker/engine.js";
 import { WorkerJournal } from "./internal/worker/journal.js";
 import { WorkerApiError, type WorkerRunRequest } from "./internal/worker/contracts.js";
-import { skillAdapter } from "./internal/worker/skills.js";
-import type { AgentConnections } from "./internal/connections/registry.js";
+import { prepareNativeInput, type NativeInputPreparer } from "./engine.js";
+import type { ProviderConnections } from "./internal/connections/registry.js";
 import type { ProviderController, ExecutionDriver } from "./controller.js";
 import type { ProviderAuthority } from "./core.js";
 import type { AttachmentStore } from "./attachments.js";
@@ -45,7 +45,7 @@ export class NativeExecution implements ExecutionDriver {
   private maintenance?: Promise<void>;
   private closing = false;
   constructor(private readonly controller: ProviderController, private readonly store: ProviderStore, private readonly authority: ProviderAuthority,
-    private readonly connections: AgentConnections, private readonly attachments: AttachmentStore, private readonly data: string, origin: () => string) {
+    private readonly connections: ProviderConnections, private readonly attachments: AttachmentStore, private readonly data: string, origin: () => string, private readonly prepareInput: NativeInputPreparer = prepareNativeInput) {
     this.journal = new WorkerJournal(path.join(data, "execution-journal"));
     this.mcp = new ProviderMcp(authority, origin, (id, event) => this.proxyDecision(id, event), (id, decisionId, _tool, allowed, automatic) => this.proxySettled(id, decisionId, allowed, automatic));
     this.engine = new WorkerEngine(this.journal, {
@@ -53,10 +53,8 @@ export class NativeExecution implements ExecutionDriver {
       reserve: request => connections.reserve(request.binding),
       cwd: async request => { const id = this.requests.get(request); if (!id) throw new Error("Missing admitted execution identity."); const { record } = await store.run(id); return record.workspaces?.[0]?.path ?? path.join(data, "workspaces", request.conversationId); },
       adapter: async request => { const { session, record } = await store.run(this.requests.get(request)!); const configuration = session.configurations[record.snapshot.configurationRevision]!;
-        const adapter = await connections.adapter(configuration.binding!); const home = await connections.executionHome(configuration.binding!);
-        const historyHome = configuration.binding!.harnessKind === "claude" ? await connections.executionHistoryHome?.(configuration.binding!) : undefined;
         if (!configuration.skillPath) throw new Error("The immutable skill snapshot is unavailable.");
-        const isolated = await skillAdapter(adapter, home, request.binding.harnessKind, configuration.skillPath, path.join(data, "native-sessions", session.id), historyHome);
+        const isolated = await connections.prepareAdapter(configuration.binding!, { skillPath: configuration.skillPath, sessionDirectory: path.join(data, "native-sessions", session.id) });
         const processes = await TrackedNativeProcesses.create(data, record.snapshot.ref.id, record.snapshot.generation); this.processes.set(record.snapshot.ref.id, processes);
         return trackedAdapter(isolated, processes); },
     }, controller.capacity);
@@ -106,16 +104,10 @@ export class NativeExecution implements ExecutionDriver {
       }
       const refs = "text" in input.input ? input.input.attachments ?? [] : [];
       if (refs.length > 20 || refs.reduce((total, ref) => total + ref.sizeBytes, 0) > 100 * 1024 * 1024) throw new AgentApiError("attachment_limit", "Turn attachments exceed the provider limit.", 413);
-      for (const ref of refs) {
-        const file = await this.attachments.resolve(ref, session.owner);
-        if (this.controller.kind === "ollama") {
-          const bytes = await readFile(file);
-          if (bytes.length > 32_000 || bytes.includes(0) || /\.(png|jpe?g|gif|webp|pdf|zip)$/i.test(ref.name ?? "")) throw new AgentApiError("unsupported_attachment", "This Ollama adapter accepts bounded UTF-8 text attachments.", 422);
-          text += `\n\nAttachment ${JSON.stringify(ref.name ?? ref.id)}:\n${new TextDecoder("utf-8", { fatal: true }).decode(bytes)}`;
-        } else text += `\n\nUser attachment ${JSON.stringify(ref.name ?? ref.id)}: ${JSON.stringify(file)}`;
-      }
-      const selectedSkillText = this.controller.kind === "ollama" && configuration.configuration.nativeTools === "none" ? await ollamaSkillInstructions(configuration.skillPath!) : "";
-      const systemPrompt = [selectedSkillText, ...(configuration.configuration.instructions ?? []).map(value => value.text), configuration.configuration.systemPrompt?.text, ...(record.workspaces ?? []).map(value => `Authorized worktree ${value.id} at revision ${value.revision}: ${value.path}`), ...(input.context ?? []).map(value => value.text)].filter(Boolean).join("\n\n");
+      const resolvedAttachments = await Promise.all(refs.map(async ref => ({ ...ref, path: await this.attachments.resolve(ref, session.owner) })));
+      const prepared = await this.prepareInput({ text, attachments: resolvedAttachments, configuration: configuration.configuration, skillPath: configuration.skillPath! });
+      text = prepared.text;
+      const systemPrompt = [prepared.instructions, ...(configuration.configuration.instructions ?? []).map(value => value.text), configuration.configuration.systemPrompt?.text, ...(record.workspaces ?? []).map(value => `Authorized worktree ${value.id} at revision ${value.revision}: ${value.path}`), ...(input.context ?? []).map(value => value.text)].filter(Boolean).join("\n\n");
       const request: WorkerRunRequest = { conversationId: sessionId, binding: configuration.binding!, input: text, selection: input.selection ?? { model: null, reasoningEffort: null },
         resource: workspace ? { kind: "worktree", id: workspace.id, revision: workspace.revision } : { kind: "conversation", id: sessionId },
         operation: "chat", skillExportId: configuration.snapshotId, autoAllowedPrefixes: mcp.prefixes,
@@ -352,14 +344,3 @@ export function responseFromDecision(pending: AgentPendingDecision, answers: Dec
 }
 
 function workspaceRevision(value: string): number { if (!/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value))) throw new AgentApiError("invalid_resource", "A Core worktree requires its numeric participation revision.", 422); return Number(value); }
-
-async function ollamaSkillInstructions(directory: string): Promise<string> {
-  const blocks: string[] = []; let bytes = 0;
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-    const filename = path.join(directory, entry.name, "SKILL.md"), content = await readFile(filename, "utf8");
-    bytes += Buffer.byteLength(content); if (bytes > 256 * 1024) throw new AgentApiError("skill_snapshot_budget", "Selected Ollama skill instructions exceed the declared inline snapshot budget.", 413);
-    blocks.push(`Selected skill ${JSON.stringify(entry.name)} (guidance, not additional permissions; package files: ${path.dirname(filename)}):\n${content}`);
-  }
-  return blocks.join("\n\n");
-}

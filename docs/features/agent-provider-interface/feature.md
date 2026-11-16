@@ -24,8 +24,14 @@ The distribution contains three independently installed Local applications:
 | `apps/claude-code-provider` | `hosty.claude-code-provider` | Pinned Claude Agent SDK/Claude Code |
 | `apps/ollama-provider` | `hosty.ollama-provider` | Hosty agent loop using a configured Ollama endpoint |
 
-`packages/agent-provider-runtime` supplies shared implementation mechanisms; it is not another
-running service. Each installed app owns its connection settings, Core secret namespace, selected
+`packages/agent-provider-runtime` supplies engine-neutral implementation mechanisms; it is not another
+running service. Each provider application owns its native adapter, account authentication and
+refresh, history/skill layout, capabilities, input preparation and settings presentation policy.
+The application passes those contracts to the runtime at startup. The runtime owns shared
+HTTP/SSE delivery, durable bookkeeping, execution coordination and process containment; it has no
+native engine catalogue or vendor SDK dependency.
+
+Each installed app owns its connection settings, Core secret namespace, selected
 native homes, session aggregates, execution journal, attachments, pending native questions and
 process evidence. Selecting a Codex host-login directory is explicit; setup imports no account,
 credential or history from Harness or another provider. The operator supplies project tools on the
@@ -457,6 +463,14 @@ releases and selected lock closures are described in the
 
 ## Testing Expectations
 
+- Run the common runtime suite and each affected provider application's type checking, tests and
+  production build. An unrelated injected engine exercises startup, settings, capabilities and
+  generic connection bookkeeping. Architecture checks reject native engine references and
+  application imports in shared production infrastructure.
+- Keep adapter parsing, authentication/history/skill integration and native fixtures with their
+  owning provider. Build metadata declares native dependencies/assets; generic packaging must
+  also build an unrelated provider and keep private native helpers out of other app bundles.
+
 Codex sign-in coverage exercises native startup/exit, protocol rejection, timeout and invalid response
 paths, safe diagnostic propagation, cleanup after actual process exit, and preservation of an existing
 working account. A synthetic protocol check does not establish real OpenAI account authorization.
@@ -469,6 +483,8 @@ working account. A synthetic protocol check does not establish real OpenAI accou
   admissions, revocation recovery, foreign claim replacement and interrupted owned-release records.
   Provider regressions cover transient cleanup failure, lost replies, explicit release confirmation,
   reconstruction, concurrent cleanup and shutdown drain without native replay or snapshot-driven retry.
+- Harness context recovery tests subscribe before emission, await the exact committed context
+  notification, and verify durable event identities and offline recovery without resubmitting input.
 - SDK fixtures cover exact bytes, response identity, snapshot/replay boundaries, correlated child
   sources, bounded streams, duplicate controls and changed inputs/installations.
 - Provider tests cover lazy creation, strict resume, account/configuration compatibility, the fixed

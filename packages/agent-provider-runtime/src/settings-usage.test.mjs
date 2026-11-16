@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { claudeUsage, codexUsage } from "./internal/harness/provider-usage.ts";
 import { summarizeProviderUsage } from "./settings-usage.mjs";
 const observedAt = "2026-11-04T20:00:00.000Z";
 const now = Date.parse(observedAt);
@@ -35,8 +34,8 @@ describe("summarizeProviderUsage", () => {
     unknown(usage([row()], { observedAt: null }));
   });
   it("honors the provider's headline rather than a lower unrelated model window", () => {
-    const headline = row({ id: "claude:session::", group: "claude:session::", active: true, used: 20, remaining: 80 });
-    const unselected = row({ id: "claude:weekly_scoped:Other:", group: "claude:weekly_scoped:Other:", scope: "Other", used: 99, remaining: 1 });
+    const headline = row({ id: "independent:session::", group: "independent:session::", active: true, used: 20, remaining: 80 });
+    const unselected = row({ id: "independent:weekly_scoped:Other:", group: "independent:weekly_scoped:Other:", scope: "Other", used: 99, remaining: 1 });
     expect(summarizeProviderUsage(usage([unselected, headline]), now)).toEqual({ remaining: 80, row: headline });
   });
   it("keeps missing or conflicting provider headlines unknown", () => {
@@ -48,50 +47,6 @@ describe("summarizeProviderUsage", () => {
     const selected = row();
     expect(summarizeProviderUsage(usage([row({ id: "inactive", active: false, used: 99, remaining: 1 }), selected]), now)).toEqual({ remaining: 70, row: selected });
     unknown(usage([row({ active: false })]));
-  });
-  it("takes the limiting window within a sole Codex bucket, ignoring credits", () => {
-    const value = codexUsage({ rateLimitsByLimitId: { account: {
-      primary: { usedPercent: 25, windowDurationMins: 300 },
-      secondary: { usedPercent: 70, windowDurationMins: 10080 },
-      credits: { balance: "0", hasCredits: false }
-    } } }, false, observedAt);
-    expect(summarizeProviderUsage(value, now)).toEqual({ remaining: 30, row: value.rows[1] });
-  });
-  it("selects only an exact canonical Codex model scope", () => {
-    const value = codexUsage({ rateLimitsByLimitId: {
-      selected: { normalModelSlug: "canonical-model", primary: { usedPercent: 20 } },
-      other: { normalModelSlug: "other-model", primary: { usedPercent: 95 } }
-    } }, false, observedAt);
-    expect(summarizeProviderUsage(value, now, "canonical-model")).toEqual({ remaining: 80, row: value.rows[0] });
-    unknown(value);
-    unknown(value, now, "Canonical Model");
-    unknown(value, now, "canonical-model ");
-    unknown(value, now, "default");
-  });
-  it("does not invent a global Codex bucket or combine ambiguous account buckets", () => {
-    const scoped = row({ id: "scoped", group: "codex:model", scope: "selected" });
-    const unscoped = row({ group: "codex:account" });
-    unknown(usage([scoped, unscoped]), now, "selected");
-    unknown(usage([unscoped, row({ group: "codex:other" })]));
-    unknown(usage([scoped, row({ ...scoped, id: "inconsistent", scope: "other" })]), now, "selected");
-    expect(summarizeProviderUsage(usage([scoped, unscoped]), now, "different")).toEqual({ remaining: 70, row: unscoped });
-  });
-  it("uses Claude's known account-wide windows without guessing model or OAuth applicability", () => {
-    const value = claudeUsage({ rate_limits: {
-      five_hour: { utilization: 20 },
-      seven_day: { utilization: 50 },
-      seven_day_oauth_apps: { utilization: 99 },
-      seven_day_opus: { utilization: 98 },
-      seven_day_sonnet: { utilization: 97 },
-      model_scoped: [{ display_name: "Selected Model", utilization: 96 }]
-    } }, observedAt);
-    expect(summarizeProviderUsage(value, now, "Selected Model")).toEqual({ remaining: 50, row: value.rows[1] });
-    unknown(claudeUsage({ rate_limits: { seven_day_opus: { utilization: 10 }, model_scoped: [{ display_name: "Selected Model", utilization: 20 }] } }, observedAt), now, "Selected Model");
-  });
-  it("keeps unknown Claude window kinds ambiguous unless the provider selects a headline", () => {
-    unknown(usage([row({ group: "claude:five_hour" }), row({ group: "claude:new_meter::" })]));
-    const headline = row({ group: "claude:new_meter:Display model:", scope: "Display model", active: true, used: 90, remaining: 10 });
-    expect(summarizeProviderUsage(usage([headline]), now)).toEqual({ remaining: 10, row: headline });
   });
   it("does not combine unrelated or scoped generic limits", () => {
     unknown(usage([row(), row({ group: "other-account" })]));

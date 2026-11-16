@@ -1,6 +1,6 @@
 {
   "name": "@hosty/codex-provider",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -10,16 +10,29 @@
     "build": "node ../../packages/agent-provider-runtime/scripts/build.mjs codex-provider",
     "doctor": "node ../../packages/agent-provider-runtime/scripts/doctor.mjs codex",
     "lint": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "dependencies": {
     "@hosty/agent-provider-runtime": "*",
     "@hosty-sdk/app": "*",
-    "@openai/codex": "0.167.0"
+    "@openai/codex": "0.167.0",
+    "js-tiktoken": "1.0.21"
   },
   "devDependencies": {
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "@types/node": "^24.19.2"
+    "@types/node": "^24.19.2",
+    "vitest": "^5.1.0",
+    "@modelcontextprotocol/sdk": "1.32.2"
+  },
+  "hostyAgentProvider": {
+    "external": [
+      "@openai/codex",
+      "@openai/codex/*"
+    ],
+    "assets": [],
+    "nativeTests": [
+      "test/native-controls.mjs"
+    ]
   }
 }

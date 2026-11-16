@@ -19,7 +19,7 @@ fs.rename = async (from, to) => {
   return rename(from, to);
 };
 syncBuiltinESMExports();
-const request = id => ({ conversationId: id, binding: { connectionId: id, connectionRevision: 1, harnessKind: "codex" },
+const request = id => ({ conversationId: id, binding: { connectionId: id, connectionRevision: 1, harnessKind: "fixture-engine" },
   selection: { model: null, reasoningEffort: null }, resource: { kind: "conversation", id }, input: "synthetic input", options: {}, autoAllowedPrefixes: [] });
 const engine = new WorkerEngine(journal, {
   validateSelection: async () => {}, cwd: async () => root,

@@ -43,8 +43,8 @@ test('installs once, runs common runtime checks once and retains each selected p
   assert.equal(commands.filter(args => args[0] === 'ci').length, 1);
   assert.deepEqual(commands.slice(1), [
     ['run', 'lint', '--workspace', '@hosty/agent-provider-runtime'], ['run', 'test', '--workspace', '@hosty/agent-provider-runtime'],
-    ['run', 'lint', '--workspace', '@hosty/codex-provider'], ['run', 'build', '--workspace', '@hosty/codex-provider'],
-    ['run', 'lint', '--workspace', '@hosty/ollama-provider'], ['run', 'build', '--workspace', '@hosty/ollama-provider'],
+    ['run', 'lint', '--workspace', '@hosty/codex-provider'], ['run', 'test', '--workspace', '@hosty/codex-provider'], ['run', 'build', '--workspace', '@hosty/codex-provider'],
+    ['run', 'lint', '--workspace', '@hosty/ollama-provider'], ['run', 'test', '--workspace', '@hosty/ollama-provider'], ['run', 'build', '--workspace', '@hosty/ollama-provider'],
   ]);
 });
 test('a failed selected check cannot be replaced by a later build or a successful shared test', async t => {

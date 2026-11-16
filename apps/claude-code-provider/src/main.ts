@@ -1,2 +1,3 @@
 import { startAgentProvider } from "@hosty/agent-provider-runtime";
-await startAgentProvider({ kind: "claude", defaultPort: 3521 });
+import { claudeEngine } from "./provider.js";
+await startAgentProvider({ engine: claudeEngine, defaultPort: 3521 });

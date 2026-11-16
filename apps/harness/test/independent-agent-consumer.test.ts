@@ -1,3 +1,4 @@
+import { fixtureCapabilities } from "../../../packages/agent-provider-runtime/src/test-support/provider.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
@@ -31,10 +32,10 @@ async function fixture({ staleProviderCode = "provider_unavailable" } = {}) {
     if (!request || request.operation !== operation || request.method !== method || request.path !== route || request.bodyHash !== hash) throw new AgentApiError("operation_mismatch", "Wrong exact operation", 403);
     return { ...request, provider, userId: "operator", principalId: "principal", callerAppId: consumer, callerInstallation: "consumer-installation", admissionRef: token } as VerifiedOperation;
   } } as ProviderAuthority;
-  const connections = { binding: async () => ({ harnessKind: "ollama", connectionRevision: 1 }) } as unknown as AgentConnections;
+  const connections = { binding: async () => ({ harnessKind: "fixture-engine", connectionRevision: 1 }) } as unknown as AgentConnections;
   const store = new ProviderStore(path.join(root, "sessions"), provider); await store.initialize();
-  const controller = new ProviderController(store, authority, connections, "ollama"); cleanup.push(() => controller.close());
-  controller.connections.list = vi.fn(async () => ({ defaultId: "account", connections: [{ id: "account", name: "Test account", kind: "ollama", auth: "none", available: true, revision: 1 }] })) as never;
+  const controller = new ProviderController(store, authority, connections, fixtureCapabilities); cleanup.push(() => controller.close());
+  controller.connections.list = vi.fn(async () => ({ defaultId: "account", connections: [{ id: "account", name: "Test account", kind: "fixture-engine", auth: "none", available: true, revision: 1 }] })) as never;
   const starts: string[] = [];
   controller.driver = { start: async (sessionId, runId) => {
     starts.push(runId);

@@ -29,7 +29,7 @@ export function agentRoutes(controller: ProviderController, attachments: Attachm
     switch (parsed.operation) {
       case "capabilities": result = controller.capabilities; break;
       case "connections.list": {
-        const listed = await controller.connections.list(), entries = listed.connections.filter(connection => connection.kind === controller.kind)
+        const listed = await controller.connections.list(), entries = listed.connections
           .map(connection => ({ id: connection.id, revision: String(connection.revision), name: connection.name, ready: connection.available, reason: connection.reason, capabilities: controller.capabilities.capabilities }));
         result = page(entries, parsed.query.cursor, parsed.query.limit, value => value.id, "connections"); break;
       }

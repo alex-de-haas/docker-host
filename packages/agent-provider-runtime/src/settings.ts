@@ -3,10 +3,21 @@ import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isValidCodeVerifier, resolveAppAuthProtocol } from "@hosty-sdk/app/app-code";
 import { readAppContinuity, type AppContinuity } from "@hosty-sdk/app/continuity";
-import { AgentConnections, ConnectionError, type AgentKind } from "./internal/connections/registry.js";
+import { AgentConnections, ConnectionError } from "./internal/connections/registry.js";
 
+export type UsagePresentationPolicy = {
+  grouping?: "model" | "account"; accountGroups?: string[]; knownGroups?: string[]; scopedGroupPrefixes?: string[]; resetLabels?: boolean;
+};
+export type ProviderSettingsDefinition = {
+  kind: string; name: string; connectionName?: string;
+  authentication: Array<{ id: string; label: string; credential?: boolean; hostDirectory?: boolean; browserLogin?: boolean }>;
+  hostDirectory?: { label: string; placeholder: string; description: string };
+  baseUrl?: { label: string; placeholder: string; description: string };
+  login?: { name: string; description: string };
+  usage?: UsagePresentationPolicy;
+};
 export type ProviderSettingsOptions = {
-  kind: AgentKind; connections: Pick<AgentConnections, "list" | "get" | "update" | "remove" | "setDefault" | "startLogin" | "fetchLogin" | "cancelLogin" | "usage">;
+  definition: ProviderSettingsDefinition; connections: Pick<AgentConnections, "list" | "get" | "update" | "remove" | "setDefault" | "startLogin" | "fetchLogin" | "cancelLogin" | "usage">;
   isConnectionInUse: (id: string) => Promise<boolean>; env?: NodeJS.ProcessEnv; fetch?: typeof fetch;
 };
 type Actor = { userId: string; hostRole: string; activeUntil?: string | null; activityRequired?: boolean; continuity?: AppContinuity };
@@ -27,7 +38,8 @@ async function body(request: IncomingMessage): Promise<Record<string, unknown>> 
 
 /** App-owned settings and Core login. Native execution credentials are never browser identity. */
 export function createProviderSettings(options: ProviderSettingsOptions): (request: IncomingMessage, response: ServerResponse, pathname: string) => Promise<boolean> {
-  if (!["codex", "claude", "ollama"].includes(options.kind)) throw new Error("Select a fixed provider kind.");
+  const definition = options.definition;
+  if (!definition.kind || !definition.name || !definition.authentication.length) throw new Error("Select a provider settings definition.");
   const env = options.env ?? process.env, fetcher = options.fetch ?? globalThis.fetch;
   const appId = env.HOSTY_APP_ID ?? "", core = env.HOSTY_CORE_ORIGIN ?? "", service = env.HOSTY_APP_SERVICE_TOKEN ?? "";
   const cookie = "hosty_provider_" + createHash("sha256").update(appId).digest("hex").slice(0, 12);
@@ -56,19 +68,19 @@ export function createProviderSettings(options: ProviderSettingsOptions): (reque
   const recovery = async () => ({ appId, corePublicOrigin: env.HOSTY_CORE_PUBLIC_ORIGIN ?? null, appAuthProtocol: await resolveAppAuthProtocol(core || null) });
   const current = async (id: string, input?: Record<string, unknown>) => {
     const connection = await options.connections.get(id);
-    if (connection.kind !== options.kind) throw new SettingsError(404, "connection_missing", "Connection not found.");
+    if (connection.kind !== definition.kind) throw new SettingsError(404, "connection_missing", "Connection not found.");
     if (input && input.expectedRevision !== String(connection.revision)) throw new SettingsError(409, "connection_changed", "The connection changed. Refresh before trying again.");
     return connection;
   };
   const inactive = async (id: string) => { if (await options.isConnectionInUse(id)) throw new SettingsError(409, "connection_in_use", "Stop and reconcile this connection's active execution before changing it."); };
   const inventory = async () => {
     const result = await options.connections.list();
-    return { kind: options.kind, defaultId: result.defaultId, ollamaDefaultUrl: result.ollamaDefaultUrl, connections: result.connections.filter(c => c.kind === options.kind).map(c => ({ id: c.id, name: c.name, kind: c.kind, auth: c.auth, revision: String(c.revision), baseUrl: c.baseUrl, hostDirectory: c.hostDirectory, available: c.available, reason: c.reason })) };
+    return { kind: definition.kind, defaultId: result.defaultId, defaults: result.defaults, connections: result.connections.filter(c => c.kind === definition.kind).map(c => ({ id: c.id, name: c.name, kind: c.kind, auth: c.auth, revision: String(c.revision), baseUrl: c.baseUrl, hostDirectory: c.hostDirectory, available: c.available, reason: c.reason })) };
   };
   return async (request, response, pathname) => {
     const method = request.method ?? "GET";
     if (method === "GET" && (pathname === "/" || pathname === "/settings")) {
-      response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" }); response.end(settingsHtml(options.kind)); return true;
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" }); response.end(settingsHtml(definition)); return true;
     }
     const assetType = (pathname === "/settings-browser.mjs" || pathname === "/settings-bootstrap.js") ? "text/javascript; charset=utf-8"
       : pathname === "/settings.css" || pathname === "/hosty-theme.css" ? "text/css; charset=utf-8"
@@ -120,7 +132,7 @@ export function createProviderSettings(options: ProviderSettingsOptions): (reque
           else if ((!id && method === "POST" || id && method === "PUT") && !connectionRoute[2]) {
             if (Object.keys(input).some(k => !["name", "auth", "secret", "baseUrl", "hostDirectory", "expectedRevision"].includes(k))) throw new SettingsError(400, "invalid_input", "Unexpected connection fields.");
             const { expectedRevision: _revision, ...update } = input;
-            const saved = await options.connections.update({ ...update, kind: options.kind }, id);
+            const saved = await options.connections.update({ ...update, kind: definition.kind }, id);
             json(response, 200, { ...await inventory(), saved: { id: saved.id, revision: String(saved.revision) } });
           } else throw new SettingsError(405, "method_not_allowed", "Unsupported settings operation.");
         }); return true;
@@ -136,20 +148,23 @@ export function createProviderSettings(options: ProviderSettingsOptions): (reque
     return true;
   };
 }
-export function settingsHtml(kind: AgentKind): string {
-  const name = kind === "codex" ? "Codex" : kind === "claude" ? "Claude Code" : "Ollama";
+const htmlText = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+export function settingsHtml(definition: ProviderSettingsDefinition): string {
+  const kind = htmlText(definition.kind), name = htmlText(definition.name), host = definition.hostDirectory, url = definition.baseUrl;
+  const login = definition.login ?? { name: "provider", description: "Complete this account's browser sign-in." };
+  const descriptor = JSON.stringify(definition).replaceAll("<", "\\u003c");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${name} provider settings</title><script src="/settings-bootstrap.js"></script><link rel="stylesheet" href="/hosty-theme.css"><link rel="stylesheet" href="/settings.css"></head>
-<body data-provider-kind="${kind}"><main class="settings-page"><header class="app-heading"><h1>${name} provider</h1></header>
+<body data-provider-kind="${kind}"><script id="provider-definition" type="application/json">${descriptor}</script><main class="settings-page"><header class="app-heading"><h1>${name} provider</h1></header>
 <div class="access-status"><p id="message" role="status">Checking Hosty access…</p><div class="access-actions"><button id="signin" class="button button-outline" type="button">Sign in through Hosty</button><button id="refresh" class="button button-outline button-sm" type="button">Refresh</button></div></div>
 <div id="protected" hidden><section class="providers" aria-labelledby="providers-heading"><div class="section-heading"><div><h2 id="providers-heading">Providers</h2></div><button id="add-provider" class="button button-outline button-sm" type="button">+ Add provider</button></div><div id="connections" class="connections" aria-live="polite" aria-busy="true"></div></section></div></main>
 <dialog id="editor" aria-labelledby="form-title" aria-describedby="form-description" class="dialog"><form id="connection-form" class="dialog-form"><div class="dialog-header"><h2 id="form-title">Add provider</h2><p id="form-description">Configure this provider’s connection.</p></div><button id="editor-close" class="dialog-close button button-ghost button-icon" aria-label="Close" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg></button><div class="dialog-body"><fieldset id="connection-fields" class="form-fields">
 <div class="field"><label for="name">Connection name</label><input id="name" maxlength="100" placeholder="My ${name}" required></div>
 <div class="field"><label for="auth">Authentication</label><select id="auth"></select></div>
-<p id="chatgpt-description" class="field-description" hidden>Sign in using your ChatGPT account in the browser. Hosty displays a code and waits for your confirmation.</p>
+<p id="browser-login-description" class="field-description" hidden>${htmlText(login.description)}</p>
 <div id="secret-field" class="field"><label for="secret">Credential</label><input id="secret" type="password" autocomplete="new-password" aria-describedby="secret-description"><p id="secret-description" class="field-description">Credentials are stored securely for this provider. Leave blank when editing to keep the current credential.</p></div>
-<div id="host-field" class="field"><label for="hostDirectory">Codex home on the Hosty server</label><input id="hostDirectory" placeholder="/home/hosty/.codex" aria-describedby="host-description"><p id="host-description" class="field-description">Use an existing signed-in Codex directory accessible to this provider. Removing the connection leaves that directory and its session files in place.</p></div>
-<div id="url-field" class="field"><label for="baseUrl">Ollama server URL</label><input id="baseUrl" type="url" maxlength="2048" placeholder="http://127.0.0.1:11434" aria-describedby="url-description"><p id="url-description" class="field-description">Connect to an existing Ollama server. Leave blank to use the local default. Models stay on that server; Hosty does not download them.</p></div>
+<div id="host-field" class="field"><label for="hostDirectory">${htmlText(host?.label ?? "Existing account directory")}</label><input id="hostDirectory" placeholder="${htmlText(host?.placeholder ?? "")}" aria-describedby="host-description"><p id="host-description" class="field-description">${htmlText(host?.description ?? "")}</p></div>
+<div id="url-field" class="field"><label for="baseUrl">${htmlText(url?.label ?? "Server URL")}</label><input id="baseUrl" type="url" maxlength="2048" placeholder="${htmlText(url?.placeholder ?? "")}" aria-describedby="url-description"><p id="url-description" class="field-description">${htmlText(url?.description ?? "")}</p></div>
 </fieldset><p id="form-error" class="alert alert-error" role="alert" hidden></p></div><div class="dialog-footer"><button id="save-provider" type="submit" class="button button-sm">Save provider</button><button id="clear" type="button" class="button button-outline button-sm">Cancel</button></div></form></dialog>
-<dialog id="login-dialog" class="dialog login-dialog" aria-labelledby="login-title" aria-describedby="login-description"><div class="dialog-header"><h2 id="login-title">Sign in with ChatGPT</h2><p id="login-description">Open ChatGPT in your browser, sign in, and enter this one-time code.</p></div><div class="dialog-body"><div id="login-code-row" class="login-code"><code id="login-code">Preparing…</code><button id="copy-code" type="button" class="button button-ghost button-icon" aria-label="Copy code">⧉</button></div><p id="login-status" class="field-description" role="status">Waiting for confirmation…</p><p id="login-error" role="alert" class="alert alert-error" hidden></p></div><div class="dialog-footer"><button id="login-close" class="button button-outline" type="button">Cancel sign-in</button><a id="login-open" class="button" target="_blank" rel="noopener noreferrer" hidden>Open ChatGPT</a></div></dialog><script type="module" src="/settings-browser.mjs"></script></body></html>`;
+<dialog id="login-dialog" class="dialog login-dialog" aria-labelledby="login-title" aria-describedby="login-description"><div class="dialog-header"><h2 id="login-title">Sign in with ${htmlText(login.name)}</h2><p id="login-description">${htmlText(login.description)}</p></div><div class="dialog-body"><div id="login-code-row" class="login-code"><code id="login-code">Preparing…</code><button id="copy-code" type="button" class="button button-ghost button-icon" aria-label="Copy code">⧉</button></div><p id="login-status" class="field-description" role="status">Waiting for confirmation…</p><p id="login-error" role="alert" class="alert alert-error" hidden></p></div><div class="dialog-footer"><button id="login-close" class="button button-outline" type="button">Cancel sign-in</button><a id="login-open" class="button" target="_blank" rel="noopener noreferrer" hidden>Open ${htmlText(login.name)}</a></div></dialog><script type="module" src="/settings-browser.mjs"></script></body></html>`;
 }

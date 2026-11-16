@@ -7,7 +7,7 @@ import type { AgentCapabilities, AgentConfiguration, AgentConfigurationCreate, A
 import { AgentApiError } from "@hosty-sdk/app/agent";
 import { ProviderStore, bytesHash, valueHash, increment, type VerifiedOperation, type Actor, type ConfigurationRecord, type SessionRecord, type RunRecord } from "./store.js";
 import type { ProviderAuthority } from "./core.js";
-import type { AgentConnections, AgentKind } from "./internal/connections/registry.js";
+import type { ProviderConnections } from "./internal/connections/registry.js";
 
 export interface ExecutionDriver {
   start(sessionId: string, runId: string): Promise<void>;
@@ -18,25 +18,13 @@ export interface ExecutionDriver {
   close(): Promise<void>;
 }
 const conflict = (message: string, code = "stale_revision"): never => { throw new AgentApiError(code, message, 409); };
-export const capabilities = (kind: AgentKind): AgentCapabilities => ({
-  version: 1, eventVersions: ["agent-event.1"],
-  capabilities: ["session.resume", "configuration.resume-compatible", "configuration.approval-mode", "skills.catalog", "skills.exclusive-selection", "mcp.core", "mcp.apps", "mcp.policy-update", "workflow.consumer", "model.change-on-resume", "decisions.questions", "decisions.auto-allow", "connections.usage", "runs.park", "runs.barrier", "runs.reconcile",
-    ...(kind !== "codex" ? ["native-tools.none", "decisions.deny-reason", "runs.live-configure"] : ["decisions.next-turn"]),
-    ...(kind !== "ollama" ? ["predictions", "subagents.native"] : [])],
-  limits: { maxCommandBytes: 1024 * 1024, maxEventBytes: 1024 * 1024, maxSnapshotBytes: 1024 * 1024, maxReplayBytes: 64 * 1024 * 1024,
-    replayRetentionMs: 7 * 24 * 60 * 60 * 1000, maxControls: 10000, maxPageSize: 100, maxDurationMs: 24 * 60 * 60 * 1000, ...(kind === "ollama" ? { maxSkillSnapshotBytes: 256 * 1024 } : {}) },
-  configuration: { resumeCompatible: ["instructions", "systemPrompt", "skills", "nativeTools", "approvalMode", "predictions"] },
-  nativeTools: { default: "provider_default", none: kind !== "codex" },
-  subagents: { defaultEnabled: kind !== "ollama", policy: kind === "codex" ? "observed" : kind === "claude" ? "enforceable" : "unavailable", observation: kind === "codex" ? "summary" : kind === "claude" ? "partial" : "unavailable" },
-});
-
 /** Public concurrency and idempotency never depend on an SDK's mutable thread state. */
 export class ProviderController {
   readonly capabilities: AgentCapabilities;
   readonly tasks = new Set<Promise<unknown>>();
   driver!: ExecutionDriver;
   private closing = false;
-  constructor(readonly store: ProviderStore, readonly authority: ProviderAuthority, readonly connections: AgentConnections, readonly kind: AgentKind, readonly capacity = 4) { this.capabilities = capabilities(kind); }
+  constructor(readonly store: ProviderStore, readonly authority: ProviderAuthority, readonly connections: ProviderConnections, capabilities: AgentCapabilities, readonly capacity = 4) { this.capabilities = structuredClone(capabilities); }
   requireCapabilities(required: string[] = []): void {
     const missing = required.filter(value => !this.capabilities.capabilities.includes(value));
     if (missing.length) throw new AgentApiError("unsupported_capability", "The provider cannot enforce a required capability.", 422, false, { missing });
@@ -47,7 +35,7 @@ export class ProviderController {
       throw new AgentApiError("unsupported_capability", "This provider cannot enforce the selected native subagent policy.", 422);
     if (input.predictions?.enabled) this.requireCapabilities(["predictions"]);
     const binding = await this.connections.binding(input.connection.id);
-    if (!binding || binding.harnessKind !== this.kind || String(binding.connectionRevision) !== input.connection.revision) conflict("Select the exact current connection.", "connection_revision_mismatch");
+    if (!binding || String(binding.connectionRevision) !== input.connection.revision) conflict("Select the exact current connection.", "connection_revision_mismatch");
     // Empty selection is explicit too: native discovery uses this provider-owned isolated snapshot.
     const empty = path.resolve(this.store.directory, "..", "skill-snapshots", "empty");
     if (!input.skills?.length) { await mkdir(empty, { recursive: true, mode: 0o700 }); if ((await readdir(empty)).length) throw new AgentApiError("skill_snapshot_unavailable", "The empty native discovery snapshot is not empty.", 503); }

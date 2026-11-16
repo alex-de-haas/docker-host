@@ -12,7 +12,7 @@ const fontAssets = ['plex-sans', 'jetbrains-mono'].flatMap(family => [
   ...['latin', 'latin-ext', 'cyrillic'].map(subset => `fonts/${family}-${subset}.woff2`), `fonts/${family}-LICENSE.txt`,
 ]);
 const bundleAssets = ['main.mjs','native-runner.mjs','native-windows.mjs','windows-native-job.ps1','windows-native-job.cs',
-  'claude-child-history.mjs','settings-browser.mjs','hosty-theme.css','settings-bootstrap.js','settings.css',...fontAssets];
+  'adapter-helper.mjs','settings-browser.mjs','hosty-theme.css','settings-bootstrap.js','settings.css',...fontAssets];
 async function writeFixtureOutput(output, file, contents) {
   const target = path.join(output,file); await mkdir(path.dirname(target),{recursive:true}); await writeFile(target,contents);
 }
@@ -27,7 +27,8 @@ async function fixture() {
   const root = path.join(parent, 'source'), cache = path.join(parent, 'cache'); await mkdir(root);
   await mkdir(path.join(root, 'node_modules')); await writeFile(path.join(root, 'node_modules/other-provider'), 'keep');
   await writeFile(path.join(root, 'input'), 'first'); let builds = 0;
-  const snapshot = async () => [{ path: 'input', bytes: await readFile(path.join(root, 'input')) }];
+  const snapshot = async () => [{ path: 'input', bytes: await readFile(path.join(root, 'input')) },
+    ...['codex-provider', 'claude-code-provider'].map(slug => ({ path: `apps/${slug}/package.json`, bytes: Buffer.from(JSON.stringify({ name: `@hosty/${slug}`, hostyAgentProvider: { assets: [{ source: 'src/helper.mjs', target: 'adapter-helper.mjs' }] } })) }))];
   const options = { root, cache, slug: 'codex-provider', snapshot, log() {}, buildBundle: async (directory, slug) => {
     builds++; const output = path.join(directory, 'apps', slug, 'dist'); await mkdir(output, { recursive: true });
     for (const file of bundleAssets)
@@ -65,7 +66,7 @@ it('publishes a new generation for damaged output without renaming the old consu
   expect(await readFile(path.join(first,'apps/codex-provider/dist/main.mjs'),'utf8')).toBe('built first');
   expect(await completeBundle(second,fingerprint(await f.options.snapshot()),f.options.slug)).toBe(true);
 });
-it.each(['claude-child-history.mjs','hosty-theme.css','settings-bootstrap.js','settings.css',...fontAssets])('rejects an older cache receipt that omits required asset %s', async file => {
+it.each(['adapter-helper.mjs','hosty-theme.css','settings-bootstrap.js','settings.css',...fontAssets])('rejects an older cache receipt that omits required asset %s', async file => {
   const f = await fixture(), first = await prepare(f.options), receiptPath = path.join(first,'bundle.json');
   const receipt = JSON.parse(await readFile(receiptPath,'utf8'));
   receipt.files = receipt.files.filter(([entry]) => entry !== `apps/codex-provider/dist/${file}`);
@@ -128,6 +129,8 @@ it('rejects a symlinked shared font input instead of reading outside the source 
 it('copies canonical CSS, font subsets and license notices into every provider bundle with an isolated compiler fixture', async () => {
   const f = await fixture(), script = 'packages/agent-provider-runtime/scripts/build.mjs';
   await writeFixtureOutput(f.root,script,await readFile(path.join(repository,script)));
+  const configScript = 'packages/agent-provider-runtime/scripts/build-config.mjs';
+  await writeFixtureOutput(f.root,configScript,await readFile(path.join(repository,configScript)));
   await writeFixtureOutput(f.root,'node_modules/esbuild/package.json',JSON.stringify({name:'esbuild',type:'module',exports:'./index.mjs'}));
   await writeFixtureOutput(f.root,'node_modules/esbuild/index.mjs',"import { writeFile } from 'node:fs/promises'; export const build = options => writeFile(options.outfile, '// isolated compiler fixture');");
   await writeFixtureOutput(f.root,'node_modules/@hosty-sdk/app/package.json',JSON.stringify({name:'@hosty-sdk/app',type:'module',exports:{'.':'./index.mjs','./theme':'./theme.mjs'}}));
@@ -135,16 +138,18 @@ it('copies canonical CSS, font subsets and license notices into every provider b
   await writeFixtureOutput(f.root,'node_modules/@hosty-sdk/app/theme.mjs','export const themeBootstrapScript='+JSON.stringify(themeBootstrapScript)+';');
   const copies = new Map([
     ['hosty-theme.css','shared/web/hosty-theme.css'], ['settings.css','packages/agent-provider-runtime/src/settings.css'],
-    ['claude-child-history.mjs','packages/agent-provider-runtime/src/claude-child-history.mjs'],
     ...fontAssets.map(file => [file,'shared/web/'+file]),
   ]);
   for (const source of copies.values()) await writeFixtureOutput(f.root,source,await readFile(path.join(repository,source)));
   for (const file of ['native-runner.mjs','native-windows.mjs','windows-native-job.ps1','windows-native-job.cs'])
     await writeFixtureOutput(f.root,'packages/agent-provider-runtime/src/'+file,'fixture');
-  for (const slug of ['codex-provider','claude-code-provider','ollama-provider']) {
-    await writeFixtureOutput(f.root,`apps/${slug}/package.json`,JSON.stringify({name:`@hosty/${slug}`,version:'0.1.0'}));
+  for (const slug of ['codex-provider','claude-code-provider','ollama-provider','independent-provider']) {
+    await writeFixtureOutput(f.root,`apps/${slug}/src/helper.mjs`,'app-owned helper '+slug);
+    await writeFixtureOutput(f.root,`apps/${slug}/package.json`,JSON.stringify({name:`@hosty/${slug}`,version:'0.1.0',
+      hostyAgentProvider: { external: ['independent-native-sdk'], assets: [{source:'src/helper.mjs',target:'adapter-helper.mjs'}] } }));
     await promisify(execFile)(process.execPath,[path.join(f.root,script),slug],{cwd:f.root});
     expect(await readFile(path.join(f.root,'apps',slug,'dist/settings-bootstrap.js'),'utf8')).toBe(launchModeBootstrapScript+'\n'+themeBootstrapScript);
+    expect(await readFile(path.join(f.root,'apps',slug,'dist/adapter-helper.mjs'),'utf8')).toBe('app-owned helper '+slug);
     for (const [asset, source] of copies)
       expect(await readFile(path.join(f.root,'apps',slug,'dist',asset))).toEqual(await readFile(path.join(repository,source)));
   }

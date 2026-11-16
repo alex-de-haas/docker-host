@@ -1,12 +1,30 @@
 {
   "name": "@hosty/agent-provider-runtime",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
   "exports": {
     ".": "./src/index.ts",
-    "./native": "./src/native.ts"
+    "./native": "./src/native.ts",
+    "./harness/*": "./src/internal/harness/*.ts",
+    "./worker/*": "./src/internal/worker/*.ts",
+    "./runtime/*": "./src/internal/runtime/*.ts",
+    "./connections/*": "./src/internal/connections/*.ts",
+    "./test-support/*": "./src/test-support/*.ts",
+    "./test-env": "./src/internal/test-env.ts",
+    "./persistence": "./src/internal/persistence.ts",
+    "./tracked-adapter": "./src/tracked-adapter.ts",
+    "./tracked-process": "./src/tracked-process.ts",
+    "./store": "./src/store.ts",
+    "./projection": "./src/projection.ts",
+    "./settings": "./src/settings.ts",
+    "./engine": "./src/engine.ts",
+    "./core": "./src/core.ts",
+    "./controller": "./src/controller.ts",
+    "./native-driver": "./src/native-driver.ts",
+    "./server": "./src/server.ts",
+    "./attachments": "./src/attachments.ts"
   },
   "scripts": {
     "lint": "tsc --noEmit",
@@ -15,28 +33,13 @@
   },
   "dependencies": {
     "@hosty-sdk/app": "*",
-    "@modelcontextprotocol/sdk": "1.32.2",
-    "js-tiktoken": "1.0.21",
-    "undici": "^8.12.4"
+    "@modelcontextprotocol/sdk": "1.32.2"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
-    "@types/ws": "8.18.2",
     "esbuild": "0.28.2",
     "typescript": "^6.0.3",
     "vitest": "^5.1.0",
     "jsdom": "^30.1.2"
-  },
-  "peerDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "*",
-    "@openai/codex": "*"
-  },
-  "peerDependenciesMeta": {
-    "@anthropic-ai/claude-agent-sdk": {
-      "optional": true
-    },
-    "@openai/codex": {
-      "optional": true
-    }
   }
 }

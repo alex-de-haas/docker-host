@@ -11,7 +11,7 @@ import type { HarnessStartOptions } from "../harness/adapter.js";
 
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
-const request = (): WorkerRunRequest => ({ conversationId: "chat-1", binding: { connectionId: "account-1", connectionRevision: 1, harnessKind: "codex" },
+const request = (): WorkerRunRequest => ({ conversationId: "chat-1", binding: { connectionId: "account-1", connectionRevision: 1, harnessKind: "org.example.engine" },
   selection: { model: null, reasoningEffort: null }, resource: { kind: "conversation", id: "chat-1" }, input: "test", options: {}, autoAllowedPrefixes: [] });
 async function setup(stopAndWait: (() => Promise<void>) | null = async () => {}, interrupt: () => Promise<void> = async () => {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "hosty-worker-test-")); cleanups.push(() => rm(root, { recursive: true, force: true }));
@@ -38,6 +38,13 @@ async function setup(stopAndWait: (() => Promise<void>) | null = async () => {},
     put: (id: string, value = request()) => fetch(`${base}/v1/runs/${id}`, { method: "PUT", headers, body: JSON.stringify(value) }) };
 }
 describe("direct worker contract", () => {
+  it("accepts an opaque application engine identity while rejecting malformed bindings", async () => {
+    const f = await setup();
+    for (const harnessKind of ["", "x".repeat(101), "engine\nother"])
+      expect((await f.put("invalid-binding", { ...request(), binding: { ...request().binding, harnessKind } })).status).toBe(400);
+    expect((await f.put("opaque-engine", request())).status).toBe(202);
+    await expect.poll(f.starts).toBe(1);
+  });
   it("transports verified instruction provenance and rejects mismatched metadata", async () => {
     const f = await setup();
     const valid = { ...request(), skillExportId: "a".repeat(64), options: { systemPrompt: "instructions", instructionSources: [{ source: "runtime" as const, text: "instructions" }] } };

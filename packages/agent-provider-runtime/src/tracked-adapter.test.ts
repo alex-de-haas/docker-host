@@ -1,3 +1,4 @@
+import { fixtureCapabilities } from "./test-support/provider.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
@@ -62,12 +63,12 @@ it.each([true, false])("retains public capacity, the account claim and workspace
   const workspaceId = "f".repeat(64), authority = { admit: vi.fn(async () => ({})), renew: vi.fn(async () => ({})), workspace: vi.fn(async (_ref, operation) => operation === "resolve" ? { id: workspaceId, revision: "1", path: worktree } : {}), skills: vi.fn() } as unknown as ProviderAuthority;
   let claims = 0;
   const adapter: HarnessAdapter = { name: "throwing-sdk", capabilities: { questions: true, appMcp: true, liveReconfigure: true, autoAllow: true, denyReason: true }, probe: async () => ({ available: true }), start: options => {
-    if (spawn) { const child = options.processTransport!.spawn("claude", ["-e", "setInterval(()=>{},1000)"], { command: process.execPath, cwd: worktree, env: { PATH: process.env.PATH, HOME: home } }); child.stdout.resume(); child.stderr.resume(); }
+    if (spawn) { const child = options.processTransport!.spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { command: process.execPath, cwd: worktree, env: { PATH: process.env.PATH, HOME: home } }); child.stdout.resume(); child.stderr.resume(); }
     throw new Error("SDK startup threw after initialization");
   } };
-  const connections = { binding: async () => ({ connectionId: "account", connectionRevision: 1, harnessKind: "claude" }), reserve: async () => { claims++; return () => { claims--; }; }, adapter: async () => adapter, executionHome: async () => home, shutdown: async () => {} } as unknown as AgentConnections;
+  const connections = { binding: async () => ({ connectionId: "account", connectionRevision: 1, harnessKind: "fixture-engine" }), reserve: async () => { claims++; return () => { claims--; }; }, prepareAdapter: async () => adapter, executionHome: async () => home, shutdown: async () => {} } as unknown as AgentConnections;
   const store = new ProviderStore(path.join(directory, "sessions"), provider); await store.initialize();
-  const controller = new ProviderController(store, authority, connections, "claude", 1), driver = new NativeExecution(controller, store, authority, connections, new AttachmentStore(path.join(directory, "assets"), provider), directory, () => "http://127.0.0.1:1");
+  const controller = new ProviderController(store, authority, connections, fixtureCapabilities, 1), driver = new NativeExecution(controller, store, authority, connections, new AttachmentStore(path.join(directory, "assets"), provider), directory, () => "http://127.0.0.1:1");
   controller.driver = driver; await driver.initialize(); cleanup.push(() => controller.close());
   const sessionId = randomUUID(), create = { configuration: { connection: { id: "account", revision: "1" } } }; await controller.createSession(sessionId, create, JSON.stringify(create), actor);
   const id = randomUUID(), input: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start", input: { text: "Begin" }, resources: [{ kind: "worktree", id: workspaceId, revision: "1" }] };

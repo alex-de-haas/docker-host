@@ -3,12 +3,14 @@ import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProviderSettings, type ProviderSettingsOptions } from "./settings.js";
-import { absentUsage, codexUsage, type ProviderUsage } from "./internal/harness/provider-usage.js";
+import { absentUsage, type ProviderUsage } from "./internal/harness/provider-usage.js";
 
-const appId = "org.example.independent-codex", connections = () => ({
-  list: vi.fn(async () => ({ defaultId: "account-1", ollamaDefaultUrl: "http://127.0.0.1:11434", connections: [{ id: "account-1", name: "Personal", kind: "codex" as const, auth: "chatgpt" as const, revision: 1, secretKey: "must-not-be-public", available: true }] })),
-  get: vi.fn(async () => ({ id: "account-1", name: "Personal", kind: "codex" as const, auth: "chatgpt" as const, revision: 1, secretKey: "private-key" })),
-  update: vi.fn(async () => ({ id: "account-1", name: "Personal", kind: "codex" as const, auth: "chatgpt" as const, revision: 2, secretKey: "private-key" })),
+const definition = { kind: "sample", name: "Example", authentication: [{ id: "browser", label: "Example account", browserLogin: true }] };
+const sampleUsage = (): ProviderUsage => ({ state: "available", observedAt: new Date().toISOString(), rows: [{ id:"account", group:"account", label:"Account", kind:"quota", used:25, observedAt:new Date().toISOString() }] });
+const appId = "org.example.independent-engine", connections = () => ({
+  list: vi.fn(async () => ({ defaultId: "account-1", defaults: {}, connections: [{ id: "account-1", name: "Personal", kind: "sample" as const, auth: "browser" as const, revision: 1, secretKey: "must-not-be-public", available: true }] })),
+  get: vi.fn(async () => ({ id: "account-1", name: "Personal", kind: "sample" as const, auth: "browser" as const, revision: 1, secretKey: "private-key" })),
+  update: vi.fn(async () => ({ id: "account-1", name: "Personal", kind: "sample" as const, auth: "browser" as const, revision: 2, secretKey: "private-key" })),
   remove: vi.fn(async () => {}), setDefault: vi.fn(async () => {}), startLogin: vi.fn(async () => ({ id: "login-1", connectionId: "account-1", status: "pending" as const, message: "Continue account sign-in." })),
   fetchLogin: vi.fn(async () => ({ id: "login-1", connectionId: "account-1", status: "pending" as const, message: "Continue account sign-in." })), cancelLogin: vi.fn(async () => {}),
   usage: vi.fn(async (_id: string, _refresh = false): Promise<ProviderUsage> => absentUsage()),
@@ -17,7 +19,7 @@ const servers: Server[] = [];
 afterEach(async () => { for (const server of servers.splice(0)) { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } });
 async function fixture(options: Partial<ProviderSettingsOptions> = {}) {
   const registry = connections(), isConnectionInUse = vi.fn(async () => false), coreFetch = vi.fn(async () => Response.json({ active: true, appId, userId: "user-1", hostRole: "host.admin" }));
-  const settings = createProviderSettings({ kind: "codex", connections: registry, isConnectionInUse, env: { HOSTY_APP_ID: appId, HOSTY_CORE_ORIGIN: "http://core.test", HOSTY_APP_SERVICE_TOKEN: "synthetic-test-service" }, fetch: coreFetch as typeof fetch, ...options });
+  const settings = createProviderSettings({ definition, connections: registry, isConnectionInUse, env: { HOSTY_APP_ID: appId, HOSTY_CORE_ORIGIN: "http://core.test", HOSTY_APP_SERVICE_TOKEN: "synthetic-test-service" }, fetch: coreFetch as typeof fetch, ...options });
   const server = createServer((request, response) => { void settings(request, response, new URL(request.url!, "http://test").pathname).then(handled => { if (!handled) { response.writeHead(404); response.end(); } }); });
   servers.push(server); server.listen(0, "127.0.0.1"); await once(server, "listening"); const address = server.address(); if (!address || typeof address === "string") throw new Error("No test listener");
   const origin = `http://127.0.0.1:${address.port}`;
@@ -39,7 +41,7 @@ describe("independent provider settings", () => {
     expect(f.registry.list).not.toHaveBeenCalled(); expect(f.coreFetch).not.toHaveBeenCalled();
   });
   it("acknowledges the exact saved connection without exposing native credential references", async () => {
-    const f = await fixture(), response = await f.request("/api/settings/connections", "POST", { name: "New", auth: "chatgpt" });
+    const f = await fixture(), response = await f.request("/api/settings/connections", "POST", { name: "New", auth: "browser" });
     const value = await response.json() as { saved: Record<string, unknown>; connections: unknown[] };
     expect(response.status).toBe(200); expect(value.saved).toEqual({ id: "account-1", revision: "2" });
     expect(value.connections).toHaveLength(1); expect(JSON.stringify(value)).not.toContain("secretKey");
@@ -65,10 +67,10 @@ describe("independent provider settings", () => {
   });
   it("fixes provider kind and rejects stale connection revisions", async () => {
     const f = await fixture();
-    expect((await f.request("/api/settings/connections", "POST", { name: "Other", kind: "claude", auth: "api-key", secret: "synthetic" })).status).toBe(400);
+    expect((await f.request("/api/settings/connections", "POST", { name: "Other", kind: "other", auth: "api-key", secret: "synthetic" })).status).toBe(400);
     expect((await f.request("/api/settings/connections/account-1", "PUT", { name: "New", expectedRevision: "0" })).status).toBe(409); expect(f.registry.update).not.toHaveBeenCalled();
-    expect((await f.request("/api/settings/connections", "POST", { name: "New", auth: "chatgpt" })).status).toBe(200);
-    expect(f.registry.update).toHaveBeenCalledWith({ name: "New", auth: "chatgpt", kind: "codex" }, undefined);
+    expect((await f.request("/api/settings/connections", "POST", { name: "New", auth: "browser" })).status).toBe(200);
+    expect(f.registry.update).toHaveBeenCalledWith({ name: "New", auth: "browser", kind: "sample" }, undefined);
   });
   it("requires same-origin provenance for cookie mutations", async () => {
     const f = await fixture(), cookie = "hosty_provider_" + createHash("sha256").update(appId).digest("hex").slice(0, 12);
@@ -86,12 +88,12 @@ describe("independent provider settings", () => {
     const member = await fixture({ fetch: vi.fn(async () => Response.json({ active: true, appId, userId: "member", hostRole: "host.user" })) as typeof fetch });
     expect((await member.request("/api/settings/connections/account-1/usage?refresh=true")).status).toBe(403);
     expect(member.registry.usage).not.toHaveBeenCalled();
-    const anotherKind = await fixture({ kind: "claude" });
+    const anotherKind = await fixture({ definition: { ...definition, kind: "other" } });
     expect((await anotherKind.request("/api/settings/connections/account-1/usage?refresh=true")).status).toBe(404);
     expect(anotherKind.registry.usage).not.toHaveBeenCalled();
   });
   it("returns normalized account usage with a string revision and refreshes only on an explicit true query", async () => {
-    const f = await fixture(), sample = { ...codexUsage({ rateLimits: { primary: { usedPercent: 25 } } }), connectionRevision: 1 };
+    const f = await fixture(), sample = { ...sampleUsage(), connectionRevision: 1 };
     f.registry.usage.mockResolvedValue(sample);
     const response = await f.request("/api/settings/connections/account-1/usage?refresh=true");
     expect(response.status).toBe(200); expect(await response.json()).toEqual({ ...sample, connectionRevision: "1" });
@@ -106,7 +108,7 @@ describe("independent provider settings", () => {
   it("does not attach old account usage to a connection changed during the diagnostic", async () => {
     const f = await fixture(), original = await f.registry.get();
     f.registry.get.mockResolvedValueOnce(original).mockResolvedValueOnce({ ...original, revision: 2 });
-    f.registry.usage.mockResolvedValue({ ...codexUsage({ rateLimits: { primary: { usedPercent: 25 } } }), connectionRevision: 1 });
+    f.registry.usage.mockResolvedValue({ ...sampleUsage(), connectionRevision: 1 });
     const response = await f.request("/api/settings/connections/account-1/usage?refresh=true");
     expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ code: "connection_changed" });
   });

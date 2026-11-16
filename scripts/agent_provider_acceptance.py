@@ -82,7 +82,7 @@ class ProviderAcceptance:
             manifest = json.loads((self.workspace/'apps'/slug/'manifest.json').read_text())
             manifest['source']['repository'] = self.context['repository']
             if scripted_codex and kind == 'codex':
-                fixture = self.workspace/'packages/agent-provider-runtime/test/fake-codex-server.mjs'
+                fixture = self.workspace/'apps/codex-provider/test/fake-codex-server.mjs'
                 assert fixture.is_file()
                 manifest['services'][0]['runtimes']['local'].setdefault('environment', {})['HOSTY_HARNESS_CODEX_COMMAND'] = str(fixture)
             target = self.base/(slug+'-acceptance.json')

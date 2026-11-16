@@ -5,7 +5,6 @@ import path from 'node:path';
 
 /** Presence/version checks only: no installs, login, provider requests, shell edits or secret output. */
 export async function providerDoctor({kind,env=process.env,platform=process.platform,arch=process.arch,probe}={}) {
-  if(kind&&!['codex','claude','ollama'].includes(kind))throw new Error('Select codex, claude or ollama.');
   const find=probe??(async name=>{
     if((platform==='win32'?path.win32:path.posix).isAbsolute(name)){try{await access(name,platform==='win32'?constants.F_OK:constants.X_OK);return true;}catch{return false;}}
     const extensions=platform==='win32'?(env.PATHEXT??'.EXE;.CMD;.BAT').split(';'):[''];

@@ -21,9 +21,21 @@ describe("SessionManager public provider integration", () => {
     const f = await fixture(), record = await chat(f), runId = f.starts[0]!.runId;
     await waitForStream(f, runId);
     const usage = (usedTokens: number) => ({ usedTokens, maxTokens: 1000, estimated: false, observedAt: "2026-11-13T12:00:00Z" });
-    const first = f.emit(runId, "context.updated", { usage: usage(100) });
-    f.update(runId, { latestContext: { sequence: first.sequence, usage: usage(100) } });
-    await vi.waitFor(async () => expect((await f.store.readEvents(record.id)).filter(event => event.type === "context_usage")).toHaveLength(1));
+    let expectedContextId: string | undefined, contextCommitted!: () => void;
+    const committed = new Promise<void>(resolve => { contextCommitted = resolve; });
+    // Session notifications follow durable append; subscribe before emitting instead of
+    // racing the projection's queued disk writes against the polling helper's deadline.
+    const { unsubscribe } = await f.manager.subscribe(record.id, 0, event => {
+      if (event.type === "context_usage" && event.providerEventId === expectedContextId) contextCommitted();
+    });
+    let first!: ReturnType<typeof f.emit>;
+    try {
+      first = f.emit(runId, "context.updated", { usage: usage(100) });
+      expectedContextId = `${runId}:context:${first.sequence}`;
+      f.update(runId, { latestContext: { sequence: first.sequence, usage: usage(100) } });
+      await committed;
+      expect((await f.store.readEvents(record.id)).filter(event => event.type === "context_usage")).toHaveLength(1);
+    } finally { unsubscribe(); }
     await f.manager.shutdown();
     f.emit(runId, "context.updated", { usage: usage(200) });
     const final = latestCount === null ? null : usage(latestCount);
