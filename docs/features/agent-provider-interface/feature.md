@@ -81,6 +81,13 @@ and detailed windows/credits as Harness. The existing public usage operation ref
 account telemetry without a model prompt, so an empty consumer chat does not need a first message
 to populate its limits. Provider-owned settings use their own administrator-authenticated usage
 route and share the same revision-bound cache and refresh throttle.
+Codex ChatGPT sign-in reports the failed native phase and a bounded diagnostic code. Recognized
+upstream refusals include their HTTP status; native startup and timeout failures remain distinct.
+The UI and app logs expose only fixed categories and validated numeric/enum facts, never raw native
+error text, stderr, credentials or device codes. Failed sign-in preserves the previous connection
+revision and credentials. Temporary login storage is removed only after native process closure is confirmed. A bounded
+shutdown failure retains that storage and reports pending cleanup instead of blocking settings;
+provider shutdown retries the retained cleanup.
 Account sign-in, current-user activity and continuity remain independent for each provider app.
 Harness settings open Agent profiles; the former Agent providers tab is removed. Its historical
 `/settings/providers` bookmark opens Agent profiles. Accounts and sign-in are managed in each
@@ -372,6 +379,19 @@ executable; it does not install into the source checkout or prune another provid
 Older generations stay in place for their existing consumers. Source changes during preparation
 reject publication rather than mixing revisions.
 
+The three provider applications publish independent stable 0.1.0 releases through the
+[repository release model](../repository-release-model/feature.md). Public feeds select stable
+for new installations, retain the exact source commit and manifest assets, and require Core
+0.180.0 or newer. The catalog cards state the Git, Node.js 24/npm and account prerequisites;
+Ollama also requires an independently installed server and models.
+[Marketplace catalog membership](https://github.com/alex-de-haas/hosty-catalog/pull/26) includes all
+three providers. Fresh installs select their public stable feeds through Marketplace and the normal
+Core runtime/permission confirmation; authenticated settings work without Harness.
+
+Dependabot tracks all three provider applications and the shared runtime through the root npm
+workspace lockfile. Docker updates cover the production Harness coordinator; the retired embedded
+worker has no npm or Docker update target.
+
 Provider updates require operator-prepared quiescence: finish or cancel active runs through the
 provider API and wait for authoritative stop/effect confirmation before using Core lifecycle.
 Core's Local Stop forcibly terminates its app process group/job; it does not perform an SDK drain.
@@ -450,6 +470,10 @@ releases and selected lock closures are described in the
 - Keep adapter parsing, authentication/history/skill integration and native fixtures with their
   owning provider. Build metadata declares native dependencies/assets; generic packaging must
   also build an unrelated provider and keep private native helpers out of other app bundles.
+
+Codex sign-in coverage exercises native startup/exit, protocol rejection, timeout and invalid response
+paths, safe diagnostic propagation, cleanup after actual process exit, and preservation of an existing
+working account. A synthetic protocol check does not establish real OpenAI account authorization.
 
 - Core HTTP tests cover an empty/independent app boundary, exact operation/hash/install binding,
   current original authority, task chains, revoked grants, selected tools, pinned skill availability,

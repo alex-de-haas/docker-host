@@ -11,7 +11,7 @@ import type { ConnectionSecrets } from "@hosty/agent-provider-runtime/connection
 import type { HarnessAdapter } from "@hosty/agent-provider-runtime/harness/adapter";
 import { absentUsage, type ProviderUsage } from "@hosty/agent-provider-runtime/harness/provider-usage";
 import { CodexHarnessAdapter } from "./adapter/codex.js";
-import { CodexLogin } from "./connections/codex-login.js";
+import { CodexLogin, CodexLoginError, codexLoginFailure } from "./connections/codex-login.js";
 type LoginState = {
   id: string;
   connectionId: string;
@@ -339,21 +339,25 @@ export class CodexConnections extends AgentConnections {
       const response = await worker.request("account/login/start", {
         type: "chatgptDeviceCode",
       });
-      if (
-        typeof response.verificationUrl !== "string" ||
-        typeof response.userCode !== "string" ||
-        new URL(response.verificationUrl).origin !== "https://auth.openai.com"
-      )
-        throw new Error("Unexpected login response.");
-      login.verificationUrl = response.verificationUrl;
+      let verificationUrl: string | undefined;
+      try {
+        if (typeof response.verificationUrl === "string" &&
+          new URL(response.verificationUrl).origin === "https://auth.openai.com")
+          verificationUrl = response.verificationUrl;
+      } catch { /* An invalid native URL is a protocol failure, never browser navigation. */ }
+      if (!verificationUrl || typeof response.userCode !== "string" || !response.userCode.trim())
+        throw new CodexLoginError({ code: "invalid_response", phase: "device-code", method: "account/login/start" });
+      login.verificationUrl = verificationUrl;
       login.userCode = response.userCode;
       login.nativeLoginId =
         typeof response.loginId === "string" ? response.loginId : undefined;
       return this.loginView(loginId);
-    } catch {
+    } catch (error) {
+      const failure = codexLoginFailure(error);
       login.status = "failed";
-      login.message =
-        "ChatGPT sign-in could not start. Check connectivity and whether device-code login is enabled for your account.";
+      login.message = failure.message;
+      // Only closed categories and validated numeric/enum facts leave the native protocol.
+      console.warn("[codex-login] " + JSON.stringify(failure.diagnostic));
       await this.finishLogin(login);
       return this.loginView(loginId);
     }
@@ -404,7 +408,14 @@ export class CodexConnections extends AgentConnections {
   }
   private async finishLogin(login: LoginState): Promise<void> {
     clearTimeout(login.timer);
-    login.worker.close();
+    try { await login.worker.closeAndWait(); }
+    catch (error) {
+      const warning = "Temporary sign-in storage is retained until process shutdown is confirmed. (codex_login_cleanup_pending)";
+      if (!login.message?.includes("codex_login_cleanup_pending"))
+        login.message = [login.message, warning].filter(Boolean).join(" ");
+      console.warn("[codex-login] " + JSON.stringify(codexLoginFailure(error).diagnostic));
+      return; // Retain the worker and its private home for a later confirmed cleanup.
+    }
     await rm(login.home, { recursive: true, force: true });
     const cleanup = setTimeout(() => this.logins.delete(login.id), 10 * 60_000);
     cleanup.unref();
@@ -443,7 +454,12 @@ export class CodexConnections extends AgentConnections {
   }
   override async fetchLogin(id: string): Promise<ConnectionLogin> { return this.loginView(id); }
   protected override async cancelConnectionLogins(id: string) { for (const login of this.logins.values()) if (login.connectionId === id) await this.cancelLoginNow(login.id); }
-  protected override async closeConnections() { for (const login of this.logins.values()) await this.cancelLogin(login.id); }
+  protected override async closeConnections() {
+    for (const login of this.logins.values()) {
+      if (login.status === "pending") await this.cancelLogin(login.id);
+      else await this.finishLogin(login);
+    }
+  }
   async importEnvironment(env: NodeJS.ProcessEnv): Promise<void> {
     if (!(await this.load()).imported) {
       const sources: Array<Record<string, unknown> & { importSource: string }> =
