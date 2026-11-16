@@ -1631,3 +1631,18 @@ The final isolated pagination candidate passes the actual all-provider CI helper
 seconds: 726 passing tests, three Windows-only skips, shared runtime type checking and all three
 provider checks/builds. All 348 source input hashes remain unchanged and temporary staging is
 removed. The PR candidate retains the previously approved artifact versions.
+
+### Workflow Cleanup Observation Regression (2026-11-16)
+
+The final review-candidate hosted provider job exposes one asynchronous test assertion race:
+native stop confirmation is durably published before the synchronization tail removes its local
+workflow server. A controlled terminal-publication observer reproduces the original assertion
+failure; the observer is removed from the shipped test. The test now waits for confirmed native
+exit and workflow removal together, retaining its original five-second bound, workflow-only
+server assertion and prohibition on minting Core MCP authority. Production lifecycle ordering
+and authorization remain unchanged. All 24 affected native-driver/workflow/MCP tests and runtime
+type checking pass; an independent review confirms the correction.
+
+The exact test-only cleanup candidate passes the isolated all-provider helper in 121.820 seconds:
+726 tests pass, three Windows-only cases skip, and shared type checking plus all three provider
+checks/builds pass. All 348 source hashes remain unchanged and temporary staging is removed.

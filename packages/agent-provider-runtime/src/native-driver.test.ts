@@ -50,7 +50,9 @@ describe("native execution behind the public lifecycle", () => {
     const mcpToken = vi.fn(async () => { throw new Error("Workflow must not mint Core MCP authority."); }); f.authority.mcp = mcpToken;
     const command: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start", input: { text: "Business workflow" } };
     await f.controller.startRun(f.sessionId, id, command, JSON.stringify(command), actor);
-    await until(() => f.controller.snapshot(id), snapshot => snapshot.stopConfirmed);
+    // Native exit is durably published before the synchronization tail removes its workflow server.
+    await until(async () => ({ snapshot: await f.controller.snapshot(id), workflow: f.driver.mcp.workflow.target(id) }),
+      state => state.snapshot.stopConfirmed && state.workflow === undefined);
     expect(Object.keys(f.starts[0]!.mcpServers ?? {})).toEqual(["hosty-workflow"]); expect(mcpToken).not.toHaveBeenCalled();
     expect(f.driver.mcp.workflow.target(id)).toBeUndefined();
   });
