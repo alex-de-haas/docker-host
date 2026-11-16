@@ -75,6 +75,13 @@ and detailed windows/credits as Harness. The existing public usage operation ref
 account telemetry without a model prompt, so an empty consumer chat does not need a first message
 to populate its limits. Provider-owned settings use their own administrator-authenticated usage
 route and share the same revision-bound cache and refresh throttle.
+Codex ChatGPT sign-in reports the failed native phase and a bounded diagnostic code. Recognized
+upstream refusals include their HTTP status; native startup and timeout failures remain distinct.
+The UI and app logs expose only fixed categories and validated numeric/enum facts, never raw native
+error text, stderr, credentials or device codes. Failed sign-in preserves the previous connection
+revision and credentials. Temporary login storage is removed only after native process closure is confirmed. A bounded
+shutdown failure retains that storage and reports pending cleanup instead of blocking settings;
+provider shutdown retries the retained cleanup.
 Account sign-in, current-user activity and continuity remain independent for each provider app.
 Harness settings open Agent profiles; the former Agent providers tab is removed. Its historical
 `/settings/providers` bookmark opens Agent profiles. Accounts and sign-in are managed in each
@@ -449,6 +456,10 @@ releases and selected lock closures are described in the
 [repository release model](../repository-release-model/feature.md).
 
 ## Testing Expectations
+
+Codex sign-in coverage exercises native startup/exit, protocol rejection, timeout and invalid response
+paths, safe diagnostic propagation, cleanup after actual process exit, and preservation of an existing
+working account. A synthetic protocol check does not establish real OpenAI account authorization.
 
 - Core HTTP tests cover an empty/independent app boundary, exact operation/hash/install binding,
   current original authority, task chains, revoked grants, selected tools, pinned skill availability,

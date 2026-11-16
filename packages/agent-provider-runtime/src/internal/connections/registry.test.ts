@@ -15,7 +15,7 @@ import path from "node:path";
 import os from "node:os";
 import { AgentConnections } from "./registry.js";
 import type { ConnectionSecrets } from "./secrets.js";
-import { cleanAgentEnvironment } from "./codex-login.js";
+import { cleanAgentEnvironment, CodexLogin, CodexLoginError } from "./codex-login.js";
 import { captureEnv } from "../test-env.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -353,6 +353,48 @@ describe("provider connections", () => {
     expect(await secrets.get(previous.secretKey)).toContain(
       "synthetic-refresh",
     );
+  });
+
+  it.each(["reject-start", "invalid-start"])("explains %s without disclosing native details or replacing a working account", async mode => {
+    const connection = await registry.update({ name: "ChatGPT", kind: "codex", auth: "chatgpt" });
+    const initial = await registry.startLogin(connection.id);
+    await waitFor(() => registry.loginView(initial.id).status === "complete");
+    const previous = await registry.get(connection.id);
+    const credential = await secrets.get(previous.secretKey);
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+    process.env.TEST_LOGIN_MODE = mode;
+    const failed = await registry.startLogin(connection.id);
+    expect(failed.status).toBe("failed");
+    expect(failed.message).toContain(mode === "reject-start" ? "codex_login_rejected" : "codex_login_invalid_response");
+    if (mode === "reject-start") expect(failed.message).toContain("403");
+    const exposed = JSON.stringify({ failed, warnings: warnings.mock.calls });
+    expect(exposed).not.toContain("synthetic-private-login-detail");
+    expect(exposed).not.toContain("synthetic-refresh");
+    expect(exposed).not.toContain(root);
+    expect(exposed).not.toContain("enabled for your account");
+    expect(await registry.get(connection.id)).toEqual(previous);
+    expect(await secrets.get(previous.secretKey)).toBe(credential);
+    expect(await readdir(path.join(cache, "agent-logins"))).toEqual([]);
+    expect(warnings).toHaveBeenCalledOnce();
+  });
+
+  it("retains uncertain sign-in storage without blocking settings and retries cleanup on shutdown", async () => {
+    const connection = await registry.update({ name: "ChatGPT", kind: "codex", auth: "chatgpt" });
+    process.env.TEST_LOGIN_MODE = "reject-start";
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const close = vi.spyOn(CodexLogin.prototype, "closeAndWait").mockRejectedValueOnce(
+      new CodexLoginError({ code: "timeout", phase: "shutdown" }),
+    );
+    try {
+      const failed = await registry.startLogin(connection.id);
+      expect(failed).toMatchObject({ status: "failed" });
+      expect(failed.message).toContain("codex_login_rejected");
+      expect(failed.message).toContain("codex_login_cleanup_pending");
+      expect(await readdir(path.join(cache, "agent-logins"))).toEqual([failed.id]);
+      expect((await registry.list()).connections).toHaveLength(1);
+    } finally { close.mockRestore(); }
+    await registry.shutdown();
+    expect(await readdir(path.join(cache, "agent-logins"))).toEqual([]);
   });
 
   it("detects host-login account changes, including different members of the same workspace", async () => {
