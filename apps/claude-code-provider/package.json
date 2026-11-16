@@ -10,7 +10,7 @@
     "build": "node ../../packages/agent-provider-runtime/scripts/build.mjs claude-code-provider",
     "doctor": "node ../../packages/agent-provider-runtime/scripts/doctor.mjs claude",
     "lint": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "dependencies": {
     "@hosty/agent-provider-runtime": "*",
@@ -20,6 +20,22 @@
   "devDependencies": {
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "@types/node": "^24.19.2"
+    "@types/node": "^24.19.2",
+    "vitest": "^5.1.0"
+  },
+  "hostyAgentProvider": {
+    "external": [
+      "@anthropic-ai/claude-agent-sdk",
+      "@anthropic-ai/claude-agent-sdk/*"
+    ],
+    "assets": [
+      {
+        "source": "src/adapter/claude-child-history.mjs",
+        "target": "claude-child-history.mjs"
+      }
+    ],
+    "nativeTests": [
+      "test/native-controls.mjs"
+    ]
   }
 }

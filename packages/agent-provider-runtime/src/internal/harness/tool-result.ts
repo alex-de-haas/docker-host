@@ -23,7 +23,7 @@ function clippedText(text: string, limit: number): string {
 
 /** These results are either hidden routing or contain private setup/answer material. */
 export function shouldRetainToolOutput(toolName: string): boolean {
-  return !["ToolSearch", "AskUserQuestion", "hosty:development: environment_setup", "mcp__hosty-workspaces__environment_setup"].includes(toolName);
+  return !["hosty:development: environment_setup", "mcp__hosty-workspaces__environment_setup"].includes(toolName);
 }
 
 /** Rebuild the display payload at each persistence/transport boundary; never copy its envelope. */

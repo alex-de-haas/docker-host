@@ -1,3 +1,4 @@
+import { fixtureCapabilities } from "./test-support/provider.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -25,8 +26,8 @@ async function fixture(capacity = 4, sessionId: string = randomUUID()) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "hosty-provider-test-")); directories.push(dir); const skillsPath = path.join(dir, "skills"); await mkdir(skillsPath);
   const store = new ProviderStore(path.join(dir, "sessions"), provider); await store.initialize();
   const authority = { skills: vi.fn(async () => ({ id: "a".repeat(64), path: skillsPath, digest: "a".repeat(64), skills: [] })), admit: vi.fn(), renew: vi.fn() } as unknown as ProviderAuthority;
-  const connections = { binding: vi.fn(async () => ({ connectionId: "connection", connectionRevision: 1, harnessKind: "codex" })) } as unknown as AgentConnections;
-  const controller = new ProviderController(store, authority, connections, "codex", capacity);
+  const connections = { binding: vi.fn(async () => ({ connectionId: "connection", connectionRevision: 1, harnessKind: "fixture-engine" })) } as unknown as AgentConnections;
+  const controller = new ProviderController(store, authority, connections, fixtureCapabilities, capacity);
   const driver: ExecutionDriver = { start: vi.fn(async () => {}), cancel: vi.fn(async () => {}), respond: vi.fn(async () => {}), control: vi.fn(async () => {}), synchronize: vi.fn(async () => {}), close: vi.fn(async () => {}) }; controller.driver = driver;
   await controller.createSession(sessionId, create, JSON.stringify(create), actor);
   return { dir, store, authority, connections, controller, driver, sessionId };
@@ -115,8 +116,8 @@ describe("provider-owned assets and transport", () => {
     ] : ["account_a", "account_B", "account_c", "account_D", "account_b"];
     const f = await fixture(4, kind === "sessions" ? ids[0]! : randomUUID());
     f.connections.list = vi.fn(async () => ({ connections: ids.map(id => ({ id, revision: 1, name: id,
-      kind: "codex" as const, auth: "api-key" as const, secretKey: "agent.fixture", available: true })),
-      defaultId: ids[0]!, ollamaDefaultUrl: "" })) as typeof f.connections.list;
+      kind: "fixture-engine" as const, auth: "api-key" as const, secretKey: "agent.fixture", available: true })),
+      defaultId: ids[0]!, defaultBaseUrl: "" })) as typeof f.connections.list;
     const http = await httpClient(f);
     try {
       if (kind === "sessions") for (const id of ids) expect((await http.client.createSession(id, create)).ref.id).toBe(id);
@@ -143,7 +144,7 @@ describe("provider-owned assets and transport", () => {
   it("serves an unrelated SDK consumer through operation-bound HTTP and replay SSE", async () => {
     const f = await fixture(); const proofs = new Map<string, { method: string; path: string; bodyHash: string; operation: string; sessionId?: string; runId?: string }>();
     f.authority.introspect = vi.fn(async (token, operation, method, route, hash) => { const proof = proofs.get(token); expect(proof).toMatchObject({ operation, method, path: route, bodyHash: hash }); return { ...actor, operation, sessionId: proof?.sessionId, runId: proof?.runId }; });
-    f.connections.list = vi.fn(async () => ({ connections: [{ id: "connection", revision: 1, name: "Configured", kind: "codex" as const, auth: "api-key" as const, secretKey: "agent.fixture", available: true }], defaultId: "connection", ollamaDefaultUrl: "" })) as typeof f.connections.list;
+    f.connections.list = vi.fn(async () => ({ connections: [{ id: "connection", revision: 1, name: "Configured", kind: "fixture-engine" as const, auth: "api-key" as const, secretKey: "agent.fixture", available: true }], defaultId: "connection", defaultBaseUrl: "" })) as typeof f.connections.list;
     const route = agentRoutes(f.controller, new AttachmentStore(path.join(f.dir, "assets"), provider));
     const server = createServer((req, res) => { void route(req, res, new URL(req.url!, "http://test.invalid")).catch(error => json(res, error.status ?? 500, { error: { code: error.code, message: error.message, retryable: false } })); });
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); const address = server.address() as { port: number };

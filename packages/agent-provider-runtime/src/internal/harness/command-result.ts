@@ -61,26 +61,3 @@ export function commandTestSummary(output: unknown): string | undefined {
 function totals(passed: number, failed: number): string | undefined {
   return failed ? passed ? `${passed} passed · ${failed} failed` : `${failed} failed` : passed ? `${passed} passed` : undefined;
 }
-
-/** Verified from the pinned app-server v2 CommandExecution fields. */
-export function codexCommandResult(toolUseId: string, value: unknown): CommandResult | null {
-  const item = fields(value);
-  if (item.status === "declined") return null;
-  const exitCode = code(item.exitCode) ? item.exitCode : undefined;
-  const status = item.status === "completed" ? exitCode === undefined ? "unknown" : exitCode === 0 ? "completed" : "failed"
-    : item.status === "failed" ? "failed" : "unknown";
-  return sanitizeCommandResult({ type: "command_result", toolUseId, status,
-    ...(exitCode !== undefined ? { exitCode } : {}), ...(duration(item.durationMs) ? { durationMs: item.durationMs } : {}),
-    ...(status !== "unknown" ? { summary: commandTestSummary(item.aggregatedOutput) } : {}) });
-}
-
-/** BashOutput has interrupted/stdout/stderr, but no final exit code or duration in the shipped SDK. */
-export function claudeCommandResult(toolUseId: string, block: unknown, structured: unknown): CommandResult | null {
-  const result = fields(block), output = fields(structured);
-  const known = typeof output.stdout === "string" && typeof output.stderr === "string" && typeof output.interrupted === "boolean";
-  const background = typeof output.backgroundTaskId === "string" || output.backgroundedByUser === true || output.detachedToolCall === true;
-  const status = !known || background ? "unknown" : output.interrupted === true ? "cancelled"
-    : result.is_error === true ? "failed" : result.is_error === undefined || result.is_error === false ? "completed" : "unknown";
-  return sanitizeCommandResult({ type: "command_result", toolUseId, status,
-    ...(known && !background && status !== "unknown" ? { summary: commandTestSummary(output.stdout) } : {}) });
-}

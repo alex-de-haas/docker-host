@@ -1,4 +1,4 @@
-import { claudeMcpContextDetail, type McpContextDetail } from "./context-mcp.js";
+import type { McpContextDetail } from "./context-mcp.js";
 
 /** Latest context observation, never cumulative billed token usage. */
 export interface ContextUsage {
@@ -16,19 +16,6 @@ export function contextUsage(used: unknown, limit: unknown, estimated: boolean):
   if (!tokenCount(used)) return null;
   return { usedTokens: used, maxTokens: tokenCount(limit) && limit > 0 ? limit : null,
     estimated, observedAt: new Date().toISOString() };
-}
-
-export function codexContextUsage(value: unknown): ContextUsage | null {
-  const usage = value as { last?: { totalTokens?: unknown }; modelContextWindow?: unknown } | null;
-  // Cached input and reasoning output are already included in totalTokens.
-  return contextUsage(usage?.last?.totalTokens, usage?.modelContextWindow, true);
-}
-
-export function claudeContextUsage(value: unknown): ContextUsage | null {
-  const usage = value as { totalTokens?: unknown; maxTokens?: unknown } | null;
-  const snapshot = contextUsage(usage?.totalTokens, usage?.maxTokens, true);
-  const mcp = claudeMcpContextDetail(value);
-  return snapshot && mcp ? { ...snapshot, mcp } : snapshot;
 }
 
 /** One bounded diagnostic at a time; intermediate requests collapse into one fresh read. */

@@ -1,3 +1,4 @@
+import { fixtureCapabilities } from "../../../../packages/agent-provider-runtime/src/test-support/provider.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -35,9 +36,9 @@ async function fixture() {
     // Core's nullable optional fields are present in its real JSON invocation response.
     return { ...actor, ...request, provider, admissionRef: token, configurationDigest: request.configurationDigest ?? null } as unknown as VerifiedOperation;
   }), skills: vi.fn(async () => ({ id: "immutable-snapshot", path: directory, digest: "b".repeat(64), skills: [{ skillId, digest: "c".repeat(64) }] })) } as unknown as ProviderAuthority;
-  const connections = { binding: vi.fn(async () => ({ harnessKind: "ollama", connectionRevision: 1 })) } as unknown as AgentConnections;
+  const connections = { binding: vi.fn(async () => ({ harnessKind: "fixture-engine", connectionRevision: 1 })) } as unknown as AgentConnections;
   const store = new ProviderStore(path.join(directory, "sessions"), provider); await store.initialize();
-  const controller = new ProviderController(store, authority, connections, "ollama");
+  const controller = new ProviderController(store, authority, connections, fixtureCapabilities);
   const start = vi.fn(async () => {});
   controller.driver = { start, cancel: vi.fn(async () => {}), respond: vi.fn(async () => {}), control: vi.fn(async () => {}), synchronize: vi.fn(async () => {}), close: vi.fn(async () => {}) };
   const routes = agentRoutes(controller, new AttachmentStore(path.join(directory, "attachments"), provider));

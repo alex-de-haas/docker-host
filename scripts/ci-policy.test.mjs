@@ -38,7 +38,7 @@ test("web changes select their consumers and do not compile Core", () => {
 test("local agent changes select only their provider and shared runtime fans out independently", () => {
   for (const component of ["codex-provider", "claude-code-provider", "ollama-provider"])
     assertSelection([`apps/${component}/src/main.ts`], [component]);
-  assertSelection(["packages/agent-provider-runtime/src/native/codex.ts"], ["codex-provider", "claude-code-provider", "ollama-provider"]);
+  assertSelection(["packages/agent-provider-runtime/src/controller.ts"], ["codex-provider", "claude-code-provider", "ollama-provider"]);
   assertSelection(["apps/harness/src/provider-selection.ts"], ["harness"]);
 });
 

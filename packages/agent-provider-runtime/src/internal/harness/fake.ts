@@ -132,7 +132,7 @@ class FakeRun implements HarnessRun {
 
   // Echoes the answer back into the transcript, so a test can assert that the harness *acted on*
   // what the operator chose rather than merely that the card closed — the distinction that hid two
-  // near-miss bugs in the Codex adapter.
+  // near-miss bugs in native adapters.
   resolveQuestion(questionId: string, answers: Record<string, string>): boolean {
     const pending = this.pendingQuestions.get(questionId);
     if (!pending) {

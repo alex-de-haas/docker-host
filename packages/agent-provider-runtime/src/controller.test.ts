@@ -1,3 +1,4 @@
+import { fixtureCapabilities } from "./test-support/provider.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -20,8 +21,8 @@ async function fixture() {
   const store = new ProviderStore(path.join(dir, "sessions"), provider); await store.initialize();
   const authority = { skills: vi.fn(async () => ({ id: "a".repeat(64), path: skillPath, digest: "a".repeat(64), skills: [] })),
     admit: vi.fn(), renew: vi.fn() } as unknown as ProviderAuthority;
-  const connections = { binding: vi.fn(async () => ({ connectionId: "account", connectionRevision: 1, harnessKind: "codex" })) } as unknown as AgentConnections;
-  const controller = new ProviderController(store, authority, connections, "codex", 1);
+  const connections = { binding: vi.fn(async () => ({ connectionId: "account", connectionRevision: 1, harnessKind: "fixture-engine" })) } as unknown as AgentConnections;
+  const controller = new ProviderController(store, authority, connections, fixtureCapabilities, 1);
   const driver: ExecutionDriver = { start: vi.fn(async () => {}), cancel: vi.fn(async () => {}), respond: vi.fn(async () => {}),
     control: vi.fn(async () => {}), synchronize: vi.fn(async () => {}), close: vi.fn(async () => {}) };
   controller.driver = driver;

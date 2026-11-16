@@ -1,3 +1,4 @@
+import { fixtureCapabilities } from "./test-support/provider.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -123,7 +124,7 @@ describe("bounded public native projection", () => {
     f.record.snapshot.pending = []; f.record.snapshot.decisions![0]!.state = "unknown";
     f.record.controls[requestId] = { hash: "retained-command", decisionId: decision.id, decision, response, receipt: { requestId, run: f.record.snapshot.ref, revision: "1", state: "applied" } };
     await f.store.save(f.session);
-    const controller = new ProviderController(f.store, {} as never, {} as never, "claude"); controller.driver = { synchronize: async () => {} } as never;
+    const controller = new ProviderController(f.store, {} as never, {} as never, fixtureCapabilities); controller.driver = { synchronize: async () => {} } as never;
     const before = f.record.events.length;
     await expect(controller.snapshot(f.record.snapshot.ref.id, { ...actor, callerInstallation: "wrong-installation" })).rejects.toMatchObject({ status: 404 });
     expect((await f.store.run(f.record.snapshot.ref.id)).record.events).toHaveLength(before);

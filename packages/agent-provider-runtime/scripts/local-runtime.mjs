@@ -4,10 +4,10 @@ import { mkdir, readFile, writeFile, readdir, lstat, stat, rename, rm, rmdir, re
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { projectNpm } from '../../../scripts/npm-workspace.mjs';
+import { applicationSlug, commonAssets, providerBuildConfig } from './build-config.mjs';
 
 export const repository = fileURLToPath(new URL('../../../', import.meta.url));
-const slugs = ['codex-provider', 'claude-code-provider', 'ollama-provider'];
-const selected = slug => { if (!slugs.includes(slug)) throw new Error('Select a provider application directory.'); return slug; };
+const selected = applicationSlug;
 export const platformIdentity = () => ({ node: process.version, platform: process.platform, arch: process.arch });
 const canonical = value => JSON.stringify(value, null, 2) + '\n';
 const excluded = /(?:^|\/)(?:node_modules|dist|[^/]+\.(?:test|spec)\.[^/]+|__tests__)(?:\/|$)/;
@@ -75,10 +75,11 @@ export async function completeBundle(directory, key, slug) {
         await stat(target);
       } else if (!info.isFile() || info.size !== size) return false;
     }
+    const { assets } = await providerBuildConfig(directory, slug);
     const fonts = ['plex-sans', 'jetbrains-mono'].flatMap(family => [
       ...['latin', 'latin-ext', 'cyrillic'].map(subset => `fonts/${family}-${subset}.woff2`), `fonts/${family}-LICENSE.txt`,
     ]);
-    return ['main.mjs', 'native-runner.mjs', 'native-windows.mjs', 'windows-native-job.ps1', 'windows-native-job.cs', 'claude-child-history.mjs',
+    return ['main.mjs', ...commonAssets, ...assets.map(asset => asset.target),
       'settings-browser.mjs', 'hosty-theme.css', 'settings-bootstrap.js', 'settings.css', ...fonts]
       .every(file => receipt.files.some(([entry]) => entry === `apps/${slug}/dist/${file}`));
   } catch { return false; }

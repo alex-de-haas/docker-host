@@ -16,7 +16,7 @@ export function selectedProviders(plan) {
   return selected;
 }
 
-/** Preserve the exact lock graph, including both SDKs needed to typecheck the shared runtime.
+/** Preserve the exact lock graph for runtime and independently owned provider adapters.
  * No unrelated application, build output or node_modules from the checkout enters this install. */
 export async function stageProviderChecks(root, output) {
   const json = async file => JSON.parse(await readFile(path.join(root, file), 'utf8'));
@@ -51,6 +51,7 @@ export async function validateProviderChecks({ root, output, plan, execute = run
   await execute(['run', 'test', '--workspace', '@hosty/agent-provider-runtime'], output);
   for (const slug of providers) {
     await execute(['run', 'lint', '--workspace', `@hosty/${slug}`], output);
+    await execute(['run', 'test', '--workspace', `@hosty/${slug}`], output);
     await execute(['run', 'build', '--workspace', `@hosty/${slug}`], output);
   }
 }

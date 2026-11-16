@@ -1,3 +1,4 @@
+import { fixtureCapabilities } from "./test-support/provider.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import os from "node:os";
@@ -28,10 +29,10 @@ async function setup(block = false) {
       else { options.onEvent({ type: "assistant_delta", text: "Answer" }); options.onEvent({ type: "assistant_text", text: "Answer" }); options.onEvent({ type: "result", status: "success" }); }
     }, resolveApproval: () => true, resolveQuestion: vi.fn(() => true), setMcpServers: async () => true, interrupt: async () => {}, stop: async () => {}, stopAndWait: async () => { stops++; } };
   } };
-  const connections = { binding: vi.fn(async () => ({ connectionId: "connection", connectionRevision: 1, harnessKind: "claude" })),
-    reserve: async () => { claims++; return () => { claims--; }; }, adapter: async () => adapter, executionHome: async () => home, shutdown: async () => {} } as unknown as AgentConnections;
+  const connections = { binding: vi.fn(async () => ({ connectionId: "connection", connectionRevision: 1, harnessKind: "fixture-engine" })),
+    reserve: async () => { claims++; return () => { claims--; }; }, prepareAdapter: async () => adapter, executionHome: async () => home, shutdown: async () => {} } as unknown as AgentConnections;
   const authority = { admit: vi.fn(async () => ({})), renew: vi.fn(async () => ({})), skills: vi.fn(async () => { throw new Error("A plain request must not require skill-library authority."); }), workspace: vi.fn(async () => ({ state: "released" })) } as unknown as ProviderAuthority;
-  const controller = new ProviderController(store, authority, connections, "claude");
+  const controller = new ProviderController(store, authority, connections, fixtureCapabilities);
   const driver = new NativeExecution(controller, store, authority, connections, new AttachmentStore(path.join(directory, "assets"), provider), directory, () => "http://127.0.0.1:1");
   controller.driver = driver; await driver.initialize(); closers.push(() => controller.close());
   const sessionId = randomUUID(), input = { configuration: { connection: { id: "connection", revision: "1" } } };
