@@ -483,6 +483,8 @@ working account. A synthetic protocol check does not establish real OpenAI accou
   admissions, revocation recovery, foreign claim replacement and interrupted owned-release records.
   Provider regressions cover transient cleanup failure, lost replies, explicit release confirmation,
   reconstruction, concurrent cleanup and shutdown drain without native replay or snapshot-driven retry.
+- Harness context recovery tests subscribe before emission, await the exact committed context
+  notification, and verify durable event identities and offline recovery without resubmitting input.
 - SDK fixtures cover exact bytes, response identity, snapshot/replay boundaries, correlated child
   sources, bounded streams, duplicate controls and changed inputs/installations.
 - Provider tests cover lazy creation, strict resume, account/configuration compatibility, the fixed

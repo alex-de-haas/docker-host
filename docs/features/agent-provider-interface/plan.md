@@ -1825,3 +1825,18 @@ pending approvals, unknown-stop fencing and confirmed cancellation. Docker cold/
 7.589/6.656 seconds locally. Parent Finish confirms child resource removal, and the test process,
 ports, fixture data, credentials and build/snapshot directories are removed. Documentation, version
 and whitespace checks pass; D22 is verified on the integrated source. D5 and D6 remain open.
+
+### Harness Context Recovery CI Checkpoint (2026-11-16)
+
+The hosted candidate passes every check except Harness, where one offline-context recovery case
+exceeds the polling helper's one-second persistence deadline. A controlled 1.2-second delay of only
+the context transcript append reproduces the same assertion failure in both parameterized cases;
+the hosted runner's exact scheduling cause is not established. The test subscribes before emission
+and awaits the exact committed context notification before asserting its stored event count. The
+original usage, identity, reopen and no-resubmission assertions remain, with the existing overall
+test timeout and no production change.
+
+Both cases pass under the same controlled delay, and that diagnostic probe is removed. The full
+public-provider consumer suite passes 154 tests across 13 files; Harness type checking and diff
+checks pass. This test-only correction changes no runtime artifact version. The existing Codex
+review has no findings; exact-head CI remains the publication gate.
