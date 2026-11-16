@@ -371,7 +371,11 @@ architecture. The selected native SDK is included; unrelated providers, Next and
 excluded. Concurrent setup uses an owner lock and atomic publication. `start` imports the prepared
 executable; it does not install into the source checkout or prune another provider's dependencies.
 Older generations stay in place for their existing consumers. Source changes during preparation
-reject publication rather than mixing revisions.
+reject publication rather than mixing revisions. Published generation directories use a compact
+UUID name; the full input fingerprint stays in the pointer and bundle receipt. This avoids adding
+the 64-character fingerprint to native executable paths, which can exceed Windows process-launch
+limits even when npm successfully installs the same files in the shorter staging directory. Existing
+fingerprint-prefixed generations remain readable and are never renamed beneath active consumers.
 
 The three provider applications publish independent stable 0.1.0 releases through the
 [repository release model](../repository-release-model/feature.md). Public feeds select stable
@@ -488,6 +492,9 @@ working account. A synthetic protocol check does not establish real OpenAI accou
   identities, bounded history, metadata changes, native-close barriers and helper deadlines.
 - Local packaging tests cover concurrent independent providers, preserved source dependencies,
   cache reuse, source changes, damaged/failed generations and direct-SDK dependency selection.
+  Cover compact published paths, legacy generation pointers, malformed pointer rejection and actual
+  Windows native process launch from a prepared generation. Codex sign-in startup verification uses
+  the pinned npm wrapper with an empty isolated home and confirms initialization and shutdown.
   CI/release fixtures require a Codex-only SDK pin to leave Claude, Ollama and Harness unselected.
 - Cleanup fixtures cover both storage locks, exact inventory digests, changed/linked paths, foreign
   or unsettled execution metadata, interrupted/replayed deletion and preservation of unrelated data.
