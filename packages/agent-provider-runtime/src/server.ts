@@ -60,9 +60,10 @@ export function agentRoutes(controller: ProviderController, attachments: Attachm
   };
 }
 function page<T>(values: T[], cursor: string | undefined, limit = 50, id: (value: T) => string, key: string) {
-  values.sort((a, b) => id(a).localeCompare(id(b))); let after = "";
+  const compare = (a: string, b: string) => a === b ? 0 : a < b ? -1 : 1;
+  values.sort((a, b) => compare(id(a), id(b))); let after = "";
   if (cursor) { try { const value: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")); if (typeof value !== "string") throw new Error(); after = value; } catch { throw new AgentApiError("invalid_cursor", "Invalid page cursor.", 400); } }
-  const selected = values.filter(value => id(value) > after).slice(0, limit + 1), next = selected.length > limit; if (next) selected.pop();
+  const selected = values.filter(value => compare(id(value), after) > 0).slice(0, limit + 1), next = selected.length > limit; if (next) selected.pop();
   return { [key]: selected, nextCursor: next ? Buffer.from(JSON.stringify(id(selected.at(-1)!))).toString("base64url") : null };
 }
 async function eventStream(controller: ProviderController, request: IncomingMessage, response: ServerResponse, id: string, actor: VerifiedOperation, after: string | undefined, revalidate: () => Promise<unknown>) {

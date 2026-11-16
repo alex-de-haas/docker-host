@@ -1610,3 +1610,24 @@ a reported test failure or final count. A diagnostic stack shows Git-backed work
 in the owned test host; it does not establish the cause of the longer macOS duration. All owned
 runner/host processes exit after graceful cancellation. This incomplete run is not a pass; the
 corrected full Core suite remains required in GitHub CI. D5, D6 and D11 remain open.
+
+### Hosted Core Qualification And Pagination Review (2026-11-16)
+
+The corrected PR CI attempt 2912 passes all 26 jobs in 18 minutes 36 seconds on the reviewed
+source. The full hosted Core suite passes 5,052 tests with seven platform/opt-in skips and no
+failures, satisfying the earlier full-suite verification boundary. macOS NativeAOT with paired
+update verification remains the critical path at 18 minutes 7 seconds; providers take 2 minutes
+30 seconds and Harness takes 5 minutes 41 seconds. The additional cancelled local macOS run
+remains explicitly incomplete. These runs do not establish Linux/Windows provider end-to-end
+acceptance or production release publication.
+
+The remaining pagination review is reproduced through the public HTTP/SDK path: mixed-case IDs
+lose two of five entries with a page size of one. Connection and session lists now share one
+ordinal comparator for sorting and cursor advancement, without changing identifier case. Two
+regressions require complete enumeration, unique cursor roundtrips and existing invalid-cursor
+bounds; the affected provider/surface/store batch passes 22 tests and runtime type checking.
+
+The final isolated pagination candidate passes the actual all-provider CI helper in 125.610
+seconds: 726 passing tests, three Windows-only skips, shared runtime type checking and all three
+provider checks/builds. All 348 source input hashes remain unchanged and temporary staging is
+removed. The PR candidate retains the previously approved artifact versions.

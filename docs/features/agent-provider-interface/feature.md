@@ -1,6 +1,6 @@
 ---
 created: 2026-11-12
-updated: 2026-11-15
+updated: 2026-11-16
 summary: Independent Local agent apps expose installation-qualified HTTP/SSE execution with provider-owned native state and Core-scoped authority.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -109,6 +109,9 @@ The unauthenticated `/healthz` endpoint reports service liveness only.
 | `POST /runs/{uuid}/cancel` | Cancellation or a lost-start admission fence |
 | `POST /runs/{uuid}/controls` | Capability-gated park, barrier, reconciliation or configuration control |
 | `GET /runs/{uuid}/controls/{requestId}` | Durable control receipt |
+
+Connection and session lists use the same ordinal ID ordering for sorting and cursor advancement.
+Pagination preserves opaque IDs and their case; mixed-case IDs remain reachable across pages.
 
 The TypeScript SDK exports types from `@hosty-sdk/app/agent`, `AgentClient` and exact-byte preparation
 helpers from `/agent/client`, validators/SSE helpers from `/agent/server`, and schemas from
@@ -432,6 +435,8 @@ releases and selected lock closures are described in the
   five-minute parking deadline with a controlled clock, revised next-turn delivery, lost
   admission/cancellation races, interrupted storage, decision delivery, process evidence and stdin
   protocol preservation. Unknown native stop or tool effects keep the slot occupied.
+- HTTP/SDK pagination tests enumerate mixed-case session and connection IDs one page at a time,
+  requiring complete results, unique cursors and bounded invalid-cursor rejection.
 - Native transport fixtures exercise multi-MiB synchronous stdout/stderr, paused consumers,
   notifications before acknowledgments, duplex requests, terminal output drain, stubborn descendants
   and producer crashes. Cancellation fixtures cover rejected/hung interrupts, exact turn identity,

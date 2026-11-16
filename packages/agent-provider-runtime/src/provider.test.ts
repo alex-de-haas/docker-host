@@ -5,7 +5,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { AgentClient } from "@hosty-sdk/app/agent/client";
-import type { AgentRunInput, AgentSessionCreate } from "@hosty-sdk/app/agent";
+import type { AgentAuthorizationRequest, AgentRunInput, AgentSessionCreate } from "@hosty-sdk/app/agent";
 import type { AgentConnections } from "./internal/connections/registry.js";
 import type { ProviderAuthority } from "./core.js";
 import { ProviderController, type ExecutionDriver } from "./controller.js";
@@ -21,14 +21,14 @@ const actor: VerifiedOperation = { userId: "user", principalId: "original-princi
 const configuration = { connection: { id: "connection", revision: "1" }, skills: [{ skillId: "f".repeat(64) }] };
 const create: AgentSessionCreate = { configuration };
 const input = (revision: string): AgentRunInput => ({ expectedSessionRevision: revision, configurationRevision: "1", continuation: "start", input: { text: "Hello" } });
-async function fixture(capacity = 4) {
+async function fixture(capacity = 4, sessionId: string = randomUUID()) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "hosty-provider-test-")); directories.push(dir); const skillsPath = path.join(dir, "skills"); await mkdir(skillsPath);
   const store = new ProviderStore(path.join(dir, "sessions"), provider); await store.initialize();
   const authority = { skills: vi.fn(async () => ({ id: "a".repeat(64), path: skillsPath, digest: "a".repeat(64), skills: [] })), admit: vi.fn(), renew: vi.fn() } as unknown as ProviderAuthority;
   const connections = { binding: vi.fn(async () => ({ connectionId: "connection", connectionRevision: 1, harnessKind: "codex" })) } as unknown as AgentConnections;
   const controller = new ProviderController(store, authority, connections, "codex", capacity);
   const driver: ExecutionDriver = { start: vi.fn(async () => {}), cancel: vi.fn(async () => {}), respond: vi.fn(async () => {}), control: vi.fn(async () => {}), synchronize: vi.fn(async () => {}), close: vi.fn(async () => {}) }; controller.driver = driver;
-  const sessionId = randomUUID(); await controller.createSession(sessionId, create, JSON.stringify(create), actor);
+  await controller.createSession(sessionId, create, JSON.stringify(create), actor);
   return { dir, store, authority, connections, controller, driver, sessionId };
 }
 describe("independent provider admission", () => {
@@ -79,6 +79,23 @@ describe("independent provider admission", () => {
     await f.controller.close();
   });
 });
+async function httpClient(f: Awaited<ReturnType<typeof fixture>>) {
+  const proofs = new Map<string, AgentAuthorizationRequest>();
+  f.authority.introspect = vi.fn(async (token, operation, method, route, hash) => {
+    const proof = proofs.get(token); expect(proof).toMatchObject({ operation, method, path: route, bodyHash: hash });
+    return { ...actor, operation, sessionId: proof?.sessionId, runId: proof?.runId };
+  });
+  const route = agentRoutes(f.controller, new AttachmentStore(path.join(f.dir, "assets"), provider));
+  const server = createServer((req, res) => { void route(req, res, new URL(req.url!, "http://test.invalid"))
+    .catch(error => json(res, error.status ?? 500, { error: { code: error.code, message: error.message, retryable: false } })); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/agent/v1`;
+  const client = new AgentClient({ provider, authorize: async request => {
+    const token = randomUUID(); proofs.set(token, request);
+    return { provider, baseUrl, token, expiresAt: new Date(Date.now() + 120000).toISOString() };
+  } });
+  return { client, baseUrl, close: async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } };
+}
 describe("provider-owned assets and transport", () => {
   it("publishes immutable exact attachment bytes and hides another consumer's assets", async () => {
     const f = await fixture(), store = new AttachmentStore(path.join(f.dir, "assets"), provider), id = randomUUID(), bytes = Buffer.from("A user-owned document");
@@ -87,6 +104,41 @@ describe("provider-owned assets and transport", () => {
     await expect(store.chunk(id, 0, { ...chunk, data: Buffer.from("B user-owned document").toString("base64") }, actor)).rejects.toMatchObject({ code: "request_conflict" });
     await expect(store.resolve(result.attachment!, { ...actor, userId: "another" })).rejects.toMatchObject({ status: 404 });
     const file = await store.resolve(result.attachment!, actor); await writeFile(file, "corrupted"); await expect(store.resolve(result.attachment!, actor)).rejects.toMatchObject({ code: "attachment_unavailable" });
+  });
+  it.each(["sessions", "connections"] as const)("paginates mixed-case %s identities through HTTP without omissions or duplicates", async kind => {
+    const ids = kind === "sessions" ? [
+      "0000000a-0000-4000-8000-000000000001",
+      "0000000B-0000-4000-8000-000000000002",
+      "0000000c-0000-4000-8000-000000000003",
+      "0000000D-0000-4000-8000-000000000004",
+      "0000000b-0000-4000-8000-000000000005",
+    ] : ["account_a", "account_B", "account_c", "account_D", "account_b"];
+    const f = await fixture(4, kind === "sessions" ? ids[0]! : randomUUID());
+    f.connections.list = vi.fn(async () => ({ connections: ids.map(id => ({ id, revision: 1, name: id,
+      kind: "codex" as const, auth: "api-key" as const, secretKey: "agent.fixture", available: true })),
+      defaultId: ids[0]!, ollamaDefaultUrl: "" })) as typeof f.connections.list;
+    const http = await httpClient(f);
+    try {
+      if (kind === "sessions") for (const id of ids) expect((await http.client.createSession(id, create)).ref.id).toBe(id);
+      const list = async (query: { cursor?: string; limit?: number }) => {
+        if (kind === "sessions") { const page = await http.client.sessions(query); return { ids: page.sessions.map(session => session.ref.id), nextCursor: page.nextCursor }; }
+        const page = await http.client.connections(query); return { ids: page.connections.map(connection => connection.id), nextCursor: page.nextCursor };
+      };
+      const seen: string[] = [], cursors = new Set<string>();
+      let cursor: string | undefined;
+      for (let pageIndex = 0; pageIndex <= ids.length; pageIndex++) {
+        const page = await list({ limit: 1, cursor }); expect(page.ids).toHaveLength(1); seen.push(...page.ids);
+        if (page.nextCursor === null) { cursor = undefined; break; }
+        expect(cursors.has(page.nextCursor)).toBe(false); cursors.add(page.nextCursor); cursor = page.nextCursor;
+      }
+      expect(cursor).toBeUndefined();
+      expect(seen).toEqual([ids[1], ids[3], ids[0], ids[4], ids[2]]);
+      expect(new Set(seen).size).toBe(ids.length);
+      for (const malformed of ["not-json", Buffer.from(JSON.stringify({ id: ids[0] })).toString("base64url")])
+        await expect(list({ limit: 1, cursor: malformed })).rejects.toMatchObject({ code: "invalid_cursor", status: 400 });
+      const tooLong = await fetch(`${http.baseUrl}/${kind}?limit=1&cursor=${"a".repeat(8193)}`, { headers: { authorization: "Bearer bounded-query" } });
+      expect(tooLong.status).toBe(400); expect(await tooLong.json()).toMatchObject({ error: { code: "invalid_input" } });
+    } finally { await http.close(); }
   });
   it("serves an unrelated SDK consumer through operation-bound HTTP and replay SSE", async () => {
     const f = await fixture(); const proofs = new Map<string, { method: string; path: string; bodyHash: string; operation: string; sessionId?: string; runId?: string }>();
