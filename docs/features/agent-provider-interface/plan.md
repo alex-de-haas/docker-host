@@ -1579,3 +1579,34 @@ The publication candidate integrates current main with a regular merge, preservi
 retirement and moving its updated Hono and Node adapter versions into the actual provider lock
 closure. The isolated CI helper passes again on this integrated source in 121.439 seconds with
 716 passing tests, three Windows-only skips and all three provider checks/builds.
+
+### Initial GitHub Qualification And Corrective Checks (2026-11-16)
+
+The first PR CI attempt runs all selected components. Every build, provider/Harness check and all
+four NativeAOT jobs pass; the required aggregate correctly fails on eight Core test failures.
+The complete attempt takes 19 minutes 49 seconds, with macOS NativeAOT plus paired-update
+verification on the critical path at 19 minutes 15 seconds. Providers take 2 minutes 25 seconds
+and Harness takes 5 minutes 41 seconds. The nearest main Harness run takes 5 minutes 23 seconds
+with a different installation-cache result; this comparison does not demonstrate an overall CI
+speedup or measure a production Docker release build.
+
+The corrective batch replaces stale Harness runtime and MCP wire expectations, adds valid
+candidate manifests to activation fixtures, and isolates retained recipe read failures from
+ordinary candidate-source availability on Linux. Valid aggregate recipes continue to bypass
+obsolete legacy metadata. The affected local batches pass 33 contract/manifest cases, 10
+activation cases and 21 inventory/source-availability cases.
+
+Accepted PR findings also correct bounded opaque connection IDs and complete replacement of
+run-owned MCP policy. Eight focused MCP regressions cover removed exceptions, automatic guard
+invalidation, manual approval continuity, independent runs and concurrent catalog/configuration
+updates. A full projected provider run reports one existing Ollama event-wait timeout; the exact
+test passes three isolated repeats and its complete 39-test file without source changes. The
+cause is not established. The clean final helper subsequently passes all 724 tests with three
+Windows-only skips and all three provider checks/builds in 122.824 seconds. All 348 input hashes
+remain unchanged and the temporary projection is removed.
+
+An additional unfiltered local Core run is deliberately cancelled after 1,382.533 seconds without
+a reported test failure or final count. A diagnostic stack shows Git-backed workspace preparation
+in the owned test host; it does not establish the cause of the longer macOS duration. All owned
+runner/host processes exit after graceful cancellation. This incomplete run is not a pass; the
+corrected full Core suite remains required in GitHub CI. D5, D6 and D11 remain open.

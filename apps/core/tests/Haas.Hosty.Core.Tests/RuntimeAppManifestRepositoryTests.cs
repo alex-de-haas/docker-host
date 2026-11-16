@@ -28,7 +28,7 @@ public sealed class RuntimeAppManifestRepositoryTests
     }
 
     [Fact]
-    public async Task Harness_DefaultsToDockerAndPreservesExplicitLocalSelection()
+    public async Task Harness_UsesOneDockerServiceAndKeepsLocalExecutionDevelopmentOnly()
     {
         var path = Path.Combine(FindRepositoryRoot(), "apps", "harness", "manifest.json");
         var manifests = new AppManifestService();
@@ -37,14 +37,15 @@ public sealed class RuntimeAppManifestRepositoryTests
         Assert.Equal("docker", initial.RuntimeProfile.Type);
         Assert.False(initial.RuntimeProfile.Development);
         Assert.Null(initial.Manifest.AgentWorker);
-        Assert.Equal(2, initial.Services.Count);
-        Assert.False(initial.Services.Single(s => s.Key == "worker").Injection!.AppServiceToken);
-        var local = await manifests.LoadAsync(path, "local");
+        Assert.Equal("api", Assert.Single(initial.Services).Key);
+        var local = await manifests.LoadAsync(path, "dev");
         Assert.Equal("localCommand", local.RuntimeProfile.Type);
-        Assert.False(local.RuntimeProfile.Development);
+        Assert.True(local.RuntimeProfile.Development);
         Assert.All(local.Services, service => Assert.Equal("native", service.Runtime.Environment["HOSTY_HARNESS_RUNTIME"]));
-        Assert.True((await manifests.LoadAsync(path, "dev")).RuntimeProfile.Development);
-        Assert.Equal("local", (await manifests.LoadAsync(path, "local", forceRead: true)).RuntimeProfile.Key);
+        var dockerDev = await manifests.LoadAsync(path, "docker-dev");
+        Assert.Equal("docker", dockerDev.RuntimeProfile.Type);
+        Assert.True(dockerDev.RuntimeProfile.Development);
+        await Assert.ThrowsAsync<AppManifestException>(() => manifests.LoadAsync(path, "local", forceRead: true));
     }
 
     [Fact]

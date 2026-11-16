@@ -122,6 +122,44 @@ public sealed class CoreAgentProviderHttpTests
     }
 
     [Theory]
+    [InlineData("connections.usage", "usage")]
+    [InlineData("connections.models", "models")]
+    public async Task ConnectionMetadataAuthorizesTheBoundedPublicOpaqueIdContract(string operation, string suffix)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var now = DateTimeOffset.UtcNow;
+        await host.Services.GetRequiredService<UserDirectoryStore>().WriteAsync(new(1,
+            [new("owner", "owner@example.test", "Owner", "host.admin", false, now, now)], [], [], []));
+        var consumer = Record("unrelated.consumer", now) with { GrantedCorePermissions = [CoreAppPermissions.AgentProviders] };
+        var provider = Record("independent.provider", now) with { RuntimeState = "running", ConfirmedRoles = ["agent"],
+            Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v1", 1, [])] } };
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await apps.UpsertAppAsync(consumer); await apps.UpsertAppAsync(provider);
+        var credential = await BrowserAuthorityFixture.Grant(host, consumer.Id, "owner");
+        using var http = host.CreateClient();
+        http.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(consumer.Id));
+        http.DefaultRequestHeaders.Add("X-Hosty-User-Token", credential.AccessToken);
+        foreach (var id in new[] { "account_one-A9", "_", new string('a', 256), "", new string('a', 257), "account/one", "account%2Fone", "account.one", "account one", "аккаунт" })
+        {
+            var valid = id is "account_one-A9" or "_" || id.Length == 256;
+            var input = new CoreAgentAuthorizeRequest(new(provider.Id, PanelIdentity.Installation(provider), "native"),
+                operation, "GET", $"/connections/{id}/{suffix}", new string('0', 64));
+            using var response = await http.PostAsJsonAsync($"/api/internal/apps/{consumer.Id}/agent/authorize", input);
+            Assert.Equal(valid ? HttpStatusCode.OK : HttpStatusCode.BadRequest, response.StatusCode);
+            if (valid)
+            {
+                var binding = (await response.Content.ReadFromJsonAsync<JsonElement>()).Deserialize(CoreJson.TypeInfo<CoreAgentBinding>())!;
+                var actor = await host.Services.GetRequiredService<CoreAgentExecution>().Introspect(provider,
+                    new(binding.Token, operation, "GET", input.Path, input.BodyHash), default);
+                Assert.Equal(consumer.Id, actor.CallerAppId);
+            }
+            else
+                Assert.Contains("invalid_input", await response.Content.ReadAsStringAsync());
+        }
+    }
+
+    [Theory]
     [InlineData("cancelled")]
     [InlineData("failed")]
     [InlineData("completed")]

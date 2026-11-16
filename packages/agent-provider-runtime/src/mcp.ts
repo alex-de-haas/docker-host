@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AgentMcpSelection, AgentMcpTarget } from "@hosty-sdk/app/agent";
+import type { AgentMcpPolicy, AgentMcpSelection, AgentMcpTarget } from "@hosty-sdk/app/agent";
 import { AgentApiError } from "@hosty-sdk/app/agent";
 import { McpProxy } from "./internal/mcp/proxy.js";
 import { McpToolPolicy } from "./internal/mcp/policy.js";
@@ -19,7 +19,14 @@ export class ProviderMcp {
   constructor(private readonly authority: ProviderAuthority, private readonly origin: () => string,
     notify: (runId: string, event: { type: "approval_request"; approvalId: string; toolName: string; input: unknown }) => Promise<void>,
     settled: (runId: string, id: string, tool: string, allowed: boolean, automatic: boolean) => Promise<void>) {
-    this.policy = new McpToolPolicy({ read: async () => structuredClone(this.preferences), transform: async change => { this.preferences = { ...this.preferences, ...await change(structuredClone(this.preferences)) }; return structuredClone(this.preferences); } }, notify, settled, 24 * 60 * 60 * 1000, runId => this.autonomous.has(runId));
+    this.policy = new McpToolPolicy({ read: async () => structuredClone(this.preferences), transform: async change => {
+      for (;;) {
+        const previous = this.preferences, patch = await change(structuredClone(previous));
+        // Discovery must not restore exceptions from before a concurrent policy replacement.
+        if (this.preferences !== previous) continue;
+        this.preferences = { ...previous, ...patch }; return structuredClone(this.preferences);
+      }
+    } }, notify, settled, 24 * 60 * 60 * 1000, runId => this.autonomous.has(runId));
     this.workflow = new ProviderWorkflow(authority, notify, settled);
     this.proxy = new McpProxy(async (runId, key) => {
       const target = this.targets.get(key); if (!target || target.runId !== runId) return null;
@@ -35,17 +42,28 @@ export class ProviderMcp {
   }
   async configure(runId: string, admissionRef: string, selection: AgentMcpSelection | undefined, autonomous: boolean): Promise<{ servers: Record<string, unknown>; prefixes: string[] }> {
     if (selection?.connections?.length) throw new AgentApiError("unsupported_capability", "External MCP connections must be configured by this provider; arbitrary URLs and commands are not accepted.", 422);
-    const nextPreferences = structuredClone(this.preferences), prepared: Array<{ key: string; target: Target }> = [];
+    const prepared: Array<{ key: string; target: Target; policy?: AgentMcpPolicy }> = [];
     const targets = [];
     const keys = new Set<string>();
     for (const selected of selection?.targets ?? []) {
       const key = "target_" + createHash("sha256").update(JSON.stringify([runId, mcpTargetKey(selected.target)])).digest("hex").slice(0, 24);
       const minted = await this.authority.mcp(admissionRef, selected.target, selected.tools);
-      const identity = mcpTargetKey(selected.target);
-      (nextPreferences.mcpDefaults ??= {})[key] = { identity, mode: selected.policy?.default ?? "ask" };
-      nextPreferences.mcpAutoAllow[key] = selected.policy?.autoAllowReadOnly === true;
-      for (const [name, rule] of Object.entries(selected.policy?.tools ?? {})) (nextPreferences.mcpToolRules ??= {})[JSON.stringify([key, name])] = { identity, mode: rule.mode === "run" && !rule.definition ? "ask" : rule.mode, definition: rule.definition };
-      prepared.push({ key, target: { runId, admissionRef, ...selected } }); keys.add(key); targets.push({ appId: key, url: minted.url });
+      prepared.push({ key, target: { runId, admissionRef, target: selected.target, tools: selected.tools }, policy: selected.policy });
+      keys.add(key); targets.push({ appId: key, url: minted.url });
+    }
+    // A configuration replaces this run's policy, including removed exceptions and derived grants.
+    // Wait for every credential before changing policy, and preserve other runs' latest preferences.
+    const nextPreferences = structuredClone(this.preferences);
+    const replaced = new Set([...this.targets].filter(([, target]) => target.runId === runId).map(([key]) => key).concat([...keys]));
+    for (const key of replaced) { delete nextPreferences.mcpDefaults?.[key]; delete nextPreferences.mcpAutoAllow[key]; }
+    for (const rule of Object.keys(nextPreferences.mcpToolRules ?? {}))
+      if (replaced.has((JSON.parse(rule) as [string, string])[0])) delete nextPreferences.mcpToolRules![rule];
+    nextPreferences.mcpPolicyMigrated = nextPreferences.mcpPolicyMigrated?.filter(marker => !marker.startsWith("provider:") || !replaced.has(marker.slice("provider:".length)));
+    for (const { key, target, policy } of prepared) {
+      const identity = mcpTargetKey(target.target);
+      (nextPreferences.mcpDefaults ??= {})[key] = { identity, mode: policy?.default ?? "ask" };
+      nextPreferences.mcpAutoAllow[key] = policy?.autoAllowReadOnly === true;
+      for (const [name, rule] of Object.entries(policy?.tools ?? {})) (nextPreferences.mcpToolRules ??= {})[JSON.stringify([key, name])] = { identity, mode: rule.mode === "run" && !rule.definition ? "ask" : rule.mode, definition: rule.definition };
     }
     this.preferences = nextPreferences;
     if (autonomous) this.autonomous.add(runId); else this.autonomous.delete(runId);

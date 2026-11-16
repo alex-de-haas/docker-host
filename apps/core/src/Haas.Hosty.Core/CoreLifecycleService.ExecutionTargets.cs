@@ -62,8 +62,13 @@ internal sealed partial class CoreLifecycleService
             var resolved = await ResolveWorkspaceTreeAsync(app, workspace.Id, allowed.Select(t => t.Id).ToArray(),
                 null, currentWorktreeId, ct);
             var tree = allowed.SingleOrDefault(t => t.Id == resolved.WorktreeId);
+            // Retained recipe failures invalidate this app's state, not merely its candidate source.
+            // Read outside the availability catch and retain an absent result without rereading it.
+            var legacyRecipe = tree is not null && resolved.Runtime is null
+                ? await JsonStorage.ReadAsync<WorkspaceExecutionRecipe>(WorkspaceRecipePath(app.Id, tree.Id), ct) : null;
             string? recipe = null;
-            try { if (tree is not null) recipe = await ReadWorkspaceRecipeAsync(app, tree.Id, ct, resolved.Runtime); }
+            try { if (tree is not null) recipe = await ReadWorkspaceRecipeAsync(app, tree.Id, ct,
+                resolved.Runtime, legacyRecipe, legacyRecipeRead: true); }
             catch (Exception error) when (error is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException)
             { /* An unavailable candidate must not remove the installed package's Return choice. */ }
             var reason = tree is null ? resolved.Unavailable
@@ -84,7 +89,7 @@ internal sealed partial class CoreLifecycleService
         AppExecutionStore.DirectoryFor(paths, appId), "recipes", treeId + ".json");
 
     private async Task<string?> ReadWorkspaceRecipeAsync(AppRecord app, string treeId, CancellationToken ct,
-        string? configured = null)
+        string? configured = null, WorkspaceExecutionRecipe? legacyRecipe = null, bool legacyRecipeRead = false)
     {
         var tree = await DevWorkspaces.Read(treeId, null, ct);
         await DevWorkspaces.CheckDevTreeAsync(tree, app, tree.Owner, ct);
@@ -95,7 +100,8 @@ internal sealed partial class CoreLifecycleService
         if (configured is not null)
             return profiles.Any(p => p.Key == configured)
                 ? (await LoadWorkspaceDevelopmentRecipeAsync(app, tree.Path, configured, ct)).RuntimeProfile.Key : null;
-        var recipe = await JsonStorage.ReadAsync<WorkspaceExecutionRecipe>(WorkspaceRecipePath(app.Id, treeId), ct);
+        var recipe = legacyRecipeRead ? legacyRecipe
+            : await JsonStorage.ReadAsync<WorkspaceExecutionRecipe>(WorkspaceRecipePath(app.Id, treeId), ct);
         var runtime = recipe?.Installation == app.InstalledAt && profiles.Any(p => p.Key == recipe.Runtime) ? recipe.Runtime
             : profiles.FirstOrDefault(p => p.Default)?.Key ?? profiles.FirstOrDefault(p => p.Key == "dev")?.Key
             ?? (profiles.Length == 1 ? profiles[0].Key : null);

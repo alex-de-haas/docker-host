@@ -12,6 +12,39 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecutionInventory_CurrentAggregateDoesNotReadObsoleteLegacyRecipe(bool directory)
+    {
+        var (f, owner, workspaces, tree, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, tree);
+        const string appId = "test.created";
+        await f.Service.ConfigureWorkspaceRecipeAsync(tree.WorkspaceId,
+            new(Guid.NewGuid().ToString(), appId, tree.Id, "dev"), owner.UserId, null, default);
+        var aggregatePath = Path.Combine(AppExecutionStore.DirectoryFor(f.Paths, appId),
+            "workspace-recipes", tree.WorkspaceId + ".json");
+        var aggregate = await File.ReadAllTextAsync(aggregatePath);
+        var legacyPath = Path.Combine(AppExecutionStore.DirectoryFor(f.Paths, appId), "recipes", tree.Id + ".json");
+        Directory.CreateDirectory(Path.GetDirectoryName(legacyPath)!);
+        if (directory) Directory.CreateDirectory(legacyPath);
+        else await File.WriteAllTextAsync(legacyPath, "{ unreadable");
+        var app = CoreJson.Text((await f.Apps.GetAppAsync(appId))!);
+        var inventory = await new WorkspaceInspectionService(workspaces, f.Apps, f.Clock).ListAsync(owner.UserId, default);
+
+        var targets = await f.Service.ReadExecutionTargetsAsync(appId, inventory, default);
+
+        Assert.Contains(targets.Choices, choice => choice.Kind == "package" && choice.Runtime == "docker" && choice.Available);
+        Assert.Contains(targets.Choices, choice => choice.Kind == "workspace" && choice.WorktreeId == tree.Id
+            && choice.Runtime == "dev" && choice.Available);
+        Assert.Equal(aggregate, await File.ReadAllTextAsync(aggregatePath));
+        if (directory) Assert.True(Directory.Exists(legacyPath));
+        else Assert.Equal("{ unreadable", await File.ReadAllTextAsync(legacyPath));
+        Assert.Equal(app, CoreJson.Text((await f.Apps.GetAppAsync(appId))!));
+        Assert.Equal(0, f.Adapter.StartCount);
+        Assert.Equal(0, f.Adapter.StopCount);
+    }
+
+    [Theory]
     [InlineData("aggregate-json")]
     [InlineData("aggregate-incomplete")]
     [InlineData("dev-missing")]
