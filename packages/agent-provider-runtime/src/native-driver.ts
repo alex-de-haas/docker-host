@@ -39,6 +39,7 @@ export class NativeExecution implements ExecutionDriver {
   private subscriptions = new Map<string, () => void>();
   private requests = new WeakMap<WorkerRunRequest, string>();
   private pendingSync = new Map<string, Promise<void>>();
+  private pendingCleanup = new Map<string, Promise<void>>();
   private syncAgain = new Set<string>();
   private timer?: NodeJS.Timeout;
   private maintenance?: Promise<void>;
@@ -254,6 +255,8 @@ export class NativeExecution implements ExecutionDriver {
           }
         } catch { await this.cancel(id, stableUuid(`${id}:authority-expired`)).catch(() => {}); }
       }
+      if (record.input && record.snapshot.stopConfirmed && !record.reservedFor && record.workspaceRelease?.state !== "released")
+        await this.cleanup(id, true).catch(() => {});
       await this.parkOverdueQuestion(id).catch(() => {});
       if (record.snapshot.pending.length) await this.decisions(session, record).catch(() => {});
       if (record.decisionLinks || record.decisionDeliveries || record.snapshot.pending.length) await syncDecisionDeliveries(this.store, this.controller, this.authority, id).catch(() => {});
@@ -295,13 +298,39 @@ export class NativeExecution implements ExecutionDriver {
       await syncDecisionDeliveries(this.store, this.controller, this.authority, id);
     }
   }
-  private async cleanup(id: string): Promise<void> {
+  private cleanup(id: string, retryPending = false): Promise<void> {
     this.mcp.close(id);
-    const { record } = await this.store.run(id);
-    await this.authority.workspace(record.admissionRef, "release_all", { requestId: stableUuid(`${id}:release-all`) }).catch(() => {});
-    this.processes.delete(id);
+    const old = this.pendingCleanup.get(id); if (old) return old;
+    const task = this.releaseWorkspace(id, retryPending).finally(() => { if (this.pendingCleanup.get(id) === task) this.pendingCleanup.delete(id); });
+    this.pendingCleanup.set(id, task); return task;
   }
-  async close(): Promise<void> { this.closing = true; clearInterval(this.timer); await this.engine.close("Provider is shutting down."); await Promise.allSettled([...this.pendingSync.values()]); for (const dispose of this.subscriptions.values()) dispose(); await this.connections.shutdown(); }
+  private async releaseWorkspace(id: string, retryPending: boolean): Promise<void> {
+    const intent = await this.store.exclusive(async () => {
+      const { session, record } = await this.store.run(id);
+      // Reservation/cancel-fence placeholders never admitted an execution or acquired its leases.
+      if (!record.input || !record.snapshot.stopConfirmed || record.reservedFor) return null;
+      const fresh = !record.workspaceRelease;
+      if (fresh) {
+        record.workspaceRelease = { requestId: stableUuid(`${id}:release-all`), state: "pending" };
+        await this.store.save(session);
+      }
+      return { admissionRef: record.admissionRef, release: { ...record.workspaceRelease! }, fresh };
+    });
+    if (!intent) return;
+    this.processes.delete(id);
+    // Reads may synchronize a terminal run repeatedly; only the maintenance pump retries an existing intent.
+    if (intent.release.state === "released" || !intent.fresh && !retryPending) return;
+    let receipt: { state?: string } | null;
+    try { receipt = await this.authority.workspace(intent.admissionRef, "release_all", { requestId: intent.release.requestId }); }
+    catch { return; } // Ambiguous delivery retains the original durable identity for the next pump/restart.
+    if (receipt?.state !== "released") return;
+    await this.store.exclusive(async () => {
+      const { session, record } = await this.store.run(id);
+      if (record.workspaceRelease?.requestId !== intent.release.requestId || record.workspaceRelease.state === "released") return;
+      record.workspaceRelease.state = "released"; await this.store.save(session);
+    });
+  }
+  async close(): Promise<void> { this.closing = true; clearInterval(this.timer); await this.engine.close("Provider is shutting down."); await Promise.allSettled([...this.pendingSync.values(), ...this.pendingCleanup.values(), ...(this.maintenance ? [this.maintenance] : [])]); for (const dispose of this.subscriptions.values()) dispose(); await this.connections.shutdown(); }
 }
 function requirePinnedSnapshot(configuration: ConfigurationRecord, pinned: Awaited<ReturnType<ProviderAuthority["skills"]>>): void {
   const identities = (skills: Array<{ skillId: string; digest: string }>) => JSON.stringify(skills.map(skill => ({ skillId: skill.skillId, digest: skill.digest })).sort((a, b) => a.skillId.localeCompare(b.skillId) || a.digest.localeCompare(b.digest)));

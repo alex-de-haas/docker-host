@@ -192,6 +192,12 @@ The provider's own Decisions permissions still govern its question records.
   prevents later acquisition or replay of released UUIDs. Agent-MCP individual release verifies
   the exact claim owner under the workspace mutation lock and retains its own recovery-safe
   operation identity. Ordinary workspace administration keeps its existing authority.
+  After confirmed native stop, the provider durably records pending cleanup before contacting
+  Core. Its maintenance loop retries the original admission and release request UUID after a
+  transient failure or lost reply, including provider reconstruction, until Core explicitly
+  confirms release. Cleanup does not require a snapshot read, pending decision or renewed execution.
+  Only a persisted execution start is eligible; superseded reservations and before-start cancel
+  placeholders retain their fences without creating cleanup requests.
 
 Before a new run, Harness reads current participation separately for every selected workspace
 under the original user or task attempt. A cached association or a missing revision cannot supply
@@ -437,6 +443,8 @@ releases and selected lock closures are described in the
 - Lease interleaving tests hold real workspace mutation locks to verify direct/MCP acquisition,
   cleanup and individual release. They cover durable closure, replay, cancelled waiters, unrelated
   admissions, revocation recovery, foreign claim replacement and interrupted owned-release records.
+  Provider regressions cover transient cleanup failure, lost replies, explicit release confirmation,
+  reconstruction, concurrent cleanup and shutdown drain without native replay or snapshot-driven retry.
 - SDK fixtures cover exact bytes, response identity, snapshot/replay boundaries, correlated child
   sources, bounded streams, duplicate controls and changed inputs/installations.
 - Provider tests cover lazy creation, strict resume, account/configuration compatibility, the fixed

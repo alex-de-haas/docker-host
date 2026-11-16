@@ -869,6 +869,7 @@ neither caching nor a universal inference API is a prerequisite to this provider
 - [x] D18. Repair defects exposed by final acceptance: bound Claude's polite interrupt and complete stop wait, preserve authoritative child command outcomes through supported SDK observations during cancellation, and allow provider-owned Ollama MCP approvals to cross Core's credential TTL with finite SDK/HTTP deadlines and prompt cancellation; verify independent continuation with Harness stopped and real active-child cancellation.
 - [x] D19. Preserve the latest context observation in the provider snapshot and restore it after consumer disconnect/restart, with a sequence-bound nullable value and compatible SDK validation; verify the latest measurement against its actual model request without claiming an offline per-request telemetry ledger.
 - [x] D20. Fence direct and agent-origin MCP workspace lease acquisition against concurrent cleanup and replay, persist admission closure, preserve idempotent cleanup after expiry/revocation/restart, and verify real claims with deterministic interleavings.
+- [x] D21. Persist pending workspace cleanup after native stop and retry the same release identity during maintenance after transient Core failure, including provider reconstruction and executions without pending decisions.
 
 ### Implementation Order
 
@@ -1690,3 +1691,26 @@ Swift and Windows NativeAOT. A prior single Windows replacement-readiness failur
 runner diagnostics to establish a cause and does not reproduce in that successful run; no timeout
 or production startup change is inferred from it. The new lease source still requires its own
 exact-head CI qualification. D5, D6 and D11 retain their remaining accepted scope.
+
+### Durable Provider Workspace Cleanup Retry (2026-11-16)
+
+D21 addresses transient Core failure after confirmed native stop. The provider saves a private
+pending release receipt before dispatch, retains the original admission and deterministic request
+UUID across failed or lost replies and reconstruction, and acknowledges only Core
+`state: released`. The existing maintenance pump retries pending receipts without consumer reads,
+decisions, execution renewal or native replay. Concurrent cleanup coalesces and shutdown drains
+in-flight acknowledgements. Local MCP teardown remains immediate.
+
+Only records with a persisted execution input are eligible: response-only superseded reservations
+and before-admission cancel placeholders cannot acquire execution leases and create no cleanup
+requests. Real executions with no initial workspaces remain eligible because MCP-created leases
+are retained by Core. Both negative cases and three retry regressions reproduce failures before
+the correction. The final affected batch passes all 60 tests, runtime type checking passes and
+independent review finds no material issue.
+
+The frozen final candidate passes the actual isolated all-provider helper in 122.500 seconds:
+733 tests pass, three Windows-only cases skip, shared type checking and all three provider
+checks/builds pass. All 348 source hashes remain unchanged and temporary staging is removed.
+This uses an existing npm cache and is not a cold GitHub benchmark. The preceding Core-lease
+head passes all 26 hosted checks in 16 minutes 29 seconds; this additional provider correction
+requires fresh exact-head CI. D5, D6 and D11 retain their remaining accepted scope.

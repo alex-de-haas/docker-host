@@ -30,7 +30,7 @@ async function setup(block = false) {
   } };
   const connections = { binding: vi.fn(async () => ({ connectionId: "connection", connectionRevision: 1, harnessKind: "claude" })),
     reserve: async () => { claims++; return () => { claims--; }; }, adapter: async () => adapter, executionHome: async () => home, shutdown: async () => {} } as unknown as AgentConnections;
-  const authority = { admit: vi.fn(async () => ({})), renew: vi.fn(async () => ({})), skills: vi.fn(async () => { throw new Error("A plain request must not require skill-library authority."); }), workspace: vi.fn(async () => ({})) } as unknown as ProviderAuthority;
+  const authority = { admit: vi.fn(async () => ({})), renew: vi.fn(async () => ({})), skills: vi.fn(async () => { throw new Error("A plain request must not require skill-library authority."); }), workspace: vi.fn(async () => ({ state: "released" })) } as unknown as ProviderAuthority;
   const controller = new ProviderController(store, authority, connections, "claude");
   const driver = new NativeExecution(controller, store, authority, connections, new AttachmentStore(path.join(directory, "assets"), provider), directory, () => "http://127.0.0.1:1");
   controller.driver = driver; await driver.initialize(); closers.push(() => controller.close());
