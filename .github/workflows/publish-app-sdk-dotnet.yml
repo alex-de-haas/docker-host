@@ -56,6 +56,8 @@ jobs:
 
       - name: Set up .NET
         uses: ./.github/actions/setup-dotnet
+        with:
+          compatibility-sdk-version: '10.0.402'
 
       - name: Skip when the version is already published
         id: guard

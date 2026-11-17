@@ -111,8 +111,9 @@ Use $hosty-app-skill to wrap this app as a Hosty runtime app.
 
 ## Local development
 
-Install .NET SDK 10.0.401 or a later .NET 10 SDK, as required by `global.json`. This includes
-the Native AOT fix needed for current macOS linkers; older SDKs can fail during native linking.
+Install .NET SDK 11.0.100 or a later .NET 11 SDK, as required by `global.json`.
+Core and CLI target .NET 11 and publish with Native AOT. Keep a .NET 10 SDK installed
+alongside it when running the independently versioned application SDK or Telemetry tests.
 
 See [Local development and testing](docs/features/local-development/feature.md) for detailed guidance.
 

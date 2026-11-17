@@ -384,7 +384,7 @@
       "resolveBases": {
         "SDK_IMAGE": {
           "repository": "mcr.microsoft.com/dotnet/sdk",
-          "tag": "10.0"
+          "tag": "11.0"
         },
         "RUNTIME_IMAGE": {
           "repository": "mcr.microsoft.com/dotnet/aspnet",

@@ -351,6 +351,11 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
         if (OperatingSystem.IsWindows())
         {
             var windowsStartInfo = CreateWindowsBackgroundStartInfo(target, options, logPath);
+            // Disconnect the wrapper from the caller's streams without changing cmd's console mode.
+            using var nullHandle = File.OpenNullHandle();
+            windowsStartInfo.StandardInputHandle = nullHandle;
+            windowsStartInfo.StandardOutputHandle = nullHandle;
+            windowsStartInfo.StandardErrorHandle = nullHandle;
             using var windowsProcess = Process.Start(windowsStartInfo) ??
                 throw new InvalidOperationException("Unable to start Hosty Core process.");
             return logPath;

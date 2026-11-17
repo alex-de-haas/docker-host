@@ -1,5 +1,10 @@
 name: Set up repository .NET SDK
 description: Install the exact SDK declared by the checked-out global.json.
+inputs:
+  compatibility-sdk-version:
+    description: Additional exact SDK for tests that retain an older target runtime.
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -7,6 +12,11 @@ runs:
       id: sdk
       shell: bash
       run: node "${GITHUB_ACTION_PATH}/version.mjs"
+    - name: Install compatibility runtime
+      if: inputs.compatibility-sdk-version != ''
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: ${{ inputs.compatibility-sdk-version }}
     - name: Install repository SDK
       uses: actions/setup-dotnet@v6
       with:

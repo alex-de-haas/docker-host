@@ -1,6 +1,6 @@
 ---
 created: 2026-10-25
-updated: 2026-10-26
+updated: 2026-11-17
 summary: Starting an app starts its installed required dependencies, waits for readiness and resumes through durable, authorized startup intents.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -106,6 +106,9 @@ Existing app-change events refresh the UI. CLI colours `waiting` yellow and retu
   providers, automatic provider starts, shared-consumer cancellation, failed-provider retry, reachable
   injected URLs, dependency-ordered boot with disabled providers
   and preservation of waiting intent through a reviewed dependency repair.
+  The compiled Docker fixtures use a digest-pinned public Node image with the test server
+  preloaded through `NODE_OPTIONS`; health probes clear that variable. The public image
+  satisfies the registry-readiness contract exercised by reviewed production updates.
   Owner-led Finish verifies removal of the child root and owned Docker resources.
 - For browser acceptance, set `HOSTY_DEPENDENCY_SHELL_IMAGE` to a locally built Shell image and
   `HOSTY_DEPENDENCY_BROWSER_HOLD=1`. The fixture writes temporary test login details outside the

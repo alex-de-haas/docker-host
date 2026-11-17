@@ -452,8 +452,8 @@ def acceptance(workspace, keep, core_binary=None, cli_binary=None, resume_state=
     if os.name == "nt":
         raise RuntimeError("Run this native acceptance on macOS/Linux; Windows requires separate verification.")
     suffix = ".exe" if os.name == "nt" else ""
-    cli = Path(cli_binary).resolve() if cli_binary else workspace / ("apps/cli/src/Haas.Hosty.Cli/bin/Debug/net10.0/hosty" + suffix)
-    core = Path(core_binary).resolve() if core_binary else workspace / ("apps/core/src/Haas.Hosty.Core/bin/Debug/net10.0/hosty-core" + suffix)
+    cli = Path(cli_binary).resolve() if cli_binary else workspace / ("apps/cli/src/Haas.Hosty.Cli/bin/Debug/net11.0/hosty" + suffix)
+    core = Path(core_binary).resolve() if core_binary else workspace / ("apps/core/src/Haas.Hosty.Core/bin/Debug/net11.0/hosty-core" + suffix)
     for path in (cli, core, workspace / PROJECT, workspace / "apps/harness/web/out/index.html"):
         if not path.exists():
             raise RuntimeError("Build the final Core/CLI and Harness web before acceptance: missing " + str(path))

@@ -33,6 +33,19 @@ test('repository publication targets resolve existing production apps and migrat
     migrationIds.add(migration.migrationId);
   }
 });
+test('Telemetry release and local container builds use the repository SDK and retained app runtime', () => {
+  const read = path => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
+  const publisher = JSON.parse(read('distribution/release-publisher.json'));
+  const recipe = publisher.images.find(image => image.dockerfile === 'apps/telemetry-backend/Dockerfile');
+  const sdk = JSON.parse(read('global.json')).sdk.version.split('.').slice(0, 2).join('.');
+  const runtime = /<TargetFramework>net(\d+\.\d+)<\/TargetFramework>/.exec(read('apps/telemetry-backend/src/Haas.Hosty.TelemetryBackend/Haas.Hosty.TelemetryBackend.csproj'))[1];
+  assert.equal(recipe.resolveBases.SDK_IMAGE.tag, sdk, 'release build arguments must not override the selected SDK with an older major');
+  assert.equal(recipe.resolveBases.RUNTIME_IMAGE.tag, runtime, 'runtime follows the application target');
+  const dockerfile = read(recipe.dockerfile);
+  for (const [name, base] of Object.entries(recipe.resolveBases)) {
+    assert.ok(dockerfile.split('\n').includes(`ARG ${name}=${base.repository}:${base.tag}`), `${name}: local and release builds use the same base version`);
+  }
+});
 test('publisher names and counts are data; duplicate/default/control IDs fail', () => {
   for (const count of [1,3,10]) assert.equal(validatePublisher(config(count)).feeds.length, count);
   const c = config(2); c.feeds[1].id = c.feeds[0].id; assert.throws(() => validatePublisher(c), /duplicate/);

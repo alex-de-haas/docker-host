@@ -278,6 +278,8 @@ jobs:
 
       - name: Set up .NET
         uses: ./.github/actions/setup-dotnet
+        with:
+          compatibility-sdk-version: '10.0.402'
 
       - name: Test HostySdk.App
         run: dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj
@@ -363,6 +365,14 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y clang zlib1g-dev
           fi
+      - name: Test native acceptance process timeouts
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} scripts/test-platform-native-update.py
+      - name: Test Windows detached launcher output
+        if: runner.os == 'Windows'
+        run: dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj --filter FullyQualifiedName~WindowsDetachedLaunchTests
+      - name: Test Windows child Core launch
+        if: runner.os == 'Windows'
+        run: dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --filter "FullyQualifiedName~CoreEnvironmentLaunchTests|FullyQualifiedName~WindowsProcessControlTests"
       - name: Publish Core and verify native paired updates
         env:
           HOSTY_VERIFY_PLATFORM_UPDATE: '1'
@@ -408,6 +418,8 @@ jobs:
 
       - name: Set up .NET
         uses: ./.github/actions/setup-dotnet
+        with:
+          compatibility-sdk-version: '10.0.402'
 
       - name: Build Telemetry Backend
         run: npm run telemetry-backend:build

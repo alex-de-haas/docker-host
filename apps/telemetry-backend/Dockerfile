@@ -2,7 +2,7 @@
 # Hosty telemetry backend image. Framework-dependent (IL) multi-stage build: publish with the SDK,
 # run on the aspnet runtime. Portable output + the SQLitePCLRaw bundle's per-RID native libs make one
 # image work on linux/amd64 and linux/arm64. See docs/features/observability/feature.md.
-ARG SDK_IMAGE=mcr.microsoft.com/dotnet/sdk:10.0
+ARG SDK_IMAGE=mcr.microsoft.com/dotnet/sdk:11.0
 ARG RUNTIME_IMAGE=mcr.microsoft.com/dotnet/aspnet:10.0
 FROM --platform=$BUILDPLATFORM ${SDK_IMAGE} AS builder
 WORKDIR /repo

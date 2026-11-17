@@ -139,6 +139,7 @@ Plans: 14 In Progress · 1 Blocked · 45 Draft · 9 On Hold.
 - [Documentation Workflow](features/documentation-workflow/feature.md) — Workflow documents carry YAML frontmatter and stable deliverable IDs, checked by one validator shared by every Hosty repository.
 - [Documents App](features/documents-app/feature.md) — Read current application documentation, source-defined plans and workspace progress from Git, with version-aware links, attention and assistant drafts.
 - [Feature: Domain Model](features/domain-model/feature.md) — The shared vocabulary for Core, Shell, the CLI and runtime apps.
+- [.NET 11 Platform Toolchain](features/dotnet-11-migration/feature.md) — The .NET 11 platform toolchain, Native AOT targets, application compatibility boundaries and migration verification.
 - [Durable Agent Jobs And Continuation](features/durable-agent-jobs/plan.md) — Durable jobs and recoverable Harness sessions with scheduling, bounded context, same-provider continuation, budgets and decision waits. · Draft, 0/7, updated 2026-11-07
 - [Embedded App Chrome](features/embedded-app-chrome/feature.md) — Navigation visibility uses explicit SDK composition policy while legacy launch modes retain transport and old-client compatibility.
 - [Embedded App Sign-In](features/embedded-app-sign-in/feature.md) — Embedded apps keep their own per-tab sign-in grant and sign in silently through Core without Shell handling their codes.
