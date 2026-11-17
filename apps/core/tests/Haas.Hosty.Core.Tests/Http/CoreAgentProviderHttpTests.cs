@@ -102,6 +102,83 @@ public sealed class CoreAgentProviderHttpTests
     }
 
     [Fact]
+    public async Task ProviderRevisionChangeAllowsFreshOperationsAndKeepsOldRunAdmissionFenced()
+    {
+        var now = DateTimeOffset.UtcNow;
+        await using var host = await CoreHttpHarness.StartAsync(new TestClock(now));
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        await host.Services.GetRequiredService<UserDirectoryStore>().WriteAsync(new(1,
+            [new("owner", "owner@example.test", "Owner", "host.admin", false, now, now)], [], [], []));
+        var consumer = Record("unrelated.consumer", now) with { GrantedCorePermissions = [CoreAppPermissions.AgentProviders] };
+        var provider = Record("independent.provider", now) with
+        {
+            PermissionRevision = Guid.NewGuid().ToString("N"),
+            RuntimeState = "running",
+            ConfirmedRoles = ["agent"],
+            Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v1", 1, [])] },
+        };
+        await apps.UpsertAppAsync(consumer);
+        await apps.UpsertAppAsync(provider);
+        var credential = await BrowserAuthorityFixture.Grant(host, consumer.Id, "owner");
+        var tokens = host.Services.GetRequiredService<AppServiceTokenService>();
+        using var callerHttp = host.CreateClient();
+        callerHttp.DefaultRequestHeaders.Authorization = new("Bearer", tokens.CreateToken(consumer.Id));
+        callerHttp.DefaultRequestHeaders.Add("X-Hosty-User-Token", credential.AccessToken);
+        using var providerHttp = host.CreateClient();
+        providerHttp.DefaultRequestHeaders.Authorization = new("Bearer", tokens.CreateToken(provider.Id));
+        var callerRoute = $"/api/internal/apps/{consumer.Id}/agent/authorize";
+        var providerRoute = $"/api/internal/apps/{provider.Id}/agent";
+        var reference = new HostyProviderRef(provider.Id, PanelIdentity.Installation(provider), "native");
+        var bodyHash = Convert.ToHexStringLower(SHA256.HashData([]));
+        var reads = new CoreAgentAuthorizeRequest[]
+        {
+            new(reference, "capabilities", "GET", "/capabilities", bodyHash),
+            new(reference, "connections.list", "GET", "/connections?limit=100", bodyHash),
+        };
+        async Task<CoreAgentBinding> Authorize(CoreAgentAuthorizeRequest request)
+        {
+            using var response = await callerHttp.PostAsJsonAsync(callerRoute, request);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            return (await response.Content.ReadFromJsonAsync<JsonElement>()).Deserialize(CoreJson.TypeInfo<CoreAgentBinding>())!;
+        }
+        Task<HttpResponseMessage> Introspect(CoreAgentAuthorizeRequest request, CoreAgentBinding binding) => providerHttp.PostAsJsonAsync(
+            providerRoute + "/introspect", new CoreAgentIntrospection(binding.Token, request.Operation, request.Method, request.Path, request.BodyHash));
+        var session = Guid.NewGuid().ToString();
+        CoreAgentAuthorizeRequest StartRun(string run) => new(reference, "runs.start", "PUT", $"/sessions/{session}/runs/{run}",
+            new string('b', 64), SessionId: session, RunId: run);
+
+        var originalReads = await Task.WhenAll(reads.Select(Authorize));
+        var originalRun = StartRun(Guid.NewGuid().ToString());
+        var originalAdmission = await Authorize(originalRun);
+        using var admit = await providerHttp.PostAsJsonAsync(providerRoute + "/admit", new CoreAgentReference(originalAdmission.AdmissionRef));
+        Assert.Equal(HttpStatusCode.OK, admit.StatusCode);
+
+        await apps.UpsertAppAsync(provider with { Version = "0.1.1", PermissionRevision = Guid.NewGuid().ToString("N") });
+        foreach (var (request, original) in reads.Zip(originalReads))
+        {
+            using var stale = await Introspect(request, original);
+            Assert.Equal(HttpStatusCode.Forbidden, stale.StatusCode);
+            var current = await Authorize(request);
+            Assert.NotEqual(original.AdmissionRef, current.AdmissionRef);
+            Assert.Equal(current.AdmissionRef, (await Authorize(request)).AdmissionRef);
+            using var accepted = await Introspect(request, current);
+            Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        }
+
+        using var replay = await callerHttp.PostAsJsonAsync(callerRoute, originalRun);
+        Assert.Equal(HttpStatusCode.Forbidden, replay.StatusCode);
+        foreach (var operation in new[] { "admit", "renew" })
+        {
+            using var stale = await providerHttp.PostAsJsonAsync(providerRoute + "/" + operation, new CoreAgentReference(originalAdmission.AdmissionRef));
+            Assert.Equal(HttpStatusCode.Forbidden, stale.StatusCode);
+        }
+        var freshAdmission = await Authorize(StartRun(Guid.NewGuid().ToString()));
+        using var fresh = await providerHttp.PostAsJsonAsync(providerRoute + "/admit", new CoreAgentReference(freshAdmission.AdmissionRef));
+        Assert.Equal(HttpStatusCode.OK, fresh.StatusCode);
+    }
+
+    [Fact]
     public async Task MetadataCannotRelayPromptsAndNativeExecutionRequiresCurrentAdministrator()
     {
         await using var host = await CoreHttpHarness.StartAsync();

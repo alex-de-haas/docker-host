@@ -182,6 +182,11 @@ retains the original authority's absolute expiry. Provider-owned renewal recheck
 installations, consumer grants and task state; it creates no indefinite or background grant.
 Harness availability is not part of that renewal check. Expired/revoked authority fences new effects;
 a terminal-looking status alone does not free an unconfirmed execution.
+Operation credentials outside run admission bind the current consumer and provider permission
+revisions. After an ordinary provider update, the same authorized consumer session can discover
+accounts and obtain new operation credentials. Previously issued credentials and retained run
+admissions still require their original revisions. Repeating the original start request preserves
+its admission and cannot renew it across a provider revision change.
 
 Provider bridges below `/api/internal/apps/{provider}/agent` cover `introspect`, `admit`, `renew`,
 `mcp/token`, `skills/snapshots` and `workspace`. They operate on the exact admitted original context.
@@ -306,6 +311,15 @@ Codex observes pinned SDK subagent activity and reads only a verified completed 
 the read-only native `thread/read` operation. This supplies attributed tool summaries without
 starting/resuming another thread. Interrupted, missing or superseded child history marks tools
 coverage as truncated. Closing an already verified completed child preserves its recorded history.
+
+Claude keeps an observed background Bash invocation pending until the native task reports a terminal
+outcome for that exact run and tool call. The command card then shows completion, failure or
+cancellation, including inside a subagent that has already yielded. A launch acknowledgement and a
+task notification do not provide stdout or a structured exit code. Missing terminal evidence leaves
+the outcome unknown. The shared provider projection keeps the same command status in the live
+event and snapshot, even when no exit code, duration or summary is supplied. During suggestion
+collection, Harness can retain the first confirmed result for an already recorded command with
+the same provider run, generation and tool identity.
 
 Claude can supply a nested command's text result without structured exit metadata. The provider
 retains that output and its child provenance while reporting the command outcome as unknown.
@@ -543,6 +557,9 @@ working account. A synthetic protocol check does not establish real OpenAI accou
   five-minute parking deadline with a controlled clock, revised next-turn delivery, lost
   admission/cancellation races, interrupted storage, decision delivery, process evidence and stdin
   protocol preservation. Unknown native stop or tool effects keep the slot occupied.
+- Core authorizes fresh agent operations across a provider permission revision change using the
+  same consumer grant. Old credentials and old run admissions remain fenced. The managed provider
+  update test checks discovery and usage across an actual update with the same Harness process and grant.
 - HTTP/SDK pagination tests enumerate mixed-case session and connection IDs one page at a time,
   requiring complete results, unique cursors and bounded invalid-cursor rejection.
 - Native transport fixtures exercise multi-MiB synchronous stdout/stderr, paused consumers,
@@ -561,7 +578,8 @@ working account. A synthetic protocol check does not establish real OpenAI accou
   Nested-command cases retain completed native agent ancestry, await actual background Bash output
   and resumed child summaries, and require one final parent synthesis before confirmed exit.
   They cover predictions on/off, explicit cancellation, stale idle, inventory-only ancestry and
-  unrelated parentless/ambient background work.
+  unrelated parentless/ambient background work. The exact invocation receives its command outcome
+  only from a matching native terminal, with no duplicate launch result.
   Native SDK tests use an empty temporary home and a deterministic loopback model fixture; these
   establish SDK/process behavior separately from hosted-model quality or account authorization.
 - Harness reducer/manager and browser checks cover child attribution, actionable child decisions,

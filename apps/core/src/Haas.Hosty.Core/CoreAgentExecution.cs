@@ -229,7 +229,12 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
         }
         if (deadline < expires) expires = deadline;
         if (expires <= clock.UtcNow) throw Invalid("The requested execution deadline has expired.");
-        var id = Hash(CoreJson.Text(input) + CoreJson.Text(origin) + caller.User.Id);
+        var requestIdentity = CoreJson.Text(input) + CoreJson.Text(origin) + caller.User.Id;
+        // A run submission retains its original admission, even if the provider is updated.
+        // Other operations can get fresh authority without making old signed references valid again.
+        var id = input.Operation == "runs.start"
+            ? Hash(requestIdentity)
+            : Hash($"operation-v2:{CoreJson.Text(consumer.PermissionRevision)}:{CoreJson.Text(provider.PermissionRevision)}:{requestIdentity}");
         var record = await store.Put(new(id, origin, caller.User.Id, caller.PrincipalId,
             consumer.Id, consumer.InstalledAt, consumer.PermissionRevision, input, provider.PermissionRevision, expires, Authority: input.Authority), ct);
         await ValidateRecord(provider, record, ct, admitted: false);

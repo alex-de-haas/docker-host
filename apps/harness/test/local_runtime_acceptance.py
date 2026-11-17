@@ -84,6 +84,35 @@ def check(context):
     usage = call(app_origin, '/api/connections/'+connection['id']+'/usage?refresh=true')
     assert usage['state'] == 'unsupported' and usage['rows'] == [] and usage['connectionRevision'] == connection['revision']
     say('PASS: independent Claude provider settings and qualified usage report unsupported API-key telemetry without inference')
+    if docker_consumer:
+        # Exercise the same exact operations under one Harness grant across a reviewed provider update.
+        previous_runtime = runtime_identity()
+        grant = call(app_origin, '/api/auth/identity')['continuity']['grantId']
+        provider_id = connection['provider']['appId']
+        update_manifest = json.loads((base/'claude-code-provider-acceptance.json').read_text())
+        version = update_manifest['version']
+        prefix, patch = version.rsplit('.', 1)
+        update_manifest['version'] = f'{prefix}.{int(patch) + 1}'
+        candidate = base/'claude-code-provider-update.json'
+        candidate.write_text(json.dumps(update_manifest))
+        update_path = f'/control/v1/apps/{provider_id}/update'
+        selection = {'manifestPath': str(candidate), 'selectedRuntime': 'local'}
+        plan = request(update_path+'/plan', selection, control=True)
+        assert (plan['appId'], plan['currentVersion'], plan['targetVersion'], plan['targetRuntime']) == (
+            provider_id, version, update_manifest['version'], 'local')
+        applied = request(update_path, {**selection, 'planDigest': plan['planDigest']}, control=True)
+        assert applied['status'] == 'updated' and applied['app']['version'] == update_manifest['version']
+        assert request(f'/api/apps/{provider_id}/health')['status'] == 'healthy'
+        assert runtime_identity() == previous_runtime
+        assert call(app_origin, '/api/auth/identity')['continuity']['grantId'] == grant
+        roster = call(app_origin, '/api/connections')
+        provider = next(row for row in roster['providers'] if row['appId'] == provider_id)
+        assert provider['available'], provider.get('reason', 'Updated provider unavailable in Harness')
+        refreshed = next((row for row in roster['connections'] if row['id'] == connection['id']), None)
+        assert refreshed and refreshed['available'] and refreshed['provider'] == connection['provider']
+        usage = call(app_origin, '/api/connections/'+connection['id']+'/usage?refresh=true')
+        assert usage['state'] == 'unsupported' and usage['rows'] == [] and usage['connectionRevision'] == connection['revision']
+        say('PASS: reviewed Claude update preserves discovery and usage with the same Harness runtime, grant and provider connection')
     local_usage = providers.configure_for_harness(app_origin, call, 'ollama', 'Local quota fixture', auth='none')
     local_usage = call(app_origin, '/api/connections/'+local_usage['id']+'/usage?refresh=true')
     assert local_usage['state'] == 'not_applicable' and local_usage['rows'] == []
