@@ -17,7 +17,7 @@ namespace Haas.Hosty.Cli;
 //
 // Clearing HANDLE_FLAG_INHERIT limits incidental handle inheritance. Starting with .NET 11,
 // explicitly selected standard handles are duplicated even when this flag is cleared. Background
-// shell wrappers therefore also use StartDetached to select null-device standard handles before
+// shell wrappers therefore also select explicit null-device standard handles before
 // their shell redirects output to the child log. Explicitly redirected pipes remain unaffected.
 //
 // stdin is deliberately left alone, for the same reason Core's variant leaves it alone (#205): whenever

@@ -24,15 +24,18 @@ internal static class DetachedCliProcess
         if (OperatingSystem.IsWindows())
         {
             var command = $"{CmdQuote(cliPath)} {string.Join(' ', args.Select(CmdQuote))} > {CmdQuote(logPath)} 2>&1";
+            // .NET 11 duplicates standard handles even after their inherit flags are cleared.
+            // Keep the wrapper off the caller's streams while preserving cmd's no-window logging.
+            using var nullHandle = File.OpenNullHandle();
             var startInfo = new ProcessStartInfo
             {
                 FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
                 Arguments = $"/d /s /c \"{command}\"",
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                // Keep the durable cmd wrapper off the caller's captured streams on .NET 11.
-                // The shell command still redirects the helper's own output to its attempt log.
-                StartDetached = true,
+                StandardInputHandle = nullHandle,
+                StandardOutputHandle = nullHandle,
+                StandardErrorHandle = nullHandle,
                 WorkingDirectory = workingDirectory,
             };
             using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start the hosty helper process.");

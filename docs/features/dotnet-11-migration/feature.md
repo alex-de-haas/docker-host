@@ -48,12 +48,13 @@ pipeline](https://learn.microsoft.com/en-us/dotnet/core/compatibility/sdk/11/aot
 preserves them. Core and CLI publish executables, so the Unix native-library
 `lib` prefix change does not affect release filenames.
 
-Windows background Core, child Core and CLI-helper shell wrappers use
-[`StartDetached`](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.processstartinfo.startdetached?view=net-11.0).
+Windows background Core, child Core and CLI-helper shell wrappers explicitly set
+[`StandardInputHandle`](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.processstartinfo.standardinputhandle?view=net-11.0),
+`StandardOutputHandle` and `StandardErrorHandle` to a scoped null-device handle.
 .NET 11 explicitly duplicates standard handles for child startup, including
-handles whose inheritance flag was cleared. Detached startup gives the wrapper
-null-device standard handles; its existing shell redirection still writes the
-child's output to the selected log. This prevents a surviving background process
+handles whose inheritance flag was cleared. The wrapper retains its existing
+`CreateNoWindow` console mode and shell redirection writes the child's output to
+the selected log. This prevents a surviving background process
 from retaining a caller's captured output pipes. Foreground launches, explicit
 service pipes, process identities and readiness checks retain their existing behavior.
 

@@ -213,6 +213,15 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         Process launched;
         try
         {
+            // .NET 11 otherwise duplicates the parent's streams into this durable shell.
+            // Explicit NUL handles preserve CREATE_NO_WINDOW and the child's shell log redirection.
+            using var nullHandle = OperatingSystem.IsWindows() ? File.OpenNullHandle() : null;
+            if (nullHandle is not null)
+            {
+                start.StandardInputHandle = nullHandle;
+                start.StandardOutputHandle = nullHandle;
+                start.StandardErrorHandle = nullHandle;
+            }
             launched = Process.Start(start) ?? throw new InvalidOperationException("No launcher process was created.");
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
@@ -256,9 +265,6 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
     internal static void ConfigureWindowsLaunch(ProcessStartInfo start, string executable, string log)
     {
         start.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
-        // .NET 11 otherwise duplicates the parent's standard handles into this durable shell.
-        // NUL handles detach its lifetime while the command preserves the child's startup log.
-        start.StartDetached = true;
         // cmd /s /c consumes shell syntax, not CRT-escaped argv. ArgumentList would turn the
         // embedded quotes into backslash-quotes and fail before creating the output file.
         start.Arguments = $"/d /s /c \"\"{executable}\" >> \"{log}\" 2>&1\"";

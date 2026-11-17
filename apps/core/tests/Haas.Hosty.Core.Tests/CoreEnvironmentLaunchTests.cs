@@ -57,7 +57,6 @@ public sealed class CoreEnvironmentLaunchTests : IDisposable
         await File.WriteAllTextAsync(log, "startup-log-marker\n");
         var start = new ProcessStartInfo { WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true };
         CoreEnvironmentRuntime.ConfigureWindowsLaunch(start, executable, log);
-        Assert.True(start.StartDetached);
 
         var result = await ProcessRunner.RunAsync(start, TimeSpan.FromSeconds(10), outputLimit: 4096);
 
