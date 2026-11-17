@@ -15,7 +15,7 @@ COPY packages/app-sdk/src packages/app-sdk/src
 COPY shared/web shared/web
 # These shared DTOs and pure presentation helpers are the web's complete backend import closure.
 # API-only changes keep the static export cached; Next still checks every shipped source type.
-COPY apps/harness/src/agent-providers/decision-identity.ts apps/harness/src/agent-providers/
+COPY apps/harness/src/agent-providers/decision-identity.ts apps/harness/src/agent-providers/transcript-source.ts apps/harness/src/agent-providers/
 COPY apps/harness/src/feedback/presentation.ts apps/harness/src/feedback/workspace.ts apps/harness/src/feedback/
 COPY apps/harness/src/harness/activity.ts apps/harness/src/harness/context-mcp.ts apps/harness/src/harness/context-sources.ts apps/harness/src/harness/context-usage.ts apps/harness/src/harness/provider-usage.ts apps/harness/src/harness/
 COPY apps/harness/src/profiles/types.ts apps/harness/src/profiles/

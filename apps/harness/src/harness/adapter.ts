@@ -58,7 +58,8 @@ export interface HarnessQuestion {
   options: Array<{ id?: string; label: string; description: string; preview?: string }>;
 }
 
-export type HarnessEvent =
+export type HarnessEvent = (
+  | import("../agent-providers/transcript-source.js").NativeAgentStatusEvent
   | import("./prompt-suggestion.js").PromptSuggestion
   | { type: "answer_complete" }
   /** Private execution evidence used only for task barriers, never transcript display. */
@@ -71,7 +72,7 @@ export type HarnessEvent =
   /** The harness-native session id became known; persisted for resume-after-restart. */
   | { type: "harness_session"; harnessSessionId: string }
   | { type: "assistant_delta"; text: string }
-  | { type: "assistant_text"; text: string }
+  | { type: "assistant_text"; text: string; incomplete?: boolean }
   /** Bounded tool content for the expandable transcript; separate from command metadata. */
   | import("./tool-result.js").ToolResult
   | { type: "tool_use"; toolName: string; input: unknown; toolUseId?: string; cwd?: string; mcp?: { server: string; tool: string } }
@@ -120,7 +121,8 @@ export type HarnessEvent =
    * failing to start must not do that to an otherwise healthy session and its remaining tools.
    */
   | { type: "notice"; message: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+) & { providerSource?: import("../agent-providers/transcript-source.js").ProviderTranscriptSource };
 
 export interface HarnessStartOptions {
   promptSuggestions?: boolean;

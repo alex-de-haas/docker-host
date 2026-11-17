@@ -1,4 +1,5 @@
 import { activeTool } from "./activity.js";
+import { ClaudeBackgroundLifecycle } from "./claude-background.js";
 import { shouldRetainToolOutput } from "./tool-output-policy.js";
 import { readNativeQuestions, questionAnswers } from "./questions.js";
 import { UsageReader, absentUsage, claudeUsage, claudeLimitEvent } from "./provider-usage.js";
@@ -171,6 +172,9 @@ class ClaudeRun implements HarnessRun {
   private readonly nativeProcessClosures: Promise<void>[] = [];
   private turnActive = false;
   private suggestionPending = false;
+  private pendingRootResult: Record<string, unknown> | null = null;
+  private pendingSuggestion: string | null | undefined;
+  private readonly background = new ClaudeBackgroundLifecycle(parent => this.childSource(parent, false), event => this.options.onEvent(event));
   private nativeSessionId: string | null = null;
   private readonly commandRun = randomUUID();
   private commandTurn = 0;
@@ -205,6 +209,7 @@ class ClaudeRun implements HarnessRun {
 
   send(text: string): void {
     this.suggestionPending = false;
+    this.pendingRootResult = null; this.pendingSuggestion = undefined; this.background.beginTurn();
     this.turnActive = true;
     this.commandTurn++;
     this.commandCalls.clear();
@@ -307,6 +312,8 @@ class ClaudeRun implements HarnessRun {
   }
 
   interrupt(): Promise<void> {
+    // A native idle emitted while cancelling cannot turn an earlier yield into success.
+    this.pendingRootResult = null; this.pendingSuggestion = undefined; this.suggestionPending = false;
     if (this.interrupting) return this.interrupting;
     const query = this.query;
     if (!query) return Promise.resolve();
@@ -478,6 +485,8 @@ class ClaudeRun implements HarnessRun {
         if (value.type === "result") this.options.onEvent({ type: "provider_usage", usage: await this.readUsage() });
         this.dispatch(value);
       }
+      if (!this.stopped && this.turnActive)
+        this.options.onEvent({ type: "error", message: "Claude's stream ended before its active turn or background continuation completed. Native completion is unconfirmed." });
     } catch (error) {
       if (!this.stopped) {
         this.options.onEvent({
@@ -694,14 +703,9 @@ class ClaudeRun implements HarnessRun {
     if (!this.pendingNativeEffects.size) for (const done of [...this.terminalWaiters]) done();
   }
 
-  private dispatch(message: Record<string, unknown>): void {
-    const type = message.type;
-    // Cancellation can deliver the authoritative tool terminal during interrupt/close. Drain
-    // only calls this exact turn already registered; no new child/tool/message is admitted.
-    if (this.stopped && (type !== "user" || message.isReplay)) return;
-    const parent = typeof message.parent_tool_use_id === "string" && message.parent_tool_use_id.length <= 512 ? message.parent_tool_use_id : undefined;
-    let source = parent ? this.childSources.get(parent) : undefined;
-    if (parent && !source) {
+  private childSource(parent: string, announce = true): HarnessEventSource | undefined {
+    let source = this.childSources.get(parent);
+    if (!source) {
       if (this.stopped) return;
       if (this.childSources.size >= 256) {
         if (!this.childCoverageWarning) { this.childCoverageWarning = true; this.options.onEvent({ type: "notice", message: "Additional native child observations were omitted at the bounded child inventory limit." }); }
@@ -710,7 +714,50 @@ class ClaudeRun implements HarnessRun {
       const owner = this.toolSources.get(parent);
       source = { agentId: `claude-child:${parent}`, ...(owner ? { parentAgentId: owner.agentId, parentToolCallId: owner.id } : {}) };
       this.childSources.set(parent, source);
-      this.options.onEvent({ type: "agent_status", ...source, state: "running", stopConfirmed: false, source });
+      if (announce) this.options.onEvent({ type: "agent_status", ...source, state: "running", stopConfirmed: false, source });
+    }
+    return source;
+  }
+
+  private finishNativeResult(): void {
+    if (!this.pendingRootResult || !this.background.idle || this.background.busy) return;
+    const message = this.pendingRootResult, suggestion = this.pendingSuggestion;
+    this.pendingRootResult = null; this.pendingSuggestion = undefined;
+    this.emitRootResult(message);
+    if (this.suggestionPending && suggestion !== undefined) {
+      this.suggestionPending = false; this.options.onEvent({ type: "prompt_suggestion", text: suggestion });
+    }
+  }
+
+  private emitRootResult(message: Record<string, unknown>): void {
+    this.pendingRootResult = null;
+    this.suggestionPending = this.options.promptSuggestions === true && message.subtype === "success" && message.is_error !== true;
+    this.activity.reset(); this.turnActive = false;
+    // Keep exact tool identities until their terminal callbacks, including during SDK stop.
+    this.proposedTools.clear();
+    const usage = message.usage as Record<string, unknown> | undefined;
+    if (typeof message.session_id === "string") this.options.onEvent({ type: "harness_session", harnessSessionId: message.session_id });
+    this.options.onEvent({ type: "result", status: message.is_error === true ? "failed" : String(message.subtype ?? "success"),
+      costUsd: typeof message.total_cost_usd === "number" ? message.total_cost_usd : undefined,
+      usage: usage ? { inputTokens: typeof usage.input_tokens === "number" ? usage.input_tokens : undefined,
+        outputTokens: typeof usage.output_tokens === "number" ? usage.output_tokens : undefined } : undefined });
+  }
+
+  private dispatch(message: Record<string, unknown>): void {
+    const type = message.type;
+    // Cancellation can deliver the authoritative tool terminal during interrupt/close. Drain
+    // only calls this exact turn already registered; no new child/tool/message is admitted.
+    const stopLifecycle = type === "system" && ["task_notification", "task_updated", "background_tasks_changed"].includes(String(message.subtype));
+    if (this.stopped && (type !== "user" && !stopLifecycle || message.isReplay)) return;
+    const parent = typeof message.parent_tool_use_id === "string" && message.parent_tool_use_id.length <= 512 ? message.parent_tool_use_id : undefined;
+    const source = parent ? this.childSource(parent) : undefined;
+    if (parent && !source) return;
+    if (!parent && message.session_id === this.nativeSessionId && !message.isReplay && this.background.observe(message, !this.stopped)) {
+      if (this.stopped) return;
+      if (message.subtype === "session_state_changed" && message.state === "running") {
+        this.pendingRootResult = null; this.pendingSuggestion = undefined; this.suggestionPending = false;
+      }
+      this.finishNativeResult(); return;
     }
     const emit = (event: HarnessEvent): void => this.options.onEvent(source ? { ...event, source } : event);
     // A native child's result is an observation of that child, never completion of the root query.
@@ -721,6 +768,9 @@ class ClaudeRun implements HarnessRun {
     }
     if (source && (type === "prompt_suggestion" || type === "tool_progress")) return;
     if (type === "prompt_suggestion") {
+      if (this.pendingRootResult && !this.background.busy && message.session_id === this.nativeSessionId) {
+        this.pendingSuggestion = suggestionText(message.suggestion); return;
+      }
       if (this.suggestionPending && message.session_id === this.nativeSessionId) {
         this.suggestionPending = false;
         emit({ type: "prompt_suggestion", text: suggestionText(message.suggestion) });
@@ -746,6 +796,7 @@ class ClaudeRun implements HarnessRun {
             || block.is_error !== undefined && typeof block.is_error !== "boolean"
             || block.content !== undefined && typeof block.content !== "string" && !Array.isArray(block.content))) continue;
           const tool = this.toolCalls.get(key);
+          const observed = this.turnActive || this.pendingNativeEffects.has(key);
           const structuredResult = resultBlocks.length === 1 && message.tool_use_result && typeof message.tool_use_result === "object" && !Array.isArray(message.tool_use_result)
             ? message.tool_use_result as Record<string, unknown> : {};
           // An SDK-local MCP abort can return a tool-error block while the remote effect is
@@ -753,18 +804,18 @@ class ClaudeRun implements HarnessRun {
           const unknownRemoteAbort = this.stopped && tool?.name.startsWith("mcp__") && block.is_error === true
             && !Array.isArray(structuredResult.content) && structuredResult.structuredContent == null;
           const effectId = commandToolUseId(this.commandRun, this.commandTurn, block.tool_use_id, typeof message.parent_tool_use_id === "string" ? message.parent_tool_use_id : "main");
-          if (this.turnActive && !message.isReplay && effectId) {
+          if (observed && !message.isReplay && effectId) {
             const structured = resultBlocks.length === 1 && message.tool_use_result && typeof message.tool_use_result === "object" ? message.tool_use_result as Record<string, unknown> : {};
             emit({ type: "native_effect", id: effectId,
               state: unknownRemoteAbort || structured.detachedToolCall === true || structured.backgroundedByUser === true || typeof structured.backgroundTaskId === "string" ? "unknown" : "settled" });
           }
           const command = this.commandCalls.get(key);
-          if (this.turnActive && !message.isReplay && command && !this.deniedToolCalls.has(command.rawId)) {
+          if (observed && !message.isReplay && command && !this.deniedToolCalls.has(command.rawId)) {
             const result = claudeCommandResult(command.id, block,
               !this.ambiguousCommandDenial && resultBlocks.length === 1 ? message.tool_use_result : undefined);
             if (result) emit(result);
           }
-          if (this.turnActive && !message.isReplay && tool && !this.ambiguousToolDenial
+          if (observed && !message.isReplay && tool && !this.ambiguousToolDenial
               && !this.deniedToolCalls.has(tool.rawId) && shouldRetainToolOutput(tool.name)) {
             // Only the matched block is display content; the SDK's structured envelope can carry
             // private provider metadata and is ambiguous when several results share a message.
@@ -880,28 +931,20 @@ class ClaudeRun implements HarnessRun {
     }
 
     if (type === "result") {
-      this.suggestionPending = this.options.promptSuggestions === true && message.subtype === "success" && message.is_error !== true;
-      this.activity.reset();
-      this.turnActive = false;
-      this.commandCalls.clear();
-      this.pendingNativeEffects.clear();
-      this.toolCalls.clear();
-      this.proposedTools.clear();
-      const usage = message.usage as Record<string, unknown> | undefined;
-      if (typeof message.session_id === "string") {
-        emit({ type: "harness_session", harnessSessionId: message.session_id });
+      if (message.isReplay || this.nativeSessionId && typeof message.session_id === "string" && message.session_id !== this.nativeSessionId) return;
+      this.pendingSuggestion = undefined;
+      if (message.subtype === "success" && message.is_error !== true) {
+        // Native notification acknowledgements can have no model turn or answer. They
+        // cannot replace the root yield while its background children are continuing.
+        if (this.pendingRootResult && message.num_turns === 0 && message.result === "") return;
+        if (this.background.busy || this.background.requiresIdle && !this.background.idle) {
+          this.pendingRootResult = message; return;
+        }
+        // The SDK public iterator hides host-only session_state_changed. Its next substantive
+        // root result after the agent inventory drains closes the native continuation.
+        // An empty inventory alone never publishes the earlier yielded root result.
       }
-      emit({
-        type: "result",
-        status: message.is_error === true ? "failed" : String(message.subtype ?? "success"),
-        costUsd: typeof message.total_cost_usd === "number" ? message.total_cost_usd : undefined,
-        usage: usage
-          ? {
-              inputTokens: typeof usage.input_tokens === "number" ? usage.input_tokens : undefined,
-              outputTokens: typeof usage.output_tokens === "number" ? usage.output_tokens : undefined,
-            }
-          : undefined,
-      });
+      this.emitRootResult(message);
     }
   }
 }

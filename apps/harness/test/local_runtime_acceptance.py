@@ -152,6 +152,13 @@ def check(context):
             text=True, cwd=workspace)
         assert result.returncode == 0, 'Suggestion browser acceptance failed'
 
+    if os.environ.get('HOSTY_NATIVE_SUBAGENTS_BROWSER'):
+        import subprocess
+        result = subprocess.run(['node', str(workspace/'apps/harness/test/native-subagents-browser.mjs')],
+            input=json.dumps({'core':(context.get('child', {}).get('previewUrl') or origin).rstrip('/'), 'harness':app_origin, 'appId':app, 'email':'activation-fixture@example.test', 'password':password, 'link':link}),
+            text=True, cwd=workspace)
+        assert result.returncode == 0, 'Native subagent browser acceptance failed'
+
     if os.environ.get('HOSTY_QUEUE_BROWSER'):
         import subprocess
         result = subprocess.run(['node', str(workspace/'apps/harness/test/message-queue-browser.mjs')],

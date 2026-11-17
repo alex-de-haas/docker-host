@@ -1,6 +1,6 @@
 {
   "name": "@hosty/claude-code-provider",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -35,7 +35,8 @@
       }
     ],
     "nativeTests": [
-      "test/native-controls.mjs"
+      "test/native-controls.mjs",
+      "test/native-background.mjs"
     ]
   }
 }

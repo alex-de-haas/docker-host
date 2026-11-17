@@ -42,6 +42,8 @@ function validateSnapshot(snapshot: AgentRunSnapshot): void {
   try { validateAgentRunSnapshot(snapshot); } catch { invalid("invalid snapshot"); }
   cursor(snapshot.cursor);
   assertDistinct(snapshot.messages ?? []); assertDistinct(snapshot.tools ?? []); assertDistinct(snapshot.pending);
+  const agents = snapshot.agents ?? [];
+  if (new Set(agents.map(agent => agent.agentId)).size !== agents.length) invalid("duplicate snapshot agent identity");
 }
 function sameRun(left: AgentRunSnapshot, right: AgentRunSnapshot): void {
   const a = left.ref.provider, b = right.ref.provider;
@@ -164,6 +166,16 @@ export function reduceAgentRunProjection(current: AgentRunProjection, item: Agen
       snapshot.decisions = history;
     }
   }
+  else if (event.type === "agent.updated") {
+    const supplied = event.data.agent as NonNullable<AgentRunSnapshot["agents"]>[number];
+    if (!object(supplied) || !["queued", "running", "waiting_for_input", "succeeded", "failed", "cancelled", "unknown"].includes(String(supplied.state))
+      || supplied.stopConfirmed !== undefined && typeof supplied.stopConfirmed !== "boolean") invalid("invalid agent status");
+    if (!sameSource(supplied, event.source)) invalid("agent status source changed");
+    const agents = structuredClone(snapshot.agents ?? []), index = agents.findIndex(agent => agent.agentId === supplied.agentId);
+    if (index >= 0 && !sameSource(agents[index], supplied)) invalid("agent parent changed");
+    if (index < 0) agents.push(structuredClone(supplied)); else agents[index] = structuredClone(supplied);
+    snapshot.agents = agents;
+  }
   else if (event.type === "selection.updated" && event.source.parentAgentId === undefined) snapshot.selection = selection(event.data);
   else if (event.type === "usage.updated" && event.data.execution !== undefined)
     snapshot.executionUsage = structuredClone(event.data.execution) as AgentRunSnapshot["executionUsage"];
@@ -188,7 +200,7 @@ export function reduceAgentRunProjection(current: AgentRunProjection, item: Agen
       childResults = index < 0 ? [...childResults, next] : childResults.map((child, position) => position === index ? next : child);
     }
   }
-  Object.assign(snapshot, { revision: event.revision, lastSequence: event.sequence, cursor: item.cursor, messages, tools, pending });
+  Object.assign(snapshot, { revision: event.revision, lastSequence: event.sequence, cursor: item.cursor, observedAt: event.occurredAt, messages, tools, pending });
   if (finalResult) snapshot.result = finalResult; else delete snapshot.result;
   return { snapshot, cursor: item.cursor, messages, tools, pending, ...(finalResult ? { result: finalResult } : {}), childResults };
 }
