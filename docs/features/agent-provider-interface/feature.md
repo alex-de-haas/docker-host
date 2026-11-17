@@ -1,6 +1,6 @@
 ---
 created: 2026-11-12
-updated: 2026-11-16
+updated: 2026-11-17
 summary: Independent Local agent apps expose installation-qualified HTTP/SSE execution with provider-owned native state and Core-scoped authority.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -267,6 +267,34 @@ Ollama advertises no native subagents. Unsupported concurrency guarantees are re
 child output does not replace the root result, and inclusive usage is not counted again as separate
 child consumption.
 
+Harness retains the public provider, installation, run, generation and agent ancestry with
+messages, streamed text, tool calls/results, approvals and questions. Its replay reducer applies
+`agent.updated` as well as snapshot inventories. The chat groups native children by their qualified
+run and offers expandable output with the parent, latest action and observed status. Child text
+streams are independent of the main response. Approval and question controls stay visible in the
+main conversation with their child attribution. These observations do not create business tasks.
+A lost connection, interrupted run or missing current child inventory shows an unknown/last-known
+status rather than continuing a stale running badge. Interrupted partial messages remain labelled;
+old source-less history keeps its existing presentation. Confirmed whole-run containment also
+confirms observed child stops; it does not invent a successful child result.
+
+User prompts show their stored message time as local HH:mm. Message timestamp controls expose the
+full local date, time and timezone on hover, keyboard focus or tap. Missing or invalid historical
+timestamps do not produce a fabricated date; individual tool events do not acquire time badges.
+
+Claude distinguishes a root model result from completion of the native execution. The pinned SDK's
+background inventory and task notifications retain child identities, active tool receipts and
+logical outcomes across an interim root response. A successful root result is deferred while
+non-ambient native agents remain active; persistent background shells do not create this dependency.
+An empty agent inventory alone cannot complete the earlier response: the native continuation's
+next substantive root result supplies completion. Model-less notification acknowledgements do not
+replace it. The native CLI emits host-only `session_state_changed` frames that the pinned SDK's
+public iterator filters out; streams that expose lifecycle frames also respect their idle boundary. The provider does not synthesize a continuation
+prompt or infer completion from a delay. Disabling predictions while children are active changes
+prediction policy without closing the native query. Explicit Stop still stops the whole owned
+execution and drains exact late tool terminals; an idle notification during interruption cannot
+publish a pre-cancellation result as success.
+
 Codex observes pinned SDK subagent activity and reads only a verified completed child turn through
 the read-only native `thread/read` operation. This supplies attributed tool summaries without
 starting/resuming another thread. Interrupted, missing or superseded child history marks tools
@@ -302,6 +330,12 @@ Console diagnostics distinguish admission, binding, file/history guards, termina
 and helper deadlines through fixed codes, counts, timings and bounded SHA256 bindings. They omit
 raw paths, identifiers, commands, message content and SDK error text, and do not settle effects.
 
+During normal completion, native shutdown can emit terminal callbacks while the worker owns its
+journal lock. The worker drains already registered tool/effect and child terminal evidence before
+publishing the final receipt. It matches retained run/source/call identities and rejects new work,
+foreign ancestry and conflicting duplicate outcomes. These callbacks do not reopen a completed run;
+a missing terminal still leaves its effect unresolved.
+
 Harness retains each run's canonical cancellation bytes and acknowledgement independently of its
 pending outbox. An applied receipt can remove the pending entry without losing its UUID, body hash
 or original optimistic revisions. Repeated Stop and restored execution observe that same control;
@@ -334,6 +368,13 @@ Windows uses a suspended native launch assigned to a non-breakaway kill-on-close
 handle/accounting checks. Private
 control channels stay separate from native stdin/stdout/stderr. Native environments exclude Hosty
 service/control credentials and unrelated tool bearers.
+
+When the native receipt confirms physical exit but effect outcomes remain unresolved, the provider
+emits a distinct diagnostic with that distinction and retains the execution fence. Harness reports
+unreconciled native tool outcomes separately from missing stop evidence. Neither diagnostic releases
+capacity, permits another turn or repairs historical effects. Older interrupted runs still require
+the original provider's supported reconciliation and retained native evidence; edited receipt files
+or a new prompt do not establish recovery.
 
 Before launching a child, the provider durably records its intent. Durable SDK-stop confirmation,
 matching child receipts and a sealed/exited producer support reconciliation after restart. Missing
@@ -503,6 +544,16 @@ working account. A synthetic protocol check does not establish real OpenAI accou
   thread-scoped background cleanup, late correlated command completion after turn termination,
   cleanup ACK/error/missing-result uncertainty,
   finite RPC acknowledgments, active approval waits and shutdown behind an accepted control.
+- Claude background lifecycle regressions exercise an interim root result with three background
+  children, predictions disabled during their work, late successful/failed tool terminals, native
+  parent continuation, idle ordering, stale task runs, ambient tasks and explicit whole-run Stop.
+  Native SDK tests use an empty temporary home and a deterministic loopback model fixture; these
+  establish SDK/process behavior separately from hosted-model quality or account authorization.
+- Harness reducer/manager and browser checks cover child attribution, actionable child decisions,
+  independent text streams, unknown status, same-cursor recovery, bounded snapshot gaps and replay
+  without duplicate groups. Timestamp checks cover local time, old history and keyboard/mobile access.
+  Run the installed-app browser fixture with `HOSTY_NATIVE_SUBAGENTS_BROWSER=1` alongside the
+  `agent-providers` integration suite; its controlled browser events do not prove native inference.
 - Claude child-history fixtures cover the SDK's normalized live UUIDs, preserved API message IDs,
   exact native agent/session/parent/input binding, ordered error terminals, missing or ambiguous
   identities, bounded history, metadata changes, native-close barriers and helper deadlines.

@@ -163,6 +163,10 @@ export async function publicProviderFixture() {
   return { ...initial, root, owner, credential, provider, selection, connectionId, capabilities, sessions, runs, starts, controls, receipts,
     requests, authorizations, behavior, emit, update, makeManager,
     snapshot: (runId: string) => structuredClone(runs.get(runId)!),
+    reconnect(runId: string) {
+      const active = watchers.get(runId); watchers.delete(runId);
+      for (const watcher of active ?? []) watcher.close();
+    },
     complete(runId: string, text = "Completed", stopConfirmed = true) {
       return update(runId, { state: stopConfirmed ? "succeeded" : "running", phase: stopConfirmed ? "terminal" : "finalizing", stopConfirmed,
         messages: [{ id: "message", role: "assistant", text, state: "complete" }],

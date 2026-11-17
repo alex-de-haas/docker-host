@@ -45,7 +45,7 @@ import type { SettingsStore } from "../settings/store.js";
 import { CORE_PROVIDER_ID, type McpProvider, type ProviderDirectory } from "../settings/providers.js";
 import { TokenExchange, toMcpServerConfig, serverName, TOKEN_REFRESH_MARGIN_MS } from "../mcp/exchange.js";
 import { readOnlyToolNames } from "../mcp/readonly.js";
-import { AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentAttachment, type AgentMcpSelection, type AgentPendingDecision, type AgentRunSnapshot, type AgentRunControlInput, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest, type AgentWatchItem } from "@hosty-sdk/app/agent";
+import { AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentAttachment, type AgentMcpSelection, type AgentPendingDecision, type AgentRunSnapshot, type AgentSource, type AgentRunControlInput, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest, type AgentWatchItem } from "@hosty-sdk/app/agent";
 import type { MediatedProviderInvocation } from "@hosty-sdk/app/providers";
 import { CoreAgentBackend } from "../agent-providers/core.js";
 import { agentSelectionId } from "../agent-providers/directory.js";
@@ -54,6 +54,7 @@ import { withAgentAuthority } from "../agent-providers/context.js";
 import { ProviderHarnessRun, type ProviderRunContext } from "../agent-providers/run.js";
 import { providerDecisionCard, providerDecisionCardId, type QuestionAnswers } from "../agent-providers/decision-identity.js";
 import { createAgentRunProjection, reduceAgentRunProjection, type AgentRunProjection } from "../agent-providers/projection.js";
+import { nativeAgentStatus, nativeAgentStatusIdentity, providerAgentKey, providerTranscriptSource, transcriptToolId, type NativeAgentStatusEvent } from "../agent-providers/transcript-source.js";
 import { ProviderExecution, type ProviderExecutionState } from "../agent-providers/execution.js";
 import { readFile } from "node:fs/promises";
 import type { McpProxy, MintedToken } from "../mcp/proxy.js";
@@ -250,6 +251,7 @@ export class SessionManager {
   private readonly providerStates = new Map<string, ProviderExecutionState>();
   private readonly providerFiles = new Map<string, Array<{ name: string; path: string }>>();
   private readonly providerProjectedIds = new Map<string, Set<string>>();
+  private readonly providerAgentStatuses = new Map<string, Map<string, NativeAgentStatusEvent>>();
   private readonly operations = new Map<string, Promise<unknown>>();
   private readonly actorCredentialRefreshes = new Map<string, { credential: string }>();
   private readonly queuePumps = new Map<string, Promise<void>>();
@@ -642,7 +644,11 @@ export class SessionManager {
       if (previous && item.kind === "event" && BigInt(item.event.sequence) <= BigInt(previous.snapshot.lastSequence)) return;
       if (previous && item.kind === "snapshot" && item.snapshot.generation === previous.snapshot.generation
         && BigInt(item.snapshot.lastSequence) <= BigInt(previous.snapshot.lastSequence)
-        && BigInt(item.snapshot.revision) <= BigInt(previous.snapshot.revision)) return;
+        && BigInt(item.snapshot.revision) <= BigInt(previous.snapshot.revision)
+        && (BigInt(item.snapshot.lastSequence) < BigInt(previous.snapshot.lastSequence)
+          || BigInt(item.snapshot.revision) < BigInt(previous.snapshot.revision))) return;
+      // Equal watermarks may carry a new observation of freshness or native stop. Project those
+      // snapshots and let durable event identities suppress unchanged transcript content.
       const projection = previous ? reduceAgentRunProjection(previous, item)
         : item.kind === "snapshot" ? createAgentRunProjection(item.snapshot) : undefined;
       if (!projection) throw new AppContextError(409, "resync_required", "Read the provider run snapshot before following its events.");
@@ -655,13 +661,21 @@ export class SessionManager {
       }
       if (session.record.taskBarrier?.state === "resuming" && session.record.taskBarrier.runId !== next.runId && next.runId)
         (session.record.decisionRunIds ??= {})[session.record.taskBarrier.commandId] = next.runId;
-      const seen = this.providerProjectedIds.get(id) ?? new Set((await this.store.readEvents(id))
+      const retainedEvents = this.providerProjectedIds.has(id) && this.providerAgentStatuses.has(id) ? [] : await this.store.readEvents(id);
+      const seen = this.providerProjectedIds.get(id) ?? new Set(retainedEvents
         .map(event => event.providerEventId).filter((key): key is string => typeof key === "string"));
-      this.providerProjectedIds.set(id, seen);
+      const agentStatuses = this.providerAgentStatuses.get(id) ?? new Map<string, NativeAgentStatusEvent>();
+      if (!this.providerAgentStatuses.has(id)) for (const event of retainedEvents) {
+        if (event.type !== "native_agent_status" || !event.providerSource) continue;
+        const status = event as unknown as NativeAgentStatusEvent;
+        agentStatuses.set(providerAgentKey(status.providerSource), status);
+      }
+      this.providerProjectedIds.set(id, seen); this.providerAgentStatuses.set(id, agentStatuses);
       const stoppedSnapshotOutputs = !projectStatus && item.kind === "snapshot" && projection.snapshot.stopConfirmed
         && projection.snapshot.ref.id === value.runId && projection.snapshot.sessionId === value.sessionId
         && agentSelectionId({ provider: projection.snapshot.ref.provider, connection: value.selection.connection }) === agentSelectionId(value.selection);
-      const append = async (key: string, event: HarnessEvent, snapshotToolName?: string) => {
+      const append = async (key: string, event: HarnessEvent, snapshotToolName?: string, source?: AgentSource) => {
+        event = { ...event, providerSource: providerTranscriptSource(projection.snapshot, source) };
         const identity = `${projection.snapshot.ref.id}:${key}`;
         if (seen.has(identity)) return;
         const output = event.type === "tool_result" || event.type === "command_result";
@@ -671,24 +685,48 @@ export class SessionManager {
           // facts after an observation failure. Ordinary callbacks keep their live guard.
           const result = event.type === "tool_result" ? sanitizeToolResult(event) : sanitizeCommandResult(event);
           if (result && (event.type !== "tool_result" || shouldRetainToolOutput(snapshotToolName)))
-            await this.append(id, { ...result, providerEventId: identity, providerGeneration: projection.snapshot.generation });
+            await this.append(id, { ...result, providerSource: event.providerSource, providerEventId: identity, providerGeneration: projection.snapshot.generation });
         } else await this.applyHarnessEvent(id, { ...event, providerEventId: identity, providerGeneration: projection.snapshot.generation });
         seen.add(identity);
       };
       try {
-        for (const message of projection.messages) if (message.role === "assistant" && message.state === "complete")
-          await append(`message:${message.source?.agentId ?? "root"}:${message.id}`, { type: "assistant_text", text: message.text });
+        const statuses = (projection.snapshot.agents ?? []).filter(agent => agent.parentAgentId !== undefined)
+          .map(agent => nativeAgentStatus(projection.snapshot, agent));
+        const currentAgents = new Set(statuses.map(status => providerAgentKey(status.providerSource)));
+        for (const [key, previous] of agentStatuses) {
+          const source = previous.providerSource;
+          if (source.runId !== projection.snapshot.ref.id || source.generation !== projection.snapshot.generation
+            || source.provider.appId !== projection.snapshot.ref.provider.appId
+            || source.provider.installationId !== projection.snapshot.ref.provider.installationId
+            || source.provider.key !== projection.snapshot.ref.provider.key || currentAgents.has(key)
+            || !["queued", "running", "waiting_for_input"].includes(previous.lastKnownState ?? previous.state)) continue;
+          // Missing inventory is not evidence that a previously observed child is still running.
+          statuses.push({ ...previous, state: "unknown", freshness: "last_known", observedAt: projection.snapshot.observedAt,
+            lastKnownState: previous.lastKnownState ?? previous.state });
+        }
+        for (const status of statuses) {
+          const key = providerAgentKey(status.providerSource), previousStatus = agentStatuses.get(key);
+          if (previousStatus && nativeAgentStatusIdentity(previousStatus) === nativeAgentStatusIdentity(status)) continue;
+          // Observation freshness can change without a native cursor advance. Deduplicate against
+          // the latest durable status, allowing recovery to a state seen earlier in this run.
+          await append(`agent:${status.providerSource.agentId}:${projection.snapshot.lastSequence}:${session.record.lastEventSeq + 1}`,
+            status, undefined, status.providerSource);
+          agentStatuses.set(key, status);
+        }
+        for (const message of projection.messages) if (message.role === "assistant" && ["complete", "interrupted"].includes(message.state))
+          await append(`message:${message.source?.agentId ?? "root"}:${message.id}${message.state === "interrupted" ? ":interrupted" : ""}`,
+            { type: "assistant_text", text: message.text, ...(message.state === "interrupted" ? { incomplete: true } : {}) }, undefined, message.source);
         for (const tool of projection.tools) {
           const barrier = session.record.taskBarrier;
           if (barrier?.state === "armed" && barrier.runId === projection.snapshot.ref.id && tool.state === "completed"
             && tool.output?.includes(`hosty_task_barrier:${barrier.id}:${barrier.generation}`))
             barrier.acknowledgedSequence ??= item.kind === "event" ? item.event.sequence : projection.snapshot.lastSequence;
-          const toolUseId = `provider-${createHash("sha256").update(JSON.stringify([projection.snapshot.ref.id, tool.source?.agentId, tool.id])).digest("hex")}`;
-          await append(`tool:${tool.source?.agentId ?? "root"}:${tool.id}`, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input });
+          const toolUseId = transcriptToolId(projection.snapshot.ref.id, tool.source, tool.id);
+          await append(`tool:${tool.source?.agentId ?? "root"}:${tool.id}`, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input }, undefined, tool.source);
           if (tool.state !== "running" && tool.output !== undefined) await append(`output:${tool.source?.agentId ?? "root"}:${tool.id}:${tool.state}`,
-            { type: "tool_result", toolUseId, status: tool.state, output: tool.output, ...(tool.truncated ? { truncated: true as const } : {}) }, tool.name);
+            { type: "tool_result", toolUseId, status: tool.state, output: tool.output, ...(tool.truncated ? { truncated: true as const } : {}) }, tool.name, tool.source);
           if (tool.command) await append(`command:${tool.source?.agentId ?? "root"}:${tool.id}:${tool.command.status}`,
-            { type: "command_result", toolUseId, ...tool.command }, tool.name);
+            { type: "command_result", toolUseId, ...tool.command }, tool.name, tool.source);
         }
         session.pendingApprovals.clear(); session.pendingQuestions.clear();
         for (const decision of projection.pending) {
@@ -697,12 +735,12 @@ export class SessionManager {
             session.pendingApprovals.set(cardId, decision.toolName ?? "Agent action");
             await append(`decision:${decision.id}:${decision.revision}`, { type: "approval_request", approvalId: cardId,
               toolName: decision.toolName ?? "Agent action", input: decision.input, ...(decision.title ? { title: decision.title } : {}),
-              ...(decision.toolCallId ? { toolUseId: `provider-${createHash("sha256").update(JSON.stringify([projection.snapshot.ref.id, decision.source?.agentId, decision.toolCallId])).digest("hex")}` } : {}) });
+              ...(decision.toolCallId ? { toolUseId: transcriptToolId(projection.snapshot.ref.id, decision.source, decision.toolCallId) } : {}) }, undefined, decision.source);
           } else {
             const questions = this.providerQuestions(decision);
             session.pendingQuestions.set(cardId, questions.map(question => question.id!));
             await append(`decision:${decision.id}:${decision.revision}`, { type: "question_request", questionId: cardId, questions,
-              ...(decision.delivery === "next_turn" ? { blocking: false, delivery: "message" as const } : {}) });
+              ...(decision.delivery === "next_turn" ? { blocking: false, delivery: "message" as const } : {}) }, undefined, decision.source);
           }
         }
         for (const entry of projection.snapshot.decisions ?? []) {
@@ -711,33 +749,34 @@ export class SessionManager {
           if (entry.state !== "resolved" || !entry.response) continue;
           if (decision.kind === "approval" && entry.response.kind === "approval") {
             await append(`decision:${decision.id}:${decision.revision}`, { type: "approval_request", approvalId: cardId,
-              toolName: decision.toolName ?? "Agent action", input: decision.input, ...(decision.title ? { title: decision.title } : {}) });
+              toolName: decision.toolName ?? "Agent action", input: decision.input, ...(decision.title ? { title: decision.title } : {}) }, undefined, decision.source);
             const key = `${projection.snapshot.ref.id}:resolved:${decision.id}`;
             if (!seen.has(key)) { await this.append(id, { type: "approval_decision", approvalId: cardId,
               toolName: decision.toolName ?? "Agent action", decision: entry.response.decision,
-              ...(entry.response.message ? { message: entry.response.message } : {}), providerEventId: key }); seen.add(key); }
+              ...(entry.response.message ? { message: entry.response.message } : {}), providerSource: providerTranscriptSource(projection.snapshot, decision.source), providerEventId: key }); seen.add(key); }
           } else if (decision.kind === "question" && entry.response.kind === "question") {
             await append(`decision:${decision.id}:${decision.revision}`, { type: "question_request", questionId: cardId, questions: this.providerQuestions(decision),
-              ...(decision.delivery === "next_turn" ? { blocking: false, delivery: "message" as const } : {}) });
+              ...(decision.delivery === "next_turn" ? { blocking: false, delivery: "message" as const } : {}) }, undefined, decision.source);
             const key = `${projection.snapshot.ref.id}:resolved:${decision.id}`;
             if (!seen.has(key)) { await this.append(id, { type: "question_answered", questionId: cardId,
-              answers: structuredClone(entry.response.answers), providerEventId: key }); seen.add(key); }
+              answers: structuredClone(entry.response.answers), providerSource: providerTranscriptSource(projection.snapshot, decision.source), providerEventId: key }); seen.add(key); }
           }
         }
         if (item.kind === "event" && item.event.type === "message.delta") this.fanOut(session,
-          { seq: session.record.lastEventSeq, ts: item.event.occurredAt, type: "assistant_delta", text: String(item.event.data.text ?? "") });
+          { seq: session.record.lastEventSeq, ts: item.event.occurredAt, type: "assistant_delta", text: String(item.event.data.text ?? ""),
+            providerSource: providerTranscriptSource(projection.snapshot, item.event.source) });
         if (item.kind === "event") {
           const event = item.event, data = event.data;
-          if (event.type === "warning" && typeof data.message === "string") await append(`warning:${event.sequence}`, { type: "notice", message: data.message });
-          if (event.type === "extension" && data.namespace === "hosty.agent.answer" && data.name === "answer.complete")
+          if (event.type === "warning" && typeof data.message === "string") await append(`warning:${event.sequence}`, { type: "notice", message: data.message }, undefined, event.source);
+          if (event.type === "extension" && event.source.parentAgentId === undefined && data.namespace === "hosty.agent.answer" && data.name === "answer.complete")
             await append(`extension:${event.sequence}`, { type: "answer_complete" });
-          if (event.type === "extension" && data.namespace === "hosty.agent.predictions" && data.name === "predictions")
+          if (event.type === "extension" && event.source.parentAgentId === undefined && data.namespace === "hosty.agent.predictions" && data.name === "predictions")
             await append(`extension:${event.sequence}`, { type: "prompt_suggestion", ...(typeof data.text === "string" ? { text: data.text } : {}),
               ...(typeof data.reason === "string" ? { reason: data.reason } : {}), workerRunId: projection.snapshot.ref.id } as HarnessEvent);
-          if (event.type === "extension" && data.namespace === "hosty.agent.activity" && data.name === "activity" && data.activity && typeof data.activity === "object") {
+          if (event.type === "extension" && event.source.parentAgentId === undefined && data.namespace === "hosty.agent.activity" && data.name === "activity" && data.activity && typeof data.activity === "object") {
             const activity = data.activity as import("../harness/activity.js").HarnessActivity;
             if (["working", "thinking", "responding"].includes(activity.phase) && Number.isSafeInteger(activity.toolCount) && activity.toolCount >= 0)
-              await this.applyHarnessEvent(id, { type: "activity", activity });
+              await this.applyHarnessEvent(id, { type: "activity", activity, providerSource: providerTranscriptSource(projection.snapshot, event.source) });
           }
         }
         const context = projection.snapshot.latestContext;
@@ -758,8 +797,13 @@ export class SessionManager {
           const key = `${projection.snapshot.ref.id}:observation-unavailable`;
           session.record.status = "failed";
           if (!seen.has(key)) {
-            await this.append(id, { type: "notice", message: "The provider's execution state is unavailable or interrupted. Native exit is unconfirmed; reconnect or inspect the original provider execution before continuing.", providerEventId: key });
+            const unresolved = projection.snapshot.effects.unresolvedCallIds.length;
+            const message = unresolved > 0
+              ? `The provider's completion cannot be reconciled because ${unresolved} native tool outcome${unresolved === 1 ? " is" : "s are"} unresolved. Inspect the original provider execution before continuing.`
+              : "The provider's execution state is unavailable or interrupted. Native exit is unconfirmed; reconnect or inspect the original provider execution before continuing.";
+            await this.append(id, { type: "notice", message, providerSource: providerTranscriptSource(projection.snapshot), providerEventId: key });
             await this.append(id, { type: "session_status", status: "failed", providerState: projection.snapshot.state,
+              providerSource: providerTranscriptSource(projection.snapshot),
               providerObservation: { runId: projection.snapshot.ref.id, generation: projection.snapshot.generation, stopConfirmed: false } });
             seen.add(key);
           }
@@ -786,7 +830,7 @@ export class SessionManager {
           current.run = structuredClone(projection.snapshot); current.cursor = projection.cursor;
         }
         this.providerProjections.set(id, projection);
-      } catch (error) { this.providerProjectedIds.delete(id); throw error; }
+      } catch (error) { this.providerProjectedIds.delete(id); this.providerAgentStatuses.delete(id); throw error; }
   }
 
   private providerQuestions(decision: AgentPendingDecision): import("../harness/adapter.js").HarnessQuestion[] {
@@ -3626,9 +3670,13 @@ export class SessionManager {
 
   private async appendProviderResolution(id: string, event: Record<string, unknown> & { type: string; providerEventId: string }): Promise<void> {
     await this.serialize(id, async () => {
-      const seen = this.providerProjectedIds.get(id);
-      if (seen?.has(event.providerEventId) || (await this.store.readEvents(id)).some(item => item.providerEventId === event.providerEventId)) return;
-      await this.append(id, event); seen?.add(event.providerEventId);
+      const seen = this.providerProjectedIds.get(id), events = await this.store.readEvents(id);
+      if (seen?.has(event.providerEventId) || events.some(item => item.providerEventId === event.providerEventId)) return;
+      const request = events.findLast(item => event.type === "approval_decision"
+        ? item.type === "approval_request" && item.approvalId === event.approvalId
+        : item.type === "question_request" && item.questionId === event.questionId);
+      await this.append(id, { ...event, ...(request?.providerSource ? { providerSource: request.providerSource } : {}) });
+      seen?.add(event.providerEventId);
     });
   }
 
@@ -4131,6 +4179,7 @@ export class SessionManager {
         await this.append(id, { ...result,
           ...(event.providerEventId ? { providerEventId: event.providerEventId } : {}),
           ...(event.providerGeneration ? { providerGeneration: event.providerGeneration } : {}),
+          ...(event.providerSource ? { providerSource: event.providerSource } : {}),
           ...(event.workerRunId !== undefined ? { workerRunId: event.workerRunId, workerSequence: event.workerSequence } : {}),
         });
         return;
@@ -4144,6 +4193,7 @@ export class SessionManager {
         await this.append(id, { ...result,
           ...(event.providerEventId ? { providerEventId: event.providerEventId } : {}),
           ...(event.providerGeneration ? { providerGeneration: event.providerGeneration } : {}),
+          ...(event.providerSource ? { providerSource: event.providerSource } : {}),
           ...(event.workerRunId !== undefined ? { workerRunId: event.workerRunId, workerSequence: event.workerSequence } : {}),
         });
         return;

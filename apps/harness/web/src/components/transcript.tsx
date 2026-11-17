@@ -4,6 +4,7 @@ import { DecisionQuestion } from "./decision-question";
 import { transcriptDecisionId, type QuestionAnswers } from "../../../src/agent-providers/decision-identity";
 export { transcriptDecisionId };
 import { UserMessage } from "./user-message";
+import { MessageTimestamp } from "./message-timestamp";
 import { PromptSuggestionCard } from "./prompt-suggestion";
 import { parseSuggestion, type PromptSuggestion } from "@/lib/prompt-suggestions";
 import { Fragment, useId, useMemo, useRef, useState } from "react";
@@ -158,9 +159,10 @@ export function TranscriptEvent({
         ? event.attachmentDisplayNames as Record<string, unknown> : {};
       const card = feedbackCardForEvent(event, feedbackCard ? [feedbackCard] : []);
       return (
-        <div className="space-y-1">
+        <div className="flex flex-col gap-1">
           {card || feedbackReferenceForEvent(event) ? <FeedbackMessageCard card={card} originalText={String(event.text ?? "")} loading={feedbackLoading} />
             : String(event.text ?? "").trim() && <UserMessage text={String(event.text ?? "")} />}
+          <MessageTimestamp ts={event.ts} />
           {names.length > 0 && (
             <AttachmentRow files={names.map((name) => ({ name, displayName: attachmentLabel(name, displayNames[name]), size: attachments?.sizes.get(name) ?? null }))} />
           )}
@@ -178,8 +180,12 @@ export function TranscriptEvent({
     }
     case "assistant_text":
       return (
-        <div className="rounded-lg bg-muted/60 px-3 py-2">
-          <Markdown text={String(event.text ?? "")} />
+        <div className="group/message flex flex-col gap-1">
+          <div className="rounded-lg bg-muted/60 px-3 py-2">
+            <Markdown text={String(event.text ?? "")} />
+            {event.incomplete === true && <p className="mt-2 text-xs text-muted-foreground">Interrupted message</p>}
+          </div>
+          <MessageTimestamp ts={event.ts} compact className="sm:opacity-0 sm:group-hover/message:opacity-100 sm:focus-within:opacity-100" />
         </div>
       );
     case "tool_use": {

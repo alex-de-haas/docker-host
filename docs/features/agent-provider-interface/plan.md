@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-10-10
-updated: 2026-11-16
+updated: 2026-11-17
 summary: Extract independent local agent-provider apps consumed by Docker-hosted Harness, with explicit discovery, authority, recovery and host-tool readiness.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -45,6 +45,14 @@ Owner approval, 2026-11-16: finish provider release publication, stable-feed pro
 Marketplace registration, then verify fresh installation through the normal reviewed Core flow.
 This continuation includes retiring obsolete embedded-worker dependency-update targets. D11 stays
 open until the actual releases, default feeds, catalog deployment and installation checks are verified.
+
+Owner approval, 2026-11-17: repair native background-subagent lifecycle and complete its
+status/attribution delivery through Harness, including compact child progress and message timestamps.
+Reproduce the root-answer/prediction-disable incident, verify late tool settlement and parent
+continuation, and run isolated Core-managed checks. Preserve the interrupted conversation and
+its source; recovery follows verified reconciliation rather than clearing an uncertain state.
+This approval covers the scoped D23-D26 work below, not the unrelated remaining D5 acceptance,
+commits, publication or ordinary-data runtime activation.
 
 ## Accepted Delivery Scope
 
@@ -643,6 +651,58 @@ principal or grant. Root cancel/finalization accounts for native child work and 
 all descendants stopped. Client-driven child creation/messaging/control is a separate later API;
 v1 does not add `/spawn-agent` or promise cross-provider native session transfer.
 
+### Background Child Completion Repair
+
+The accepted repair distinguishes a root turn yielding from the end of its owned native work.
+A successful root result while background children are active retains their identities, output,
+authority and execution ownership. Prediction controls affect only predictions. Child terminals
+remain observable after a root result, and native completion can wake the root for its final answer.
+Explicit Stop still interrupts the entire owned execution and reconciles known child outcomes.
+Provider-independent infrastructure consumes lifecycle observations rather than vendor names.
+
+Harness preserves source attribution and applies `agent.updated` during live delivery and replay.
+A child status panel uses provider-qualified run/agent identity and exposes partial observation
+honestly. Existing messages without source or timestamps remain readable. Operator prompt times
+and full message timestamps use the viewer's locale and timezone; tool rows remain compact.
+
+Required evidence for D23-D26 includes a deterministic failing baseline for root yield followed by
+prediction disable; late child tool success/error settlement; three children completing before a
+final parent response; cancellation with confirmed process-tree exit; reconnect without duplicated
+children or output; provider/Harness builds and affected tests; and separate-data child Core
+verification. The heavyweight tasks suite is optional and unselected. Ordinary provider credentials
+are not copied into the child; an unavailable authorized test connection is reported explicitly.
+The historical incident is recovered only through verified provider-owned evidence and supported
+controls; manual edits to retained execution state are not a recovery mechanism.
+
+Verification for the November 17 repair on macOS arm64:
+
+- `npm run agent-providers:lint` and `npm run agent-providers:test` pass: runtime 363,
+  Codex 179, Claude 210 and Ollama 52 tests. Four Windows-native cases are skipped on macOS.
+- `HOSTY_TEST_PROVIDER_INSTALLED_CLI=1 node --import tsx --test apps/claude-code-provider/test/native-background.mjs`
+  passes both actual pinned SDK/CLI scenarios: three background children complete with parent
+  synthesis, and explicit cancellation stops all children. A local deterministic model fixture,
+  temporary home and placeholder credentials isolate this evidence from paid-provider inference.
+- `npm run harness:test` passes 2,906 tests; the final reconnect/parent-link/terminal-status
+  refinements pass 43 focused tests. Harness backend/web lint, web production export and all three
+  provider production builds pass. Documentation, version consistency and diff checks pass.
+- Installed Docker Harness browser verification uses normal child Core password/app-code login,
+  separate test data, standalone and embedded/mobile surfaces. It covers child/root text isolation,
+  visible child approval, replay, run identity, unknown/terminal status and accessible local time.
+  Browser event fixtures establish presentation separately from native execution.
+
+- `HOSTY_NATIVE_SUBAGENTS_BROWSER=1 npm run test:integration -- agent-providers` passes on
+  the final candidate, including the unrelated SDK consumer, three installed Local providers,
+  Docker Harness, independent restart/recovery, persisted queue/attachments and browser assertions.
+  Docker cold start is 7.589 seconds and warm restart 6.740 seconds. The integration owner confirms
+  Finish removed the child, helper, Git server, credentials, snapshots and occupied port.
+- The separately registered UI sandbox also reaches `finished`, with no retained process/data root
+  and its browser consumer released. The incident's source and native transcripts remain untouched;
+  no ordinary-host activation or manual historical receipt repair is part of this change.
+- Versions: Harness 0.99.0 → 0.100.0; each provider 0.1.2 → 0.1.3; shared private runtime
+  0.1.1 → 0.1.2. Platform and SDK contracts do not change. Core/CLI fixture builds pass with
+  existing analyzer/NuGet warnings. Hosted inference and Windows-native execution are not claimed;
+  the optional heavyweight tasks suite is unselected. D5/D6 retain their broader acceptance scope.
+
 ### Pending Responses And Cancellation
 
 ```json
@@ -883,6 +943,11 @@ neither caching nor a universal inference API is a prerequisite to this provider
 - [x] D20. Fence direct and agent-origin MCP workspace lease acquisition against concurrent cleanup and replay, persist admission closure, preserve idempotent cleanup after expiry/revocation/restart, and verify real claims with deterministic interleavings.
 - [x] D21. Persist pending workspace cleanup after native stop and retry the same release identity during maintenance after transient Core failure, including provider reconstruction and executions without pending decisions.
 - [x] D22. Restore engine-neutral shared infrastructure: move concrete adapters, account/auth/history/skill integration, settings policy and build metadata into their provider applications; inject explicit runtime contracts, preserve persisted state/public behavior and verify neutral-engine, provider, packaging and affected integration checks.
+
+- [x] D23. Preserve native background children across root turn results and prediction controls, retain child/tool identities until authoritative settlement, and verify final parent continuation plus explicit cancellation with deterministic regressions and an isolated real provider run.
+- [x] D24. Reduce native agent status events and retain run-qualified child attribution in Harness messages, tools and decisions; render compact child progress and expandable attributed output with reconnect/replay coverage.
+- [x] D25. Display local message times for operator prompts and accessible full timestamps for transcript messages without adding time labels to every tool event; verify transcript grouping and history compatibility.
+- [x] D26. Verify the combined lifecycle and UI path in an owned Core sandbox, record accurate stop-versus-outcome diagnostics and reconciliation limits, update current behavior documentation, and preserve the interrupted session's source and partial research for supported recovery.
 
 ### Implementation Order
 

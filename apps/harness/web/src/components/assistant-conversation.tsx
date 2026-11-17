@@ -38,6 +38,8 @@ import {
   MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 import { transcriptItems } from "@/lib/transcript-items";
+import { nativeAgentTranscript, nativeAgentKey, nativeSource, receiveTranscriptText, emptyTranscriptStreams } from "@/lib/native-subagents";
+import { NativeSubagents } from "./native-subagents";
 import { feedbackCardForEvent, useFeedbackTranscript } from "@/lib/feedback-transcript";
 import { resolveTranscriptReview, type TranscriptReviewReference } from "@/lib/transcript-edits";
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
@@ -134,7 +136,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const historyLoading = !!session && historyReadyFor !== session.id && connection !== "disconnected";
   const [events, setEvents] = useState<AssistantEvent[]>([]);
   const transcriptRequestIds = useMemo(() => new Set(events.flatMap(event => event.type === "user_message" && typeof event.clientRequestId === "string" ? [event.clientRequestId] : [])), [events]);
-  const [streamed, setStreamed] = useState("");
+  const [streams, setStreams] = useState(emptyTranscriptStreams);
+  const streamed = streams.root;
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -497,7 +500,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setConnection("connecting");
     setHistoryReadyFor(null);
     setEvents([]);
-    setStreamed("");
+    setStreams(emptyTranscriptStreams());
     // Whatever was left unsent in this session, put back in the box. Per session, so switching away
     // and back returns your own half-written sentence rather than someone else's.
     setInput(readDraft(record.id, retainedSend?.draftText ?? record.handoffDraft?.text ?? ""));
@@ -597,11 +600,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             ? { ...current, appIds: event.appIds as string[], appContextRevision: revision, lastEventSeq: event.seq, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(current) ? event.ts : current.updatedAt } : current);
         }
         if (event.type === "assistant_delta") {
-          setStreamed((current) => current + String(event.text ?? ""));
+          setStreams(current => receiveTranscriptText(current, event));
           return;
         }
         if (event.type === "assistant_text") {
-          setStreamed("");
+          setStreams(current => receiveTranscriptText(current, event));
         }
         if (event.type === "session_status") {
           // Cancellation closes earlier approval cards, including when replaying a stopped turn.
@@ -617,7 +620,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           if (sessionSnapshot.current) sessionSnapshot.current = applyStatus(sessionSnapshot.current);
           if (!["running", "awaiting_approval", "awaiting_question"].includes(String(event.status))) {
             setActivity(null);
-            setStreamed("");
+            setStreams(emptyTranscriptStreams());
             // A recovered Docker stop can clear a previously unavailable generation without
             // changing the selected provider or session. Refresh from its terminal event.
             void getHealth(record.id).then(value => {
@@ -644,7 +647,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         // Keep this boundary through reconnects so an existing reader is not remounted.
         if (state === "connected") setHistoryReadyFor(record.id);
         if (state !== "connected") setActivity(null);
-        if (state === "disconnected") setStreamed("");
+        if (state === "disconnected") setStreams(emptyTranscriptStreams());
       },
     );
   }, [onSessionChange, suggestionsReceive, queueReceive, fullPage]);
@@ -679,7 +682,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     streamAbortRef.current?.abort(); activeSessionId.current = null;
     requestedSessionRef.current = null; selectedRoute.current = null;
     setRequestedSessionId(null); setSurfaceSessionId(null); setSession(null);
-    setStatus("idle"); setEvents([]); setStreamed(""); setInput(""); setPending([]); setUploaded([]);
+    setStatus("idle"); setEvents([]); setStreams(emptyTranscriptStreams()); setInput(""); setPending([]); setUploaded([]);
     setPendingSend(null); setError(null);
   }, []);
   const pickWorkspace = (target: DevelopmentWorkspace, matched?: AssistantSession) => {
@@ -1099,7 +1102,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setSession(null);
     setStatus("idle");
     setEvents([]);
-    setStreamed("");
+    setStreams(emptyTranscriptStreams());
     setInput("");
     setPending([]);
     setUploaded([]);
@@ -1205,7 +1208,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // Which message each uploaded file belongs to, so a claimed file is drawn under its message and
   // nowhere else.
   const attachmentIndex = useMemo(() => indexAttachments(events), [events]);
-  const items = useMemo(() => transcriptItems(events, attachmentIndex.claimed, decidedApprovals), [events, attachmentIndex, decidedApprovals]);
+  const nativeTranscript = useMemo(() => nativeAgentTranscript(events, streams.children), [events, streams.children]);
+  const items = useMemo(() => transcriptItems(nativeTranscript.events, attachmentIndex.claimed, decidedApprovals), [nativeTranscript, attachmentIndex, decidedApprovals]);
   const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
   const mcpActivity = useMemo(() => contextDetailsOpen ? observedMcpActivity(events) : EMPTY_MCP_ACTIVITY, [events, contextDetailsOpen]);
 
@@ -1371,9 +1375,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     <MessageScrollerItem key={item.key} messageId={item.key}>
                       <ToolActivity events={item.events} appNames={appNames} reviewContext={transcriptReviewContext} commandResults={item.commandResults} toolResults={item.toolResults} approvals={item.approvals} />
                     </MessageScrollerItem>
+                  ) : item.event.type === "native_agent_group" ? (
+                    <MessageScrollerItem key={`native-${nativeTranscript.groups.get(item.event.seq)!.key}`} messageId={`native-${nativeTranscript.groups.get(item.event.seq)!.key}`}>
+                      <NativeSubagents group={nativeTranscript.groups.get(item.event.seq)!} connected={connection === "connected"} appNames={appNames} reviewContext={transcriptReviewContext} />
+                    </MessageScrollerItem>
                   ) : (
                     <MessageScrollerItem key={item.key} messageId={item.key}>
                     <div ref={item.event === pendingDecision ? decisionCard : undefined} tabIndex={item.event === pendingDecision ? -1 : undefined}>
+                    {nativeSource(item.event) && <p className="mb-1 text-xs text-muted-foreground">From {nativeTranscript.agents.get(nativeAgentKey(nativeSource(item.event)!))?.label ?? "subagent"}</p>}
                     <TranscriptEvent
                       event={item.event}
                       appNames={appNames}

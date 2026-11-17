@@ -23,6 +23,7 @@ export class WorkerEngine {
   private readonly healthyCloseEffects = new Map<string, Set<string>>();
   private readonly healthyClosing = new Set<string>();
   private readonly failureFinalizations = new Map<string, Promise<void>>();
+  private readonly queuedEvents = new Map<string, Set<{ event: HarnessEvent; consumed: boolean }>>();
   private starts = new Set<Promise<void>>();
   private closing = false;
   private usagePersistenceFailed = false;
@@ -103,9 +104,13 @@ export class WorkerEngine {
     } finally { if (!started) await adapter?.dispose?.(); }
   }
   private async event(id: string, event: HarnessEvent): Promise<void> {
-    const admittedBeforeClose = !this.closing;
+    const admittedBeforeClose = !this.closing, queued = { event, consumed: false };
+    const pending = this.queuedEvents.get(id) ?? new Set();
+    pending.add(queued); this.queuedEvents.set(id, pending);
     try {
       await this.journal.exclusive(async () => {
+        pending.delete(queued); if (!pending.size && this.queuedEvents.get(id) === pending) this.queuedEvents.delete(id);
+        if (queued.consumed) return;
         if (this.quarantined.has(id)) {
           const expected = this.healthyCloseEffects.get(id), source = readHarnessEventSource(event.source);
           if (expected && event.type === "native_effect" && event.state === "settled" && typeof event.id === "string"
@@ -157,13 +162,63 @@ export class WorkerEngine {
         }
       });
     } catch { await this.fail(id, "Worker could not persist or finalize provider output. Execution may require recovery."); }
+    finally { pending.delete(queued); if (!pending.size && this.queuedEvents.get(id) === pending) this.queuedEvents.delete(id); }
   }
   private async stopNative(id: string): Promise<void> {
     const active = this.active.get(id);
     if (!active) return;
     clearTimeout(active.collecting);
-    if (active.run.stopAndWait) await active.run.stopAndWait(); else await active.run.stop();
+    const beforeStop = await this.journal.load(id);
+    if (active.run.stopAndWait) {
+      await active.run.stopAndWait();
+      await this.drainCompletionTerminals(id, beforeStop);
+    } else await active.run.stop();
     active.release(); this.active.delete(id); this.disabledSuggestions.delete(id);
+  }
+  /** Called under the journal lock after confirmed stop, before publishing the final receipt. */
+  private async drainCompletionTerminals(id: string, beforeStop: Awaited<ReturnType<WorkerJournal["load"]>>): Promise<void> {
+    // Native cleanup can emit callbacks while its caller owns the journal lock. Consume only
+    // already registered terminal facts here; their queued handlers subsequently become no-ops.
+    // Snapshot the queue at stop completion so a later callback cannot reopen a closed execution.
+    const queued = [...this.queuedEvents.get(id) ?? []];
+    const effects = new Map(Object.entries(beforeStop.receipt.effects ?? {})), effectSources = new Map<string, string>();
+    const calls = new Set<string>(), outcomes = new Map<string, string>(), agents = new Map<string, string | undefined>();
+    const sourceKey = (source: HarnessEvent["source"]) => JSON.stringify([source?.agentId ?? "root", source?.parentAgentId ?? null, source?.parentToolCallId ?? null]);
+    const callKey = (source: HarnessEvent["source"], callId: string) => JSON.stringify([sourceKey(source), callId]);
+    for (const { event } of beforeStop.events) {
+      const source = readHarnessEventSource(event.source), agentKey = sourceKey(source);
+      if (source && source.agentId !== "root" && !agents.has(agentKey)) agents.set(agentKey, undefined);
+      if (event.type === "native_effect") effectSources.set(nativeEventIdentity(source, event.id), agentKey);
+      if (event.type === "tool_use" && event.toolUseId) calls.add(callKey(source, event.toolUseId));
+      if (event.type === "tool_result" || event.type === "command_result") outcomes.set(`${event.type}:${callKey(source, event.toolUseId)}`, event.status);
+      if (event.type === "agent_status" && source) agents.set(agentKey, event.state);
+      if (source && source.agentId !== "root" && (event.type === "result" || event.type === "error"))
+        agents.set(agentKey, event.type === "result" && successfulResult(event.status) ? "succeeded" : "failed");
+    }
+    for (const entry of queued) {
+      const event = entry.event, source = readHarnessEventSource(event.source), agentKey = sourceKey(source);
+      if (event.source !== undefined && source === undefined) continue;
+      let accepted = false;
+      if (event.type === "native_effect" && (event.state === "settled" || event.state === "unknown")) {
+        const key = nativeEventIdentity(source, event.id);
+        accepted = effects.has(key) && effectSources.get(key) === agentKey && effects.get(key) !== event.state;
+        if (accepted) { if (event.state === "settled") effects.delete(key); else effects.set(key, event.state); }
+      } else if (event.type === "tool_result" || event.type === "command_result") {
+        const call = callKey(source, event.toolUseId), key = `${event.type}:${call}`, previous = outcomes.get(key);
+        accepted = calls.has(call) && (previous === undefined || previous === "unknown" && event.status !== "unknown");
+        if (accepted) outcomes.set(key, event.status);
+      } else if (source && source.agentId !== "root" && agents.has(agentKey)
+        && !["succeeded", "failed", "cancelled"].includes(agents.get(agentKey) ?? "")) {
+        const state = event.type === "agent_status" && event.agentId === source.agentId
+          && event.parentAgentId === source.parentAgentId && event.parentToolCallId === source.parentToolCallId ? event.state
+          : event.type === "result" ? successfulResult(event.status) ? "succeeded" : "failed"
+            : event.type === "error" ? "failed" : undefined;
+        if (state && ["succeeded", "failed", "cancelled"].includes(state)) { accepted = true; agents.set(agentKey, state); }
+      }
+      if (!accepted) continue;
+      await this.journal.append(id, event);
+      entry.consumed = true;
+    }
   }
   private async finishSuggestionLocked(id: string, timeout = false): Promise<void> {
     if (this.quarantined.has(id) || (await this.journal.load(id)).receipt.state !== "suggesting") return;

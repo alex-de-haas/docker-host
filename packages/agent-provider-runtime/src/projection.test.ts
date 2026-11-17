@@ -176,3 +176,42 @@ it("marks explicitly incomplete native child tool coverage without changing stop
   expect(f.record.snapshot.stopConfirmed).toBe(false);
   expect(f.record.snapshot.result).toBeUndefined();
 });
+
+
+it("distinguishes confirmed process exit from unresolved outcomes without releasing the execution fence", async () => {
+  const f = await fixture();
+  f.session.session.activeRun = f.record.snapshot.ref;
+  const receipt: WorkerReceipt = { runId: f.record.snapshot.ref.id, conversationId: f.session.id, generation: "native", state: "completed", revision: 2,
+    selection: { model: null, reasoningEffort: null }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    exitConfirmed: true, effects: { [nativeEventIdentity(child, "last-call")]: "started" } };
+  projectReceipt(f.store, f.session, f.record, receipt);
+  expect(f.record.snapshot).toMatchObject({ state: "unknown", phase: "interrupted", stopConfirmed: false, freshness: "last_known" });
+  expect(f.session.session.activeRun).toEqual(f.record.snapshot.ref);
+  const warnings = () => f.record.events.filter(event => event.type === "warning" && event.data.code === "native_effect_outcomes_unresolved");
+  expect(warnings()).toHaveLength(1);
+  expect(warnings()[0]!.data.message).toContain("native process has stopped");
+  projectReceipt(f.store, f.session, f.record, receipt);
+  expect(warnings()).toHaveLength(1);
+  projectReceipt(f.store, f.session, f.record, { ...receipt, revision: 3, effects: {} });
+  expect(f.record.snapshot).toMatchObject({ state: "succeeded", stopConfirmed: true });
+  expect(f.session.session.activeRun).toBeNull();
+  for (const event of f.record.events) validateAgentEvent(event);
+});
+
+
+it.each(["completed", "cancelled"] as const)("shares confirmed whole-tree stop with observed children without inventing success: %s", async state => {
+  const f = await fixture();
+  f.append({ type: "agent_status", ...child, state: "running", stopConfirmed: false, source: child });
+  f.append({ type: "agent_status", agentId: "finished", parentAgentId: "root", state: "succeeded", stopConfirmed: false,
+    source: { agentId: "finished", parentAgentId: "root" } });
+  const receipt: WorkerReceipt = { runId: f.record.snapshot.ref.id, conversationId: f.session.id, generation: "native", state, revision: 2,
+    selection: { model: null, reasoningEffort: null }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), exitConfirmed: true, effects: {} };
+  projectReceipt(f.store, f.session, f.record, { ...receipt, effects: { outstanding: "started" } });
+  expect(f.record.snapshot.agents!.every(agent => agent.stopConfirmed === false)).toBe(true);
+  projectReceipt(f.store, f.session, f.record, receipt);
+  expect(f.record.snapshot.agents).toMatchObject([{ state: "unknown", stopConfirmed: true }, { state: "succeeded", stopConfirmed: true }]);
+  const count = f.record.events.length;
+  projectReceipt(f.store, f.session, f.record, receipt);
+  expect(f.record.events).toHaveLength(count);
+  for (const event of f.record.events) validateAgentEvent(event);
+});

@@ -3,7 +3,7 @@
   "id": "hosty.codex-provider",
   "name": "Codex Provider",
   "description": "Independent local Codex agent execution with app-owned connections, native sessions and Hosty-authorized HTTP/SSE.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",
