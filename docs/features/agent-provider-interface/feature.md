@@ -286,11 +286,14 @@ Claude distinguishes a root model result from completion of the native execution
 background inventory and task notifications retain child identities, active tool receipts and
 logical outcomes across an interim root response. A successful root result is deferred while
 non-ambient native agents remain active; persistent background shells do not create this dependency.
-An empty agent inventory alone cannot complete the earlier response: the native continuation's
-next substantive root result supplies completion. Model-less notification acknowledgements do not
-replace it. The native CLI emits host-only `session_state_changed` frames that the pinned SDK's
-public iterator filters out; streams that expose lifecycle frames also respect their idle boundary. The provider does not synthesize a continuation
-prompt or infer completion from a delay. Disabling predictions while children are active changes
+An empty agent inventory or a later substantive root result cannot complete the execution: queued
+child notifications can produce progress turns before the final parent synthesis. The provider
+observes the native CLI's host-only `session_state_changed` frames through the supported process
+spawn hook, because the pinned SDK filters those frames from its public iterator. A native idle
+boundary is correlated with its preceding root result's session and UUID; completion waits until
+that exact result reaches the SDK iterator. The bounded observer passes stdout through unchanged
+and retains only lifecycle metadata. The provider does not synthesize a continuation prompt or
+infer completion from a delay. Disabling predictions while children are active changes
 prediction policy without closing the native query. Explicit Stop still stops the whole owned
 execution and drains exact late tool terminals; an idle notification during interruption cannot
 publish a pre-cancellation result as success.
@@ -547,6 +550,10 @@ working account. A synthetic protocol check does not establish real OpenAI accou
 - Claude background lifecycle regressions exercise an interim root result with three background
   children, predictions disabled during their work, late successful/failed tool terminals, native
   parent continuation, idle ordering, stale task runs, ambient tasks and explicit whole-run Stop.
+  Queued-notification regressions complete all children while a parent progress request is pending,
+  then require the final synthesis to survive the adapter and worker journal with predictions on
+  and off. Raw stdout may reach idle before the SDK iterator drains its final result; result/session
+  correlation must prevent early completion. Cancellation before final synthesis cannot publish success.
   Native SDK tests use an empty temporary home and a deterministic loopback model fixture; these
   establish SDK/process behavior separately from hosted-model quality or account authorization.
 - Harness reducer/manager and browser checks cover child attribution, actionable child decisions,

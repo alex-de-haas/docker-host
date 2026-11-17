@@ -9,8 +9,8 @@ it("correlates concurrent and child commands once by factual IDs, omits raw outp
   const events: HarnessEvent[] = [];
   const messages = [proposal("a"), proposal("b"), proposal("a", "child"), completion("b"), completion("a", undefined, "child"), completion("foreign"),
     completion("a"), completion("a"), { ...proposal("replay"), isReplay: true }, completion("replay"),
-    { type: "result", subtype: "success" }, completion("b")];
-  queryMock.mockImplementation(() => Object.assign((async function* () { yield* messages; })(), { interrupt: async () => {}, close: () => {} }));
+    { type: "result", subtype: "success" }, { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" }, completion("b")];
+  queryMock.mockImplementation(() => Object.assign((async function* () { yield { type: "system", subtype: "init", session_id: "native" }; yield* messages; })(), { interrupt: async () => {}, close: () => {} }));
   const run = new ClaudeHarnessAdapter().start({ sessionId: "test", cwd: "/tmp", onEvent: event => events.push(event) }); run.send("test");
   await vi.waitFor(() => expect(events.find(event => event.type === "result")).toBeDefined());
   const starts = events.filter((event): event is Extract<HarnessEvent, { type: "tool_use" }> => event.type === "tool_use" && !!event.toolUseId);
@@ -23,11 +23,11 @@ it("correlates concurrent and child commands once by factual IDs, omits raw outp
 });
 it("does not turn a denied Bash call into execution even if a late native result claims completion", async () => {
   const events: HarnessEvent[] = [];
-  queryMock.mockImplementation((args: { options: { canUseTool: (name: string, input: unknown, context: unknown) => Promise<unknown> } }) => Object.assign((async function* () {
+  queryMock.mockImplementation((args: { options: { canUseTool: (name: string, input: unknown, context: unknown) => Promise<unknown> } }) => Object.assign((async function* () { yield { type: "system", subtype: "init", session_id: "native" };
     yield proposal("denied");
     const permission = args.options.canUseTool("Bash", { command: "fixture" }, { toolUseID: "denied" });
     await vi.waitFor(() => expect(events.find(event => event.type === "approval_request")).toBeDefined());
-    await permission; yield completion("denied"); yield completion("denied"); yield { type: "result", subtype: "success" };
+    await permission; yield completion("denied"); yield completion("denied"); yield { type: "result", subtype: "success" }; yield { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" };
   })(), { interrupt: async () => {}, close: () => {} }));
   const run = new ClaudeHarnessAdapter().start({ sessionId: "test", cwd: "/tmp", onEvent: event => events.push(event) }); run.send("test");
   await vi.waitFor(() => expect(events.find(event => event.type === "approval_request")).toBeDefined());
@@ -40,11 +40,11 @@ it("keeps a reused raw ID unknown across turns without disabling a later genuine
   const events: HarnessEvent[] = [];
   let nextTurn = () => {};
   const resume = new Promise<void>(resolve => { nextTurn = resolve; });
-  queryMock.mockImplementation(() => Object.assign((async function* () {
-    yield proposal("old"); yield completion("old"); yield { type: "result", subtype: "success" };
+  queryMock.mockImplementation(() => Object.assign((async function* () { yield { type: "system", subtype: "init", session_id: "native" };
+    yield proposal("old"); yield completion("old"); yield { type: "result", subtype: "success" }; yield { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" };
     await resume;
     yield proposal("old"); yield completion("old");
-    yield proposal("new"); yield completion("new"); yield { type: "result", subtype: "success" };
+    yield proposal("new"); yield completion("new"); yield { type: "result", subtype: "success" }; yield { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" };
   })(), { interrupt: async () => {}, close: () => {} }));
   const run = new ClaudeHarnessAdapter().start({ sessionId: "test", cwd: "/tmp", onEvent: event => events.push(event) });
   run.send("first"); await vi.waitFor(() => expect(events.filter(event => event.type === "result")).toHaveLength(1));
@@ -56,10 +56,10 @@ it("keeps a reused raw ID unknown across turns without disabling a later genuine
 });
 it("names the paused call on its approval only when the raw ID identifies one recorded call", async () => {
   const events: HarnessEvent[] = [];
-  queryMock.mockImplementation((args: { options: { canUseTool: (name: string, input: unknown, context: unknown) => Promise<unknown> } }) => Object.assign((async function* () {
+  queryMock.mockImplementation((args: { options: { canUseTool: (name: string, input: unknown, context: unknown) => Promise<unknown> } }) => Object.assign((async function* () { yield { type: "system", subtype: "init", session_id: "native" };
     yield proposal("asked"); yield proposal("shared"); yield proposal("shared", "child");
     const permissions = ["asked", "shared"].map(id => args.options.canUseTool("Bash", { command: "fixture" }, { toolUseID: id }));
-    await Promise.all(permissions); yield { type: "result", subtype: "success" };
+    await Promise.all(permissions); yield { type: "result", subtype: "success" }; yield { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" };
   })(), { interrupt: async () => {}, close: () => {} }));
   const run = new ClaudeHarnessAdapter().start({ sessionId: "test", cwd: "/tmp", onEvent: event => events.push(event) }); run.send("test");
   await vi.waitFor(() => expect(events.filter(event => event.type === "approval_request")).toHaveLength(2));
@@ -80,9 +80,9 @@ it("keeps observed nested Bash exit metadata unknown when the SDK supplies only 
     { type: "user", parent_tool_use_id: parent, message: { content: [{ type: "tool_result", tool_use_id: child, content: "child-fixture-output", is_error: false }] } },
     { type: "user", parent_tool_use_id: null, tool_use_result: { status: "completed", agentId: "native-child" },
       message: { content: [{ type: "tool_result", tool_use_id: parent, content: "Child returned", is_error: false }] } },
-    { type: "result", subtype: "success" },
+    { type: "result", subtype: "success" }, { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" },
   ];
-  queryMock.mockImplementation(() => Object.assign((async function* () { yield* messages; })(), { interrupt: async () => {}, close() {} }));
+  queryMock.mockImplementation(() => Object.assign((async function* () { yield { type: "system", subtype: "init", session_id: "native" }; yield* messages; })(), { interrupt: async () => {}, close() {} }));
   const run = new ClaudeHarnessAdapter().start({ sessionId: "nested-result-fixture", cwd: "/tmp", onEvent: event => events.push(event) }); run.send("Run child");
   try {
     await vi.waitFor(() => expect(events.some(event => event.type === "result")).toBe(true));

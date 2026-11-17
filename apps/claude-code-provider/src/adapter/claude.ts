@@ -1,5 +1,7 @@
 import { activeTool } from "./activity.js";
 import { ClaudeBackgroundLifecycle } from "./claude-background.js";
+import { ClaudeNativeCompletion } from "./claude-native-completion.js";
+import { spawn } from "node:child_process";
 import { shouldRetainToolOutput } from "./tool-output-policy.js";
 import { readNativeQuestions, questionAnswers } from "./questions.js";
 import { UsageReader, absentUsage, claudeUsage, claudeLimitEvent } from "./provider-usage.js";
@@ -172,7 +174,9 @@ class ClaudeRun implements HarnessRun {
   private readonly nativeProcessClosures: Promise<void>[] = [];
   private turnActive = false;
   private suggestionPending = false;
+  private completionCancelled = false;
   private pendingRootResult: Record<string, unknown> | null = null;
+  private nativeCompletion: ClaudeNativeCompletion | null = null;
   private pendingSuggestion: string | null | undefined;
   private readonly background = new ClaudeBackgroundLifecycle(parent => this.childSource(parent, false), event => this.options.onEvent(event));
   private nativeSessionId: string | null = null;
@@ -208,8 +212,9 @@ class ClaudeRun implements HarnessRun {
   }
 
   send(text: string): void {
+    this.completionCancelled = false;
     this.suggestionPending = false;
-    this.pendingRootResult = null; this.pendingSuggestion = undefined; this.background.beginTurn();
+    this.pendingRootResult = null; this.pendingSuggestion = undefined; this.background.beginTurn(); this.nativeCompletion?.beginTurn();
     this.turnActive = true;
     this.commandTurn++;
     this.commandCalls.clear();
@@ -312,6 +317,8 @@ class ClaudeRun implements HarnessRun {
   }
 
   interrupt(): Promise<void> {
+    // Fence before awaiting native acknowledgement: already-buffered SDK results can still arrive.
+    this.completionCancelled = true;
     // A native idle emitted while cancelling cannot turn an earlier yield into success.
     this.pendingRootResult = null; this.pendingSuggestion = undefined; this.suggestionPending = false;
     if (this.interrupting) return this.interrupting;
@@ -392,14 +399,26 @@ class ClaudeRun implements HarnessRun {
           cwd: this.options.cwd,
           ...(this.options.model ? { model: this.options.model } : {}),
           ...(this.options.reasoningEffort ? { effort: this.options.reasoningEffort } : {}),
-          ...(this.options.processTransport ? {
-            spawnClaudeCodeProcess: (input: { command: string; args: string[]; cwd?: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }) => {
-              if (this.stopped || this.nativeProcessClosures.length >= 8) throw new Error("Claude native process admission is closed.");
-              const child = this.options.processTransport!.spawn(input.command, input.args, { cwd: input.cwd ?? this.options.cwd, env: input.env, signal: input.signal });
-              this.nativeProcessClosures.push(new Promise<void>(resolve => child.once("close", () => resolve())));
-              return child;
-            },
-          } : {}),
+          spawnClaudeCodeProcess: (input: { command: string; args: string[]; cwd?: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }) => {
+            if (this.stopped || this.nativeProcessClosures.length >= 8) throw new Error("Claude native process admission is closed.");
+            const options = { cwd: input.cwd ?? this.options.cwd, env: input.env, signal: input.signal };
+            const child = this.options.processTransport
+              ? this.options.processTransport.spawn(input.command, input.args, options)
+              : spawn(input.command, input.args, { ...options, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+            this.nativeProcessClosures.push(new Promise<void>(resolve => child.once("close", () => resolve())));
+            const completion = new ClaudeNativeCompletion(child.stdout, () => {
+              if (!this.stopped && this.nativeCompletion === completion) this.finishNativeResult();
+            }, () => {
+              if (!this.stopped && this.nativeCompletion === completion)
+                this.options.onEvent({ type: "error", message: "Claude native completion evidence could not be verified. Native completion is unconfirmed." });
+            }, this.options.resumeHarnessSessionId);
+            this.nativeCompletion = completion;
+            // The SDK owns stdin and controls. Observe only the supported stdout transport;
+            // do not inspect private SDK state or change any native frame delivered to it.
+            return { stdin: child.stdin, stdout: completion.stdout, stderr: child.stderr,
+              get killed() { return child.killed; }, get exitCode() { return child.exitCode; }, get signalCode() { return child.signalCode; },
+              kill: child.kill.bind(child), on: child.on.bind(child), once: child.once.bind(child), off: child.off.bind(child) };
+          },
           resume: this.options.resumeHarnessSessionId,
           permissionMode: this.options.autonomy === "autonomous" ? "bypassPermissions" : "default",
           allowDangerouslySkipPermissions: this.options.autonomy === "autonomous",
@@ -720,7 +739,8 @@ class ClaudeRun implements HarnessRun {
   }
 
   private finishNativeResult(): void {
-    if (!this.pendingRootResult || !this.background.idle || this.background.busy) return;
+    if (this.completionCancelled || !this.pendingRootResult || this.background.busy
+      || !(this.nativeCompletion ? this.nativeCompletion.confirms(this.pendingRootResult) : this.background.idle)) return;
     const message = this.pendingRootResult, suggestion = this.pendingSuggestion;
     this.pendingRootResult = null; this.pendingSuggestion = undefined;
     this.emitRootResult(message);
@@ -934,15 +954,16 @@ class ClaudeRun implements HarnessRun {
       if (message.isReplay || this.nativeSessionId && typeof message.session_id === "string" && message.session_id !== this.nativeSessionId) return;
       this.pendingSuggestion = undefined;
       if (message.subtype === "success" && message.is_error !== true) {
+        if (this.completionCancelled) return;
         // Native notification acknowledgements can have no model turn or answer. They
         // cannot replace the root yield while its background children are continuing.
         if (this.pendingRootResult && message.num_turns === 0 && message.result === "") return;
-        if (this.background.busy || this.background.requiresIdle && !this.background.idle) {
-          this.pendingRootResult = message; return;
-        }
-        // The SDK public iterator hides host-only session_state_changed. Its next substantive
-        // root result after the agent inventory drains closes the native continuation.
-        // An empty inventory alone never publishes the earlier yielded root result.
+        // A child can finish while its notification is still queued for the parent. Neither
+        // empty task inventory nor another root model result proves the continuation is over.
+        // Native idle is bound to the exact result before it can become a public completion.
+        this.pendingRootResult = message;
+        this.finishNativeResult();
+        return;
       }
       this.emitRootResult(message);
     }

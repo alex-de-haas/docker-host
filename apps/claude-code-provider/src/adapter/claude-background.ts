@@ -12,11 +12,9 @@ export class ClaudeBackgroundLifecycle {
   private readonly tasks = new Map<string, Task>();
   private level: Set<string> | undefined;
   private unknown = false;
-  private observedSessionState = false;
   idle = false;
   constructor(private readonly source: (parent: string) => HarnessEventSource | undefined,
     private readonly emit: (event: HarnessEvent) => void) {}
-  get requiresIdle(): boolean { return this.observedSessionState; }
   get busy(): boolean {
     return this.unknown || (this.level ? this.level.size > 0 : [...this.tasks.values()].some(task => task.agent && task.background && !task.ambient && !terminal(task.state)));
   }
@@ -25,7 +23,7 @@ export class ClaudeBackgroundLifecycle {
     if (message.type !== "system") return false;
     if (message.subtype === "session_state_changed") {
       if (!["idle", "running", "requires_action"].includes(String(message.state))) return true;
-      this.observedSessionState = true; this.idle = message.state === "idle"; return true;
+      this.idle = message.state === "idle"; return true;
     }
     if (message.subtype === "background_tasks_changed") {
       // The SDK specifies replace semantics; edge bookend ordering is independent.

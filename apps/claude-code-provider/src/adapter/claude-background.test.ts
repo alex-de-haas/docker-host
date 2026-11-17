@@ -143,7 +143,7 @@ it("ignores model-less notification acknowledgements until the parent produces i
   await f.engine.disableSuggestions("run", "disable");
   await f.push(finished("one"), tasks([]), { ...result(), num_turns: 0, result: "" });
   expect(f.close).not.toHaveBeenCalled();
-  await f.push(assistant([{ type: "text", text: "Final synthesis." }]), { ...result(), num_turns: 1, result: "Final synthesis." });
+  await f.push(assistant([{ type: "text", text: "Final synthesis." }]), { ...result(), num_turns: 1, result: "Final synthesis." }, { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" });
   await vi.waitFor(async () => expect((await f.journal.load("run")).receipt.state).toBe("completed"));
   expect((await f.journal.load("run")).events.filter(frame => frame.event.type === "result")).toHaveLength(1);
 });
@@ -177,7 +177,7 @@ it("does not accept a foreign or replayed root result as the parent continuation
     { ...result(), session_id: "foreign" }, { ...result(), isReplay: true });
   await f.engine.disableSuggestions("run", "disable");
   expect(f.close).not.toHaveBeenCalled();
-  await f.push({ ...result(), num_turns: 1, result: "" });
+  await f.push({ ...result(), num_turns: 1, result: "" }, { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" });
   await vi.waitFor(async () => expect((await f.journal.load("run")).receipt.state).toBe("completed"));
 });
 
@@ -186,7 +186,7 @@ it("retains exact late child terminals produced by normal final-result teardown"
   await f.push(assistant([tool("late-fetch", "WebFetch")], "spawn-one"));
   await f.engine.disableSuggestions("run", "disable");
   f.query.interrupt.mockImplementation(async () => { await f.pushDuringStop(toolResult("late-fetch", "spawn-one")); });
-  await f.push(result());
+  await f.push(result(), { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" });
   await vi.waitFor(async () => expect((await f.journal.load("run")).receipt).toMatchObject({ state: "completed", exitConfirmed: true, effects: {} }));
   expect((await f.journal.load("run")).receipt.effects).toEqual({});
   expect((await f.journal.load("run")).events).toContainEqual(expect.objectContaining({ event: expect.objectContaining({ type: "tool_result", status: "completed", source: expect.objectContaining({ agentId: "claude-child:spawn-one" }) }) }));
@@ -199,7 +199,39 @@ it("keeps malformed background inventories uncertain until a valid native replac
     { ...result(), num_turns: 1, result: "An uncertain inventory is not completion evidence." });
   await f.engine.disableSuggestions("run", "disable");
   expect(f.close).not.toHaveBeenCalled();
-  await f.push(finished("one"), tasks([]), { ...result(), num_turns: 1, result: "Final synthesis." });
+  await f.push(finished("one"), tasks([]), { ...result(), num_turns: 1, result: "Final synthesis." }, { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" });
   await vi.waitFor(async () => expect((await f.journal.load("run")).receipt.state).toBe("completed"));
   expect((await f.journal.load("run")).events.filter(frame => frame.event.type === "notice" && frame.event.message.includes("background activity"))).toHaveLength(1);
+});
+
+
+it("waits for native idle while completed children's notifications still drive parent turns", async () => {
+  const f = await fixture();
+  await f.push(tasks(["one", "two", "three"]), started("one"), started("two"), started("three"),
+    assistant([{ type: "text", text: "Waiting for children." }]), result(),
+    finished("one"), finished("two"), finished("three"), tasks([]),
+    assistant([{ type: "text", text: "BETA returned; GAMMA's notification is still queued." }]),
+    { ...result(), num_turns: 1, result: "BETA returned; still waiting." });
+  expect((await f.journal.load("run")).receipt.state).toBe("running");
+  expect((await f.journal.load("run")).events.some(frame => frame.event.type === "answer_complete")).toBe(false);
+  await f.engine.disableSuggestions("run", "disable-during-queued-parent-notification");
+  expect(f.close).not.toHaveBeenCalled();
+  await f.push(assistant([{ type: "text", text: "Final synthesis from all three observed child results." }]),
+    { ...result(), num_turns: 1, result: "Final synthesis from all three observed child results." },
+    { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" });
+  await vi.waitFor(async () => expect((await f.journal.load("run")).receipt.state).toBe("completed"));
+  const events = (await f.journal.load("run")).events.map(frame => frame.event);
+  expect(events.filter(event => event.type === "result" && !event.source)).toHaveLength(1);
+  expect(events).toContainEqual(expect.objectContaining({ type: "assistant_text", text: "Final synthesis from all three observed child results." }));
+});
+
+it("fences a late successful root result delivered while native interrupt is still acknowledging cancellation", async () => {
+  const f = await fixture();
+  await f.push(tasks(["one"]), started("one"), result(), finished("one"), tasks([]));
+  f.query.interrupt.mockImplementation(async () => {
+    await f.pushDuringStop({ ...result(), num_turns: 1, result: "Must not complete after cancellation." },
+      { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" });
+  });
+  expect(await f.engine.cancel("run", "cancel-before-late-root-result")).toMatchObject({ state: "cancelled", exitConfirmed: true });
+  expect((await f.journal.load("run")).events.some(frame => frame.event.type === "result" || frame.event.type === "answer_complete")).toBe(false);
 });
