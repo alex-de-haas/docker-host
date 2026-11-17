@@ -30,6 +30,9 @@ internal static class DetachedCliProcess
                 Arguments = $"/d /s /c \"{command}\"",
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                // Keep the durable cmd wrapper off the caller's captured streams on .NET 11.
+                // The shell command still redirects the helper's own output to its attempt log.
+                StartDetached = true,
                 WorkingDirectory = workingDirectory,
             };
             using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start the hosty helper process.");

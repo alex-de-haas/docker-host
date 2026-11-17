@@ -15,9 +15,10 @@ namespace Haas.Hosty.Cli;
 // `> core-update.log` redirect then fails with a sharing violation before the helper CLI ever runs, so
 // the Shell's Update button silently does nothing while the update-available badge stays on.
 //
-// Clearing HANDLE_FLAG_INHERIT on the CLI's stdout/stderr at startup breaks that leak for every child
-// the CLI spawns. Per-spawn redirect pipes are unaffected: .NET marks those inheritable just for the
-// child that uses them. No-op off Windows — POSIX opens these descriptors close-on-exec.
+// Clearing HANDLE_FLAG_INHERIT limits incidental handle inheritance. Starting with .NET 11,
+// explicitly selected standard handles are duplicated even when this flag is cleared. Background
+// shell wrappers therefore also use StartDetached to select null-device standard handles before
+// their shell redirects output to the child log. Explicitly redirected pipes remain unaffected.
 //
 // stdin is deliberately left alone, for the same reason Core's variant leaves it alone (#205): whenever
 // any stream of a child is redirected, .NET sets STARTF_USESTDHANDLES and Windows requires *every*

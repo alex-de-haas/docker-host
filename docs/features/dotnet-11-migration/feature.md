@@ -48,6 +48,21 @@ pipeline](https://learn.microsoft.com/en-us/dotnet/core/compatibility/sdk/11/aot
 preserves them. Core and CLI publish executables, so the Unix native-library
 `lib` prefix change does not affect release filenames.
 
+Windows background Core, child Core and CLI-helper shell wrappers use
+[`StartDetached`](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.processstartinfo.startdetached?view=net-11.0).
+.NET 11 explicitly duplicates standard handles for child startup, including
+handles whose inheritance flag was cleared. Detached startup gives the wrapper
+null-device standard handles; its existing shell redirection still writes the
+child's output to the selected log. This prevents a surviving background process
+from retaining a caller's captured output pipes. Foreground launches, explicit
+service pipes, process identities and readiness checks retain their existing behavior.
+
+Native paired-update acceptance captures command output in temporary files and
+waits on the direct process with a bounded timeout. Windows Python pipe draining
+can otherwise block after a timeout when a surviving descendant holds an output
+handle. A separate Windows regression checks that captured launcher output reaches
+EOF while its detached child remains alive.
+
 The migration review found no platform use requiring changes for EF Core,
 OpenAPI/Blazor APIs, TAR processing, DSA, client-certificate authentication,
 named-pipe constructor obsoletions, named mutexes, command-line argument-zero
@@ -63,7 +78,7 @@ application SDK also builds for both net8.0 and net10.0.
 | Command | Result |
 | --- | --- |
 | `dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --no-build --no-restore` | 5,064 passed, 7 predeclared platform/optional integration skips, no failures. |
-| `dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj --no-build --no-restore` | 384 passed. |
+| `dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj` | 384 passed; the new Windows detached-launch regression is explicitly skipped on macOS. |
 | `dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj` | 90 passed on .NET 10. |
 | `dotnet test apps/telemetry-backend/tests/Haas.Hosty.TelemetryBackend.Tests/Haas.Hosty.TelemetryBackend.Tests.csproj` | 141 passed on .NET 10. |
 | `npm run core:aot` | osx-arm64 publication and isolated health/authorization smoke passed; no trim/AOT warnings. Readiness took 1,245 ms. |
@@ -74,6 +89,14 @@ application SDK also builds for both net8.0 and net10.0.
 | `node --test scripts/releases/publisher.test.mjs .github/actions/ci-validation-gate/setup-dotnet.test.mjs scripts/test-integration.test.mjs` | 36 passed. The broader CI/release run also passed 181 checks before the final publisher consistency regression was added. |
 | `docker build -f apps/telemetry-backend/Dockerfile -t hosty-dotnet11-telemetry:verification .` | linux/arm64 locked restore and offline net10.0 publication passed with SDK 11. |
 | `docker run --rm --network none --entrypoint dotnet hosty-dotnet11-telemetry:verification --list-runtimes` | ASP.NET/Core 10.0.15 confirmed; disposable container removed. |
+
+After the initial Windows CI run exposed captured-handle retention, Core and CLI
+were rebuilt with the detached-launch correction. The affected Core launch,
+handle and activation tests passed (5 passed, 1 Windows-only skip). The fixture's
+`python3 scripts/test-platform-native-update.py` passed 3 real-process tests, and
+`node --test scripts/ci*.test.mjs .github/actions/ci-validation-gate/*.test.mjs`
+passed 196 checks. Windows CI runs the detached-output and child-Core launch tests
+before publishing and exercising the native replacement pair.
 
 The dependency acceptance fixture uses a public digest-pinned Node image and
 preloads its generated server through `NODE_OPTIONS`. This corrects the old
@@ -103,6 +126,9 @@ local verification.
   their .NET 10 runtime. Test the CI SDK selector and compatibility-runtime setup.
 - Run `npm run core:aot` and publish/run the native CLI on the local release
   architecture. Report other operating systems and CPU architectures separately.
+- Run `python3 scripts/test-platform-native-update.py` (`python` on Windows) for
+  bounded native-acceptance capture, and run the Windows detached-launch regression
+  before native paired-update acceptance. Keep the child alive during the EOF check.
 - Run `npm run test:integration -- transport`, `dependencies` and `activation`
   for runtime toolchain changes, with isolated test data and managed environment
   cleanup. The `tasks` suite remains optional under the repository policy.

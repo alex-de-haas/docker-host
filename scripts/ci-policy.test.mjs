@@ -62,6 +62,7 @@ test("local integration fixtures select their bounded component checks", () => {
   assertSelection(["scripts/check-docker-core-transport.py"], ["core"], []);
   assertSelection(["scripts/check-core-aot.mjs"], ["core"], ["core-aot"]);
   assertSelection(["scripts/check-platform-native-update.py"], ["core", "cli"], ["core-aot"]);
+  assertSelection(["scripts/test-platform-native-update.py"], ["core", "cli"], ["core-aot"]);
   assertSelection(["scripts/check-workspace-activation.py"], ["core", "cli"], []);
 });
 

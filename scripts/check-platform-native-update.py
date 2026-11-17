@@ -28,6 +28,32 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def run_process(command, *, cwd=None, env=None, expected=0, timeout=300):
+    """Wait for the command, independently of descendants retaining its output handles."""
+    def read_output(stream, limit=None):
+        stream.seek(0, os.SEEK_END)
+        length = stream.tell()
+        start = max(0, length - limit) if limit is not None else 0
+        stream.seek(start)
+        return stream.read(length - start).decode('utf-8', errors='replace')
+
+    # A detached Core can outlive the CLI with inherited standard handles. Pipes wait for
+    # every writer to close; on Windows even subprocess.run's timeout recovery drains them
+    # without a deadline. Files let us wait for the direct child and keep bounded diagnostics.
+    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as error:
+        try:
+            result = subprocess.run([str(x) for x in command], cwd=cwd, env=env,
+                                    stdout=output, stderr=error, timeout=timeout)
+        except subprocess.TimeoutExpired as failure:
+            raise RuntimeError(f'{command[0]} timed out after {timeout} seconds:\n'
+                               + read_output(output, 6000) + read_output(error, 6000)) from failure
+        if result.returncode != expected:
+            # Build/CLI output only; never dump identity stores or control headers.
+            raise RuntimeError(f'{command[0]} exited {result.returncode}, expected {expected}:\n'
+                               + read_output(output, 6000) + read_output(error, 6000))
+        return read_output(output)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--core', required=True, type=Path)
@@ -57,16 +83,11 @@ def main():
     log = None
     stopped = False
     succeeded = False
+    stage = 'building isolated fixtures'
 
     def run(command, expected=0, timeout=300, build=False):
-        result = subprocess.run([str(x) for x in command], cwd=repository,
-                                env=None if build else env, capture_output=True,
-                                text=True, encoding='utf-8', errors='replace', timeout=timeout)
-        if result.returncode != expected:
-            # Build/CLI output only; never dump identity stores or control headers.
-            raise RuntimeError(f'{command[0]} exited {result.returncode}, expected {expected}:\n'
-                               + result.stdout[-6000:] + result.stderr[-6000:])
-        return result.stdout
+        return run_process(command, cwd=repository, env=None if build else env,
+                           expected=expected, timeout=timeout)
 
     def command(*arguments, **kw):
         return run([cli, '--data-root', root, *arguments], **kw)
@@ -126,7 +147,9 @@ def main():
         # Reap the directly launched fixture promptly; a zombie PID must not look like
         # a Core that refused the CLI stop request.
         threading.Thread(target=process.wait, daemon=True).start()
+        stage = 'initial Core readiness'
         before = wait_ready()
+        stage = 'ordinary setup and password login'
         token = control('/auth/setup-token', {})['token']
         password = uuid.uuid4().hex + 'aA1!'
         account = {'setupToken': token, 'email': 'pair-fixture@example.test',
@@ -163,6 +186,7 @@ def main():
         previous = {str(path): digest(path) for path in [cli, core]}
         assert previous[str(cli)] != records[0]['sha256'] and previous[str(core)] != records[1]['sha256']
         (assets / target_core.name).write_bytes(b'corrupt counterpart')
+        stage = 'corrupt counterpart rejection'
         command('update', '--feed', 'Candidate-QA', '--index', index, expected=1)
         journal = root / 'core/platform-update.json'
         pending = json.loads(journal.read_text())
@@ -173,6 +197,8 @@ def main():
         index.write_text('{}')
         descriptor.write_text('{}')
         shutil.copy2(target_core, assets / target_core.name)
+        stage = 'frozen no-argument update recovery'
+        print('Resuming the frozen update and verifying native replacement readiness', flush=True)
         command('update')
         completed = json.loads(journal.read_text())
         assert completed['id'] == pending['id'] and completed['phase'] == 'completed'
@@ -184,6 +210,7 @@ def main():
         assert json.loads((root / 'core/update-source.json').read_text())['feedId'] == 'Candidate-QA'
         process.wait(timeout=20)
         print('PASS: frozen no-argument recovery replaces the distinct pair and verifies native readiness', flush=True)
+        stage = 'feed selection and stopped-Core update'
         index.write_text(json.dumps(feeds))
         descriptor.write_text(json.dumps(release))
         ready = control('/core/status')['launch']
@@ -198,6 +225,16 @@ def main():
         print('PASS: feed selection preserves the process; no-argument update keeps a stopped Core stopped', flush=True)
         succeeded = True
     finally:
+        if not succeeded:
+            # Report only the state name, never the journal's sources, identities or headers.
+            journal_phase = 'unavailable'
+            try:
+                phase = json.loads((root / 'core/platform-update.json').read_text()).get('phase')
+                if phase in ('preparing', 'prepared', 'stopping', 'replacing', 'installed', 'launching', 'completed'):
+                    journal_phase = phase
+            except (OSError, ValueError, AttributeError):
+                pass
+            print(f'Native acceptance failed during {stage}; update journal phase: {journal_phase}', flush=True)
         if process is not None and not stopped:
             try:
                 control('/core/stop', {})

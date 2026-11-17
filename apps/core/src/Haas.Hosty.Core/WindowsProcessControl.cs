@@ -16,10 +16,11 @@ namespace Haas.Hosty.Core;
 // control-discovery timeout with core.log frozen at the previous shutdown and nothing bound on the Core
 // port — exactly because the new process died before it could bind or log anything.
 //
-// Clearing HANDLE_FLAG_INHERIT on Core's stdout/stderr at startup breaks that leak for every child
-// Core spawns (localCommand, the docker/git CLI runners, the detached CLI launcher). The per-spawn
-// redirect pipes are unaffected: .NET marks those inheritable just for the child that reads them, so
-// localCommand log capture keeps working. No-op off Windows — POSIX opens these descriptors close-on-exec.
+// Clearing HANDLE_FLAG_INHERIT limits incidental handle inheritance. Starting with .NET 11,
+// explicitly selected standard handles are duplicated even when this flag is cleared. Background
+// shell wrappers therefore also use StartDetached to select null-device standard handles before
+// their shell redirects output to the child log. Explicit localCommand/docker/git pipes remain
+// unaffected, so their log capture keeps working.
 //
 // stdin is deliberately left alone. core.log is Core's stdout/stderr, so stdin was never part of the
 // leak — and clearing its flag actively broke child processes. Redirecting any stream makes .NET set

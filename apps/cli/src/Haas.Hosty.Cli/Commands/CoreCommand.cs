@@ -403,6 +403,9 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
             Arguments = $"/d /s /c \"{command}\"",
             UseShellExecute = false,
             CreateNoWindow = true,
+            // .NET 11 duplicates standard handles even after their inherit flags are cleared.
+            // Give the durable shell NUL handles; its command still redirects Core to the log.
+            StartDetached = true,
             WorkingDirectory = target.WorkingDirectory,
         };
 
