@@ -123,7 +123,7 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
     }
     case 'transport':
       return { prerequisites: [dotnet, pythonCheck, docker], steps: [build(core),
-        command(python, ['scripts/check-docker-core-transport.py', 'apps/core/src/Haas.Hosty.Core/bin/Debug/net10.0/hosty-core.dll']),
+        command(python, ['scripts/check-docker-core-transport.py', 'apps/core/src/Haas.Hosty.Core/bin/Debug/net11.0/hosty-core.dll']),
       ] };
     case 'opus':
       return { prerequisites: [command(node, ['--version']), command('uv', ['--version'])], steps: [

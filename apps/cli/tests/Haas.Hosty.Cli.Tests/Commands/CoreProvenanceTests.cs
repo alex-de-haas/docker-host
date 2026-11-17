@@ -79,7 +79,7 @@ public sealed class CoreProvenanceTests : IDisposable
         File.Copy(Path.Combine(repository.FullName, "scripts", "HostyBuildIdentity.cs"), Path.Combine(source, "scripts", "HostyBuildIdentity.cs"));
         File.Copy(Path.Combine(repository.FullName, "shared", "CoreBuildProvenance.cs"), Path.Combine(source, "CoreBuildProvenance.cs"));
         await File.WriteAllTextAsync(Path.Combine(source, "Core.csproj"), """
-            <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework>
+            <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net11.0</TargetFramework>
             <OutputType>Exe</OutputType><AssemblyName>hosty-core</AssemblyName><ImplicitUsings>enable</ImplicitUsings>
             <Nullable>enable</Nullable></PropertyGroup><ItemGroup><Compile Remove="scripts/**" /></ItemGroup></Project>
             """);

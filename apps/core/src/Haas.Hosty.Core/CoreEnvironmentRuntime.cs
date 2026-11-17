@@ -213,6 +213,15 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
         Process launched;
         try
         {
+            // .NET 11 otherwise duplicates the parent's streams into this durable shell.
+            // Explicit NUL handles preserve CREATE_NO_WINDOW and the child's shell log redirection.
+            using var nullHandle = OperatingSystem.IsWindows() ? File.OpenNullHandle() : null;
+            if (nullHandle is not null)
+            {
+                start.StandardInputHandle = nullHandle;
+                start.StandardOutputHandle = nullHandle;
+                start.StandardErrorHandle = nullHandle;
+            }
             launched = Process.Start(start) ?? throw new InvalidOperationException("No launcher process was created.");
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)

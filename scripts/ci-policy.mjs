@@ -133,7 +133,7 @@ export function classifyPaths(paths, { versionOnlyPaths = [], nodeDependencyComp
       add(["core", "cli"], reason("native acceptance fixture"));
     } else if (path === "scripts/observability_acceptance.py") {
       add(["core", "cli", "shell", "telemetry-backend", "telemetry-ui"], reason("managed observability acceptance fixture"));
-    } else if (path === "scripts/check-platform-native-update.py") {
+    } else if (["scripts/check-platform-native-update.py", "scripts/test-platform-native-update.py"].includes(path)) {
       add(["core", "cli", "core-aot"], reason("native paired-update acceptance"));
     } else if (path === "scripts/check-core-aot.mjs") {
       add(["core", "core-aot"], reason("NativeAOT compatibility gate"));

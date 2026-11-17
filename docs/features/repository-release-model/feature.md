@@ -1,6 +1,6 @@
 ---
 created: 2026-05-12
-updated: 2026-11-16
+updated: 2026-11-17
 summary: The repository layout, release artifacts and versioning rules for every component.
 ---
 
@@ -60,12 +60,17 @@ independently of the platform, browser Shell, and Apple client.
 
 ### .NET build toolchain
 
-`global.json` requires .NET SDK 10.0.401 or a later .NET 10 feature band/patch through
-`rollForward: latestFeature`. Core and CLI retain `net10.0` and Native AOT publication.
-The SDK floor includes runtime/Native AOT compiler 10.0.12, which first shipped the
-[Mach-O relocation fix](https://github.com/dotnet/runtime/pull/132171) for Apple's
-`too many large addends` linker assertion; the older 10.0.11 compiler can fail on Xcode 27.1.
-No classic-linker override or separate LLVM linker is required.
+`global.json` requires .NET SDK 11.0.100 or a later .NET 11 feature band/patch through
+`rollForward: latestFeature`. Core, CLI and their test/acceptance projects target `net11.0`;
+Core and CLI retain Native AOT publication. The platform's x64 releases require
+[x86-64-v2 hardware](https://learn.microsoft.com/en-us/dotnet/core/compatibility/jit/11/minimum-hardware-requirements).
+The release targets remain macOS arm64, Linux arm64/x64, and Windows x64.
+
+The independently versioned application SDK retains `net8.0;net10.0`, and Telemetry
+retains its .NET 10 runtime. Their test jobs install the compatibility SDK 10.0.402
+alongside the root SDK. Telemetry's Docker builder and release publisher select SDK 11;
+its final image remains ASP.NET 10. The compiler change does not remove older SDK
+consumer targets or require a .NET 11 runtime for Telemetry.
 
 Validate macOS Core publication with `npm run core:aot` and CLI with
 `dotnet publish apps/cli/src/Haas.Hosty.Cli/Haas.Hosty.Cli.csproj -c Release -r osx-arm64 --self-contained true`.
