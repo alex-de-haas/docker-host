@@ -1,4 +1,5 @@
 import { Transform, type Readable } from "node:stream";
+import { ClaudeBackgroundLifecycle } from "./claude-background.js";
 
 type ResultIdentity = { session: string; uuid: string };
 const identity = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512 && !/[\u0000-\u001f\u007f]/.test(value);
@@ -14,6 +15,8 @@ export class ClaudeNativeCompletion {
   private lastSubstantiveResult: ResultIdentity | undefined;
   private idleResult: ResultIdentity | undefined;
   private broken = false;
+  private needsSubstantiveResult = false;
+  private readonly background = new ClaudeBackgroundLifecycle(() => undefined, () => {});
   private frame = Buffer.alloc(0);
   private bytes = 0;
   private skipping = false;
@@ -33,7 +36,7 @@ export class ClaudeNativeCompletion {
     stdout.pipe(this.stdout);
   }
 
-  beginTurn(): void { this.lastResult = undefined; this.lastSubstantiveResult = undefined; this.idleResult = undefined; }
+  beginTurn(): void { this.needsSubstantiveResult = false; this.lastResult = undefined; this.lastSubstantiveResult = undefined; this.idleResult = undefined; }
 
   confirms(message: Record<string, unknown>): boolean {
     return !this.broken && root(message) && this.idleResult !== undefined
@@ -75,20 +78,30 @@ export class ClaudeNativeCompletion {
 
   private observe(message: Record<string, unknown>): void {
     if (this.broken || !root(message)) return;
-    if (message.type !== "result" && !(message.type === "system" && ["init", "session_state_changed"].includes(String(message.subtype)))) return;
+    if (message.type !== "result" && !(message.type === "system" && ["init", "session_state_changed", "background_tasks_changed", "task_started", "task_updated", "task_progress", "task_notification"].includes(String(message.subtype)))) return;
     if (!identity(message.session_id)) { this.fail(); return; }
     this.session ??= message.session_id;
     if (message.session_id !== this.session) return;
+    this.background.observe(message);
+    if (this.background.busy) this.idleResult = undefined;
     if (message.type === "result") {
       if (!identity(message.uuid)) { this.fail(); return; }
       this.lastResult = { session: message.session_id, uuid: message.uuid };
-      if (!acknowledgement(message)) this.lastSubstantiveResult = this.lastResult;
+      if (!acknowledgement(message)) { this.lastSubstantiveResult = this.lastResult; this.needsSubstantiveResult = false; }
       this.idleResult = undefined;
       return;
     }
     if (message.subtype !== "session_state_changed") return;
     if (message.state === "running" || message.state === "requires_action") { this.idleResult = undefined; return; }
     if (message.state !== "idle") { this.fail(); return; }
+    if (this.background.busy) {
+      // Native may idle while an ended agent still owns a background command. Its
+      // waiting result is never reusable when that command later leaves inventory:
+      // a new substantive continuation and a fresh idle must follow.
+      this.lastResult = undefined; this.lastSubstantiveResult = undefined; this.idleResult = undefined;
+      this.needsSubstantiveResult = true; return;
+    }
+    if (this.needsSubstantiveResult) return;
     // The raw reader can be ahead of the SDK iterator. Bind idle to an exact result,
     // never to whichever earlier result the adapter has happened to consume so far.
     this.idleResult = this.lastSubstantiveResult ?? this.lastResult;

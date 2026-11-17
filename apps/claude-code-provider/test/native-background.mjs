@@ -183,3 +183,165 @@ for (const outcome of ['complete', 'cancel', 'queued-disabled', 'queued-enabled'
       await rm(home, { recursive: true, force: true });
     }
   });
+
+for (const outcome of ['nested-disabled', 'nested-enabled', 'nested-cancel-disabled', 'nested-cancel-enabled'])
+  test(`installed Claude SDK background lifecycle: ${outcome} against local inference fixture`,
+    { skip: !installed, timeout: 90000 }, async () => {
+      const home = await mkdtemp(path.join(os.tmpdir(), 'provider-claude-nested-'));
+      const native = [], stderr = [], completionBoundaries = [], requests = [];
+      const commandResponses = new Map(), childResponses = new Map(), expectedReads = new Map(), verified = new Set(), disconnectedCommands = new Set();
+      const finalText = 'FINAL_NESTED_SYNTHESIS: COMMAND-one; COMMAND-two; COMMAND-three.';
+      const waitingText = 'WAITING_FOR_NESTED_COMMAND_OUTPUT';
+      let engine, journal, processClosed = false, rootTurns = 0, finalResponse;
+      const server = createServer(async (request, response) => {
+        try {
+          const command = request.url?.match(/^\/command\/(one|two|three)$/)?.[1];
+          if (command) {
+            response.once('close', () => disconnectedCommands.add(command));
+            commandResponses.set(command, () => response.end(`COMMAND-${command}\n`)); return;
+          }
+          let body = ''; for await (const chunk of request) body += chunk;
+          const payload = body ? JSON.parse(body) : {};
+          if (!request.url?.startsWith('/v1/messages')) { response.writeHead(200, { 'content-type': 'application/json' }); response.end('{}'); return; }
+          const messages = JSON.stringify(payload.messages ?? []);
+          const firstUser = payload.messages?.find(message => message.role === 'user');
+          const child = JSON.stringify(firstUser?.content ?? '').match(/CHILD_FIXTURE_(one|two|three)/)?.[1];
+          const results = (payload.messages ?? []).flatMap(message => Array.isArray(message.content) ? message.content : []).filter(block => block.type === 'tool_result');
+          requests.push({ child: child ?? 'root', rootTurns });
+          for (const result of results) if (expectedReads.has(result.tool_use_id)) {
+            assert.notEqual(result.is_error, true, 'The native output Read must succeed');
+            const markers = JSON.stringify(result.content).match(/COMMAND-(one|two|three)/g) ?? [];
+            assert.equal(new Set(markers).size, 1, 'The real command output must contain exactly its own marker');
+            verified.add(markers[0].slice('COMMAND-'.length));
+          }
+          // Read only a native completed Bash notification that reached this model request.
+          // Agent transcript paths can contain command text and do not prove execution.
+          const bashTasks = new Set(native.filter(message => message.subtype === 'task_started' && message.task_type === 'local_bash').map(message => message.task_id));
+          const notifications = native.filter(message => message.subtype === 'task_notification' && message.status === 'completed'
+            && bashTasks.has(message.task_id) && typeof message.output_file === 'string' && messages.includes(message.output_file));
+          const reads = [];
+          for (const notification of notifications) {
+            const id = `read-output-${notification.task_id}`;
+            if (results.some(result => result.tool_use_id === id)) continue;
+            assert.ok(notification.output_file.startsWith(await realpath(home) + path.sep), 'Native output must stay in isolated HOME');
+            expectedReads.set(id, notification.output_file);
+            reads.push(call(id, 'Read', { file_path: notification.output_file, limit: 10 }));
+          }
+          if (reads.length) { respond(response, payload, reads); return; }
+          if (child) {
+            if (verified.has(child)) { respond(response, payload, [text(`VERIFIED_CHILD_${child}`)]); return; }
+            if (!results.some(result => result.tool_use_id === `bash-${child}`)) {
+              const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
+              respond(response, payload, [call(`bash-${child}`, 'Bash', { command: `${quote(process.execPath)} ${quote(path.join(home, 'command.mjs'))} ${child}`,
+                run_in_background: true, description: `Fixture command ${child} waits for the explicit release gate` })]);
+            } else childResponses.set(child, () => respond(response, payload, [text(`CHILD_WAIT_${child}`)]));
+            return;
+          }
+          if (messages.includes('[SUGGESTION MODE:')) { respond(response, payload, [text('Review the verified results')]); return; }
+          if (++rootTurns === 1) {
+            respond(response, payload, ['one', 'two', 'three'].map(id => call(`spawn-${id}`, 'Agent', { description: `Nested fixture ${id}`,
+              subagent_type: 'general-purpose', run_in_background: true,
+              prompt: `CHILD_FIXTURE_${id}: Start the background command, wait for its notification, and Read its exact output file before returning a verified marker.` })));
+          } else if (verified.size === 3 && ['one', 'two', 'three'].every(id => messages.includes(`VERIFIED_CHILD_${id}`))) finalResponse = () => respond(response, payload, [text(finalText)]);
+          else respond(response, payload, [text(waitingText)]);
+        } catch (error) { response.writeHead(500); response.end(String(error)); }
+      });
+      try {
+        await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+        // A real command owns each HTTP request. Keeping its response open holds the Bash
+        // process without relying on sleep duration or model/network scheduling.
+        await writeFile(path.join(home, 'command.mjs'), `const response = await fetch('http://127.0.0.1:${server.address().port}/command/' + process.argv[2], { signal: AbortSignal.timeout(45000) });\nprocess.stdout.write(await response.text());\n`);
+        const environment = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: home, CLAUDE_CONFIG_DIR: home, CLAUDE_CODE_TMPDIR: home,
+          ANTHROPIC_API_KEY: 'isolated-local-fixture', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`,
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1' };
+        const transport = { spawn(command, args, options) {
+          const child = spawn(command, args, { cwd: home, env: options.env, stdio: 'pipe', signal: options.signal });
+          let pending = '';
+          child.stdout.on('data', chunk => { pending += chunk.toString(); let end;
+            while ((end = pending.indexOf('\n')) >= 0) { const line = pending.slice(0, end); pending = pending.slice(end + 1); try { native.push(JSON.parse(line)); } catch {} }
+          });
+          child.stderr.on('data', chunk => stderr.push(chunk.toString()));
+          child.once('close', () => { processClosed = true; }); return child;
+        } };
+        const adapter = new ClaudeHarnessAdapter(environment);
+        journal = new WorkerJournal(path.join(home, 'journal')); await journal.initialize();
+        const update = journal.update.bind(journal);
+        journal.update = async (...args) => { if (args[1] === 'completed') completionBoundaries.push(native.length); return update(...args); };
+        engine = new WorkerEngine(journal, { adapter: async () => ({ capabilities: adapter.capabilities, probe: () => adapter.probe(),
+          start: options => adapter.start({ ...options, nativeHome: home, processTransport: transport }) }), cwd: async () => home,
+          reserve: async () => () => {}, validateSelection: async () => {} }, 1);
+        await engine.submit('run', { conversationId: 'chat', operation: 'chat', binding: { connectionId: 'fixture', connectionRevision: 1, harnessKind: 'claude' },
+          selection: { model: 'claude-sonnet-4-5', reasoningEffort: null }, resource: { kind: 'conversation', id: 'chat' },
+          input: 'Run the isolated nested fixture.', options: { autonomy: 'autonomous', promptSuggestions: true }, autoAllowedPrefixes: [] });
+        await until(() => commandResponses.size === 3 && childResponses.size === 3 && native.some(message => message.type === 'result'),
+          'Three children did not start their actual background commands');
+        if (!outcome.endsWith('-enabled')) await engine.disableSuggestions('run', 'disable-predictions');
+        const bashTasks = native.filter(message => message.subtype === 'task_started' && message.task_type === 'local_bash');
+        const agentTasks = native.filter(message => message.subtype === 'task_started' && message.task_type === 'local_agent');
+        assert.equal(bashTasks.length, 3); assert.equal(agentTasks.length, 3);
+        assert.ok(bashTasks.every(task => agentTasks.some(agent => agent.task_id === task.parent_task_id)), 'Bash tasks must retain their actual native agent parents');
+        if (outcome.startsWith('nested-cancel-')) {
+          const receipt = await engine.cancel('run', 'stop-active-descendants');
+          const stopped = await journal.load('run');
+          assert.equal(receipt.state, 'cancelled'); assert.equal(receipt.exitConfirmed, true); assert.deepEqual(receipt.effects, {});
+          assert.equal(processClosed, true); assert.equal(verified.size, 0);
+          await until(() => disconnectedCommands.size === 3, 'Cancelled command processes must close their actual unreleased HTTP requests');
+          for (const task of [...agentTasks, ...bashTasks]) assert.ok(native.some(message => message.subtype === 'task_notification'
+            && message.task_id === task.task_id && message.status === 'stopped'), 'Cancellation must stop every actual child and command');
+          assert.equal(stopped.events.some(frame => frame.event.type === 'assistant_text' && frame.event.text === finalText), false);
+          assert.equal(stopped.events.some(frame => frame.event.type === 'answer_complete' || frame.event.type === 'result' && !frame.event.source), false);
+          assert.deepEqual(completionBoundaries, []);
+          return;
+        }
+        for (const release of childResponses.values()) release(); childResponses.clear();
+        await until(async () => native.some(message => message.subtype === 'session_state_changed' && message.state === 'idle')
+          && native.some(message => message.subtype === 'background_tasks_changed' && message.tasks.length === 3
+            && message.tasks.every(task => task.task_type === 'local_bash'))
+          && agentTasks.every(task => native.some(message => message.subtype === 'task_notification' && message.task_id === task.task_id && message.status === 'completed'))
+          && (await journal.load('run')).events.filter(frame => frame.event.type === 'agent_status' && frame.event.state === 'succeeded').length === 3,
+        'The fixture must expose native idle after agents finish while their Bash descendants remain active');
+        const earlyIdleIndex = native.findIndex(message => message.subtype === 'session_state_changed' && message.state === 'idle');
+        const withDescendants = await journal.load('run');
+        assert.equal(withDescendants.receipt.state, 'running', 'Native idle must not complete the provider while descendant commands remain active');
+        assert.equal(processClosed, false);
+        assert.ok(withDescendants.events.filter(frame => frame.event.type === 'agent_status' && frame.event.state === 'succeeded')
+          .every(frame => frame.event.stopConfirmed === false), 'Native agent completion does not confirm its descendant commands stopped');
+        assert.equal(withDescendants.events.some(frame => frame.event.type === 'answer_complete' || frame.event.type === 'result' && !frame.event.source), false);
+        for (const release of commandResponses.values()) release(); commandResponses.clear();
+        await until(async () => finalResponse || ['suggesting', 'completed', 'failed', 'interrupted'].includes((await journal.load('run')).receipt.state),
+          'SDK did not request synthesis after the actual descendant output was read');
+        const awaitingSynthesis = await journal.load('run');
+        assert.equal(awaitingSynthesis.receipt.state, 'running', 'The earlier idle/result must not become completion when descendant inventory drains');
+        assert.equal(processClosed, false); assert.ok(finalResponse);
+        assert.deepEqual([...verified].sort(), ['one', 'three', 'two']);
+        assert.equal(native.findLast(message => message.subtype === 'background_tasks_changed').tasks.length, 0);
+        assert.equal(awaitingSynthesis.events.some(frame => frame.event.type === 'answer_complete' || frame.event.type === 'result' && !frame.event.source), false);
+        finalResponse(); finalResponse = undefined;
+        await until(async () => ['completed', 'failed', 'interrupted'].includes((await journal.load('run')).receipt.state), 'Nested continuation did not terminate');
+        const record = await journal.load('run');
+        assert.deepEqual([...verified].sort(), ['one', 'three', 'two'], 'All three real command markers must be read before completion');
+        assert.equal(record.receipt.state, 'completed'); assert.equal(record.receipt.exitConfirmed, true); assert.deepEqual(record.receipt.effects, {});
+        assert.equal(processClosed, true);
+        for (const task of bashTasks) assert.ok(native.some(message => message.subtype === 'task_notification' && message.task_id === task.task_id && message.status === 'completed'));
+        const finalFrames = record.events.filter(frame => frame.event.type === 'assistant_text' && frame.event.text === finalText);
+        const results = record.events.filter(frame => frame.event.type === 'result' && !frame.event.source);
+        assert.equal(finalFrames.length, 1, 'The public nested final synthesis must appear exactly once'); assert.equal(results.length, 1);
+        assert.ok(results[0].sequence > finalFrames[0].sequence, 'Public completion must follow verified final synthesis');
+        const finalIndex = native.findIndex(message => message.type === 'result' && message.result === finalText);
+        const finalIdleIndex = native.findIndex((message, index) => index > finalIndex && message.subtype === 'session_state_changed' && message.state === 'idle');
+        assert.ok(finalIndex > earlyIdleIndex); assert.ok(finalIdleIndex > finalIndex);
+        assert.equal(completionBoundaries.length, 1); assert.ok(completionBoundaries[0] > finalIdleIndex);
+      } catch (error) {
+        console.error(JSON.stringify({ outcome, verified: [...verified], requests, native: native.filter(message => message.type === 'result'
+          || message.type === 'system' && ['session_state_changed', 'task_started', 'task_notification', 'background_tasks_changed'].includes(message.subtype))
+          .map(({ type, subtype, state, status, task_id, task_type, parent_task_id, result, tasks }) => ({ type, subtype, state, status, task_id, task_type,
+            parent_task_id, result, tasks: tasks?.map(({ task_id, task_type, parent_task_id }) => ({ task_id, task_type, parent_task_id })) })), stderr }));
+        throw error;
+      } finally {
+        for (const release of childResponses.values()) release();
+        for (const release of commandResponses.values()) release();
+        finalResponse?.();
+        await engine?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+        await rm(home, { recursive: true, force: true });
+      }
+    });

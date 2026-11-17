@@ -92,3 +92,32 @@ it("never treats incomplete native framing at EOF as completion", async () => {
   expect(f.failed).toHaveBeenCalledOnce();
   expect(f.observer.confirms(final)).toBe(false);
 });
+
+const inventory = (...tasks: Record<string, unknown>[]) => ({ type: "system", subtype: "background_tasks_changed", session_id: "native", tasks });
+const agent = { task_id: "agent", task_type: "local_agent" };
+const bash = { task_id: "bash", task_type: "local_bash", parent_task_id: "agent" };
+
+it("rejects idle while a completed agent still owns a command and never reuses that waiting result", () => {
+  const f = fixture(), waiting = result("waiting"), final = result("final");
+  f.write(state("running"), inventory(agent, bash), inventory(bash), waiting, state("idle"));
+  expect(f.observer.confirms(waiting)).toBe(false);
+  expect(f.ready).not.toHaveBeenCalled();
+  f.write(inventory(), state("idle"), result("ack", { num_turns: 0, result: "" }), state("idle"));
+  expect(f.observer.confirms(waiting)).toBe(false);
+  expect(f.ready).not.toHaveBeenCalled();
+  f.write(state("running"), final, state("idle"));
+  expect(f.observer.confirms(final)).toBe(true);
+  expect(f.ready).toHaveBeenCalledOnce();
+});
+
+it("accepts a final result preceding a lagging empty inventory when no busy idle invalidated it", () => {
+  const f = fixture(), final = result("final");
+  f.write(state("running"), inventory(agent, bash), inventory(bash), final, inventory(), state("idle"));
+  expect(f.observer.confirms(final)).toBe(true);
+});
+
+it("does not hold raw completion for parentless persistent commands or ambient descendants", () => {
+  const f = fixture(), final = result("final");
+  f.write(inventory(agent), inventory({ ...bash, ambient: true }, { task_id: "server", task_type: "local_bash" }), final, state("idle"));
+  expect(f.observer.confirms(final)).toBe(true);
+});

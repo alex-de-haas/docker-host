@@ -285,14 +285,18 @@ timestamps do not produce a fabricated date; individual tool events do not acqui
 Claude distinguishes a root model result from completion of the native execution. The pinned SDK's
 background inventory and task notifications retain child identities, active tool receipts and
 logical outcomes across an interim root response. A successful root result is deferred while
-non-ambient native agents remain active; persistent background shells do not create this dependency.
+non-ambient native agents or their proven background descendants remain active. Native task ancestry
+is retained from inventories and task events after a parent completes or leaves the live inventory.
+Unrelated parentless background shells and ambient watchers do not create this dependency.
 An empty agent inventory or a later substantive root result cannot complete the execution: queued
 child notifications can produce progress turns before the final parent synthesis. The provider
 observes the native CLI's host-only `session_state_changed` frames through the supported process
 spawn hook, because the pinned SDK filters those frames from its public iterator. A native idle
 boundary is correlated with its preceding root result's session and UUID; completion waits until
-that exact result reaches the SDK iterator. The bounded observer passes stdout through unchanged
-and retains only lifecycle metadata. The provider does not synthesize a continuation prompt or
+that exact result reaches the SDK iterator. An idle observed while owned descendant work remains
+invalidates its result candidate: an empty inventory cannot make that old result complete later.
+Completion requires a subsequent root result and a fresh idle boundary without owned work.
+The bounded observer passes stdout through unchanged and retains only lifecycle metadata. The provider does not synthesize a continuation prompt or
 infer completion from a delay. Disabling predictions while children are active changes
 prediction policy without closing the native query. Explicit Stop still stops the whole owned
 execution and drains exact late tool terminals; an idle notification during interruption cannot
@@ -554,6 +558,10 @@ working account. A synthetic protocol check does not establish real OpenAI accou
   then require the final synthesis to survive the adapter and worker journal with predictions on
   and off. Raw stdout may reach idle before the SDK iterator drains its final result; result/session
   correlation must prevent early completion. Cancellation before final synthesis cannot publish success.
+  Nested-command cases retain completed native agent ancestry, await actual background Bash output
+  and resumed child summaries, and require one final parent synthesis before confirmed exit.
+  They cover predictions on/off, explicit cancellation, stale idle, inventory-only ancestry and
+  unrelated parentless/ambient background work.
   Native SDK tests use an empty temporary home and a deterministic loopback model fixture; these
   establish SDK/process behavior separately from hosted-model quality or account authorization.
 - Harness reducer/manager and browser checks cover child attribution, actionable child decisions,

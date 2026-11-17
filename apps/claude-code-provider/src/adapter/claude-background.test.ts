@@ -235,3 +235,21 @@ it("fences a late successful root result delivered while native interrupt is sti
   expect(await f.engine.cancel("run", "cancel-before-late-root-result")).toMatchObject({ state: "cancelled", exitConfirmed: true });
   expect((await f.journal.load("run")).events.some(frame => frame.event.type === "result" || frame.event.type === "answer_complete")).toBe(false);
 });
+
+it("keeps the public lifecycle fallback pending after an ended child's command drains from an early idle", async () => {
+  const f = await fixture();
+  await f.push(tasks(["one"]), started("one"), finished("one"),
+    { type: "system", subtype: "background_tasks_changed", session_id: "native", tasks: [{ task_id: "bash", task_type: "local_bash", parent_task_id: "one" }] },
+    { ...result(), num_turns: 1, result: "Waiting for the child's command." },
+    { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" });
+  await f.engine.disableSuggestions("run", "disable-during-nested-command");
+  expect(f.close).not.toHaveBeenCalled();
+  await f.push(tasks([]), { ...result(), num_turns: 0, result: "" },
+    { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" });
+  expect(f.close).not.toHaveBeenCalled();
+  expect((await f.journal.load("run")).receipt.state).toBe("running");
+  await f.push(assistant([{ type: "text", text: "Final synthesis with the verified command output." }]),
+    { ...result(), num_turns: 1, result: "Final synthesis." },
+    { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" });
+  await vi.waitFor(async () => expect((await f.journal.load("run")).receipt).toMatchObject({ state: "completed", exitConfirmed: true }));
+});
