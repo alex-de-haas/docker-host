@@ -22,7 +22,7 @@ public sealed class WorkspaceActivationCapabilityTests : IAsyncLifetime
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Project)!);
         await File.WriteAllTextAsync(Project, """
-            <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework>
+            <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net11.0</TargetFramework>
             <OutputType>Exe</OutputType><AssemblyName>hosty-core</AssemblyName><ImplicitUsings>enable</ImplicitUsings>
             <Nullable>enable</Nullable></PropertyGroup></Project>
             """);

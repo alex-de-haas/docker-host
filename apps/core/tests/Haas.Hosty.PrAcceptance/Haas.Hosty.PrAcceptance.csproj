@@ -1,10 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>Haas.Hosty.PrAcceptance</AssemblyName>
     <DefineConstants>$(DefineConstants);HOSTY_PR_ACCEPTANCE</DefineConstants>
+    <!-- This API-only host reuses Core's embedded browser resources. Disable its static asset
+         graph to avoid duplicate .NET 11 hot-reload assets from the referenced Web project. -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Haas.Hosty.Core/Haas.Hosty.Core.csproj" />

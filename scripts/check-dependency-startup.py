@@ -6,6 +6,7 @@ HOSTY_DEPENDENCY_BROWSER_HOLD=1 pauses for authenticated browser QA before owner
 Only generated test credentials/data are used. Raw receipts stay outside the repository.
 """
 import http.cookiejar
+import base64
 import json
 import os
 from pathlib import Path
@@ -25,14 +26,28 @@ base = Path(tempfile.mkdtemp(prefix='hosty-dependencies-'))
 root = base / 'parent'
 project = workspace / 'apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj'
 suffix = '.exe' if os.name == 'nt' else ''
-core = project.parent / ('bin/Debug/net10.0/hosty-core' + suffix)
-cli = workspace / ('apps/cli/src/Haas.Hosty.Cli/bin/Debug/net10.0/hosty' + suffix)
+core = project.parent / ('bin/Debug/net11.0/hosty-core' + suffix)
+cli = workspace / ('apps/cli/src/Haas.Hosty.Cli/bin/Debug/net11.0/hosty' + suffix)
 env = {k: os.environ[k] for k in ('PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'DOTNET_ROOT', 'LANG',
        'SystemRoot', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'ProgramFiles', 'ProgramData') if k in os.environ}
 email = 'dependency-fixture@example.test'
 password = uuid.uuid4().hex + 'aA1!'
 parent = child = process = child_record = None
-image = 'hosty-dependency-fixture:' + uuid.uuid4().hex[:12]
+# Reviewed updates verify registry content, so use the existing public Node base directly.
+# Preloading the fixture keeps the compiled-image profile without publishing a private test image.
+image = {'repository': 'node', 'digest': 'sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5'}
+server_module = """import http from 'node:http';
+if (process.env.FAIL_START === '1') process.exit(1);
+const started = Date.now();
+http.createServer(async (req, res) => {
+  if (req.url === '/health') { res.statusCode = Date.now()-started >= Number(process.env.HEALTH_DELAY||0)*1000 ? 200 : 503; return res.end(); }
+  const provider = process.env.HOSTY_DEPENDENCY_PROVIDER_URL || null;
+  let reachable = null;
+  if (provider) { try { reachable = (await fetch(provider+'/health')).ok; } catch { reachable = false; } }
+  res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({provider, reachable}));
+}).listen(8080, '0.0.0.0');
+"""
+node_options = '--import=data:text/javascript;base64,' + base64.b64encode(server_module.encode()).decode()
 success = False
 
 def say(message):
@@ -111,12 +126,12 @@ def fixture(app_id, provider=None, delay=0, fail=False):
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0))
         host_port = listener.getsockname()[1]
-    result = {'schemaVersion': 'app.0.1', 'id': app_id, 'name': app_id, 'version': '0.1.0',
+    result = {'schemaVersion': 'app.0.2', 'id': app_id, 'name': app_id, 'version': '0.1.0',
         'runtimeProfiles': [{'key': 'docker', 'type': 'docker', 'default': True, 'readinessTimeoutSeconds': 1}],
         'defaultRuntime': 'docker', 'services': [{'key': 'web', 'runtimes': {'docker': {
-            'type': 'docker', 'image': image, 'environment': {'HEALTH_DELAY': str(delay), 'FAIL_START': '1' if fail else '0'},
+            'type': 'docker', 'image': image, 'environment': {'NODE_OPTIONS': node_options, 'HEALTH_DELAY': str(delay), 'FAIL_START': '1' if fail else '0'},
             'ports': [{'key': 'http', 'containerPort': 8080, 'hostPort': host_port, 'protocol': 'http', 'expose': 'host'}],
-            'healthcheck': {'type': 'exec', 'command': "node -e \"fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+            'healthcheck': {'type': 'exec', 'command': "env -u NODE_OPTIONS node -e \"fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
                             'intervalSeconds': 1, 'timeoutSeconds': 1, 'retries': 1}}}}],
         'endpoints': [{'key': 'web', 'service': 'web', 'port': 'http', 'protocol': 'http', 'public': True}]}
     if provider:
@@ -124,20 +139,6 @@ def fixture(app_id, provider=None, delay=0, fail=False):
     return result
 
 try:
-    # Tiny fixture reports the injected provider URL and whether it answers from the consumer.
-    (base / 'server.cjs').write_text("""if (process.env.FAIL_START === '1') process.exit(1);
-const http = require('node:http');
-const started = Date.now();
-http.createServer(async (req, res) => {
-  if (req.url === '/health') { res.statusCode = Date.now()-started >= Number(process.env.HEALTH_DELAY||0)*1000 ? 200 : 503; return res.end(); }
-  const provider = process.env.HOSTY_DEPENDENCY_PROVIDER_URL || null;
-  let reachable = null;
-  if (provider) { try { reachable = (await fetch(provider+'/health')).ok; } catch { reachable = false; } }
-  res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({provider, reachable}));
-}).listen(8080, '0.0.0.0');
-""")
-    (base / 'Dockerfile').write_text('FROM node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5\nCOPY server.cjs /server.cjs\nCMD ["node", "/server.cjs"]\n')
-    run(['docker', 'build', '-t', image, base])
     (root / 'core').mkdir(parents=True)
     distribution = root / 'core/distribution-apps.json'
     distribution.write_text('{"schemaVersion":"distribution-apps.0.1","apps":[]}')
@@ -281,6 +282,4 @@ finally:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=10)
-        if cleanup_ok:
-            run(['docker', 'image', 'rm', image])
         say(('PASS' if success and cleanup_ok else 'FAIL') + ': dependency startup acceptance; local diagnostics=' + str(base))

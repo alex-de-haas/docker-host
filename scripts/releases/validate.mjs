@@ -14,7 +14,7 @@ export function validateCombination({ root, app, release, files }, { run = execF
       relativePath(file.path); const destination = join(directory, file.path);
       mkdirSync(dirname(destination), { recursive: true }); writeFileSync(destination, file.data);
     }
-    const validator = resolve(root, 'apps/core/tests/Haas.Hosty.ReleaseValidation/bin/Release/net10.0/Haas.Hosty.ReleaseValidation.dll');
+    const validator = resolve(root, 'apps/core/tests/Haas.Hosty.ReleaseValidation/bin/Release/net11.0/Haas.Hosty.ReleaseValidation.dll');
     run('dotnet', [validator, path, ...app.profiles], { cwd: root, stdio: 'inherit', timeout: 120_000 });
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }

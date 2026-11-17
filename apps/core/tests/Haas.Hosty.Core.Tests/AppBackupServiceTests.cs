@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using Haas.Hosty.Core;
 
 namespace Haas.Hosty.Core.Tests;
@@ -131,6 +132,38 @@ public sealed class AppBackupServiceTests
             fixture.Service.RestoreBackupAsync("com.example.notes", backup.BackupId, createPreRestoreBackup: false));
 
         Assert.Equal("live", await File.ReadAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt")));
+    }
+
+    [Fact]
+    public async Task RestoreBackupAsync_LeavesLiveDataAndCleansStagingWhenEntryCrcIsInvalid()
+    {
+        var fixture = BackupFixture.Create();
+        await File.WriteAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt"), "original");
+        var backup = await fixture.Service.CreateBackupAsync("com.example.notes", "manual");
+        Assert.NotNull(backup);
+
+        // Keep the ZIP structure and compressed payload intact, but invalidate the entry's CRC.
+        // Matching the archive SHA ensures restore reaches .NET's entry integrity validation.
+        var archiveBytes = await File.ReadAllBytesAsync(backup.ArchivePath);
+        var endOfDirectory = archiveBytes.Length - 22; // This generated ZIP has no comment.
+        Assert.Equal(0x06054b50u, BinaryPrimitives.ReadUInt32LittleEndian(archiveBytes.AsSpan(endOfDirectory)));
+        var centralDirectory = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(archiveBytes.AsSpan(endOfDirectory + 16)));
+        Assert.Equal(0x02014b50u, BinaryPrimitives.ReadUInt32LittleEndian(archiveBytes.AsSpan(centralDirectory)));
+        archiveBytes[centralDirectory + 16] ^= 0xff;
+        await File.WriteAllBytesAsync(backup.ArchivePath, archiveBytes);
+        await JsonStorage.WriteAsync(Path.ChangeExtension(backup.ArchivePath, ".json"), backup with
+        {
+            ArchiveSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(archiveBytes)).ToLowerInvariant(),
+        });
+        await File.WriteAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt"), "live");
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            fixture.Service.RestoreBackupAsync("com.example.notes", backup.BackupId, createPreRestoreBackup: false));
+
+        Assert.Equal("live", await File.ReadAllTextAsync(Path.Combine(fixture.DataPath, "notes.txt")));
+        Assert.DoesNotContain(
+            Directory.EnumerateFileSystemEntries(Path.GetDirectoryName(fixture.DataPath)!),
+            entry => entry.EndsWith(".tmp", StringComparison.Ordinal));
     }
 
     // A backup root is a plain directory an operator can edit, so a metadata file may be truncated,

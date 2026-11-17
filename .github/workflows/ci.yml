@@ -278,6 +278,8 @@ jobs:
 
       - name: Set up .NET
         uses: ./.github/actions/setup-dotnet
+        with:
+          compatibility-sdk-version: '10.0.402'
 
       - name: Test HostySdk.App
         run: dotnet test packages/app-sdk-dotnet/HostySdk.App.Tests/HostySdk.App.Tests.csproj
@@ -408,6 +410,8 @@ jobs:
 
       - name: Set up .NET
         uses: ./.github/actions/setup-dotnet
+        with:
+          compatibility-sdk-version: '10.0.402'
 
       - name: Build Telemetry Backend
         run: npm run telemetry-backend:build

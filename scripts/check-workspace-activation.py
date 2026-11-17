@@ -22,8 +22,8 @@ windows = os.name == 'nt'
 suffix = '.exe' if windows else ''
 root = base / 'instance'
 remote = base / 'fixture-source'
-cli = pathlib.Path(os.environ.get('HOSTY_ACTIVATION_CLI', str(workspace / ('apps/cli/src/Haas.Hosty.Cli/bin/Debug/net10.0/hosty' + suffix)))).resolve()
-core = pathlib.Path(os.environ.get('HOSTY_ACTIVATION_CORE', str(workspace / ('apps/core/src/Haas.Hosty.Core/bin/Debug/net10.0/hosty-core' + suffix)))).resolve()
+cli = pathlib.Path(os.environ.get('HOSTY_ACTIVATION_CLI', str(workspace / ('apps/cli/src/Haas.Hosty.Cli/bin/Debug/net11.0/hosty' + suffix)))).resolve()
+core = pathlib.Path(os.environ.get('HOSTY_ACTIVATION_CORE', str(workspace / ('apps/core/src/Haas.Hosty.Core/bin/Debug/net11.0/hosty-core' + suffix)))).resolve()
 project = 'apps/core/src/Haas.Hosty.Core/Haas.Hosty.Core.csproj'
 # Keep native SDK OS-directory discovery while excluding credentials and provider configuration.
 env = {k: os.environ[k] for k in [
