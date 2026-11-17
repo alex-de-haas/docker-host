@@ -28,6 +28,28 @@ function expectResync(action: () => unknown, reason?: string) {
 }
 
 describe("public provider run projection", () => {
+  it("retains parallel child status transitions and rejects changed ancestry or invalid state", () => {
+    let current = createAgentRunProjection(snapshot());
+    const sibling = { ...child, agentId: "sibling", parentToolCallId: "delegate-two" };
+    current = apply(current, "agent.updated", { agent: { ...child, state: "running", stopConfirmed: false } }, child);
+    current = apply(current, "agent.updated", { agent: { ...sibling, state: "waiting_for_input" } }, sibling);
+    current = apply(current, "agent.updated", { agent: { ...child, state: "succeeded", stopConfirmed: true } }, child);
+    expect(current.snapshot.agents).toEqual([{ ...child, state: "succeeded", stopConfirmed: true }, { ...sibling, state: "waiting_for_input" }]);
+    expect(current.snapshot.state).toBe("running");
+    expect(current.snapshot.stopConfirmed).toBe(false);
+    const duplicate = event("3", "agent.updated", { agent: { ...child, state: "succeeded", stopConfirmed: true } }, child);
+    expect(reduceAgentRunProjection(current, { kind: "event", event: duplicate, cursor: "cursor-3" })).toBe(current);
+    expectResync(() => apply(current, "agent.updated", { agent: { ...child, state: "invalid" } }, child), "invalid agent status");
+    expectResync(() => apply(current, "agent.updated", { agent: { ...child, state: "running", parentAgentId: "other" } }, child), "agent status source changed");
+    const moved = { ...child, parentToolCallId: "different" };
+    expectResync(() => apply(current, "agent.updated", { agent: { ...moved, state: "running" } }, moved), "agent parent changed");
+    const replacement = snapshot({ lastSequence: "4", revision: "4", agents: [{ ...child, state: "unknown" }] });
+    current = reduceAgentRunProjection(current, { kind: "snapshot", snapshot: replacement });
+    replacement.agents![0]!.state = "running";
+    expect(current.snapshot.agents).toEqual([{ ...child, state: "unknown" }]);
+    expectResync(() => createAgentRunProjection(snapshot({ agents: [{ ...child, state: "running" }, { ...child, state: "succeeded" }] })), "duplicate snapshot agent identity");
+  });
+
   it("retains the latest root context with its original event identity across replacement and explicit clearing", () => {
     const usage = { usedTokens: 42, maxTokens: 1000, estimated: false };
     const initial = snapshot({ revision: "1", lastSequence: "1", latestContext: { sequence: "1", usage } });
