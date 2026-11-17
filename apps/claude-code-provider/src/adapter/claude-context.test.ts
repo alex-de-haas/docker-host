@@ -20,7 +20,7 @@ it("samples main-session summaries, ignores subagents, and emits a final context
     yield { type: "assistant", message: { id: "main", content: [] } };
     await done.promise;
     yield { type: "system", subtype: "compact_boundary" };
-    yield { type: "result", subtype: "success" };
+    yield { type: "result", subtype: "success" }; yield { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" };
   })(), { getContextUsage, interrupt: async () => {}, close() { subagent.release(); assistant.release(); done.release(); } }));
   run = new ClaudeHarnessAdapter().start({ sessionId: "chat", cwd: "/tmp", onEvent: event => events.push(event) });
   run.send("hi");
@@ -43,7 +43,7 @@ it("samples main-session summaries, ignores subagents, and emits a final context
 it("keeps the successful result when context diagnostics fail or are unsupported", async () => {
   for (const getContextUsage of [undefined, vi.fn().mockRejectedValue(new Error("diagnostic unavailable"))]) {
     const events: HarnessEvent[] = [];
-    queryMock.mockReturnValue(Object.assign((async function* () { yield { type: "result", subtype: "success" }; })(),
+    queryMock.mockReturnValue(Object.assign((async function* () { yield { type: "system", subtype: "init", session_id: "native" }; yield { type: "result", subtype: "success" }; yield { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" }; })(),
       { getContextUsage, interrupt: async () => {}, close() {} }));
     run = new ClaudeHarnessAdapter().start({ sessionId: "chat", cwd: "/tmp", onEvent: event => events.push(event) });
     await vi.waitFor(() => expect(events.at(-1)).toMatchObject({ type: "result", status: "success" }));

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import type { HarnessEvent, HarnessRun } from "@hosty/agent-provider-runtime/harness/adapter";
 
 const sdk = vi.hoisted(() => ({ messages: [] as Record<string, unknown>[], finish: () => {}, options: undefined as Record<string, unknown> | undefined }));
@@ -44,7 +45,7 @@ describe("Claude SDK child provenance", () => {
     run.resolveApproval(event.approvalId, "deny"); await expect(pending).resolves.toMatchObject({ behavior: "deny" });
   });
   it("forwards the pinned SDK executable and graceful-close signal to the managed process transport", async () => {
-    const child = new EventEmitter(), spawn = vi.fn(() => child as never);
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => true), killed: false, exitCode: null, signalCode: null }), spawn = vi.fn(() => child as never);
     run = new ClaudeHarnessAdapter({ ANTHROPIC_API_KEY: "isolated-test-placeholder" }).start({ sessionId: "logical-session", cwd: "/private/tmp", processTransport: { spawn }, onEvent() {} });
     await vi.waitFor(() => expect(sdk.options?.spawnClaudeCodeProcess).toBeTypeOf("function"));
     expect(sdk.options).not.toHaveProperty("pathToClaudeCodeExecutable");

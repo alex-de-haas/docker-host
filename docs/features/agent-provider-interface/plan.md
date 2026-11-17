@@ -54,6 +54,12 @@ its source; recovery follows verified reconciliation rather than clearing an unc
 This approval covers the scoped D23-D26 work below, not the unrelated remaining D5 acceptance,
 commits, publication or ordinary-data runtime activation.
 
+Owner approval, 2026-11-17: fix the premature Claude completion reproduced after the D23-D26
+live deployment, add a deterministic real-SDK regression for queued child notifications, publish
+a corrective PR through CI and review, merge it, update the installed provider and repeat the
+ordinary-host final-answer delivery check. This approval covers D27 and those publication and
+activation steps; it does not expand the unrelated D5 acceptance scope.
+
 ## Accepted Delivery Scope
 
 The recommended first delivery is the complete extraction: three Local providers, Docker Harness,
@@ -703,6 +709,22 @@ Verification for the November 17 repair on macOS arm64:
   existing analyzer/NuGet warnings. Hosted inference and Windows-native execution are not claimed;
   the optional heavyweight tasks suite is unselected. D5/D6 retain their broader acceptance scope.
 
+Verification for the queued-notification correction (D27), November 17, macOS arm64:
+
+- The pinned SDK fixture reproduces the deployed failure with predictions enabled and disabled:
+  all children finish while a parent progress request is in flight; the actual final synthesis
+  is absent from the worker journal before the correction and retained exactly once afterwards.
+- Claude lint, production build and all 223 provider tests pass. The ordinary provider test command
+  includes four genuine SDK queued-completion/cancellation cases and rejects skipped native coverage.
+- The separate native fixture passes all six cases, including ordinary three-child completion,
+  whole-run cancellation and cancellation between the intermediate and final parent responses.
+  No personal account or hosted inference is used by these fixtures.
+- Shared runtime lint and 363 tests pass; four Windows-only cases are skipped on macOS.
+  Stream tests cover exact session/result matching, raw stdout preceding the SDK iterator,
+  bounded framing, unchanged bytes, backpressure, incomplete EOF and cancellation fencing.
+- Version outcome: Claude Code Provider 0.1.3 → 0.1.4. The shared runtime, Harness, other
+  providers and platform/SDK contracts are unchanged by this correction.
+
 ### Pending Responses And Cancellation
 
 ```json
@@ -948,6 +970,8 @@ neither caching nor a universal inference API is a prerequisite to this provider
 - [x] D24. Reduce native agent status events and retain run-qualified child attribution in Harness messages, tools and decisions; render compact child progress and expandable attributed output with reconnect/replay coverage.
 - [x] D25. Display local message times for operator prompts and accessible full timestamps for transcript messages without adding time labels to every tool event; verify transcript grouping and history compatibility.
 - [x] D26. Verify the combined lifecycle and UI path in an owned Core sandbox, record accurate stop-versus-outcome diagnostics and reconciliation limits, update current behavior documentation, and preserve the interrupted session's source and partial research for supported recovery.
+
+- [x] D27. Replace Claude's next-result completion heuristic with an authoritative native idle boundary correlated to the SDK-delivered root result; reproduce queued child-notification progress followed by final synthesis using the pinned SDK with predictions enabled and disabled, and cover cancellation and stream ordering.
 
 ### Implementation Order
 

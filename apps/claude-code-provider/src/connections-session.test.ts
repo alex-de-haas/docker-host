@@ -25,7 +25,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({ query: (args: { prompt: Async
   const id = args.options.resume ? sdk.wrongResume ? "unexpected-native-session" : args.options.resume : `native-claude-${sdk.calls.length}`;
   return Object.assign((async function* () {
     yield { type: "system", subtype: "init", session_id: id };
-    for await (const _message of args.prompt) { yield { type: "assistant", message: { content: [{ type: "text", text: "Account-scoped answer" }] } }; if (!sdk.hold) yield { type: "result", subtype: "success", session_id: id }; }
+    for await (const _message of args.prompt) { yield { type: "assistant", message: { content: [{ type: "text", text: "Account-scoped answer" }] } }; if (!sdk.hold) { yield { type: "result", subtype: "success", session_id: id }; yield { type: "system", subtype: "session_state_changed", session_id: id, state: "idle" }; } }
   })(), { interrupt: async () => {}, close() {}, applyFlagSettings: async () => {} });
 } }));
 

@@ -25,9 +25,9 @@ it("reports removed getter, missing profile scope and API-key auth without faili
   expect(queryMock).not.toHaveBeenCalled();
 });
 it("observes active status events and flushes a diagnostic before the successful result", async () => {
-  queryMock.mockReturnValue(Object.assign((async function* () {
+  queryMock.mockReturnValue(Object.assign((async function* () { yield { type: "system", subtype: "init", session_id: "native" };
     yield { type: "rate_limit_event", rate_limit_info: { status: "allowed_warning", rateLimitType: "five_hour" } };
-    yield { type: "result", subtype: "success" };
+    yield { type: "result", subtype: "success" }; yield { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" };
   })(), { usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({ rate_limits_available: true, rate_limits: { five_hour: { utilization: 80 } } }),
     interrupt: async () => {}, close() {} }));
   const events: HarnessEvent[] = [];
