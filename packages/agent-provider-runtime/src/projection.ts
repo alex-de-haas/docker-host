@@ -105,8 +105,17 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
     }
     case "tool_result": { const block = tool(record, publicToolId(event.toolUseId, source.agentId)); if (block) { block.state = event.status; block.output = clipped(event.output, 8 * 1024); block.truncated = event.truncated || Buffer.byteLength(event.output) > 8 * 1024; if (block.truncated) truncated("tools"); }
       emit("tool.completed", { toolCallId: publicToolId(event.toolUseId, source.agentId), name: block?.name ?? "unknown", output: event.output, state: event.status, truncated: event.truncated }); break; }
-    case "command_result": { const block = tool(record, publicToolId(event.toolUseId, source.agentId)); if (block) { block.state = event.status; block.command = { status: event.status, exitCode: event.exitCode, durationMs: event.durationMs, summary: event.summary ? clipped(event.summary, 8192) : undefined }; }
-      emit("tool.completed", { toolCallId: publicToolId(event.toolUseId, source.agentId), name: block?.name ?? "unknown", state: event.status, exitCode: event.exitCode, durationMs: event.durationMs, summary: event.summary }); break; }
+    case "command_result": {
+      const toolCallId = publicToolId(event.toolUseId, source.agentId), block = tool(record, toolCallId);
+      const command = { status: event.status,
+        ...(event.exitCode !== undefined ? { exitCode: event.exitCode } : {}),
+        ...(event.durationMs !== undefined ? { durationMs: event.durationMs } : {}),
+        ...(event.summary ? { summary: clipped(event.summary, 8192) } : {}) };
+      if (block) { block.state = event.status; block.command = command; }
+      emit("tool.completed", { toolCallId, name: block?.name ?? "unknown", state: event.status,
+        command, exitCode: event.exitCode, durationMs: event.durationMs, summary: event.summary });
+      break;
+    }
     case "approval_request": case "question_request": { const decision = nativeDecision(frame)!;
       if (record.decisionsFenced) { emit("decision.resolved", { decisionId: decision.id, decision, state: "superseded" }); break; }
       if (!snapshot.pending.some(value => value.id === decision.id)) snapshot.pending.push(decision);

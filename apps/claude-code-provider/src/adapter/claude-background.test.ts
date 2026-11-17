@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { WorkerEngine } from "@hosty/agent-provider-runtime/worker/engine";
 import { WorkerJournal } from "@hosty/agent-provider-runtime/worker/journal";
+import type { HarnessEvent } from "@hosty/agent-provider-runtime/harness/adapter";
 import type { WorkerRunRequest } from "@hosty/agent-provider-runtime/worker/contracts";
 import { ClaudeHarnessAdapter } from "./claude.js";
 
@@ -252,4 +253,117 @@ it("keeps the public lifecycle fallback pending after an ended child's command d
     { ...result(), num_turns: 1, result: "Final synthesis." },
     { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" });
   await vi.waitFor(async () => expect((await f.journal.load("run")).receipt).toMatchObject({ state: "completed", exitConfirmed: true }));
+});
+
+const bashCall = (event: HarnessEvent): event is Extract<HarnessEvent, { type: "tool_use" }> => event.type === "tool_use" && event.toolName === "Bash";
+const bashStarted = (taskId: string, runId: string, toolId: string, owner?: string) => ({
+  type: "system", subtype: "task_started", session_id: "native", task_type: "local_bash",
+  task_id: taskId, run_id: runId, tool_use_id: toolId, is_backgrounded: true,
+  ...(owner ? { parent_task_id: owner } : {}),
+});
+const bashFinished = (taskId: string, runId: string, toolId: string, status: string) => ({
+  type: "system", subtype: "task_notification", session_id: "native", task_id: taskId,
+  run_id: runId, tool_use_id: toolId, status, summary: "Notification metadata", output_file: "/private/fixture-output",
+});
+const bashLaunch = (toolId: string, parent?: string) => ({
+  type: "user", session_id: "native", ...(parent ? { parent_tool_use_id: parent } : {}),
+  message: { content: [{ type: "tool_result", tool_use_id: toolId, content: "Started in background" }] },
+});
+
+it("projects only an exact background Bash terminal to the right child even when sibling tool IDs repeat", async () => {
+  const f = await fixture();
+  await f.push(
+    assistant([tool("spawn-one", "Agent"), tool("spawn-two", "Agent")]), started("one"), started("two"),
+    assistant([tool("bash", "Bash", { run_in_background: true })], "spawn-one"),
+    assistant([tool("bash", "Bash", { run_in_background: true })], "spawn-two"),
+    bashStarted("command-one", "run-b", "bash", "one"),
+    { ...bashStarted("command-two", "run-c", "bash", "two"), is_backgrounded: false },
+    { type: "system", subtype: "task_updated", session_id: "native", task_id: "command-two", run_id: "run-c", patch: { is_backgrounded: true } },
+    bashLaunch("bash", "spawn-one"), bashLaunch("bash", "spawn-two"),
+  );
+  const first = bashFinished("command-one", "run-b", "bash", "failed");
+  await f.push(
+    { ...first, run_id: "run-a", status: "completed" },
+    { ...first, tool_use_id: "different", status: "completed" },
+    { ...first, session_id: "other", status: "completed" },
+    { ...first, reason: "worker_restart", status: "stopped" },
+    { ...first, isReplay: true, status: "completed" },
+    { ...first, task_id: "unbound", status: "completed" },
+  );
+  const events = async () => (await f.journal.load("run")).events.map(frame => frame.event);
+  expect((await events()).filter(event => event.type === "tool_result" || event.type === "command_result")).toEqual([]);
+  await f.push(first, first, bashFinished("command-two", "run-c", "bash", "completed"));
+  const projected = await events();
+  const calls = projected.filter(bashCall);
+  expect(calls).toHaveLength(2);
+  expect(projected.filter(event => event.type === "command_result")).toEqual(calls.map((call, index) => ({
+    type: "command_result", toolUseId: call.toolUseId, status: index === 0 ? "failed" : "completed", source: call.source,
+  })));
+  expect(projected.filter(event => event.type === "tool_result")).toEqual([]);
+  expect(projected.filter(event => event.type === "native_effect" && event.state === "settled")).toEqual(calls.map(call => ({
+    type: "native_effect", id: call.toolUseId, state: "settled", source: call.source,
+  })));
+});
+
+it("retains a root Bash terminal received while generating a suggestion", async () => {
+  const f = await fixture();
+  await f.push(assistant([tool("bash", "Bash", { run_in_background: true })]),
+    bashStarted("command", "run-a", "bash"), bashLaunch("bash"),
+    result(), { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" });
+  expect((await f.journal.load("run")).receipt.state).toBe("suggesting");
+  await f.push(bashFinished("command", "run-a", "bash", "completed"));
+  await f.push({ type: "prompt_suggestion", session_id: "native", suggestion: "Consider the result." });
+  const state = await f.journal.load("run");
+  expect(state.receipt).toMatchObject({ state: "completed", exitConfirmed: true, effects: {} });
+  const events = state.events.map(frame => frame.event);
+  const call = events.find(bashCall);
+  expect(call).toBeDefined();
+  expect(events.filter(event => event.type === "command_result")).toEqual([
+    { type: "command_result", toolUseId: call?.toolUseId, status: "completed" },
+  ]);
+});
+
+it("keeps a background command unknown when cancellation races its launch receipt and no terminal arrives", async () => {
+  const f = await fixture();
+  await f.push(assistant([tool("spawn-one", "Agent")]), started("one"),
+    assistant([tool("bash", "Bash", { run_in_background: true })], "spawn-one"),
+    bashStarted("command", "run-a", "bash", "one"));
+  f.query.interrupt.mockImplementation(async () => {
+    await f.pushDuringStop(bashLaunch("bash", "spawn-one"));
+  });
+  const stopped = await f.engine.cancel("run", "stop-unreported-command");
+  const events = (await f.journal.load("run")).events.map(frame => frame.event);
+  const call = events.find(bashCall);
+  expect(call).toBeDefined();
+  expect(stopped.exitConfirmed).toBe(true);
+  expect(events.filter(event => event.type === "command_result")).toEqual([
+    { type: "command_result", toolUseId: call?.toolUseId, status: "unknown", source: call?.source },
+  ]);
+  expect(events.filter(event => event.type === "tool_result")).toEqual([]);
+});
+
+it("drains a late-starting command and its native cancellation before closing the query", async () => {
+  const f = await fixture();
+  await f.push(assistant([tool("spawn-one", "Agent")]), started("one"),
+    bashLaunch("spawn-one"),
+    assistant([tool("bash", "Bash", { run_in_background: true })], "spawn-one"));
+  let acknowledged = false;
+  f.query.interrupt.mockImplementation(async () => {
+    await f.pushDuringStop(bashStarted("command", "run-a", "bash", "untracked-owner"),
+      bashStarted("command", "run-a", "bash", "one"), bashLaunch("bash", "spawn-one"));
+    acknowledged = true;
+  });
+  const cancellation = f.engine.cancel("run", "stop-late-start");
+  await vi.waitFor(() => expect(acknowledged).toBe(true));
+  expect(f.close).not.toHaveBeenCalled();
+
+  await f.pushDuringStop(bashFinished("command", "run-a", "bash", "stopped"));
+  const receipt = await cancellation;
+  const events = (await f.journal.load("run")).events.map(frame => frame.event);
+  const call = events.find(bashCall);
+  expect(receipt.exitConfirmed).toBe(true);
+  expect(events.filter(event => event.type === "command_result")).toEqual([
+    { type: "command_result", toolUseId: call?.toolUseId, status: "cancelled", source: call?.source },
+  ]);
+  expect(events.filter(event => event.type === "tool_result" && event.toolUseId === call?.toolUseId)).toEqual([]);
 });

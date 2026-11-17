@@ -278,6 +278,21 @@ for (const outcome of ['nested-disabled', 'nested-enabled', 'nested-cancel-disab
         if (!outcome.endsWith('-enabled')) await engine.disableSuggestions('run', 'disable-predictions');
         const bashTasks = native.filter(message => message.subtype === 'task_started' && message.task_type === 'local_bash');
         const agentTasks = native.filter(message => message.subtype === 'task_started' && message.task_type === 'local_agent');
+        const bashOutcomes = (record, status) => {
+          const calls = record.events.filter(({ event }) => event.type === 'tool_use' && event.toolName === 'Bash');
+          assert.equal(calls.length, 3);
+          for (const { event: call } of calls) {
+            assert.ok(call.source?.parentToolCallId, 'The command must belong to its exact native subagent');
+            const results = record.events.flatMap(({ event }) => event.type === 'command_result' && event.toolUseId === call.toolUseId ? [event] : []);
+            assert.equal(results.length, status ? 1 : 0, 'The background launch must not be recorded as a command terminal');
+            if (status) {
+              assert.deepEqual(results[0].source, call.source);
+              assert.equal(results[0].status, status);
+            }
+            assert.ok(!record.events.some(({ event }) => event.type === 'tool_result' && event.toolUseId === call.toolUseId),
+              'The background launch receipt and notification are not command output');
+          }
+        };
         assert.equal(bashTasks.length, 3); assert.equal(agentTasks.length, 3);
         assert.ok(bashTasks.every(task => agentTasks.some(agent => agent.task_id === task.parent_task_id)), 'Bash tasks must retain their actual native agent parents');
         if (outcome.startsWith('nested-cancel-')) {
@@ -291,6 +306,7 @@ for (const outcome of ['nested-disabled', 'nested-enabled', 'nested-cancel-disab
           assert.equal(stopped.events.some(frame => frame.event.type === 'assistant_text' && frame.event.text === finalText), false);
           assert.equal(stopped.events.some(frame => frame.event.type === 'answer_complete' || frame.event.type === 'result' && !frame.event.source), false);
           assert.deepEqual(completionBoundaries, []);
+          bashOutcomes(stopped, 'cancelled');
           return;
         }
         for (const release of childResponses.values()) release(); childResponses.clear();
@@ -304,6 +320,7 @@ for (const outcome of ['nested-disabled', 'nested-enabled', 'nested-cancel-disab
         const withDescendants = await journal.load('run');
         assert.equal(withDescendants.receipt.state, 'running', 'Native idle must not complete the provider while descendant commands remain active');
         assert.equal(processClosed, false);
+        bashOutcomes(withDescendants);
         assert.ok(withDescendants.events.filter(frame => frame.event.type === 'agent_status' && frame.event.state === 'succeeded')
           .every(frame => frame.event.stopConfirmed === false), 'Native agent completion does not confirm its descendant commands stopped');
         assert.equal(withDescendants.events.some(frame => frame.event.type === 'answer_complete' || frame.event.type === 'result' && !frame.event.source), false);
@@ -323,6 +340,7 @@ for (const outcome of ['nested-disabled', 'nested-enabled', 'nested-cancel-disab
         assert.equal(record.receipt.state, 'completed'); assert.equal(record.receipt.exitConfirmed, true); assert.deepEqual(record.receipt.effects, {});
         assert.equal(processClosed, true);
         for (const task of bashTasks) assert.ok(native.some(message => message.subtype === 'task_notification' && message.task_id === task.task_id && message.status === 'completed'));
+        bashOutcomes(record, 'completed');
         const finalFrames = record.events.filter(frame => frame.event.type === 'assistant_text' && frame.event.text === finalText);
         const results = record.events.filter(frame => frame.event.type === 'result' && !frame.event.source);
         assert.equal(finalFrames.length, 1, 'The public nested final synthesis must appear exactly once'); assert.equal(results.length, 1);

@@ -87,6 +87,18 @@ describe("bounded public native projection", () => {
     expect(f.record.snapshot.effects.unresolvedCallIds).toEqual([f.record.snapshot.tools?.[0]?.id]);
     expect(f.record.snapshot.tools?.[0]?.id).not.toBe(publicToolId(id)); validateAgentRunSnapshot(f.record.snapshot);
   });
+  it("streams the command outcome even when there are no exit, duration or output details", async () => {
+    const f = await fixture(), id = "background-command";
+    f.append({ type: "tool_use", toolUseId: id, toolName: "Bash", input: {}, source: child });
+    f.append({ type: "command_result", toolUseId: id, status: "completed", source: child });
+
+    const terminal = f.record.events.at(-1)!;
+    expect(terminal).toMatchObject({ type: "tool.completed", source: publicSource(child),
+      data: { toolCallId: publicToolId(id, publicSource(child).agentId), state: "completed", command: { status: "completed" } } });
+    expect(terminal.data).not.toHaveProperty("output");
+    expect(f.record.snapshot.tools?.[0]?.command).toEqual(terminal.data.command);
+    validateAgentEvent(terminal);
+  });
   it("warns before pruning bounded messages, keeps UTF-8 valid, and exposes incomplete coverage", async () => {
     const f = await fixture();
     for (let index = 0; index < 34; index++) f.append({ type: "assistant_text", text: "界".repeat(10000) });

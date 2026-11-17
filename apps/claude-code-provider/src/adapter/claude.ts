@@ -1,5 +1,5 @@
 import { activeTool } from "./activity.js";
-import { ClaudeBackgroundLifecycle } from "./claude-background.js";
+import { ClaudeBackgroundLifecycle, type BashCall } from "./claude-background.js";
 import { ClaudeNativeCompletion } from "./claude-native-completion.js";
 import { spawn } from "node:child_process";
 import { shouldRetainToolOutput } from "./tool-output-policy.js";
@@ -154,6 +154,17 @@ interface ChildToolHook {
   input: string;
 }
 
+type BackgroundCommandStatus = "completed" | "failed" | "cancelled";
+interface BackgroundCommand {
+  key: string;
+  id: string;
+  toolId: string;
+  source?: HarnessEventSource;
+  runId: string;
+  status?: BackgroundCommandStatus;
+  published?: boolean;
+}
+
 class ClaudeRun implements HarnessRun {
   private readonly input = new PushableStream<unknown>();
   private readonly pending = new Map<string, PendingApproval>();
@@ -184,6 +195,7 @@ class ClaudeRun implements HarnessRun {
   private readonly commandRun = randomUUID();
   private commandTurn = 0;
   private readonly commandCalls = new Map<string, { id: string; rawId: string }>();
+  private readonly backgroundCommands = new Map<string, BackgroundCommand>();
   private readonly pendingNativeEffects = new Map<string, string>();
   private readonly terminalWaiters = new Set<() => void>();
   private readonly childToolHooks = new Map<string, ChildToolHook | null>();
@@ -219,6 +231,7 @@ class ClaudeRun implements HarnessRun {
     this.turnActive = true;
     this.commandTurn++;
     this.commandCalls.clear();
+    this.backgroundCommands.clear();
     this.pendingNativeEffects.clear();
     this.childToolHooks.clear();
     this.childHistoryHooks.clear();
@@ -370,6 +383,7 @@ class ClaudeRun implements HarnessRun {
       if (this.nativeProcessClosures.length) await Promise.all(this.nativeProcessClosures);
       if (Date.now() + 2000 <= this.stopDeadline) await this.readPendingChildTerminals();
       else if (this.pendingNativeEffects.size) console.warn("[claude-child-history] " + JSON.stringify({ outcome: "stop_budget", remainingMs: Math.max(0, this.stopDeadline - Date.now()) }));
+      for (const command of this.backgroundCommands.values()) this.publishBackgroundCommand(command);
     })().finally(() => {
       this.acceptingStopTerminals = false;
       if (!closed) this.query?.close();
@@ -377,8 +391,16 @@ class ClaudeRun implements HarnessRun {
     return this.stopping;
   }
 
+  private hasPendingTerminals(): boolean {
+    return this.pendingNativeEffects.size > 0 || [...this.backgroundCommands.values()].some(command => command.status === undefined);
+  }
+
+  private notifyTerminalsDrained(): void {
+    if (!this.hasPendingTerminals()) for (const done of [...this.terminalWaiters]) done();
+  }
+
   private drainPendingTerminals(): Promise<void> {
-    if (!this.pendingNativeEffects.size) return Promise.resolve();
+    if (!this.hasPendingTerminals()) return Promise.resolve();
     return new Promise(resolve => {
       const done = () => { clearTimeout(timer); this.terminalWaiters.delete(done); resolve(); };
       const timer = setTimeout(done, 2000);
@@ -720,7 +742,7 @@ class ClaudeRun implements HarnessRun {
     this.options.onEvent({ ...toolResult(tool.id, "cancelled", input.error), source });
     this.commandCalls.delete(key); this.toolCalls.delete(key); this.pendingNativeEffects.delete(key);
     this.childToolHooks.delete(JSON.stringify([call.agentId, call.toolId]));
-    if (!this.pendingNativeEffects.size) for (const done of [...this.terminalWaiters]) done();
+    this.notifyTerminalsDrained();
   }
 
   private childSource(parent: string, announce = true): HarnessEventSource | undefined {
@@ -764,16 +786,66 @@ class ClaudeRun implements HarnessRun {
         outputTokens: typeof usage.output_tokens === "number" ? usage.output_tokens : undefined } : undefined });
   }
 
+  private registerBackgroundCommand(taskId: string, call: BashCall | undefined): void {
+    if (!call || !(this.stopped ? this.acceptingStopTerminals : this.turnActive)
+      || this.backgroundCommands.has(taskId) || this.backgroundCommands.size >= 256
+      || this.ambiguousCommandDenial || this.deniedToolCalls.has(call.toolId)) return;
+    const key = JSON.stringify([call.parent ?? "main", call.toolId]), tool = this.toolCalls.get(key);
+    const source = call.parent === undefined ? undefined : this.childSources.get(call.parent);
+    if (tool?.name !== "Bash" || tool.nativeSessionId !== this.nativeSessionId || this.pendingNativeEffects.get(key) !== tool.id
+      || call.parent !== undefined && !source) return;
+    this.backgroundCommands.set(taskId, { key, id: tool.id, toolId: call.toolId, runId: call.runId, source });
+    // Ownership moved to the native background task. A launch acknowledgement or
+    // interruption of the original foreground tool cannot settle that command.
+    this.pendingNativeEffects.delete(key);
+  }
+
+  private observeBackgroundCommand(message: Record<string, unknown>): void {
+    if (typeof message.task_id !== "string") return;
+    const taskId = message.task_id;
+    if (message.subtype === "task_notification") {
+      const command = this.backgroundCommands.get(taskId);
+      if (!command || command.status || message.run_id !== command.runId || message.reason !== undefined
+        || message.task_type !== undefined && message.task_type !== "local_bash"
+        || message.tool_use_id !== undefined && message.tool_use_id !== command.toolId) return;
+      const status = message.status;
+      if (status !== "completed" && status !== "failed" && status !== "stopped") return;
+      command.status = status === "stopped" ? "cancelled" : status;
+      // The worker only accepts root tool outcomes during prediction cleanup's stop drain.
+      if (this.turnActive || this.stopped || command.source) this.publishBackgroundCommand(command);
+      this.notifyTerminalsDrained();
+    } else if (message.subtype === "task_started" || message.subtype === "task_updated"
+      && (message.patch as { is_backgrounded?: unknown } | undefined)?.is_backgrounded === true) {
+      const call = this.background.bashCall(taskId);
+      if (call && call.runId === message.run_id) this.registerBackgroundCommand(taskId, call);
+    }
+  }
+
+  private publishBackgroundCommand(command: BackgroundCommand): void {
+    if (command.published) return;
+    command.published = true;
+    const source = command.source ? { source: command.source } : {};
+    if (command.status) this.options.onEvent({ type: "native_effect", id: command.id, state: "settled", ...source });
+    // A task notification is terminal status evidence. Its summary/path is not stdout.
+    this.options.onEvent({ type: "command_result", toolUseId: command.id, status: command.status ?? "unknown", ...source });
+  }
+
   private dispatch(message: Record<string, unknown>): void {
     const type = message.type;
     // Cancellation can deliver the authoritative tool terminal during interrupt/close. Drain
     // only calls this exact turn already registered; no new child/tool/message is admitted.
     const stopLifecycle = type === "system" && ["task_notification", "task_updated", "background_tasks_changed"].includes(String(message.subtype));
-    if (this.stopped && (type !== "user" && !stopLifecycle || message.isReplay)) return;
+    if (this.stopped && (type !== "user" && !stopLifecycle || message.isReplay)) {
+      if (type === "system" && message.subtype === "task_started" && this.acceptingStopTerminals && !message.isReplay
+        && !message.parent_tool_use_id && message.session_id === this.nativeSessionId && typeof message.task_id === "string")
+        this.registerBackgroundCommand(message.task_id, this.background.bashStartedDuringStop(message));
+      return;
+    }
     const parent = typeof message.parent_tool_use_id === "string" && message.parent_tool_use_id.length <= 512 ? message.parent_tool_use_id : undefined;
     const source = parent ? this.childSource(parent) : undefined;
     if (parent && !source) return;
     if (!parent && message.session_id === this.nativeSessionId && !message.isReplay && this.background.observe(message, !this.stopped)) {
+      this.observeBackgroundCommand(message);
       if (this.stopped) return;
       if (message.subtype === "session_state_changed" && message.state === "running") {
         this.pendingRootResult = null; this.pendingSuggestion = undefined; this.suggestionPending = false;
@@ -821,32 +893,31 @@ class ClaudeRun implements HarnessRun {
             || block.content !== undefined && typeof block.content !== "string" && !Array.isArray(block.content))) continue;
           const tool = this.toolCalls.get(key);
           const observed = this.turnActive || this.pendingNativeEffects.has(key);
+          const background = !message.isReplay && message.session_id === this.nativeSessionId
+            ? [...this.backgroundCommands.values()].find(command => command.key === key) : undefined;
           const structuredResult = resultBlocks.length === 1 && message.tool_use_result && typeof message.tool_use_result === "object" && !Array.isArray(message.tool_use_result)
             ? message.tool_use_result as Record<string, unknown> : {};
+          const deferred = structuredResult.detachedToolCall === true || structuredResult.backgroundedByUser === true
+            || typeof structuredResult.backgroundTaskId === "string";
           // An SDK-local MCP abort can return a tool-error block while the remote effect is
           // still unknown. A local cancellation string is not a remote CallToolResult.
           const unknownRemoteAbort = this.stopped && tool?.name.startsWith("mcp__") && block.is_error === true
             && !Array.isArray(structuredResult.content) && structuredResult.structuredContent == null;
           const effectId = commandToolUseId(this.commandRun, this.commandTurn, block.tool_use_id, typeof message.parent_tool_use_id === "string" ? message.parent_tool_use_id : "main");
-          if (observed && !message.isReplay && effectId) {
-            const structured = resultBlocks.length === 1 && message.tool_use_result && typeof message.tool_use_result === "object" ? message.tool_use_result as Record<string, unknown> : {};
+          if (observed && !message.isReplay && effectId && !background?.status) {
             emit({ type: "native_effect", id: effectId,
-              state: unknownRemoteAbort || structured.detachedToolCall === true || structured.backgroundedByUser === true || typeof structured.backgroundTaskId === "string" ? "unknown" : "settled" });
+              state: background || unknownRemoteAbort || deferred ? "unknown" : "settled" });
           }
           const command = this.commandCalls.get(key);
-          if (observed && !message.isReplay && command && !this.deniedToolCalls.has(command.rawId)) {
+          if (observed && !message.isReplay && command && !background && !this.deniedToolCalls.has(command.rawId)) {
             const result = claudeCommandResult(command.id, block,
               !this.ambiguousCommandDenial && resultBlocks.length === 1 ? message.tool_use_result : undefined);
             if (result) emit(result);
           }
-          if (observed && !message.isReplay && tool && !this.ambiguousToolDenial
+          if (observed && !message.isReplay && tool && !background && !this.ambiguousToolDenial
               && !this.deniedToolCalls.has(tool.rawId) && shouldRetainToolOutput(tool.name)) {
             // Only the matched block is display content; the SDK's structured envelope can carry
             // private provider metadata and is ambiguous when several results share a message.
-            const structured = resultBlocks.length === 1 && message.tool_use_result && typeof message.tool_use_result === "object"
-              ? message.tool_use_result as Record<string, unknown> : {};
-            const deferred = structured.detachedToolCall === true || structured.backgroundedByUser === true
-              || typeof structured.backgroundTaskId === "string";
             const status = unknownRemoteAbort ? "unknown" : command
               ? claudeCommandResult(command.id, block, resultBlocks.length === 1 ? message.tool_use_result : undefined)?.status ?? "unknown"
               : block.is_error === true ? "failed" : deferred ? "unknown"
@@ -856,7 +927,7 @@ class ClaudeRun implements HarnessRun {
           this.commandCalls.delete(key);
           this.toolCalls.delete(key);
           this.pendingNativeEffects.delete(key);
-          if (!this.pendingNativeEffects.size) for (const done of [...this.terminalWaiters]) done();
+          this.notifyTerminalsDrained();
           if (!source) this.activity.finish(block.tool_use_id);
           if (!source) this.proposedTools.delete(block.tool_use_id);
           if (!source) this.completedTools.add(block.tool_use_id);

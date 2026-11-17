@@ -1,6 +1,7 @@
 import type { HarnessEvent, HarnessEventSource } from "@hosty/agent-provider-runtime/harness/adapter";
 
 type ChildState = "running" | "waiting_for_input" | "succeeded" | "failed" | "cancelled";
+export type BashCall = { toolId: string; parent?: string; runId: string };
 type Task = { runId?: string; parent?: string; owner?: string; kind?: string; background: boolean; ambient: boolean; agent: boolean; state: ChildState };
 const identity = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 480 && !/[\u0000-\u001f\u007f]/.test(value);
 const object = (value: unknown): Record<string, unknown> | undefined => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -27,6 +28,30 @@ export class ClaudeBackgroundLifecycle {
     return [...live].some(id => this.requiresContinuation(id));
   }
   beginTurn(): void { this.idle = false; }
+
+  bashCall(id: string): BashCall | undefined {
+    const task = this.tasks.get(id);
+    if (task?.kind !== "local_bash" || !task.background || task.ambient || !task.parent || !task.runId) return;
+    return this.bashScope(task.parent, task.runId, task.owner);
+  }
+
+  /** A stop may race task registration. Use its existing owner without admitting a new agent. */
+  bashStartedDuringStop(message: Record<string, unknown>): BashCall | undefined {
+    if (!metadataValid(message) || message.task_type !== "local_bash" || message.is_backgrounded !== true
+      || message.ambient === true || message.skip_transcript === true
+      || !identity(message.run_id) || !identity(message.tool_use_id)) return;
+    const task = this.tasks.get(message.task_id as string);
+    if (task && (task.runId !== message.run_id || task.kind !== "local_bash" || task.ambient
+      || task.parent && task.parent !== message.tool_use_id
+      || task.owner && message.parent_task_id !== undefined && task.owner !== message.parent_task_id)) return;
+    return this.bashScope(message.tool_use_id, message.run_id, (message.parent_task_id as string | undefined) ?? task?.owner);
+  }
+
+  private bashScope(toolId: string, runId: string, ownerId?: string): BashCall | undefined {
+    if (ownerId === undefined) return { toolId, runId };
+    const owner = this.tasks.get(ownerId);
+    if (owner?.agent && owner.parent) return { toolId, parent: owner.parent, runId };
+  }
 
   private requiresContinuation(id: string): boolean {
     const task = this.tasks.get(id);

@@ -194,6 +194,44 @@ describe("SessionManager public provider integration", () => {
     expect(Object.values((await f.store.readProviderExecution(record.id))!.mutations ?? {})).toEqual(outcome === "applied" ? [] : [original]);
   });
 
+  it("preserves only the first known command result for an existing provider call while suggesting", async () => {
+    const f = await fixture();
+    f.capabilities.capabilities.push("predictions");
+    const record = await f.manager.createSession({ createdBy: f.owner });
+    await f.manager.postMessage(record.id, "Run the fixture command", f.credential, [], {
+      clientRequestId: randomUUID(), actorUserId: f.owner, promptSuggestions: true,
+    });
+    const runId = f.starts[0]!.runId;
+    await waitForStream(f, runId);
+    const tool = { id: "background-command", source: { agentId: "root" }, name: "Bash", input: { command: "node fixture.mjs" },
+      state: "completed" as const, output: "Background command started" };
+    f.update(runId, { tools: [tool] });
+    await vi.waitFor(async () => expect((await f.store.readEvents(record.id)).filter(event => event.type === "tool_result")).toHaveLength(1));
+    f.emit(runId, "extension", { namespace: "hosty.agent.answer", name: "answer.complete" });
+    await vi.waitFor(async () => expect((await f.store.readRecord(record.id))!.status).toBe("suggesting"));
+
+    const terminal = { ...tool, output: "Late stdout", command: { status: "completed" as const, exitCode: 0 } };
+    const unsolicited = { ...terminal, id: "unrecorded-tool" };
+    const pending = f.update(runId, { phase: "finalizing", tools: [{ ...tool, command: { status: "unknown" } }, unsolicited] });
+    await vi.waitFor(async () => expect((await f.store.readProviderExecution(record.id))!.cursor).toBe(pending.cursor));
+    expect((await f.store.readEvents(record.id)).filter(event => event.type === "command_result")).toEqual([]);
+
+    f.update(runId, { tools: [terminal, unsolicited] });
+    await vi.waitFor(async () => expect((await f.store.readEvents(record.id)).filter(event => event.type === "command_result")).toHaveLength(1));
+    f.update(runId, { tools: [{ ...terminal, command: { status: "failed", exitCode: 1 } }, unsolicited] });
+    f.complete(runId, "Final answer during suggestions");
+    await vi.waitFor(async () => expect((await f.store.readRecord(record.id))!.status).toBe("idle"));
+
+    const events = await f.store.readEvents(record.id);
+    expect(events.filter(event => event.type === "tool_use")).toHaveLength(1);
+    expect(events.filter(event => event.type === "command_result")).toMatchObject([{
+      toolUseId: events.find(event => event.type === "tool_use")!.toolUseId, status: "completed", exitCode: 0,
+      providerSource: { runId, generation: f.snapshot(runId).generation, provider: f.provider, agentId: "root" },
+    }]);
+    expect(events.filter(event => event.type === "tool_result").map(event => event.output)).toEqual(["Background command started"]);
+    expect(events.filter(event => event.type === "assistant_text").map(event => event.text)).toEqual(["Final answer during suggestions"]);
+  });
+
   it.each(["running", "failed-and-reattached"])("projects a stopped snapshot's tool output before cancellation without reopening %s", async mode => {
     const f = await fixture(), record = await chat(f), runId = f.starts[0]!.runId;
     let { manager, store } = f;

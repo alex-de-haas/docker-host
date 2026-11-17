@@ -66,6 +66,10 @@ subagents. The correction retains exact native ancestry and rejects that early c
 it follows the existing instruction to fix completion, test it, publish through CI/review and verify
 the installed provider. Ordinary session history remains intact.
 
+Owner approval, 2026-11-17: repair provider access after ordinary updates first, then settle Claude
+background Bash cards from native command outcomes. Add regressions, publish both corrections
+through CI and review, merge, update the ordinary host and verify both behaviors live.
+
 ## Accepted Delivery Scope
 
 The recommended first delivery is the complete extraction: three Local providers, Docker Harness,
@@ -995,6 +999,10 @@ neither caching nor a universal inference API is a prerequisite to this provider
 - [x] D27. Replace Claude's next-result completion heuristic with an authoritative native idle boundary correlated to the SDK-delivered root result; reproduce queued child-notification progress followed by final synthesis using the pinned SDK with predictions enabled and disabled, and cover cancellation and stream ordering.
 
 - [x] D28. Preserve nonambient background commands owned by native subagents after their parent agent yields; retain exact ancestry, reject idle/result evidence captured before descendant completion, and verify nested final synthesis and cancellation through the real pinned SDK and ordinary provider CI.
+
+- [x] D29. Authorize current agent requests after a provider permission revision changes, while retaining the original run admission and refusing stale credentials. Verify repeated operations with the same consumer authority and a separate provider installation.
+
+- [x] D30. Settle Claude background Bash cards with the outcome of the exact native command, including commands owned by children that have already yielded. Verify attribution, late completion and preservation of final answer delivery.
 
 ### Implementation Order
 

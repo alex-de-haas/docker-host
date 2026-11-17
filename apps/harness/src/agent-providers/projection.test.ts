@@ -112,6 +112,17 @@ describe("public provider run projection", () => {
     expect(current.snapshot.pending).toBe(current.pending);
   });
 
+  it("applies live status-only Bash completion to the observed child command", () => {
+    let current = createAgentRunProjection(snapshot());
+    current = apply(current, "tool.started", { toolCallId: "same", name: "Bash", input: { command: "pwd" } });
+    current = apply(current, "tool.started", { toolCallId: "same", name: "Bash", input: { command: "pwd" } }, child);
+    current = apply(current, "tool.completed", { toolCallId: "same", name: "Bash", state: "completed", command: { status: "completed" } }, child);
+
+    expect(current.tools).toMatchObject([{ state: "running", source: root },
+      { state: "completed", source: child, command: { status: "completed" } }]);
+    expect(current.tools[1]).not.toHaveProperty("output");
+  });
+
   it("deduplicates at-least-once delivery without advancing its saved cursor backwards", () => {
     const initial = createAgentRunProjection(snapshot());
     const item = { kind: "event" as const, event: event("1", "message.delta", { messageId: "answer", text: "Once" }), cursor: "cursor-1" };

@@ -652,6 +652,7 @@ export class SessionManager {
       const projection = previous ? reduceAgentRunProjection(previous, item)
         : item.kind === "snapshot" ? createAgentRunProjection(item.snapshot) : undefined;
       if (!projection) throw new AppContextError(409, "resync_required", "Read the provider run snapshot before following its events.");
+      const retainedRun = session.record.providerExecution?.run;
       const next = { ...value, run: projection.snapshot, cursor: projection.cursor };
       session.record.providerExecution = next;
       session.record.harnessSessionId = next.sessionId;
@@ -671,18 +672,24 @@ export class SessionManager {
         agentStatuses.set(providerAgentKey(status.providerSource), status);
       }
       this.providerProjectedIds.set(id, seen); this.providerAgentStatuses.set(id, agentStatuses);
-      const stoppedSnapshotOutputs = !projectStatus && item.kind === "snapshot" && projection.snapshot.stopConfirmed
-        && projection.snapshot.ref.id === value.runId && projection.snapshot.sessionId === value.sessionId
+      const suggesting = projectStatus && session.record.status === "suggesting";
+      const stoppedSnapshot = !projectStatus && item.kind === "snapshot" && projection.snapshot.stopConfirmed;
+      const sameSelectedRun = (suggesting || stoppedSnapshot) && projection.snapshot.ref.id === value.runId && projection.snapshot.sessionId === value.sessionId
         && agentSelectionId({ provider: projection.snapshot.ref.provider, connection: value.selection.connection }) === agentSelectionId(value.selection);
-      const append = async (key: string, event: HarnessEvent, snapshotToolName?: string, source?: AgentSource) => {
+      const stoppedSnapshotOutputs = stoppedSnapshot && sameSelectedRun;
+      const priorCommandTools = suggesting && sameSelectedRun && projection.snapshot.freshness === "current"
+        && retainedRun?.ref.id === projection.snapshot.ref.id && retainedRun.generation === projection.snapshot.generation
+        ? new Map((previous?.tools ?? retainedRun.tools ?? []).map(tool => [transcriptToolId(retainedRun.ref.id, tool.source, tool.id), tool]))
+        : undefined;
+      const append = async (key: string, event: HarnessEvent, snapshotToolName?: string, source?: AgentSource, lateCommand = false) => {
         event = { ...event, providerSource: providerTranscriptSource(projection.snapshot, source) };
         const identity = `${projection.snapshot.ref.id}:${key}`;
         if (seen.has(identity)) return;
         const output = event.type === "tool_result" || event.type === "command_result";
-        if (output && !stoppedSnapshotOutputs && !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
-        if (output && stoppedSnapshotOutputs && snapshotToolName) {
-          // Only this validated same-run stopped snapshot may recover its known tool's
-          // facts after an observation failure. Ordinary callbacks keep their live guard.
+        if (output && !stoppedSnapshotOutputs && !lateCommand && !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
+        if (output && (stoppedSnapshotOutputs || lateCommand) && snapshotToolName) {
+          // A validated stopped snapshot or a known terminal for a retained call can
+          // add evidence. Ordinary callbacks and other late output keep their live guard.
           const result = event.type === "tool_result" ? sanitizeToolResult(event) : sanitizeCommandResult(event);
           if (result && (event.type !== "tool_result" || shouldRetainToolOutput(snapshotToolName)))
             await this.append(id, { ...result, providerSource: event.providerSource, providerEventId: identity, providerGeneration: projection.snapshot.generation });
@@ -722,11 +729,20 @@ export class SessionManager {
             && tool.output?.includes(`hosty_task_barrier:${barrier.id}:${barrier.generation}`))
             barrier.acknowledgedSequence ??= item.kind === "event" ? item.event.sequence : projection.snapshot.lastSequence;
           const toolUseId = transcriptToolId(projection.snapshot.ref.id, tool.source, tool.id);
-          await append(`tool:${tool.source?.agentId ?? "root"}:${tool.id}`, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input }, undefined, tool.source);
-          if (tool.state !== "running" && tool.output !== undefined) await append(`output:${tool.source?.agentId ?? "root"}:${tool.id}:${tool.state}`,
+          const toolKey = `${tool.source?.agentId ?? "root"}:${tool.id}`;
+          if (suggesting && !seen.has(`${projection.snapshot.ref.id}:tool:${toolKey}`)) continue;
+          await append(`tool:${toolKey}`, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input }, undefined, tool.source);
+          if (tool.state !== "running" && tool.output !== undefined) await append(`output:${toolKey}:${tool.state}`,
             { type: "tool_result", toolUseId, status: tool.state, output: tool.output, ...(tool.truncated ? { truncated: true as const } : {}) }, tool.name, tool.source);
-          if (tool.command) await append(`command:${tool.source?.agentId ?? "root"}:${tool.id}:${tool.command.status}`,
-            { type: "command_result", toolUseId, ...tool.command }, tool.name, tool.source);
+          if (tool.command) {
+            const prior = priorCommandTools?.get(toolUseId);
+            const lateCommand = tool.command.status !== "unknown" && prior?.name === tool.name
+              && prior.source?.parentAgentId === tool.source?.parentAgentId && prior.source?.parentToolCallId === tool.source?.parentToolCallId
+              && (await this.outputCalls(session)).get(toolUseId) === tool.name
+              && !["unknown", "completed", "failed", "cancelled"].some(status => seen.has(`${projection.snapshot.ref.id}:command:${toolKey}:${status}`));
+            await append(`command:${toolKey}:${tool.command.status}`,
+              { type: "command_result", toolUseId, ...tool.command }, tool.name, tool.source, lateCommand);
+          }
         }
         session.pendingApprovals.clear(); session.pendingQuestions.clear();
         for (const decision of projection.pending) {
