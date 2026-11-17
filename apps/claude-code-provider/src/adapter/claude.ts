@@ -175,6 +175,7 @@ class ClaudeRun implements HarnessRun {
   private turnActive = false;
   private suggestionPending = false;
   private completionCancelled = false;
+  private needsContinuationResult = false;
   private pendingRootResult: Record<string, unknown> | null = null;
   private nativeCompletion: ClaudeNativeCompletion | null = null;
   private pendingSuggestion: string | null | undefined;
@@ -212,7 +213,7 @@ class ClaudeRun implements HarnessRun {
   }
 
   send(text: string): void {
-    this.completionCancelled = false;
+    this.completionCancelled = false; this.needsContinuationResult = false;
     this.suggestionPending = false;
     this.pendingRootResult = null; this.pendingSuggestion = undefined; this.background.beginTurn(); this.nativeCompletion?.beginTurn();
     this.turnActive = true;
@@ -777,6 +778,9 @@ class ClaudeRun implements HarnessRun {
       if (message.subtype === "session_state_changed" && message.state === "running") {
         this.pendingRootResult = null; this.pendingSuggestion = undefined; this.suggestionPending = false;
       }
+      if (message.subtype === "session_state_changed" && message.state === "idle" && this.background.busy) {
+        this.pendingRootResult = null; this.pendingSuggestion = undefined; this.needsContinuationResult = true;
+      }
       this.finishNativeResult(); return;
     }
     const emit = (event: HarnessEvent): void => this.options.onEvent(source ? { ...event, source } : event);
@@ -957,7 +961,8 @@ class ClaudeRun implements HarnessRun {
         if (this.completionCancelled) return;
         // Native notification acknowledgements can have no model turn or answer. They
         // cannot replace the root yield while its background children are continuing.
-        if (this.pendingRootResult && message.num_turns === 0 && message.result === "") return;
+        if ((this.pendingRootResult || this.needsContinuationResult) && message.num_turns === 0 && message.result === "") return;
+        this.needsContinuationResult = false;
         // A child can finish while its notification is still queued for the parent. Neither
         // empty task inventory nor another root model result proves the continuation is over.
         // Native idle is bound to the exact result before it can become a public completion.
