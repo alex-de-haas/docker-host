@@ -75,7 +75,8 @@ internal sealed partial class UpdateCommand(CommandContext context)
             else if (operation.PreviousCore is null) context.Console.WriteLine("Core remains stopped. Start it with 'hosty core start'.");
             return 0;
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or HttpRequestException or OperationCanceledException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException
+            or HttpRequestException or OperationCanceledException or System.ComponentModel.Win32Exception)
         {
             context.Error.WriteLine($"Platform update failed: {error.Message}");
             context.Error.WriteLine($"Recovery journal: {PlatformUpdateTransaction.JournalPath(context.Environment.RootDirectory)}. Resume the same release with 'hosty update'.");

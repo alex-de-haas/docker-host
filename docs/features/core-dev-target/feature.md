@@ -1,6 +1,6 @@
 ---
 created: 2026-09-18
-updated: 2026-11-10
+updated: 2026-11-18
 summary: Run Core from source in Debug, restart into isolated build generations and switch back to the installed release.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -38,6 +38,9 @@ process start time on authenticated/control surfaces. A direct launch without la
 reports `unmanaged`; Shell displays it as `external` with a keyboard-accessible tooltip explaining
 the external launch and CLI recovery. New runtime selection is disabled when launch control or the
 Hosty CLI is unavailable; an existing retained operation remains inspectable.
+
+On macOS and Linux, background Core launches and lifecycle helpers start in separate OS sessions with
+file-backed logs and disconnected input. They keep running if the calling command group is terminated.
 
 The Dashboard and app menus share the name Runtime / workspace. Core offers Release and matching
 registered workspaces by their names, with unavailable reasons and a checkmark based on its actual

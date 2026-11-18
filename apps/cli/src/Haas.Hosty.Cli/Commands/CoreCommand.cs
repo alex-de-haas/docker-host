@@ -65,7 +65,8 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
                 if (operation is not null) CoreLaunchFiles.Write(path, operation with { HelperPid = Environment.ProcessId, HelperStartedAt = Process.GetCurrentProcess().StartTime.ToUniversalTime(), Status = "building" }, CoreLaunchJson.Default.CoreLaunchOperation);
             }
             try { result = args[0] == "start" ? await StartAsync(args[1..]) : await RestartAsync(args[1..]); }
-            catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+                or System.ComponentModel.Win32Exception)
             {
                 error = ex.Message;
                 context.Error.WriteLine(error);
@@ -361,35 +362,7 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
             return logPath;
         }
 
-        var environment = BuildCoreEnvironment(options, target)
-            .Select(pair => $"{pair.Key}={ShellQuote(pair.Value)}");
-        var command = string.Join(" ", [
-            .. environment,
-            "nohup",
-            .. target.GetShellCommand(),
-            ">",
-            ShellQuote(logPath),
-            "2>&1",
-            "&",
-        ]);
-
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = "/bin/sh",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = target.WorkingDirectory,
-        };
-        startInfo.ArgumentList.Add("-c");
-        startInfo.ArgumentList.Add(command);
-
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start Hosty Core process.");
-        process.WaitForExit();
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"Unable to launch Hosty Core background process. Exit code {process.ExitCode}.");
-        }
-
+        DetachedCliProcess.StartUnix(CreateCoreStartInfo(target, options), logPath);
         return logPath;
     }
 
@@ -930,9 +903,6 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
         return args[index];
     }
 
-    private static string ShellQuote(string value)
-        => $"'{value.Replace("'", "'\"'\"'", StringComparison.Ordinal)}'";
-
     private static string CmdQuote(string value)
         => $"\"{value}\"";
 
@@ -981,15 +951,6 @@ internal sealed partial class CoreCommand(CommandContext context, bool initializ
                 executablePath,
                 Path.GetDirectoryName(executablePath) ?? Directory.GetCurrentDirectory(),
                 []);
-
-        public IEnumerable<string> GetShellCommand()
-        {
-            yield return ShellQuote(FileName);
-            foreach (var argument in Arguments)
-            {
-                yield return ShellQuote(argument);
-            }
-        }
 
         public IEnumerable<string> GetCmdShellCommand()
         {
