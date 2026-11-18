@@ -1,0 +1,1 @@
+{"appId":"com.haas.demo-app","digest":"sha256:527d5894497e4263677215eb54aae9bef8bf0a331f4daf6a1747c8054be20860","platforms":["linux/amd64","linux/arm64"],"repository":"ghcr.io/alex-de-haas/demo-app","version":"0.21.1"}
