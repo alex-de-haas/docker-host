@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { buildContext, materializeContext, canonical, identity, sha256, fullCommit, reusableArtifact, trackedPaths } from './context.mjs';
-import { validatePublisher } from './model.mjs';
+import { releaseProfileKeys, validatePublisher } from './model.mjs';
 import { MetadataStore } from './metadata.mjs';
 import { verifyImage } from './registry.mjs';
 import { verifyProvenance } from './evidence.mjs';
@@ -44,11 +44,14 @@ export async function prepareRelease({ root, output, sourceCommit, validationRun
   }
   for (const app of config.apps) {
     const manifest = JSON.parse(readFileSync(join(root, app.manifest)));
+    releaseProfileKeys(manifest, app);
     const sourceContext = buildContext(root, { inputs: app.sourceInputs, dockerfile: app.manifest, platforms: [], reusable: false,
       ...(app.sourceWorkspaces?.length ? { workspaces: app.sourceWorkspaces, retainRootScripts: true } : {}),
       ...(app.sourceIgnoreOptionalPeers === true ? { ignoreOptionalPeers: true } : {}) }, { paths });
     const images = plan.images.filter(i => i.recipe.appId === app.id);
+    const excluded = app.excludedDevelopmentProfiles ?? [];
     const inputFingerprint = identity({ manifest, profiles: app.profiles, sourceFingerprint: sourceContext.fingerprint,
+      ...(excluded.length > 0 ? { excludedDevelopmentProfiles: excluded.toSorted() } : {}),
       images: images.map(i => ({ id: i.recipe.id, inputFingerprint: i.inputFingerprint })) });
     const previous = store.json(head, `apps/${app.id}/candidate.json`);
     const changed = force || previous?.inputFingerprint !== inputFingerprint;

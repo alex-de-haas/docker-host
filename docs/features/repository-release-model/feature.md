@@ -1,6 +1,6 @@
 ---
 created: 2026-05-12
-updated: 2026-11-17
+updated: 2026-11-18
 summary: The repository layout, release artifacts and versioning rules for every component.
 ---
 
@@ -148,6 +148,12 @@ SDK dependencies remain inputs. A Codex-only archive update selects Codex Provid
 Claude Code Provider, Ollama Provider or Harness. Shared provider runtime source selects all three.
 Unfamiliar dependency graphs fall back to conservative CI selection; other recipes retain their
 existing peer closure. Recipes with unpinned package-manager/network setup explicitly disable reuse.
+
+The publisher's `profiles` list identifies production profiles. Development profiles are retained
+unless the app's `excludedDevelopmentProfiles` lists them as local-only. The same selection drives
+image verification, released service runtimes and profile-specific storage. Demo App keeps
+`sandbox-dev` in its source manifest for local sandbox use. The released manifest exposes its
+production `docker` and Local `dev` profiles.
 
 Reuse requires the original input fingerprint, full source commit, signed artifact provenance and
 consumer-readable content for every declared platform. A reused service retains its original build
@@ -444,6 +450,8 @@ Bump the relevant component's version in the same change that ships the work.
 - App/platform publishers preserve independent pointers, refuse incomplete candidates and retain
   immutable release bytes on retry. Automatic publication never promotes a manual-policy feed.
 - Core-only, app-only, shared-input and missed-publication fixtures select the correct builds.
+- Demo App publication uses the repository manifest and never resolves local sandbox image names in
+  a registry. Development profiles with published Docker images still verify their own base image.
 - Local provider source recipes retain direct native SDK dependencies while excluding another
   provider's unused optional native peer. Codex-only lock changes select Codex alone; shared runtime
   changes select all three providers. Harness has no worker image or native SDK build dependency.
