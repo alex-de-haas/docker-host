@@ -13,8 +13,10 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -28,7 +30,45 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def run_process(command, *, cwd=None, env=None, expected=0, timeout=300):
+def run_with_launcher_group(command, *, cwd, env, stdout, stderr, timeout):
+    """Kill only the owned Unix launcher group after the direct CLI has exited."""
+    # Keep the group leader alive until cleanup so its group ID cannot be recycled.
+    # The CLI and any incorrectly attached replacement inherit this isolated group.
+    anchor_program = """
+from pathlib import Path
+import subprocess
+import sys
+import time
+result = subprocess.run(sys.argv[2:])
+completion = Path(sys.argv[1])
+completion.with_suffix('.tmp').write_text(str(result.returncode))
+completion.with_suffix('.tmp').replace(completion)
+while True:
+    time.sleep(60)
+"""
+    with tempfile.TemporaryDirectory(prefix='hosty-cli-group-') as directory:
+        completion = Path(directory) / 'exit-code'
+        anchor = subprocess.Popen([sys.executable, '-c', anchor_program, str(completion),
+                                   *[str(x) for x in command]], cwd=cwd, env=env,
+                                  stdout=stdout, stderr=stderr, start_new_session=True)
+        try:
+            deadline = time.monotonic() + timeout
+            while not completion.exists():
+                if anchor.poll() is not None:
+                    raise RuntimeError('Isolated CLI group exited without reporting the CLI outcome')
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                time.sleep(.02)
+            return subprocess.CompletedProcess(command, int(completion.read_text()))
+        finally:
+            if anchor.poll() is None:
+                assert os.getpgid(anchor.pid) == anchor.pid and os.getsid(anchor.pid) == anchor.pid
+                os.killpg(anchor.pid, signal.SIGKILL)
+            anchor.wait(timeout=10)
+
+
+def run_process(command, *, cwd=None, env=None, expected=0, timeout=300,
+                terminate_launcher_group=False):
     """Wait for the command, independently of descendants retaining its output handles."""
     def read_output(stream, limit=None):
         stream.seek(0, os.SEEK_END)
@@ -42,8 +82,12 @@ def run_process(command, *, cwd=None, env=None, expected=0, timeout=300):
     # without a deadline. Files let us wait for the direct child and keep bounded diagnostics.
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as error:
         try:
-            result = subprocess.run([str(x) for x in command], cwd=cwd, env=env,
-                                    stdout=output, stderr=error, timeout=timeout)
+            if terminate_launcher_group and os.name != 'nt':
+                result = run_with_launcher_group(command, cwd=cwd, env=env,
+                                                 stdout=output, stderr=error, timeout=timeout)
+            else:
+                result = subprocess.run([str(x) for x in command], cwd=cwd, env=env,
+                                        stdout=output, stderr=error, timeout=timeout)
         except subprocess.TimeoutExpired as failure:
             raise RuntimeError(f'{command[0]} timed out after {timeout} seconds:\n'
                                + read_output(output, 6000) + read_output(error, 6000)) from failure
@@ -85,9 +129,10 @@ def main():
     succeeded = False
     stage = 'building isolated fixtures'
 
-    def run(command, expected=0, timeout=300, build=False):
+    def run(command, expected=0, timeout=300, build=False, terminate_launcher_group=False):
         return run_process(command, cwd=repository, env=None if build else env,
-                           expected=expected, timeout=timeout)
+                           expected=expected, timeout=timeout,
+                           terminate_launcher_group=terminate_launcher_group)
 
     def command(*arguments, **kw):
         return run([cli, '--data-root', root, *arguments], **kw)
@@ -199,7 +244,7 @@ def main():
         shutil.copy2(target_core, assets / target_core.name)
         stage = 'frozen no-argument update recovery'
         print('Resuming the frozen update and verifying native replacement readiness', flush=True)
-        command('update')
+        command('update', terminate_launcher_group=True)
         completed = json.loads(journal.read_text())
         assert completed['id'] == pending['id'] and completed['phase'] == 'completed'
         assert completed['readyCore']['version'] == version
@@ -209,7 +254,15 @@ def main():
         assert run([cli, '--version']).strip() == version
         assert json.loads((root / 'core/update-source.json').read_text())['feedId'] == 'Candidate-QA'
         process.wait(timeout=20)
-        print('PASS: frozen no-argument recovery replaces the distinct pair and verifies native readiness', flush=True)
+        stage = 'replacement survival after updater group termination'
+        surviving = wait_ready()
+        assert surviving['launch'] == completed['readyCore']['launch'], 'Replacement launch changed after CLI exit'
+        assert surviving['listenUrl'] == before['listenUrl']
+        if os.name != 'nt':
+            os.kill(surviving['launch']['processId'], 0)
+        with browser.open(origin + '/api/auth/session', timeout=20) as response:
+            assert json.load(response)['authenticated'], 'Replacement HTTP listener did not survive CLI cleanup'
+        print('PASS: frozen recovery replaces the pair; replacement PID and listener survive updater cleanup', flush=True)
         stage = 'feed selection and stopped-Core update'
         index.write_text(json.dumps(feeds))
         descriptor.write_text(json.dumps(release))
