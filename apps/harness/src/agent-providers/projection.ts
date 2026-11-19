@@ -14,6 +14,14 @@ export type AgentRunProjection = {
   childResults: Array<{ source: AgentSource; result: AgentResult }>;
 };
 
+/** Retained results can contain the final reply after its source message falls outside a bounded snapshot. */
+export function historyMessages(projection: AgentRunProjection): AgentMessageBlock[] {
+  const final = projection.result;
+  if (!final?.text || projection.messages.some(message => message.role === "assistant" && !message.source?.parentAgentId
+    && message.state === "complete" && (final.messageId ? message.id === final.messageId : message.text === final.text))) return projection.messages;
+  return [...projection.messages, { id: final.messageId ?? "retained-result", role: "assistant", state: "complete", text: final.text }];
+}
+
 /** The caller must obtain an authoritative snapshot; this reducer never repairs missing events. */
 export class AgentProjectionResyncError extends Error {
   readonly code = "resync_required";
@@ -131,7 +139,7 @@ function selection(value: Record<string, unknown>): NonNullable<AgentRunSnapshot
 }
 
 /** Pure reduction: callers persist this whole value, including its cursor, in one transaction. */
-export function reduceAgentRunProjection(current: AgentRunProjection, item: AgentWatchItem): AgentRunProjection {
+export function reduceAgentRunProjection(current: AgentRunProjection, item: AgentWatchItem, sparseHistory = false): AgentRunProjection {
   if (item.kind === "snapshot") return replace(current, item.snapshot);
   const { event } = item;
   try { validateAgentEvent(event); } catch { invalid("invalid event"); }
@@ -140,7 +148,7 @@ export function reduceAgentRunProjection(current: AgentRunProjection, item: Agen
   if (event.generation !== current.snapshot.generation) invalid("execution generation changed");
   const sequence = BigInt(event.sequence), previous = BigInt(current.snapshot.lastSequence);
   if (sequence <= previous) return current;
-  if (sequence !== previous + 1n) invalid("event sequence gap");
+  if (!sparseHistory && sequence !== previous + 1n) invalid("event sequence gap");
   if (BigInt(event.revision) < BigInt(current.snapshot.revision)) invalid("event revision regressed");
   if (event.type === "run.updated") {
     const snapshot = event.data.snapshot as AgentRunSnapshot;

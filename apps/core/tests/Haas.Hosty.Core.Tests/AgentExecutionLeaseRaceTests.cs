@@ -304,12 +304,114 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.True(await f.Store.WithWorkspaceLease(f.Reference, _ => Task.FromResult(true), default).WaitAsync(TimeSpan.FromSeconds(5)));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task NativeWorkspacePreparationKeepsOriginAndExecutionSeparateAndRecoversLegacyReceipts(bool atAdmission)
+    {
+        var origin = new CoreAgentConversation(Guid.NewGuid().ToString(), "/chats/initial", "Originating conversation");
+        await using var f = await AgentLeaseRaceFixture.Create(atAdmission ? origin : null);
+        var chat = new WorkspaceOwner(f.Consumer.Id, f.Consumer.InstalledAt, f.Owner.UserId, origin.SessionId);
+        var requestId = Guid.NewGuid().ToString();
+        var lease = Guid.NewGuid().ToString();
+        await f.Acquire("mcp-prepare", requestId, lease);
+        var state = await f.Workspaces.ParticipationAsync(f.Tree.WorkspaceId, chat.UserId, default);
+        var admission = await f.Store.Get(f.Reference, default);
+        if (!atAdmission)
+            await f.Store.Change(f.Reference, r => r with { Leases = r.Leases?.Select(l => l.LeaseId == lease
+                ? l with { WorktreeId = "", WorkspaceId = "" } : l).ToArray() }, default);
+        var repair = new CoreAgentWorkspaceRecovery(Guid.NewGuid().ToString(), state.Revision,
+            new(f.Provider.Id, PanelIdentity.Installation(f.Provider), "native"), f.Owner.SessionId, origin.ViewerPath, origin.Title,
+            new Dictionary<string, string> { [admission.Request.RunId!] = "reported-generation" });
+        if (atAdmission)
+        {
+            await f.Acquire("mcp-prepare", requestId, lease);
+            Assert.Equal(state.Revision, (await f.Workspaces.ParticipationAsync(f.Tree.WorkspaceId, chat.UserId, default)).Revision);
+        }
+        else
+        {
+            Assert.DoesNotContain(state.Sessions, s => s.Session.SameIdentity(chat));
+            var missing = await Assert.ThrowsAsync<CoreProviderException>(() => f.Service.RecoverWorkspace(chat, f.Tree.WorkspaceId,
+                repair with { Runs = null }, default));
+            Assert.Equal("origin_unresolved", missing.Error.Code);
+            var foreign = await Assert.ThrowsAsync<CoreProviderException>(() => f.Service.RecoverWorkspace(
+                chat with { UserId = "another-user" }, f.Tree.WorkspaceId, repair, default));
+            Assert.Equal("origin_unresolved", foreign.Error.Code);
+            var apps = f.Host.Services.GetRequiredService<AppRegistryStore>();
+            await apps.UpsertAppAsync(f.Consumer with { ConfirmedRoles = ["assistant"] });
+            var grant = await BrowserAuthorityFixture.Grant(f.Host, chat.AppId, chat.UserId);
+            using var http = f.Host.CreateClient();
+            http.DefaultRequestHeaders.Authorization = new("Bearer", f.Host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(chat.AppId));
+            http.DefaultRequestHeaders.Add("X-Hosty-User-Token", grant.AccessToken);
+            using var recovered = await http.PostAsJsonAsync($"/api/internal/apps/{chat.AppId}/sessions/{chat.SessionId}/workspace-association/{f.Tree.WorkspaceId}/recover-origin", repair);
+            Assert.Equal(HttpStatusCode.OK, recovered.StatusCode);
+            var view = (await recovered.Content.ReadFromJsonAsync<WorkspaceAssociationView>())!;
+            Assert.Equal(chat.SessionId, Assert.Single(view.Workspace!.Sessions, s => s.CanOpen).SessionId);
+            state = await f.Workspaces.ParticipationAsync(f.Tree.WorkspaceId, chat.UserId, default);
+            Assert.Equal(state.Revision, (await f.Service.RecoverWorkspace(chat, f.Tree.WorkspaceId, repair, default)).Revision);
+        }
+        var evidence = Assert.Single(state.Operations, o => o.Preparation is not null).Preparation!;
+        Assert.Equal(f.Reference, evidence.AdmissionRef);
+        Assert.Equal(admission.Request.RunId, evidence.RunId);
+        Assert.Equal(requestId, evidence.PrepareRequestId);
+        var installed = await WorkspaceParticipationEndpoints.Project(state, chat.UserId, chat.AppId, null,
+            f.Host.Services.GetRequiredService<AppRegistryStore>(), default);
+        Assert.Equal(origin.ViewerPath, Assert.Single(installed.Sessions, s => s.CanOpen).ViewerPath);
+        var execution = Assert.Single(installed.Sessions, s => s.Kind == "execution");
+        Assert.False(execution.CanOpen);
+        Assert.Null(execution.ViewerPath);
+        Assert.Equal(Assert.Single(installed.Sessions, s => s.CanOpen).ActivityGroup, execution.ActivityGroup);
+        var tree = await f.Workspaces.Read(f.Tree.Id, null, default);
+        Assert.Equal(f.Owner, Assert.Single(tree.LeaseClaims!, l => l.Id == lease).Session);
+        Assert.DoesNotContain(tree.LeaseClaims!, c => c.Session.SameIdentity(chat));
+        var detached = await f.Workspaces.ChangeSessionAsync(f.Tree.WorkspaceId, chat, "detach",
+            new(Guid.NewGuid().ToString(), state.Revision), default);
+        await Assert.ThrowsAsync<AppLifecycleException>(() => f.Service.RecoverWorkspace(chat, f.Tree.WorkspaceId,
+            repair with { RequestId = Guid.NewGuid().ToString(), ExpectedRevision = detached.Revision }, default));
+        Assert.Null(await f.Workspaces.SessionParticipationAsync(chat, default));
+    }
+
+    [Fact]
+    public async Task NativeWorkspacePreparationGroupsTwoSourceRepositoriesAndAdmittedSessionsInOneOriginatingChat()
+    {
+        const string secondApp = "unrelated.second-source";
+        var conversation = new CoreAgentConversation(Guid.NewGuid().ToString(), "/conversations/working", "Edit two repositories");
+        await using var first = await AgentLeaseRaceFixture.Create(conversation);
+        await ExternalWorkspaceMcpHttpTests.SeedSourceAsync(first.Host, secondApp);
+        await first.Acquire("mcp-prepare", Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var firstAdmission = await first.Store.Get(first.Reference, default);
+        var native = first.Owner with { SessionId = Guid.NewGuid().ToString() };
+        var run = Guid.NewGuid().ToString();
+        var request = firstAdmission.Request with { SessionId = native.SessionId, RunId = run, Path = $"/sessions/{native.SessionId}/runs/{run}" };
+        var grant = await BrowserAuthorityFixture.Grant(first.Host, first.Consumer.Id, native.UserId);
+        var authorization = await first.Service.Authorize(first.Consumer, grant.AccessToken, request, default);
+        await first.Service.Admit(first.Provider, authorization.AdmissionRef, default, "second-generation");
+        var token = await first.Service.McpToken(first.Provider, new(authorization.AdmissionRef, new("core")), default);
+        var second = first with { Owner = native, Reference = authorization.AdmissionRef, McpToken = token.Token };
+        var prepareId = Guid.NewGuid().ToString();
+        var lease = Guid.NewGuid().ToString();
+        var source = await second.PrepareSource(secondApp, prepareId, lease);
+        Assert.False(source.TryGetProperty("error", out var error), error.ToString());
+        var worktreeId = source.GetProperty("id").GetString()!;
+        Assert.NotEqual(first.Tree.Id, worktreeId);
+        Assert.Equal(first.Tree.WorkspaceId, source.GetProperty("workspaceId").GetString());
+        var replay = await second.PrepareSource(secondApp, prepareId, lease);
+        Assert.Equal(worktreeId, replay.GetProperty("id").GetString());
+        var state = await first.Workspaces.ParticipationAsync(first.Tree.WorkspaceId, native.UserId, default);
+        var views = await WorkspaceParticipationEndpoints.Project(state, native.UserId, first.Consumer.Id, null,
+            first.Host.Services.GetRequiredService<AppRegistryStore>(), default);
+        Assert.Equal(conversation.SessionId, Assert.Single(views.Sessions, s => s.CanOpen).SessionId);
+        Assert.Equal(2, views.Sessions.Count(s => s.Kind == "execution"));
+        Assert.Equal("second-generation", Assert.Single(state.Operations, o => o.Id == prepareId).Preparation!.Generation);
+        Assert.Equal(native, Assert.Single((await first.Workspaces.Read(worktreeId, null, default)).LeaseClaims!).Session);
+    }
+
     private sealed record AgentLeaseRaceFixture(CoreHttpHarness Host, CoreAgentExecution Service,
         CoreAgentAuthorizationStore Store, DevelopmentWorkspaceService Workspaces, CoreDataPaths Paths,
         AppRecord Provider, AppRecord Consumer, WorkspaceOwner Owner, DevelopmentWorkspace Tree,
         string Reference, string McpToken) : IAsyncDisposable
     {
-        internal static async Task<AgentLeaseRaceFixture> Create()
+        internal static async Task<AgentLeaseRaceFixture> Create(CoreAgentConversation? conversation = null)
         {
             var host = await CoreHttpHarness.StartAsync();
             try
@@ -340,7 +442,7 @@ public sealed partial class CoreLifecycleServiceTests
                 var request = new CoreAgentAuthorizeRequest(new(provider.Id, PanelIdentity.Installation(provider), "native"),
                     "runs.start", "PUT", $"/sessions/{owner.SessionId}/runs/{run}", new string('a', 64),
                     Resources: JsonSerializer.SerializeToElement(new[] { new { kind = "worktree", id = tree.Id, revision = participation.Revision.ToString() } }),
-                    SessionId: owner.SessionId, RunId: run,
+                    SessionId: owner.SessionId, RunId: run, Conversation: conversation,
                     Ceiling: JsonSerializer.SerializeToElement(new { mcp = new { targets = new[] { new { target = new { kind = "core" },
                         tools = new[] { "prepare_workspace", "acquire_workspace_lease", "release_workspace_lease" } } } } }));
                 var binding = await service.Authorize(consumer, credential.AccessToken, request, default);
@@ -395,6 +497,8 @@ public sealed partial class CoreLifecycleServiceTests
                 : new { requestId, workspaceId = Tree.Id, leaseId };
             return await McpTool(tool, arguments);
         }
+        internal Task<JsonElement> PrepareSource(string appId, string requestId, string leaseId)
+            => McpTool("prepare_workspace", new { requestId, taskId = "caller-provided-label", appId, leaseId, name = "Edit two repositories", targetBranch = "main" });
         internal Task<JsonElement> McpRelease(string requestId, string leaseId)
             => McpTool("release_workspace_lease", new { requestId, workspaceId = Tree.Id, leaseId });
         private async Task<JsonElement> McpTool(string tool, object arguments)

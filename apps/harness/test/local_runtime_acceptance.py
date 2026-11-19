@@ -135,6 +135,10 @@ def check(context):
         spec.loader.exec_module(module)
         module.check(context, app, app_origin, call, client)
 
+    if context.get('scenario') == 'agent-providers':
+        from installation_history_acceptance import check as check_installation_history
+        check_installation_history(context, app, app_origin, link, timed)
+
     if context.get('scenario') == 'agent-providers' or os.environ.get('HOSTY_EXECUTION_RECOVERY'):
         import importlib.util
         spec = importlib.util.spec_from_file_location('execution_recovery_acceptance', workspace/'apps/harness/test/execution_recovery_acceptance.py')

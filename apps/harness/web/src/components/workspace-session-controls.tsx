@@ -13,6 +13,7 @@ export function WorkspaceSessionControls({ workspace, actions, disabled = false 
   const participation = workspace.participation!;
   const [error, setError] = useState("");
   const [joining, setJoining] = useState(false);
+  const [recoveringOrigin, setRecoveringOrigin] = useState(false);
   const [sessions, setSessions] = useState<AssistantSession[]>([]);
   const [selectedSession, setSelectedSession] = useState("");
   const [loading, setLoading] = useState(false);
@@ -22,7 +23,7 @@ export function WorkspaceSessionControls({ workspace, actions, disabled = false 
   const attachTrigger = useRef<HTMLButtonElement>(null);
   useEffect(() => () => { loadRequest.current++; }, []);
   const active = workflowIsActive(workspace.workflow);
-  const candidates = sessions.filter(s => !s.workspaceAssociation && ["idle", "cancelled", "abandoned", "failed"].includes(s.status)
+  const candidates = sessions.filter(s => !s.workspaceAssociation && (recoveringOrigin || ["idle", "cancelled", "abandoned", "failed"].includes(s.status))
     && !participation.sessions.some(b => b.attached && b.canOpen && b.sessionId === s.id));
   const loadSessions = async () => {
     const request = ++loadRequest.current;
@@ -37,11 +38,11 @@ export function WorkspaceSessionControls({ workspace, actions, disabled = false 
   const changeJoining = (open: boolean) => {
     if (busy) return;
     setJoining(open);
-    if (open) void loadSessions();
+    if (open) { setRecoveringOrigin(false); void loadSessions(); }
     else { loadRequest.current++; setError(""); }
   };
   const attach = async () => {
-    const succeeded = retry && pending ? await run(pending) : await command("attach", {}, selectedSession);
+    const succeeded = retry && pending ? await run(pending) : await command(recoveringOrigin ? "recover-origin" : "attach", {}, selectedSession);
     if (succeeded) setJoining(false);
   };
   return <Dialog open={joining} onOpenChange={changeJoining}>
@@ -54,8 +55,9 @@ export function WorkspaceSessionControls({ workspace, actions, disabled = false 
     </div>
     <DialogContent showCloseButton={!busy} onCloseAutoFocus={event => { event.preventDefault(); attachTrigger.current?.focus(); }}>
       <DialogHeader>
-        <DialogTitle>Attach session</DialogTitle>
-        <DialogDescription>Choose one of your idle sessions that is not attached to a workspace. Its conversation is retained; the agent starts with a fresh context on its next message.</DialogDescription>
+        <DialogTitle>{recoveringOrigin ? "Recover originating chat" : "Attach session"}</DialogTitle>
+        <DialogDescription>{recoveringOrigin ? "Choose the chat that created this workspace. Recovery uses its recorded run and preparation and keeps the existing agent context."
+          : "Choose an unattached idle session. Its next message starts a fresh agent context."}</DialogDescription>
       </DialogHeader>
       <DialogBody>
         <FieldGroup><Field data-disabled={loading || busy || retry || !candidates.length}>
@@ -65,15 +67,16 @@ export function WorkspaceSessionControls({ workspace, actions, disabled = false 
             <SelectContent><SelectGroup>{candidates.map(s => <SelectItem key={s.id} value={s.id}>{s.title || "Untitled session"}</SelectItem>)}</SelectGroup></SelectContent>
           </Select>
           {loading && <p role="status" className="text-sm text-muted-foreground">Loading sessions…</p>}
-          {!loading && !error && !candidates.length && <p className="text-sm text-muted-foreground">No unattached idle sessions. Create a new session, or detach an idle session from its current workspace first.</p>}
+          {!loading && !error && !candidates.length && <p className="text-sm text-muted-foreground">{recoveringOrigin ? "No unattached sessions." : "No unattached idle sessions. Create a new session, or detach an idle session from its current workspace first."}</p>}
           {(error || actionError) && <FieldError>{error || actionError}</FieldError>}
           {error && <Button variant="outline" disabled={loading || busy} onClick={() => void loadSessions()}>Reload sessions</Button>}
         </Field></FieldGroup>
       </DialogBody>
       <DialogFooter>
+        <Button variant="outline" disabled={busy || retry} onClick={() => { setRecoveringOrigin(!recoveringOrigin); setSelectedSession(""); }}>{recoveringOrigin ? "Choose an idle session" : "Recover originating chat"}</Button>
         <Button variant="outline" disabled={busy} onClick={() => changeJoining(false)}>Cancel</Button>
         {retry && pending ? <Button disabled={busy} onClick={() => void attach()}>{busy ? "Attaching…" : "Retry same request"}</Button>
-          : <Button disabled={loading || busy || !active || !candidates.some(s => s.id === selectedSession)} onClick={() => void attach()}>{busy ? "Attaching…" : "Attach session"}</Button>}
+          : <Button disabled={loading || busy || !active || !candidates.some(s => s.id === selectedSession)} onClick={() => void attach()}>{busy ? "Attaching…" : recoveringOrigin ? "Recover association" : "Attach session"}</Button>}
       </DialogFooter>
     </DialogContent>
   </Dialog>;

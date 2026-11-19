@@ -7,7 +7,13 @@ namespace HostySdk.App;
 /// <summary>Only exact command metadata goes to Core; prompts and histories go directly to the provider.</summary>
 public record HostyAgentAuthorizationRequest(string Operation, string Method, string Path, string BodyHash,
     HostyAgentResource[]? Resources = null, string? SessionId = null, string? RunId = null,
-    string? ConfigurationDigest = null, HostyAgentAuthorityCeiling? Ceiling = null, HostyAgentTaskAuthority? Authority = null);
+    string? ConfigurationDigest = null, HostyAgentAuthorityCeiling? Ceiling = null, HostyAgentTaskAuthority? Authority = null)
+{
+    /// <summary>Originating chat for a run start, with a viewer route relative to the consuming app.</summary>
+    public HostyAgentConversation? Conversation { get; init; }
+}
+/// <summary>A consumer-owned workspace conversation attached to this admission.</summary>
+public record HostyAgentConversation(string SessionId, string ViewerPath, string Title);
 /// <summary>A current, fixed execution ceiling. Resource references select context without narrowing collection grants.</summary>
 public record HostyAgentTaskAuthority(string Kind, HostyTaskDispatchRef Dispatch, string ExecutionId);
 /// <summary>Current per-run MCP, source and deadline metadata.</summary>
@@ -29,10 +35,16 @@ public record HostyAgentInvocation(int Version, string UserId, string HostRole, 
     string CallerAppId, string CallerInstallation, HostyProviderRef Provider, string Operation,
     HostyAgentResource[]? ResourceIds, string AdmissionRef, string? SessionId, string? RunId,
     string? ConfigurationDigest, HostyAgentAuthorityCeiling? Ceiling, DateTimeOffset ExpiresAt);
+/// <summary>Installation-bound, read-only history access. Endpoint is the selected provider interface base URL.</summary>
+public record HostyAgentHistoryBinding(string Token, DateTimeOffset ExpiresAt, string Endpoint);
+/// <summary>Consumer installation whose admitted runs the provider may return.</summary>
+public record HostyAgentHistoryOwner(string CallerAppId, string CallerInstallation, HostyProviderRef Provider, DateTimeOffset ExpiresAt);
+internal record HostyAgentHistorySelection(HostyProviderRef Provider);
+internal record HostyAgentHistoryIntrospection(string Token, string Key);
 internal record HostyAgentAuthorize(HostyProviderRef Provider, string Operation, string Method, string Path, string BodyHash,
-    HostyAgentResource[]? Resources, string? SessionId, string? RunId, string? ConfigurationDigest, HostyAgentAuthorityCeiling? Ceiling, HostyAgentTaskAuthority? Authority);
+    HostyAgentResource[]? Resources, string? SessionId, string? RunId, string? ConfigurationDigest, HostyAgentAuthorityCeiling? Ceiling, HostyAgentTaskAuthority? Authority, HostyAgentConversation? Conversation);
 internal record HostyAgentIntrospection(string Token, string Operation, string Method, string Path, string BodyHash);
-internal record HostyAgentAdmission(string AdmissionRef);
+internal record HostyAgentAdmission(string AdmissionRef, Guid? Generation = null);
 /// <summary>A Core-owned or explicitly selected application MCP interface.</summary>
 public record HostyAgentMcpTarget(string Kind, string? AppId = null, string? InstallationId = null, string? Key = null);
 /// <summary>One selected target and its permitted tool names; null tools keeps its reviewed set.</summary>
@@ -67,11 +79,17 @@ public record HostyAgentWorkspace(string Id, long Revision, string Path, string?
 
 public sealed partial class HostyProviderClient
 {
+    /// <summary>Resolve a history subscription for this installation without a browser session.</summary>
+    public Task<HostyAgentHistoryBinding> AuthorizeAgentHistoryAsync(HostyProviderRef provider, CancellationToken cancellationToken = default) =>
+        CoreAsync<HostyAgentHistoryBinding>("/agent/history/token", new HostyAgentHistorySelection(provider), null, cancellationToken);
+    /// <summary>Provider-only validation of the installation credential used for result delivery.</summary>
+    public Task<HostyAgentHistoryOwner> ValidateAgentHistoryAsync(string token, string key, CancellationToken cancellationToken = default) =>
+        CoreAsync<HostyAgentHistoryOwner>("/agent/history/introspect", new HostyAgentHistoryIntrospection(token, key), null, cancellationToken);
     /// <summary>Authorize one exact operation. No request content is relayed through Core.</summary>
     public Task<HostyAgentAuthorization> AuthorizeAgentAsync(HostyProviderRef provider, string? userToken,
         HostyAgentAuthorizationRequest input, CancellationToken cancellationToken = default) =>
         CoreAsync<HostyAgentAuthorization>("/agent/authorize", new HostyAgentAuthorize(provider, input.Operation, input.Method,
-            input.Path, input.BodyHash, input.Resources, input.SessionId, input.RunId, input.ConfigurationDigest, input.Ceiling, input.Authority), userToken, cancellationToken);
+            input.Path, input.BodyHash, input.Resources, input.SessionId, input.RunId, input.ConfigurationDigest, input.Ceiling, input.Authority, input.Conversation), userToken, cancellationToken);
     /// <summary>Introspect actual received bytes on every request; enforce provider resource ownership afterwards.</summary>
     public async Task<HostyAgentInvocation> ValidateAgentAsync(string token, HostyMediatedProviderRequest input,
         CancellationToken cancellationToken = default)
@@ -88,6 +106,9 @@ public sealed partial class HostyProviderClient
     /// <summary>Persist provider acceptance before this call and admit before any native effect.</summary>
     public Task<HostyAgentInvocation> AdmitAgentAsync(string admissionRef, CancellationToken cancellationToken = default)
         => CoreAsync<HostyAgentInvocation>("/agent/admit", new HostyAgentAdmission(admissionRef), null, cancellationToken);
+    /// <summary>Admit a native execution with its provider-assigned generation for exact workspace recovery.</summary>
+    public Task<HostyAgentInvocation> AdmitAgentAsync(string admissionRef, Guid generation, CancellationToken cancellationToken)
+        => CoreAsync<HostyAgentInvocation>("/agent/admit", new HostyAgentAdmission(admissionRef, generation), null, cancellationToken);
     /// <summary>Revalidate the retained actor without extending the original absolute deadline.</summary>
     public Task<HostyAgentInvocation> RenewAgentAsync(string admissionRef, CancellationToken cancellationToken = default)
         => CoreAsync<HostyAgentInvocation>("/agent/renew", new HostyAgentAdmission(admissionRef), null, cancellationToken);

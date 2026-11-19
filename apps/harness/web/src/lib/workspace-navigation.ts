@@ -1,6 +1,6 @@
 import type { AssistantSession } from "./assistant-api";
 import type { DevelopmentWorkspace } from "./development-api";
-import { activityTime, isWaiting, orderSessions } from "./attention";
+import { activityTime, isWaiting, observedSessionStatus, orderSessions } from "./attention";
 
 export type ActivityCounts = { working: number; waiting: number; failed: number; unknown: number };
 export const emptyCounts = (): ActivityCounts => ({ working: 0, waiting: 0, failed: 0, unknown: 0 });
@@ -18,20 +18,30 @@ export function workspaceChats(workspace: DevelopmentWorkspace, sessions: readon
   const ids = new Set(workspaceSessionIds(workspace));
   return orderSessions(sessions.filter(s => ids.has(s.id)));
 }
-export function workspaceCounts(workspace: DevelopmentWorkspace, sessions: readonly AssistantSession[], now = Date.now()): ActivityCounts {
-  const counts = emptyCounts();
-  if (!workspace.participation) {
-    workspaceChats(workspace, sessions).forEach(s => countStatus(counts, s.status));
-    return counts;
-  }
-  for (const binding of workspace.participation.sessions.filter(s => s.attached)) {
-    // Current authenticated own-session events can lead the bounded Core heartbeat.
-    const own = binding.canOpen ? sessions.find(s => s.id === binding.sessionId) : undefined;
+export function workspaceActivityRows(workspace: DevelopmentWorkspace, sessions: readonly AssistantSession[], now: number) {
+  const attached = workspace.participation?.sessions.filter(s => s.attached) ?? [];
+  const executions = new Map<string, number>();
+  for (const row of attached) if (row.kind === "execution" && row.activityGroup)
+    executions.set(row.activityGroup, 1 + (executions.get(row.activityGroup) ?? 0));
+  const chats = new Map(attached.filter(s => s.canOpen && s.activityGroup).map(s => [s.activityGroup, s.sessionId]));
+  return attached.map(binding => {
+    const linked = binding.activityGroup ? executions.get(binding.activityGroup) : undefined;
+    // A chat and its one native execution can report the same ongoing work.
+    const chatId = binding.canOpen ? binding.sessionId : binding.kind === "execution" && linked === 1 && binding.activityGroup ? chats.get(binding.activityGroup) : undefined;
+    const own = chatId ? sessions.find(s => s.id === chatId) : undefined;
     const newer = own && activityTime(own) > (Date.parse(binding.activityAt ?? "") || 0)
       && (!["running", "awaiting_approval", "awaiting_question"].includes(own.status) || now - activityTime(own) <= 45_000);
     const observed = Date.parse(binding.activityAt ?? "");
     const status = newer ? own.status : !["idle", "failed"].includes(binding.status) && (!Number.isFinite(observed) || now - observed > 45_000) ? "unknown" : binding.status;
-    countStatus(counts, status);
+    return { binding, status: own?.providerHistoryContact ? "unknown" : status, counted: binding.kind === "execution" || !linked };
+  });
+}
+export function workspaceCounts(workspace: DevelopmentWorkspace, sessions: readonly AssistantSession[], now = Date.now()): ActivityCounts {
+  const counts = emptyCounts();
+  if (workspace.participation) {
+    for (const row of workspaceActivityRows(workspace, sessions, now)) if (row.counted) countStatus(counts, row.status);
+  } else {
+    for (const session of workspaceChats(workspace, sessions)) countStatus(counts, observedSessionStatus(session));
   }
   return counts;
 }
@@ -50,7 +60,7 @@ export function navigationItems(workspaces: readonly DevelopmentWorkspace[], ses
   });
   for (const session of sessions) {
     if (represented.has(session.id)) continue;
-    const counts = emptyCounts(); countStatus(counts, session.status);
+    const counts = emptyCounts(); countStatus(counts, observedSessionStatus(session));
     const label = session.title?.trim() || "Untitled session";
     items.push({ key: `session:${session.id}`, label, session, counts, at: activityTime(session), matches: [],
       search: [label, ...session.contextApps?.map(a => a.displayName) ?? [], ...session.appIds ?? []].join(" ").toLowerCase() });

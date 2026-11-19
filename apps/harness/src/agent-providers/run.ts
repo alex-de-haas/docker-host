@@ -3,7 +3,7 @@ import { AGENT_CAPABILITIES, AgentApiError, type AgentConfiguration, type AgentM
   type AgentRunInput, type AgentRunSnapshot, type AgentResponseInput, type AgentControlReceipt, type AgentSessionWorkflowBinding } from "@hosty-sdk/app/agent";
 import type { AgentClient } from "@hosty-sdk/app/agent/client";
 import type { HarnessRun, HarnessStartOptions } from "../harness/adapter.js";
-import { ProviderExecution, type ProviderContinuation, type ProviderExecutionPersistence, type ProviderExecutionState } from "./execution.js";
+import { ProviderExecution, retryableObservation, type ProviderContinuation, type ProviderExecutionPersistence, type ProviderExecutionState } from "./execution.js";
 import { providerDecisionCardId, type QuestionAnswers } from "./decision-identity.js";
 
 export type ProviderRunContext = {
@@ -12,6 +12,8 @@ export type ProviderRunContext = {
   persistence: ProviderExecutionPersistence;
   configuration: AgentConfiguration;
   workflow?: AgentSessionWorkflowBinding;
+  installationHistory?(): Promise<boolean>;
+  observationContact?(runId: string, error: unknown | null): Promise<void>;
   input(text: string): Promise<Omit<AgentRunInput, "expectedSessionRevision" | "configurationRevision" | "continuation">>;
   refreshResources?(previous: AgentRunInput["resources"]): Promise<AgentRunInput["resources"]>;
   unavailable(error: unknown): Promise<void>;
@@ -25,6 +27,9 @@ export class ProviderHarnessRun implements HarnessRun {
   private observation: Promise<void> = Promise.resolve();
   private busy = false;
   private detached = false;
+  private observationWaiting = false;
+  private observationFailures = 0;
+  private retryTimer?: NodeJS.Timeout;
   private readonly controls = new Map<string, string>();
   private confirmedStop: AgentRunSnapshot | null = null;
   private stopRequested = false;
@@ -40,7 +45,7 @@ export class ProviderHarnessRun implements HarnessRun {
     this.admission = this.admit(text);
     this.observation = this.admission.then(async () => {
       if (this.detached) return;
-      await this.execution!.observe(undefined, continuation => this.continueReserved(continuation));
+      await this.observe();
       if (this.context!.state.run?.stopConfirmed) this.busy = false;
     }).catch(async error => {
       if (!this.detached) await this.context?.unavailable(error);
@@ -99,24 +104,83 @@ export class ProviderHarnessRun implements HarnessRun {
 
   waitForAdmission(): Promise<void> { return this.admission; }
 
+  private async observe(readOnlySnapshots = false): Promise<void> {
+    const context = this.context!, runId = context.state.runId!;
+    try {
+      const execution = this.execution!;
+      if (await context.installationHistory?.() || this.detached || this.execution !== execution || context.state.runId !== runId) return;
+      await execution.observe(undefined, continuation => this.continueReserved(continuation), {
+        observed: async () => {
+          this.observationFailures = 0;
+          await context.observationContact?.(runId, null);
+        }, readOnlySnapshots,
+      });
+      if (context.state.run?.stopConfirmed) this.busy = false;
+    } catch (error) {
+      if (this.detached || context.state.runId !== runId) return;
+      if (!context.observationContact) throw error;
+      this.observationWaiting = true;
+      const retry = retryableObservation(error);
+      if (retry) {
+        clearTimeout(this.retryTimer);
+        const delay = Math.min(30000, 1000 * 2 ** Math.min(this.observationFailures++, 5));
+        this.retryTimer = setTimeout(() => this.retryObservation(), delay);
+        this.retryTimer.unref();
+      }
+      console.warn("[provider-observation]", { stage: "watch-run", retry: retry ? "scheduled" : "awaiting-refresh" });
+      await context.observationContact(runId, error);
+    }
+  }
+
+  /** Resume the read side of this same admission, without replaying mutations or opening a second watch. */
+  retryObservation(): void {
+    if (this.detached || !this.observationWaiting) return;
+    this.observationWaiting = false;
+    clearTimeout(this.retryTimer);
+    this.observation = this.observe(true).catch(async error => { if (!this.detached) await this.context?.unavailable(error); });
+  }
+
+  /** Receipts may resume an existing operator-authorized control. The feed cannot admit one. */
+  onHistoryObserved(item: import("@hosty-sdk/app/agent").AgentWatchItem): void {
+    const runId = item.kind === "snapshot" ? item.snapshot.ref.id : item.event.runId;
+    if (this.detached || this.context?.state.runId !== runId || !this.execution) return;
+    if (this.context.state.run?.stopConfirmed) this.busy = false;
+    const snapshot = item.kind === "snapshot" ? item.snapshot : item.event.type === "run.updated" ? item.event.data.snapshot as AgentRunSnapshot : undefined;
+    if (!(item.kind === "event" && item.event.type === "control.updated") && !snapshot?.pendingContinuations?.length) return;
+    const execution = this.execution;
+    this.observation = this.observation.catch(() => {}).then(async () => {
+      if (!this.detached && this.context?.state.runId === runId)
+        await execution.observeControls(item, continuation => this.continueReserved(continuation));
+    }).catch(async error => { if (!this.detached) await this.context?.unavailable(error); });
+  }
+
   private async requireWorkflowCapability(workflow: AgentSessionWorkflowBinding | undefined): Promise<void> {
     if (workflow && !(await this.context!.client.capabilities()).capabilities.includes(AGENT_CAPABILITIES.consumerWorkflow))
       throw new AgentApiError("workflow_provider_unsupported", "The selected provider does not support consumer task workflows. Update it or choose a compatible provider before running this task.", 422);
   }
 
-  async attach(): Promise<void> {
+  async attach(observationOnly = false): Promise<void> {
     if (this.detached) return;
     const context = this.context = await this.load();
     if (this.detached) return;
     if (!context.state.runId) throw new AgentApiError("run_not_found", "There is no retained provider run to observe.", 404);
     this.execution = new ProviderExecution(context.client, context.state, context.persistence);
+    if (!observationOnly) await this.reconcileRetainedCommands(context);
+    this.busy = !context.state.run?.stopConfirmed;
+    this.observation = this.observe(observationOnly).catch(async error => {
+      if (!this.detached) await context.unavailable(error);
+    });
+  }
+
+  private async reconcileRetainedCommands(context: ProviderRunContext): Promise<void> {
+    const execution = this.execution!;
     for (const request of Object.values(context.state.mutations ?? {})) if (["runs.respond", "runs.cancel", "runs.control"].includes(request.operation)) {
-      try { await this.execution.readControl(request); }
+      try { await execution.readControl(request); }
       catch (error) {
         if (!(error instanceof AgentApiError && error.status === 404)) throw error;
         // Persisted Stop intent takes precedence over recovering an uncertain admission. A
         // not-yet-delivered cancellation fence must reach the provider before the old start.
-        if (request.operation === "runs.cancel") await this.execution.reconcileMutation(request);
+        if (request.operation === "runs.cancel") await execution.reconcileMutation(request);
       }
     }
     const starts = Object.values(context.state.mutations ?? {}).filter(request => request.operation === "runs.start");
@@ -127,12 +191,8 @@ export class ProviderHarnessRun implements HarnessRun {
         throw new AgentApiError("stop_unconfirmed", "Confirm the retained cancellation before recovering this admission.", 409);
       // The original UUID/body is idempotent even when its first response was lost. A confirmed
       // pre-admission cancellation returns its tombstone here without starting native execution.
-      await this.execution.reconcileMutation(starts[0]!);
+      await execution.reconcileMutation(starts[0]!);
     }
-    this.busy = !context.state.run?.stopConfirmed;
-    this.observation = this.execution.observe(undefined, continuation => this.continueReserved(continuation)).catch(async error => {
-      if (!this.detached) await context.unavailable(error);
-    });
   }
 
   private async pending(id: string, kind: AgentPendingDecision["kind"], runId?: string): Promise<{ snapshot: AgentRunSnapshot; decision: AgentPendingDecision } | null> {
@@ -237,7 +297,7 @@ export class ProviderHarnessRun implements HarnessRun {
     this.observeContinuation();
   }
   private observeContinuation(): void {
-    if (!this.detached && !this.stopRequested) this.observation = this.execution!.observe(undefined, next => this.continueReserved(next))
+    if (!this.detached && !this.stopRequested) this.observation = this.observe()
       .then(() => { if (this.context!.state.run?.stopConfirmed) this.busy = false; })
       .catch(async error => { if (!this.detached) await this.context?.unavailable(error); });
   }
@@ -375,6 +435,7 @@ export class ProviderHarnessRun implements HarnessRun {
   finishSuggestions(): Promise<void> { return this.disableSuggestions(); }
   async detach(): Promise<void> {
     this.detached = true;
+    clearTimeout(this.retryTimer);
     this.execution?.detach();
   }
 }

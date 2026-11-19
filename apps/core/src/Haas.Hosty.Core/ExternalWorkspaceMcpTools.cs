@@ -19,10 +19,9 @@ internal sealed class ExternalWorkspaceMcpTools
             DevelopmentWorkspaceService.ValidateWorkspaceName(name!);
             var owner = caller.Owner(taskId, label);
             var agent = caller.Authority?.Mcp?.AgentAdmissionRef is not null ? accessor.HttpContext!.RequestServices.GetRequiredService<CoreAgentExecution>() : null;
-            Task<DevelopmentWorkspace> Prepare() => workspaces.PrepareAsync(owner,
-                new WorkspacePrepare(requestId, owner.SessionId, appId, navigationPath, targetBranch, leaseId, label, Name: name), cancellationToken);
-            var result = agent is null ? await Prepare()
-                : await agent.McpLease(caller.Authority, caller.UserId, owner, requestId, leaseId, Prepare, cancellationToken);
+            var input = new WorkspacePrepare(requestId, owner.SessionId, appId, navigationPath, targetBranch, leaseId, label, Name: name);
+            var result = agent is null ? await workspaces.PrepareAsync(owner, input, cancellationToken)
+                : await agent.McpPrepare(caller.Authority!, caller.UserId, owner, input, cancellationToken);
             await AuditAsync(audit, clock, caller, result, requestId, "prepare");
             return CoreJson.Text(await workspaces.SessionProjectionAsync(result, owner, cancellationToken));
         }, authorization, accessor, cancellationToken);

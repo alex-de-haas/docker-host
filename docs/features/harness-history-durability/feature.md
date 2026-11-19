@@ -1,11 +1,38 @@
 ---
 created: 2026-11-12
-updated: 2026-11-12
+updated: 2026-11-19
 summary: Per-conversation storage commits accepted Harness input before dispatch and isolates damaged history without replaying uncertain execution.
 components: [apps/harness]
 ---
 
 # Harness History Durability
+
+## Importing Provider Results
+
+Harness resumes a background subscription for each selected provider installation that supports
+installation history. A server restart begins catch-up using its app identity, including while every
+owner is signed out. Each observation carries a qualified run, session and generation. Harness
+looks up the durable association, writes the result to the originating conversation and then saves
+the provider cursor. When a chat cannot accept a result, Harness saves the authorized
+observation in a durable inbox for that chat and continues serving other chats. Recovery retries
+the stored observations in order. If the chat record itself cannot identify the destination,
+Harness can reread retained provider history once the binding becomes available.
+
+The subscription expects a heartbeat at least once a minute, even during long
+model operations. On loss of contact the chat shows its last observed state and offers Refresh.
+Stable event identities allow redelivery after a crash between these writes.
+A browser reads the local transcript through the conversation owner's normal access checks.
+Providers with only per-run observation use the owner's existing authority. A transient loss of
+contact triggers a read-only retry against the same native run. If authorization has expired,
+reopening or refreshing the chat can supply fresh credentials. While contact is lost, the chat
+shows when the run was last observed. Missing legacy evidence stays visible as a coverage gap. The
+[provider history contract](../agent-provider-interface/feature.md#installation-history-delivery)
+describes retention, paging and stream authorization.
+
+An explicit Stop first reads the exact provider run. When that read finds a confirmed success or
+failure, Harness records the final answer, available tool results and the original outcome. Stop
+can still cancel an active run and fence a reserved continuation. A native turn may finish
+successfully while the operator's broader task still needs an external action or verification.
 
 ## Source And Acceptance
 
@@ -186,6 +213,11 @@ integration suite is not selected. Core/CLI fixture builds retain the existing
 ILCompiler advisory/analyzer warnings and complete without errors.
 
 ## Testing Expectations
+
+- Damage the execution metadata or root record of one conversation and deliver a later result to
+  a different owner. The healthy chat receives its final answer immediately. Repair the damaged
+  record and restart Harness. Its owner receives the original final answer exactly once with no
+  new model invocation or user token.
 
 - Inject failed/delayed writes, sync, replacement and publication; check the
   acknowledgement/dispatch boundary and the affected mutation fence.

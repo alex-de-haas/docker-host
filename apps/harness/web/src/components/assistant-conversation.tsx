@@ -71,6 +71,7 @@ import {
   getHealth,
   stopSession,
   getSession,
+  refreshProviderHistory,
   listAppNames,
   listSessions,
   uploadAttachment,
@@ -543,6 +544,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           return;
         }
         if (event.type === "session_activity") {
+          if (sessionSnapshot.current?.providerHistoryContact) return;
           const update = event as unknown as SessionActivity;
           setActivity(current => current?.epoch === update.epoch && current.revision >= update.revision ? current : update);
           return;
@@ -600,6 +602,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             ? { ...current, appIds: event.appIds as string[], appContextRevision: revision, lastEventSeq: event.seq, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(current) ? event.ts : current.updatedAt } : current);
         }
         if (event.type === "assistant_delta") {
+          if (sessionSnapshot.current?.providerHistoryContact) return;
           setStreams(current => receiveTranscriptText(current, event));
           return;
         }
@@ -613,11 +616,16 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           const value = String(event.status ?? "idle");
           setStatus(value);
           const applyStatus = (item: AssistantSession) => item.id === record.id ? { ...item, status: value,
+            ...("providerHistoryContact" in event ? { providerHistoryContact: event.providerHistoryContact as AssistantSession["providerHistoryContact"] ?? undefined } : {}),
             lastEventSeq: Math.max(item.lastEventSeq ?? 0, event.seq),
             updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item;
           setSessions(current => current.map(applyStatus));
           setSession(current => current ? applyStatus(current) : current);
           if (sessionSnapshot.current) sessionSnapshot.current = applyStatus(sessionSnapshot.current);
+          if (event.providerHistoryContact) {
+            setActivity(null);
+            setStreams(emptyTranscriptStreams());
+          }
           if (!["running", "awaiting_approval", "awaiting_question"].includes(String(event.status))) {
             setActivity(null);
             setStreams(emptyTranscriptStreams());
@@ -975,7 +983,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   // Overlay live status while retaining stream updates for previously selected sessions.
   const listedSessions = useMemo(
-    () => session ? sessions.map(record => record.id === session.id && record.status !== status ? { ...record, status } : record) : sessions,
+    () => session ? sessions.map(record => record.id === session.id ? { ...record, status, providerHistoryContact: session.providerHistoryContact } : record) : sessions,
     [sessions, session, status],
   );
 
@@ -1278,7 +1286,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
               {fullPage ? <>{session && renamingSessionId === session.id ? <SessionTitleInput key={session.id} title={sessionTitle ?? ""} onCommit={async title => { setRenamingSessionId(null); await rename(session.id, title); }} onCancel={() => setRenamingSessionId(null)} /> : <><h1 className="min-w-0 truncate text-sm font-medium">{session ? sessionTitle || "Untitled session" : "New session"}</h1>{session && <Button variant="ghost" size="icon-sm" aria-label="Rename session" onClick={() => setRenamingSessionId(session.id)}><Pencil className="size-3.5" /></Button>}</>}</> : <HostyNavigationBoundary><Sparkles className="h-4 w-4 shrink-0" aria-hidden /><span className="text-sm font-medium">Assistant</span></HostyNavigationBoundary>}
             </div>
             <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
-              {status !== "idle" && <StatusBadge value={status} />}
+              {status !== "idle" && <StatusBadge value={session?.providerHistoryContact ? "unknown" : status} />}
               {composerBlocked && (running || stopping || session?.sourceAdmission || session?.workerRun) && <Button type="button" variant="ghost" size="icon-sm" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
                 {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
               </Button>}
@@ -1377,7 +1385,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     </MessageScrollerItem>
                   ) : item.event.type === "native_agent_group" ? (
                     <MessageScrollerItem key={`native-${nativeTranscript.groups.get(item.event.seq)!.key}`} messageId={`native-${nativeTranscript.groups.get(item.event.seq)!.key}`}>
-                      <NativeSubagents group={nativeTranscript.groups.get(item.event.seq)!} connected={connection === "connected"} appNames={appNames} reviewContext={transcriptReviewContext} />
+                      <NativeSubagents group={nativeTranscript.groups.get(item.event.seq)!} unobservedRunId={session?.providerHistoryContact?.runId} connected={connection === "connected"} appNames={appNames} reviewContext={transcriptReviewContext} />
                     </MessageScrollerItem>
                   ) : (
                     <MessageScrollerItem key={item.key} messageId={item.key}>
@@ -1415,7 +1423,16 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     </div>
                     </MessageScrollerItem>
                   )}
-                  {(running || stopping) && connection !== "disconnected" && <MessageScrollerItem messageId="current-activity">
+                  {session?.providerHistoryContact && <MessageScrollerItem messageId="provider-contact">
+                    <div role="status" className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+                      <span>{session.providerHistoryContact.reason === "denied" ? "Provider history access denied."
+                        : session.providerHistoryContact.reason === "invalid" ? "Provider history needs reconciliation." : "Reconnecting to the provider."}
+                        {" "}Last observed {new Date(session.providerHistoryContact.observedAt).toLocaleString()}.</span>
+                      <Button variant="outline" size="sm" onClick={() => void refreshProviderHistory(session.id)
+                        .catch(error => setError(error instanceof Error ? error.message : String(error)))}>Refresh</Button>
+                    </div>
+                  </MessageScrollerItem>}
+                  {!session?.providerHistoryContact && (running || stopping) && connection !== "disconnected" && <MessageScrollerItem messageId="current-activity">
                     <AssistantActivity status={status} activity={activity?.activity ?? null}
                       connection={connection} stopping={stopping} appNames={appNames} />
                   </MessageScrollerItem>}
@@ -1619,7 +1636,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       </div>}
       </main>
       {fullPage && workspace && <RetainedWorkspacePane narrow={narrowWorkspace} width={columns.widths.details} resizeHandle={<ColumnResizeHandle label="Resize workspace details" side="left" width={columns.widths.details} min={COLUMN_MIN.details} max={columns.maximum.details} defaultWidth={COLUMN_DEFAULTS.details} onResize={width => columns.resize("details", width)} />} open={mobileDetails} visible={workspaceVisible} reviewing={!!review} onClose={() => setMobileDetails(false)}>
-        <WorkspaceDetails onSessionPicked={id => pickSession({ id })} onDeleteSession={remove} sessionActions={workspaceActions} key={workspace.id} workspace={workspace} onSessionSelected={record => { setSessions(current => [record, ...current.filter(s => s.id !== record.id)]); pickSession(record); }} appMetadata={appIconMetadata} title={workspace.name || sessionTitle || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
+        <WorkspaceDetails chats={listedSessions} onSessionPicked={id => pickSession({ id })} onDeleteSession={remove} sessionActions={workspaceActions} key={workspace.id} workspace={workspace} onSessionSelected={record => { setSessions(current => [record, ...current.filter(s => s.id !== record.id)]); pickSession(record); }} appMetadata={appIconMetadata} title={workspace.name || sessionTitle || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
       </RetainedWorkspacePane>}
       {review && <WorkspaceReview key={`${review.workspaceId}:${review.tree.id}`} workspaceId={review.workspaceId} tree={review.tree}
         choice={review.transcriptChoice ?? reviewChoices[review.tree.id] ?? { view: "session", path: "" }} onChoice={choice => {

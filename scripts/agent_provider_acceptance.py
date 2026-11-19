@@ -57,6 +57,9 @@ class ProviderAcceptance:
                 failure = {}
             details = failure.get('error') if isinstance(failure, dict) else None
             code = (failure.get('code') if isinstance(failure, dict) else None) or (details.get('code') if isinstance(details, dict) else None) or 'request_failed'
+            if route == '/probe' and code == 'acceptance_failed' and isinstance(details, dict):
+                # The test consumer uses fixed assertion messages for this code.
+                raise AssertionError(f'Independent consumer probe: {details.get("message", code)}') from None
             raise AssertionError(f'Provider acceptance request {route} failed: HTTP {error.code}, {code}') from None
 
     def authenticate(self, app_id):

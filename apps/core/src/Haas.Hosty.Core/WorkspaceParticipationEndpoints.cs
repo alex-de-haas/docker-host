@@ -3,7 +3,7 @@ namespace Haas.Hosty.Core;
 internal sealed record WorkspaceParticipantUser(string Id, string Name);
 internal sealed record WorkspaceMemberView(string UserId, string Name, string Role, string[] WorktreeIds, bool Revoked);
 internal sealed record WorkspaceSessionView(string AppId, string UserId, string SessionId, string Title,
-    bool Attached, bool CanOpen, string? ViewerPath, string Status, DateTimeOffset? ActivityAt, bool CurrentInstallation, DateTimeOffset ChangedAt);
+    bool Attached, bool CanOpen, string? ViewerPath, string Status, DateTimeOffset? ActivityAt, bool CurrentInstallation, DateTimeOffset ChangedAt, string? Kind = null, string? ActivityGroup = null);
 internal sealed record WorkspaceParticipationView(string Id, long Revision, string Role,
     WorkspaceMemberView[] Members, WorkspaceSessionView[] Sessions, WorkspaceParticipantUser[] EligibleUsers, string ViewerUserId);
 internal sealed record WorkspaceAssociationView(WorkspaceParticipationView? Workspace);
@@ -43,6 +43,15 @@ internal static class WorkspaceParticipationEndpoints
                 }
                 return new WorkspaceAssociationView(participation is null ? null : await Project(await workspaces.ParticipationAsync(participation.Id, actor.UserId, ct), actor.UserId, appId, users, apps, ct));
             }, request));
+        app.MapPost(association + "/{workspaceId}/recover-origin", async (string appId, string sessionId, string workspaceId,
+            CoreAgentWorkspaceRecovery input, HttpRequest request, WorkspaceAuthorization auth, CoreAgentExecution service,
+            DevelopmentWorkspaceService workspaces, UserDirectoryStore users, AppRegistryStore apps, CancellationToken ct) => await Handle(async () =>
+            {
+                var actor = await auth.RequireAsync(request, appId, sessionId, ct);
+                await service.RecoverWorkspace(actor, workspaceId, input, ct);
+                var current = await workspaces.SessionParticipationAsync(actor, ct);
+                return new WorkspaceAssociationView(current is null ? null : await Project(current, actor.UserId, appId, users, apps, ct));
+            }, request));
         app.MapPost(association + "/{workspaceId}/{kind}", async (string appId, string sessionId, string workspaceId,
             string kind, WorkspaceSessionCommand input, HttpRequest request, WorkspaceAuthorization auth,
             DevelopmentWorkspaceService workspaces, UserDirectoryStore users, AppRegistryStore apps, CancellationToken ct) => await Handle(async () =>
@@ -68,9 +77,10 @@ internal static class WorkspaceParticipationEndpoints
             value.Members.Select(m => new WorkspaceMemberView(m.UserId, Name(m.UserId), m.Role, m.WorktreeIds, m.RevokedAt is not null)).ToArray(),
             // External allocation evidence is retained internally, not exposed as a hosted chat or activity.
             value.Sessions.Where(s => !s.Session.IsExternal).Select(s => new WorkspaceSessionView(s.Session.AppId, s.Session.UserId, s.Session.SessionId, s.Title,
-                s.DetachedAt is null, s.Session.UserId == actor && s.Session.AppId == appId && s.Session.Installation == installation,
-                s.Session.UserId == actor && s.Session.AppId == appId && s.Session.Installation == installation ? s.ViewerPath : null,
-                s.Status is not ("idle" or "failed") && (s.ActivityAt is null || DateTimeOffset.UtcNow - s.ActivityAt > TimeSpan.FromSeconds(45)) ? "unknown" : s.Status, s.ActivityAt, s.Session.AppId == appId && s.Session.Installation == installation, s.ChangedAt ?? s.AttachedAt)).ToArray(),
+                s.DetachedAt is null, s.Kind != "execution" && s.Session.UserId == actor && s.Session.AppId == appId && s.Session.Installation == installation,
+                s.Kind != "execution" && s.Session.UserId == actor && s.Session.AppId == appId && s.Session.Installation == installation ? s.ViewerPath : null,
+                s.Status is not ("idle" or "failed") && (s.ActivityAt is null || DateTimeOffset.UtcNow - s.ActivityAt > TimeSpan.FromSeconds(45)) ? "unknown" : s.Status, s.ActivityAt, s.Session.AppId == appId && s.Session.Installation == installation, s.ChangedAt ?? s.AttachedAt, s.Kind,
+                DevelopmentWorkspaceService.Hash(DevelopmentWorkspaceService.OwnerIdentity(s.Origin ?? s.Session)))).ToArray(),
             role == "owner" ? directory.Where(u => !u.Disabled && AppAccessPolicy.IsAdmin(u))
                 .Select(u => new WorkspaceParticipantUser(u.Id, u.DisplayName ?? u.Email ?? "Administrator")).ToArray() : [], actor);
     }
@@ -79,6 +89,7 @@ internal static class WorkspaceParticipationEndpoints
     {
         request.HttpContext.Response.Headers.CacheControl = "no-store";
         try { return CoreJson.Json(await action()); }
+        catch (CoreProviderException ex) { return CoreJson.Json(new ErrorResponse(ex.Error.Code, ex.Message), ex.Status); }
         catch (AppIdentityException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), AuthEndpoints.MapIdentityErrorStatus(ex.Code)); }
         catch (AppLifecycleException ex) { return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code == "workspace_forbidden" ? 403 : ex.Code == "workspace_not_found" ? 404 : 409); }
     }

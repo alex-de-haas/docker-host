@@ -30,6 +30,12 @@ function sameObservedCall(call: AssistantEvent, result: AssistantEvent, observat
   return result.providerGeneration === observation.generation && typeof result.providerEventId === "string"
     && result.providerEventId.startsWith(`${observation.runId}:${kind}:${scope}:`);
 }
+function qualifiedOutcome(call: AssistantEvent, result: AssistantEvent, kind: "command" | "output"): boolean {
+  const id = call.providerEventId, generation = call.providerGeneration;
+  if (typeof id !== "string" || typeof generation !== "string" || !uuid.test(generation)) return false;
+  const runId = id.split(":", 1)[0];
+  return uuid.test(runId) && id.startsWith(runId + ":tool:") && sameObservedCall(call, result, { runId, generation, seq: call.seq }, kind);
+}
 /** Pair an approval with the one listed call of its recorded turn that carries the same identity. */
 function approvalCalls(events: readonly AssistantEvent[]) {
   const pairs = new Map<string, number>();
@@ -71,8 +77,9 @@ function commandResults(events: readonly AssistantEvent[]) {
       if (!call) continue;
       if (observation && call.seq < observation.seq && !sameObservedCall(call, event, observation, "command")) continue;
       const old = outcomes.get(call.seq);
-      results[call.seq] = results[call.seq]?.conflict || old && old !== fingerprint ? { status: "unknown", conflict: true } : outcome;
-      outcomes.set(call.seq, old ?? fingerprint); matched.add(event.seq);
+      const settles = results[call.seq]?.status === "unknown" && !results[call.seq]?.conflict && outcome.status !== "unknown" && qualifiedOutcome(call, event, "command");
+      results[call.seq] = !settles && (results[call.seq]?.conflict || old && old !== fingerprint) ? { status: "unknown", conflict: true } : outcome;
+      outcomes.set(call.seq, settles ? fingerprint : old ?? fingerprint); matched.add(event.seq);
       matchedByCall.set(call.seq, [...(matchedByCall.get(call.seq) ?? []), event.seq]);
     }
   }
@@ -97,8 +104,9 @@ export function toolResults(events: readonly AssistantEvent[]) {
       if (observation && call.seq < observation.seq && !sameObservedCall(call, event, observation, "output")) continue;
       if (!canShowToolOutput(String(call.toolName ?? "tool"))) { matched.add(event.seq); continue; }
       const fingerprint = JSON.stringify(output), old = outcomes.get(call.seq);
-      results[call.seq] = results[call.seq]?.conflict || old && old !== fingerprint ? { status: "unknown", output: "", conflict: true } : output;
-      outcomes.set(call.seq, old ?? fingerprint); matched.add(event.seq);
+      const settles = results[call.seq]?.status === "unknown" && !results[call.seq]?.conflict && output.status !== "unknown" && qualifiedOutcome(call, event, "output");
+      results[call.seq] = !settles && (results[call.seq]?.conflict || old && old !== fingerprint) ? { status: "unknown", output: "", conflict: true } : output;
+      outcomes.set(call.seq, settles ? fingerprint : old ?? fingerprint); matched.add(event.seq);
       matchedByCall.set(call.seq, [...(matchedByCall.get(call.seq) ?? []), event.seq]);
     }
   }
@@ -109,7 +117,33 @@ export function toolResults(events: readonly AssistantEvent[]) {
  * approval paired with its call folds into that call's row, so its card, decision and the status
  * changes around it no longer split the group.
  */
+/** Late evidence belongs before the terminal boundary in the turn that produced it. */
+function originalTurnOrder(events: AssistantEvent[]): AssistantEvent[] {
+  if (!events.some(event => event.providerHistoryEarlier === true)) return events;
+  const runKey = (event: AssistantEvent) => {
+    const source = event.providerSource as { runId?: string; generation?: string; provider?: { appId?: string; installationId?: string; key?: string } } | undefined;
+    return source?.runId && source.generation && source.provider?.installationId
+      ? JSON.stringify([source.provider.appId, source.provider.installationId, source.provider.key, source.runId, source.generation]) : undefined;
+  };
+  const base = events.filter(event => event.providerHistoryEarlier !== true);
+  const anchors = new Map<string, number>();
+  for (const [index, event] of base.entries()) {
+    const key = runKey(event);
+    if (key) anchors.set(key, turnBoundary(event) ? index : index + 1);
+  }
+  const inserts = new Map<number, AssistantEvent[]>();
+  for (const event of events) if (event.providerHistoryEarlier === true) {
+    const key = runKey(event), position = key && anchors.has(key) ? anchors.get(key)! : base.length;
+    const at = inserts.get(position) ?? [];
+    at.push(event); inserts.set(position, at);
+  }
+  const result: AssistantEvent[] = [];
+  for (const [index, event] of base.entries()) { result.push(...inserts.get(index) ?? [], event); }
+  return [...result, ...inserts.get(base.length) ?? []];
+}
+
 export function transcriptItems(events: AssistantEvent[], claimed: ReadonlySet<string>, decided: ReadonlyMap<string, ApprovalDecision> = new Map()): TranscriptItem[] {
+  events = originalTurnOrder(events);
   const items: TranscriptItem[] = [];
   const joined = commandResults(events), outputs = toolResults(events), paired = approvalCalls(events);
   const folded = new Map<number, ApprovalDecision>(), foldedIds = new Set<string>();
