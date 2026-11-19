@@ -9,15 +9,15 @@ import { nativeAgentStatus, isNativeDecision, type NativeAgentGroup } from "@/li
 import { transcriptItems } from "@/lib/transcript-items";
 import { ToolActivity, TranscriptEvent, type TranscriptReviewContext } from "./transcript";
 
-export function NativeSubagents({ group, connected, appNames, reviewContext }: {
-  group: NativeAgentGroup; connected: boolean; appNames?: Record<string, string>; reviewContext?: TranscriptReviewContext;
+export function NativeSubagents({ group, connected, unobservedRunId, appNames, reviewContext }: {
+  group: NativeAgentGroup; connected: boolean; unobservedRunId?: string; appNames?: Record<string, string>; reviewContext?: TranscriptReviewContext;
 }) {
   return <section aria-label="Provider subagents" className="flex min-w-0 flex-col gap-2 rounded-lg border p-3">
     <div className="flex items-center gap-2 text-sm font-medium"><GitBranch className="size-4" aria-hidden />
       {group.agents.length} {group.agents.length === 1 ? "subagent" : "subagents"}
     </div>
     {group.agents.map(agent => {
-      const status = nativeAgentStatus(agent, connected);
+      const status = nativeAgentStatus(agent, connected && agent.source.runId !== unobservedRunId);
       const items = transcriptItems(agent.events.filter(event => !isNativeDecision(event)), new Set());
       return <Collapsible key={agent.key}>
         <CollapsibleTrigger asChild>

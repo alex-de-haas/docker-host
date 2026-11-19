@@ -19,6 +19,11 @@ const baseControl = { requestId: uuid, expectedGeneration: uuid, expectedRevisio
 const terminalStates = ["queued", "running", "waiting_for_input", "succeeded", "failed", "cancelled", "unknown"];
 const phases = ["preparing", "executing", "waiting", "finalizing", "cancelling", "parked", "interrupted", "terminal"];
 
+const historyObservation = {
+  sessionId: id, runId: id, generation: uuid, principalId: text(512), userId: text(512),
+  item: { oneOf: [object({ kind: { const: "snapshot" }, snapshot: ref("RunSnapshot") }),
+    object({ kind: { const: "event" }, event: ref("Event"), cursor: text(8192) })] },
+};
 export const AGENT_SCHEMAS: Record<string, Schema> = {
   ProviderRef: object(refProperties),
   QualifiedRef: object({ provider: ref("ProviderRef"), id }),
@@ -75,6 +80,9 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
     decisions: list(object({ decision: ref("PendingDecision"), state: { enum: ["pending", "resolved", "superseded", "unknown"] }, response: ref("DecisionResponse") }, ["decision", "state"]), 256),
     pendingContinuations: list(object({ requestId: uuid, run: ref("QualifiedRef"), state: { enum: ["pending", "awaiting_authorization", "admitted", "superseded"] } }), 256) },
     ["ref", "sessionId", "generation", "revision", "state", "phase", "stopConfirmed", "freshness", "observedAt", "configurationRevision", "lastSequence", "cursor", "pending", "effects"], true),
+  HistoryObservation: object(historyObservation),
+  HistoryPage: object({ observations: list(object({ ...historyObservation, cursor: text(8192) }), 100),
+    through: text(8192), nextCursor: { type: ["string", "null"] } }),
   Session: object({ ref: ref("QualifiedRef"), revision, configurationRevision: revision, configurationDigest: digest,
     nativeState: { enum: ["not_created", "available", "missing", "unavailable", "unknown"] }, activeRun: { oneOf: [ref("QualifiedRef"), { type: "null" }] },
     resolvedSkills: list(object({ skillId: digest, digest }), 202), configuration: ref("Configuration"), correlation: object({ conversation: ref("QualifiedRef"), task: ref("QualifiedRef") }, []) },
@@ -116,6 +124,10 @@ function operation(operationId: string, response: string, input?: string, pathPa
 export const AGENT_OPENAPI: Schema = {
   openapi: "3.1.0", info: { title: "Hosty Agent Execution API", version: "1.0.0", description: "Independent provider execution. Paths are relative to the current Core-declared interface base. Exact UTF-8 command bytes and stable mutation UUIDs are retained across retries. No Harness dependency or raw native session IDs." },
   paths: {
+    "/history/events": { get: { operationId: "history.events", security: [{ installationHistory: [] }],
+      parameters: [{ name: "after", in: "query", schema: text(8192) }, { name: "through", in: "query", schema: text(8192) }, { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100 } }],
+      description: "Resumable, read-only installation history. Frames use event: observation with an opaque installation feed position in id. Commit each observation before saving this position.",
+      responses: { ...errors, "200": { description: "History for the authenticated consumer installation.", content: { "text/event-stream": { schema: { type: "string" }, "x-event-schema": ref("HistoryObservation") }, "application/json": { schema: ref("HistoryPage") } } } } } },
     "/capabilities": { get: operation("capabilities", "Capabilities") },
     "/connections": { get: operation("connections.list", "ConnectionPage") },
     "/connections/{connectionId}/models": { get: operation("connections.models", "ModelCatalog", undefined, ["connectionId"]) },
@@ -133,7 +145,7 @@ export const AGENT_OPENAPI: Schema = {
     "/runs/{runId}/cancel": { post: operation("runs.cancel", "ControlReceipt", "CancelInput", ["runId"], [200, 202]) },
     "/runs/{runId}/controls": { post: { ...operation("runs.control", "ControlReceipt", "ControlInput", ["runId"], [200, 202]), description: "Optional controls require their advertised capabilities. Reconcile input is an attestation, never proof of actual native exit." } },
     "/runs/{runId}/controls/{requestId}": { get: operation("runs.controls.read", "ControlReceipt", undefined, ["runId", "requestId"]) },
-  }, components: { securitySchemes: { coreOperation: { type: "http", scheme: "bearer", description: "Fresh Core exact-operation credential, never the caller's service/user token." } }, schemas: AGENT_SCHEMAS },
+  }, components: { securitySchemes: { installationHistory: { type: "http", scheme: "bearer", description: "Core-issued installation history credential." }, coreOperation: { type: "http", scheme: "bearer", description: "Fresh Core exact-operation credential, never the caller's service/user token." } }, schemas: AGENT_SCHEMAS },
 };
 function localRefs(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(localRefs);

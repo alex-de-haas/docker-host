@@ -74,7 +74,7 @@ export class NativeExecution implements ExecutionDriver {
     this.observe(runId);
     try {
       const initial = await this.store.run(runId); if (initial.record.snapshot.stopConfirmed) return;
-      const admittedAuthority = await this.authority.admit(initial.record.admissionRef) as { ceiling?: AgentAuthorizationRequest["ceiling"] } | null;
+      const admittedAuthority = await this.authority.admit(initial.record.admissionRef, initial.record.snapshot.generation) as { ceiling?: AgentAuthorizationRequest["ceiling"] } | null;
       await this.mcp.workflow.configure(runId, initial.record.admissionRef, admittedAuthority?.ceiling?.workflow);
       let { session, record } = await this.store.run(runId);
       if (record.snapshot.phase === "cancelling") { await this.failBeforeStart(runId, "Cancelled before native admission.", true); return; }

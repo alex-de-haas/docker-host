@@ -5,6 +5,13 @@ import type { AssistantEvent } from "./assistant-api";
 const event = (seq: number, type: string, extra = {}): AssistantEvent => ({ seq, ts: "", type, ...extra });
 
 describe("transcript activity", () => {
+  it("places an older run's recovered answer in its original turn", () => {
+    const providerSource = { runId: "old", generation: "first", provider: { installationId: "one", appId: "agent", key: "chat" } };
+    const events = [event(1, "user_message"), event(2, "assistant_text", { providerSource }), event(3, "result", { providerSource }),
+      event(4, "user_message"), event(5, "assistant_text"), event(6, "assistant_text", { providerSource, providerHistoryEarlier: true })];
+    expect(transcriptItems(events, new Set()).map(item => item.key)).toEqual(["event-1", "event-2", "event-6", "event-4", "event-5"]);
+  });
+
   it("groups calls without hiding approvals, questions or answer prose", () => {
     const items = transcriptItems([
       event(1, "user_message"), event(2, "tool_use", { toolName: "Read" }),

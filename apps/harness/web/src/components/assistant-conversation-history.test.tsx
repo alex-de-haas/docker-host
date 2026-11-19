@@ -8,7 +8,7 @@ import * as api from "@/lib/assistant-api";
 const controls = vi.hoisted(() => ({ ui: { reportSurfaceState: vi.fn(), getNavigation: () => ({ entries: [] }), navigate: vi.fn() } }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => controls.ui }));
 vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(),
-  getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), listAppNames: vi.fn(),
+  getHealth: vi.fn(), refreshProviderHistory: vi.fn(), stopSession: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), listAppNames: vi.fn(),
   listAgentConnections: vi.fn(), getSuggestionPreference: vi.fn(), streamEvents: vi.fn(), postMessage: vi.fn(), resolveApproval: vi.fn(), resolveQuestion: vi.fn(),
 }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), useDevelopmentInventory: () => ({ workspaces: [], loading: false, error: "", refresh: vi.fn() }) }));
@@ -144,6 +144,51 @@ it("shows terminal replay failures instead of leaving the conversation in an ind
   expect(viewport()?.textContent).toContain("Partial retained history");
 });
 
+
+it("shows the last observed run on provider loss and recovers without stopping the agent", async () => {
+  const ts = "2026-11-19T11:00:00Z";
+  const providerSource = { provider: { appId: "third.party", installationId: "i", key: "agent" }, runId: "slow", generation: "g", agentId: "child", parentAgentId: "root" };
+  const contact = { runId: "slow", observedAt: ts, reason: "unavailable" };
+  const emit = (seq: number, type: string, fields: Record<string, unknown>) => stream().event({ seq, ts, type, ...fields });
+  const activity = () => container.querySelector('[data-slot="assistant-activity"]');
+  const filters = () => container.querySelector('[aria-label="Activity filters"]')?.textContent;
+  const panel = () => container.querySelector('[aria-label="Provider subagents"]');
+  vi.mocked(api.refreshProviderHistory).mockResolvedValue(undefined);
+  await mount();
+  await act(async () => {
+    emit(1, "session_status", { status: "running" });
+    emit(2, "assistant_text", { text: "Saved result" });
+    emit(3, "native_agent_status", { providerSource, state: "running", freshness: "current" });
+    emit(4, "native_agent_status", { providerSource: { ...providerSource, agentId: "finished" }, state: "succeeded", freshness: "current", stopConfirmed: true });
+    emit(5, "notice", { message: "The operation was aborted due to timeout" });
+    emit(6, "assistant_delta", { text: "Unfinished draft" });
+  });
+  await connect(); await settle();
+  expect(activity()).not.toBeNull();
+  expect(filters()).toContain("Working1");
+  expect(viewport()?.textContent).toContain("Unfinished draft");
+
+  await act(async () => emit(7, "session_status", { status: "running", providerHistoryContact: contact }));
+  expect(container.textContent).toContain("Reconnecting to the provider.");
+  expect(activity()).toBeNull();
+  expect(filters()).toContain("Working0");
+  expect(panel()?.textContent).toContain("Last known: running");
+  expect(panel()?.textContent).toContain("Completed");
+  expect(viewport()?.textContent).toContain("Saved result");
+  expect(viewport()?.textContent).not.toContain("Unfinished draft");
+
+  await act(async () => [...viewport()!.querySelectorAll("button")].find(b => b.textContent === "Refresh")!.click());
+  expect(api.refreshProviderHistory).toHaveBeenCalledExactlyOnceWith("history-one");
+  expect(api.stopSession).not.toHaveBeenCalled();
+  await act(async () => {
+    emit(8, "assistant_text", { text: "Caught up" });
+    emit(9, "session_status", { status: "idle", providerHistoryContact: null });
+  });
+  expect(viewport()?.textContent).toContain("Caught up");
+  expect(container.textContent).not.toContain("Reconnecting to the provider.");
+  expect(activity()).toBeNull();
+  expect(filters()).toContain("Working0");
+});
 
 it("keeps replayed child output and live deltas attributed, with actionable approvals outside collapsed details", async () => {
   const source = { provider: { appId: "third.party", installationId: "installation", key: "agent" }, runId: "run", generation: "generation", agentId: "child", parentAgentId: "root", parentToolCallId: "spawn", parentTranscriptToolUseId: "spawn-transcript" };

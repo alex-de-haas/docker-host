@@ -127,6 +127,94 @@ public sealed class HostyAgentExecutionClientTests
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task InstallationHistoryUsesOnlyTheReadCredentialAndValidatesRunIdentity(bool matching)
+    {
+        var provider = new HostyProviderRef("another.provider", "installation", "agent");
+        var run = Guid.NewGuid().ToString();
+        var generation = Guid.NewGuid().ToString();
+        var observation = new {
+            sessionId = "session-1", runId = run, generation, userId = "user", principalId = "principal",
+            item = new { kind = "event", cursor = "run-position", @event = new {
+                schemaVersion = "agent-event.1", runId = matching ? run : "another-run", generation,
+                sequence = "1", revision = "1", occurredAt = DateTimeOffset.UtcNow, type = "message.completed",
+                source = new { agentId = "main" }, data = new { messageId = "reply", text = "Hello" }
+            } }
+        };
+        using var http = new HttpClient(new Handler(request => {
+            Assert.Equal("/agent/v1/history/events?after=last", request.RequestUri!.PathAndQuery);
+            Assert.Equal("Bearer read-history", request.Headers.Authorization!.ToString());
+            Assert.False(request.Headers.Contains("X-Hosty-User-Token"));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent($"event: observation\nid: shared-position\ndata: {JsonSerializer.Serialize(observation)}\n\n", Encoding.UTF8, "text/event-stream")
+            });
+        }));
+        var client = new HostyAgentExecutionClient(http, provider, (_, _) => throw new InvalidOperationException("Unexpected user authorization"));
+        var binding = new HostyAgentHistoryBinding("read-history", DateTimeOffset.UtcNow.AddHours(1), "http://provider.test/agent/v1");
+        var results = new List<HostyAgentHistoryObservation>();
+        async Task Collect() { await foreach (var item in client.HistoryAsync(binding, "last")) results.Add(item); }
+        if (!matching) { await Assert.ThrowsAsync<HostyProviderException>(Collect); return; }
+        await Collect();
+        Assert.Equal("shared-position", Assert.Single(results).Cursor);
+        Assert.Equal("run-position", results[0].Item.Cursor);
+    }
+
+    [Fact]
+    public async Task InstallationHistoryRejectsRunUpdatesWithoutSnapshot()
+    {
+        var provider = new HostyProviderRef("another.provider", "installation", "agent");
+        var generation = Guid.NewGuid().ToString();
+        var value = new { sessionId = "s", runId = "r", generation, userId = "u", principalId = "p",
+            item = new { kind = "event", cursor = "run-position", @event = new
+            {
+                schemaVersion = "agent-event.1", runId = "r", generation, sequence = "1", revision = "2",
+                occurredAt = DateTimeOffset.UtcNow, type = "run.updated", source = new { agentId = "root" }, data = new { }
+            } }
+        };
+        using var http = new HttpClient(new Handler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent($"event: observation\nid: installation-position\ndata: {JsonSerializer.Serialize(value)}\n\n",
+                Encoding.UTF8, "text/event-stream")
+        })));
+        var client = new HostyAgentExecutionClient(http, provider, (_, _) => throw new InvalidOperationException());
+        var binding = new HostyAgentHistoryBinding("history", DateTimeOffset.UtcNow.AddHours(1), "http://provider.test/agent/v1");
+        await using var reader = client.HistoryAsync(binding).GetAsyncEnumerator();
+        await Assert.ThrowsAsync<HostyProviderException>(() => reader.MoveNextAsync().AsTask());
+    }
+
+    [Theory]
+    [InlineData("watermark", null, true)]
+    [InlineData("changed", null, false)]
+    [InlineData("watermark", "previous", false)]
+    public async Task InstallationHistoryPagingKeepsItsBoundary(string boundary, string? nextCursor, bool valid)
+    {
+        var provider = new HostyProviderRef("another.provider", "installation", "agent");
+        using var http = new HttpClient(new Handler(request =>
+        {
+            Assert.Equal("/agent/v1/history/events?after=previous&through=watermark&limit=2", request.RequestUri!.PathAndQuery);
+            Assert.Equal("application/json", Assert.Single(request.Headers.Accept).MediaType);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { through = boundary, observations = Array.Empty<object>(), nextCursor }),
+                    Encoding.UTF8, "application/json")
+            });
+        }));
+        var client = new HostyAgentExecutionClient(http, provider, (_, _) => throw new InvalidOperationException("Unexpected user authorization"));
+        var binding = new HostyAgentHistoryBinding("history", DateTimeOffset.UtcNow.AddHours(1), "http://provider.test/agent/v1");
+        if (valid)
+        {
+            var page = await client.HistoryPageAsync(binding, "previous", "watermark", 2);
+            Assert.Empty(page.Observations);
+            Assert.Equal("watermark", page.Through);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<HostyProviderException>(() => client.HistoryPageAsync(binding, "previous", "watermark", 2));
+        }
+    }
+
     private sealed class Handler(Func<HttpRequestMessage, Task<HttpResponseMessage>> callback) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) => callback(request);

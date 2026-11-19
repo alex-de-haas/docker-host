@@ -6,6 +6,166 @@
     "description": "Independent provider execution. Paths are relative to the current Core-declared interface base. Exact UTF-8 command bytes and stable mutation UUIDs are retained across retries. No Harness dependency or raw native session IDs."
   },
   "paths": {
+    "/history/events": {
+      "get": {
+        "operationId": "history.events",
+        "security": [
+          {
+            "installationHistory": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          },
+          {
+            "name": "through",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "description": "Resumable, read-only installation history. Frames use event: observation with an opaque installation feed position in id. Commit each observation before saving this position.",
+        "responses": {
+          "200": {
+            "description": "History for the authenticated consumer installation.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "x-event-schema": {
+                  "$ref": "#/components/schemas/HistoryObservation"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/capabilities": {
       "get": {
         "operationId": "capabilities",
@@ -2460,6 +2620,11 @@
   },
   "components": {
     "securitySchemes": {
+      "installationHistory": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Core-issued installation history credential."
+      },
       "coreOperation": {
         "type": "http",
         "scheme": "bearer",
@@ -4172,6 +4337,194 @@
           "effects"
         ],
         "additionalProperties": true
+      },
+      "HistoryObservation": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "runId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "generation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "principalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "userId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "item": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "snapshot"
+                  },
+                  "snapshot": {
+                    "$ref": "#/components/schemas/RunSnapshot"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "snapshot"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "event"
+                  },
+                  "event": {
+                    "$ref": "#/components/schemas/Event"
+                  },
+                  "cursor": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  }
+                },
+                "required": [
+                  "kind",
+                  "event",
+                  "cursor"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "sessionId",
+          "runId",
+          "generation",
+          "principalId",
+          "userId",
+          "item"
+        ],
+        "additionalProperties": false
+      },
+      "HistoryPage": {
+        "type": "object",
+        "properties": {
+          "observations": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
+                },
+                "runId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
+                },
+                "generation": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "principalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "userId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "item": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "snapshot"
+                        },
+                        "snapshot": {
+                          "$ref": "#/components/schemas/RunSnapshot"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "snapshot"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "event"
+                        },
+                        "event": {
+                          "$ref": "#/components/schemas/Event"
+                        },
+                        "cursor": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8192
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "event",
+                        "cursor"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                }
+              },
+              "required": [
+                "sessionId",
+                "runId",
+                "generation",
+                "principalId",
+                "userId",
+                "item",
+                "cursor"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "through": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "observations",
+          "through",
+          "nextCursor"
+        ],
+        "additionalProperties": false
       },
       "Session": {
         "type": "object",

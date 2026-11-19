@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-11-16
+updated: 2026-11-19
 summary: Apps discover confirmed providers and use category or exact-operation Core credentials without relaying inference through Core.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/harness]
 ---
@@ -94,6 +94,13 @@ configuration/resource ceiling. Core validates the original current user or reta
 attempt and the existing administrator requirement. Inputs, uploads, snapshots and SSE events travel
 directly between consumer and provider. Core's own skills, MCP and Decisions keep their ordinary
 platform responsibilities.
+
+An installation with reviewed `providers.agent` can request read-only history delivery through
+`POST /api/internal/apps/{consumer}/agent/history/token` using its service identity. The selected
+provider introspects the credential with its own service identity through
+`POST /api/internal/apps/{provider}/agent/history/introspect`. The resulting scope is this
+consumer installation's own runs at that provider. Interactive operations keep their exact
+authorization and the consuming app checks user access before serving its stored conversations.
 
 The selected provider introspects the request, durably accepts the public command and admits native
 work through its own Core identity. It renews admitted authority and obtains selected-tool MCP

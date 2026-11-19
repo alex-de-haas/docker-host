@@ -5,6 +5,7 @@ import { validateAgentRequest, agentReplayCursor, encodeAgentSseEvent } from "@h
 import type { ProviderController } from "./controller.js";
 import type { AttachmentStore } from "./attachments.js";
 import { bytesHash, type VerifiedOperation } from "./store.js";
+import { serveHistory } from "./history-route.js";
 
 export const API_PREFIX = "/api/agent/v1";
 export const json = (response: ServerResponse, status: number, value: unknown) => { const payload = JSON.stringify(value); response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "content-length": Buffer.byteLength(payload) }); response.end(payload); };
@@ -17,6 +18,11 @@ function sameProvider(a: AgentProviderRef, b: AgentProviderRef): boolean { retur
 export function agentRoutes(controller: ProviderController, attachments: AttachmentStore) {
   return async (request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> => {
     if (!url.pathname.startsWith(API_PREFIX + "/")) return false;
+    if (url.pathname === API_PREFIX + "/history/events") {
+      const page = await serveHistory(controller, request, response, url);
+      if (page) json(response, 200, page);
+      return true;
+    }
     const route = url.pathname.slice(API_PREFIX.length) + url.search;
     if (request.method !== "GET" && request.headers["content-type"]?.split(";")[0]?.trim() !== "application/json") throw new AgentApiError("unsupported_media_type", "Send application/json.", 415);
     const body = await readCommand(request), parsed = validateAgentRequest(request.method ?? "GET", route, body);
@@ -45,7 +51,7 @@ export function agentRoutes(controller: ProviderController, attachments: Attachm
       case "sessions.read": result = (await controller.store.load(parsed.sessionId!, actor)).session; break;
       case "sessions.list": result = page(await controller.store.list(actor), parsed.query.cursor, parsed.query.limit, value => value.ref.id, "sessions"); break;
       case "runs.start": result = await controller.startRun(parsed.sessionId!, parsed.runId!, parsed.input, body, actor, () => { status = 202; }); break;
-      case "runs.read": await controller.store.pruneReplay(parsed.runId!, actor); result = await controller.snapshot(parsed.runId!, actor); break;
+      case "runs.read": await controller.store.pruneReplay(parsed.runId!, actor); result = await controller.snapshot(parsed.runId!, actor, { committedOnly: true }); break;
       case "runs.respond": result = await controller.respond(parsed.runId!, parsed.input, body, actor); break;
       case "runs.cancel": result = await controller.cancel(parsed.runId!, parsed.input, body, actor); break;
       case "runs.control": result = await controller.control(parsed.runId!, parsed.input, body, actor); break;
@@ -86,6 +92,6 @@ async function eventStream(controller: ProviderController, request: IncomingMess
   const heartbeat = setInterval(() => { void send(": keepalive\n\n").catch(() => response.end()); }, 15_000); heartbeat.unref();
   const authority = setInterval(() => { void revalidate().catch(() => response.end()); }, 30_000); authority.unref();
   const remaining = actor.expiresAt ? Math.max(0, Date.parse(actor.expiresAt) - Date.now()) : 115_000;
-  const expiry = setTimeout(() => response.end(), Math.min(115_000, Number.isFinite(remaining) ? remaining : 0)); expiry.unref();
+  const expiry = setTimeout(() => response.end("event: renew\ndata: {}\n\n"), Math.min(115_000, Number.isFinite(remaining) ? remaining : 0)); expiry.unref();
   await new Promise<void>(resolve => { const close = () => { if (closed) return; closed = true; clearInterval(heartbeat); clearInterval(authority); clearTimeout(expiry); unsubscribe(); resolve(); }; response.once("close", close); response.once("finish", close); request.once("aborted", close); });
 }

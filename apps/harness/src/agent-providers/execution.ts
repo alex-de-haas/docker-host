@@ -40,7 +40,7 @@ export type ProviderExecutionState = {
 export interface ProviderExecutionPersistence {
   save(state: ProviderExecutionState): Promise<void>;
   /** Merge run/cursor into the latest durable sidecar; never overwrite concurrently saved mutations/session. */
-  observe(item: AgentWatchItem, state: ProviderExecutionState): Promise<void>;
+  observe(item: AgentWatchItem, state: ProviderExecutionState, replayed?: boolean): Promise<void>;
 }
 
 type MutationLane = { tail: Promise<unknown>; starting: boolean; configuring: boolean; cancelling: Map<string, Promise<AgentControlReceipt>> };
@@ -208,11 +208,11 @@ export class ProviderExecution {
     return result;
   }
 
-  async read(project = true): Promise<AgentRunSnapshot> {
+  async read(project: boolean | "replay" = true): Promise<AgentRunSnapshot> {
     if (!this.state.runId) throw new Error("This conversation has no provider run.");
     const snapshot = await this.client.run(this.state.runId);
     this.runIdentity(snapshot);
-    if (project) await this.install(snapshot);
+    if (project) await this.install(snapshot, project === "replay");
     return snapshot;
   }
 
@@ -245,18 +245,18 @@ export class ProviderExecution {
       await this.save(next);
     });
   }
-  private async install(snapshot: AgentRunSnapshot): Promise<void> {
+  private async install(snapshot: AgentRunSnapshot, replayed = false): Promise<void> {
     this.runIdentity(snapshot);
-    await this.project({ kind: "snapshot", snapshot }, snapshot);
+    await this.project({ kind: "snapshot", snapshot }, snapshot, replayed);
   }
-  private project(item: AgentWatchItem, snapshot?: AgentRunSnapshot): Promise<void> {
+  private project(item: AgentWatchItem, snapshot?: AgentRunSnapshot, replayed = false): Promise<void> {
     const operation = this.projectionTail.catch(() => {}).then(async () => {
       const runId = item.kind === "snapshot" ? item.snapshot.ref.id : item.event.runId;
       if (this.state.runId !== runId) return;
       const cursor = item.kind === "snapshot" ? item.snapshot.cursor : item.cursor;
       const next = { ...structuredClone(this.state), ...(snapshot ? { run: snapshot } : {}), cursor };
       // Manager projection may wait on its own control lane. Never hold the mutation lane here.
-      await this.persistence.observe(item, next);
+      await this.persistence.observe(item, next, replayed);
       await this.change(async () => {
         if (this.state.runId !== runId) return;
         // A control caller can project a newer stopped snapshot while this observer
@@ -272,7 +272,8 @@ export class ProviderExecution {
     return operation;
   }
 
-  async observe(signal?: AbortSignal, onContinuation?: (continuation: ProviderContinuation) => Promise<void>): Promise<void> {
+  async observe(signal?: AbortSignal, onContinuation?: (continuation: ProviderContinuation) => Promise<void>,
+    recovery?: { observed(): Promise<void>; readOnlySnapshots: boolean }): Promise<void> {
     if (!this.state.runId) throw new Error("This conversation has no provider run.");
     this.observer?.abort();
     const controller = this.observer = new AbortController();
@@ -284,31 +285,20 @@ export class ProviderExecution {
         try {
           for await (const item of this.client.watchRun(observedRunId, { signal: combined, cursor: this.state.cursor })) {
             if (combined.aborted) return;
-            if (item.kind === "snapshot") await this.install(item.snapshot);
-            else {
+            if (item.kind === "snapshot") {
+              await this.install(item.snapshot, recovery?.readOnlySnapshots);
+              // Projection may detach this handle on a confirmed exit. The committed snapshot
+              // still restores contact for that run.
+              await recovery?.observed();
+            } else {
               const snapshot = item.event.type === "run.updated" ? item.event.data.snapshot as AgentRunSnapshot : undefined;
               if (snapshot) this.runIdentity(snapshot);
               await this.project(item, snapshot);
             }
             if (combined.aborted) return;
-            if (item.kind === "event" && item.event.type === "control.updated" && item.event.data.receipt) {
-              const receipt = item.event.data.receipt as AgentControlReceipt;
-              if (receipt.run.id !== item.event.runId || receipt.generation && receipt.generation !== item.event.generation)
-                throw new AgentApiError("provider_identity_changed", "The observed control belongs to another execution.", 409);
-              await this.retainControl(receipt);
-              const continuation = this.state.continuations?.[this.continuationKey(receipt.run.id, receipt.requestId)];
-              if (continuation?.state === "awaiting_authorization") await onContinuation?.(continuation);
-            }
-            const snapshot = item.kind === "snapshot" ? item.snapshot : item.event.type === "run.updated" ? item.event.data.snapshot as AgentRunSnapshot : undefined;
-            for (const pending of snapshot?.pendingContinuations ?? []) {
-              if (pending.state !== "awaiting_authorization") continue;
-              const receipt = await this.client.control(snapshot!.ref.id, pending.requestId);
-              if (receipt.requestId !== pending.requestId || receipt.run.id !== snapshot!.ref.id
-                || receipt.continuation?.run.id !== pending.run.id) throw new AgentApiError("provider_identity_changed", "The provider changed a reserved continuation identity.", 409);
-              await this.retainControl(receipt);
-              const continuation = this.state.continuations?.[this.continuationKey(receipt.run.id, receipt.requestId)];
-              if (continuation?.state === "awaiting_authorization") await onContinuation?.(continuation);
-            }
+            // A reconnect reads existing facts. Only a live receipt can advance an authorized
+            // continuation after a read-only attachment.
+            if (item.kind !== "snapshot" || !recovery?.readOnlySnapshots) await this.observeControls(item, onContinuation);
           }
           return;
         } catch (error) {
@@ -322,6 +312,27 @@ export class ProviderExecution {
       if (controller.signal.aborted && this.observer !== controller) return;
       throw error;
     } finally { if (this.observer === controller) this.observer = null; }
+  }
+
+  async observeControls(item: AgentWatchItem, onContinuation?: (continuation: ProviderContinuation) => Promise<void>): Promise<void> {
+    if (item.kind === "event" && item.event.type === "control.updated" && item.event.data.receipt) {
+      const receipt = item.event.data.receipt as AgentControlReceipt;
+      if (receipt.run.id !== item.event.runId || receipt.generation && receipt.generation !== item.event.generation)
+        throw new AgentApiError("provider_identity_changed", "The observed control belongs to another execution.", 409);
+      await this.retainControl(receipt);
+      const continuation = this.state.continuations?.[this.continuationKey(receipt.run.id, receipt.requestId)];
+      if (continuation?.state === "awaiting_authorization") await onContinuation?.(continuation);
+    }
+    const snapshot = item.kind === "snapshot" ? item.snapshot : item.event.type === "run.updated" ? item.event.data.snapshot as AgentRunSnapshot : undefined;
+    for (const pending of snapshot?.pendingContinuations ?? []) {
+      if (pending.state !== "awaiting_authorization") continue;
+      const receipt = await this.client.control(snapshot!.ref.id, pending.requestId);
+      if (receipt.requestId !== pending.requestId || receipt.run.id !== snapshot!.ref.id
+        || receipt.continuation?.run.id !== pending.run.id) throw new AgentApiError("provider_identity_changed", "The provider changed a reserved continuation identity.", 409);
+      await this.retainControl(receipt);
+      const continuation = this.state.continuations?.[this.continuationKey(receipt.run.id, receipt.requestId)];
+      if (continuation?.state === "awaiting_authorization") await onContinuation?.(continuation);
+    }
   }
 
   private continuationKey(sourceRunId: string, requestId: string): string { return JSON.stringify([sourceRunId, requestId]); }
@@ -473,8 +484,9 @@ export class ProviderExecution {
   detach(): void { this.observer?.abort(); this.observer = null; }
 }
 
-function retryableObservation(error: unknown): boolean {
-  if (error instanceof AgentApiError) return error.retryable;
+export function retryableObservation(error: unknown): boolean {
+  if (error instanceof AgentApiError) return error.retryable || [429, 503, 504].includes(error.status);
+  if (error instanceof Error && error.name === "TimeoutError") return true;
   const code = error && typeof error === "object" && "code" in error ? String(error.code) : undefined;
   // A sealed/corrupt source and a malformed projection require reconciliation, not another append.
   if (code?.startsWith("session_storage_") || code === "resync_required") return false;

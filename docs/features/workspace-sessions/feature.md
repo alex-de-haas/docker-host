@@ -1,6 +1,6 @@
 ---
 created: 2026-10-25
-updated: 2026-11-06
+updated: 2026-11-19
 summary: Core workspaces support concurrent private sessions, permission-based source access, attributable activity and independent conversation lifetimes.
 components: [apps/core, apps/harness]
 ---
@@ -28,6 +28,29 @@ Session association selects working context; it is not a resource permission.
 The session API remains `/api/internal/apps/{appId}/sessions/{sessionId}/workspaces`. Companion
 `workspace-association` routes read the association and attach/detach a logical workspace.
 `workspace-inspection/{workspaceId}/participants` reads activity and association metadata.
+
+## Agent-created workspaces
+
+A consumer can declare its originating conversation ID, title and app-relative viewer path when it
+authorizes a native run. Core retains this binding with the admitted run. A provider that supplies
+its run generation at admission cannot replace it on a repeated admission. A native MCP
+`prepare_workspace` call carries the admission that authorized it, including calls from native
+children using that admission. Core records the preparation request, run, known generation and
+worktree in workspace participation. The source and lease receipts retain the native actor.
+Additional repositories prepared by the same verified conversation share its logical workspace.
+
+Harness presents the accessible conversation and separate native execution activity. A viewer can
+open their own originating chat. A native execution row carries its current or last-known state.
+Workspace activity counts group the chat with its identified native execution.
+
+The owner can choose **Recover originating chat** in the workspace attachment dialog to restore an
+existing association from matching evidence. Harness derives the provider installation, session and
+observed runs from the selected chat's retained records. Core checks the current installation and
+source permissions, user, preparation receipt, run admission and participation revision. For a legacy
+admission without a conversation binding, recovery needs a matching run and generation retained by
+Harness or an original session workflow binding. Where Core retained a generation, both observations
+must agree. Missing or conflicting evidence leaves the association unresolved. An explicit detachment
+survives recovery. The original chat keeps its transcript, provider context, approvals and worktrees.
 
 ## Source Access And Privacy
 
@@ -143,6 +166,9 @@ fresh consumer checks.
 
 ## Testing Expectations
 
+- Verify native preparation across two repositories and two admitted sessions of one chat. Exercise
+  legacy repair using the authenticated owner route, repeated requests, different users, detached
+  bindings and independent verification of the provider generation and preparation receipt.
 - Verify highlighted sidebar selection, retained drafts, no top session tabs, and narrow-screen access.
   Confirm Delete targets the chosen own chat, preserves source, and retains errors in its dialog.
 - Verify direct creation from the plus and attachment from its adjacent icon, excluding bound/active chats;

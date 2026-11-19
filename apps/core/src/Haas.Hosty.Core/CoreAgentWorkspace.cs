@@ -72,8 +72,9 @@ internal sealed partial class CoreAgentExecution
         {
             if (participation.Sessions.Any(s => s.Session.SameIdentity(actor) && s.DetachedAt is not null))
                 throw new CoreProviderException("session_detached", "Explicit detachment cannot be undone by execution recovery.", 409);
+            var native = record.CallerAppId != provider.Id || record.Request.Conversation?.SessionId != actor.SessionId;
             await workspaces.ChangeSessionAsync(tree.WorkspaceId, actor, "attach",
-                new(value.RequestId!, participation.Revision, value.Title ?? "Agent session", value.ViewerPath ?? "/"), ct);
+                new(value.RequestId!, participation.Revision, value.Title ?? "Agent session", value.ViewerPath ?? "/"), ct, nativeExecution: native);
         }
         // One primary conversation association is retained; additional reviewed repository
         // contexts still have exact execution-owned leases without changing that association.
