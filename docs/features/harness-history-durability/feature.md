@@ -22,7 +22,9 @@ The subscription expects a heartbeat at least once a minute, even during long
 model operations. On loss of contact the chat shows its last observed state and offers Refresh.
 Stable event identities allow redelivery after a crash between these writes.
 A browser reads the local transcript through the conversation owner's normal access checks.
-Providers with only per-run observation use the owner's existing authority. A transient loss of
+Providers with only per-run observation use the owner's existing authority. When a provider
+rollback explicitly removes installation history, attached runs switch to that same per-run
+read path with their original actor. A transient loss of
 contact triggers a read-only retry against the same native run. If authorization has expired,
 reopening or refreshing the chat can supply fresh credentials. While contact is lost, the chat
 shows when the run was last observed. Missing legacy evidence stays visible as a coverage gap. The

@@ -42,7 +42,8 @@ export class ProviderHistoryFeeds {
   private readonly transport = new Map<string, HistoryContactIssue | null>();
   constructor(private readonly store: SessionStore, private readonly backend: CoreAgentBackend,
     importItem: (id: string, provider: AgentProviderRef, fact: AgentHistoryObservation & { replayed?: boolean }) => Promise<void>,
-    private readonly contact: (id: string, issue: HistoryContactIssue | null) => Promise<void>) {
+    private readonly contact: (id: string, issue: HistoryContactIssue | null) => Promise<void>,
+    private readonly unsupported: (id: string) => void) {
     this.inbox = new ProviderHistoryInbox(store, this.shutdown.signal, importItem, async (id, failed) => {
       for (const [key, sessions] of this.bindings) for (const chats of sessions.values()) if (chats.has(id)) {
         await contact(id, failed ? "invalid" : this.transport.get(key) ?? null);
@@ -86,7 +87,8 @@ export class ProviderHistoryFeeds {
   start(provider: AgentProviderRef, probeUpgrade = false): Promise<boolean> {
     const key = providerKey(provider), existing = this.feeds.get(key);
     if (this.shutdown.signal.aborted || !this.bindings.has(key)) return Promise.resolve(false);
-    if (existing && !existing.stop.signal.aborted && !(probeUpgrade && existing.supported === false)) return existing.ready;
+    if (existing && !existing.stop.signal.aborted && !(probeUpgrade && existing.supported === false))
+      return existing.supported === false ? Promise.resolve(false) : existing.ready;
     let decide!: (supported: boolean) => void, acknowledge!: (handled: boolean) => void;
     const ready = new Promise<boolean>(resolve => { decide = resolve; });
     const attempted = new Promise<boolean>(resolve => { acknowledge = resolve; });
@@ -154,8 +156,15 @@ export class ProviderHistoryFeeds {
         if (signal.aborted) break;
         if (retry.signal.aborted) continue;
         failed = true;
-        if (!knownSupported && error instanceof AgentApiError && error.code === "history_unsupported") {
-          this.transport.delete(key); decide(false); return;
+        if (error instanceof AgentApiError && error.code === "history_unsupported") {
+          const wasFollowing = feed.supported === true;
+          this.transport.delete(key);
+          decide(false);
+          if (wasFollowing) {
+            for (const chats of this.bindings.get(key)?.values() ?? [])
+              for (const id of chats.keys()) this.unsupported(id);
+          }
+          return;
         }
         if (error instanceof AgentApiError && error.status === 410 && cursor && !resetCursor) {
           resetCursor = true; continue;

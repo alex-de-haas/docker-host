@@ -358,7 +358,10 @@ export class SessionManager {
   ) {
     if (agentBackend) this.historyFeeds = new ProviderHistoryFeeds(store, agentBackend,
       (id, provider, fact) => this.serialize(id, () => this.importInstallationObservation(id, provider, fact)),
-      (id, issue) => this.updateProviderContact(id, issue));
+      (id, issue) => this.updateProviderContact(id, issue), id => {
+        const handle = this.live.get(id)?.run;
+        if (handle instanceof ProviderHarnessRun) handle.onInstallationHistoryUnsupported();
+      });
     this.messageQueues = new MessageQueue(store);
     this.suggestionHistory = new SuggestionHistory(store, (id, payload) => this.append(id, payload));
     this.observations = new AgentObservations(store);

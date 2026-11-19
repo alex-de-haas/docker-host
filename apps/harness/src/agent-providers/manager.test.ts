@@ -189,6 +189,33 @@ describe("SessionManager public provider integration", () => {
     await vi.waitFor(async () => expect((await f.store.readEvents(third.id)).filter(event => event.text === "New binding")).toHaveLength(1));
   });
 
+  it("switches a connected run and a later chat to actor-authorized observation after a provider downgrade", async () => {
+    const f = await publicProviderFixture(true); fixtures.push(f);
+    const first = await chat(f), firstRun = f.starts[0]!.runId;
+    await vi.waitFor(() => expect(f.activeHistoryStreams()).toBe(1));
+    const checkpoint = path.join(f.store.dataDir, "provider-history");
+    expect((await readdir(checkpoint)).filter(file => file.endsWith(".json"))).toHaveLength(1);
+    expect(f.requests.filter(request => request.path.includes("/runs/" + firstRun + "/events"))).toHaveLength(0);
+    const before = f.requests.length;
+    f.behavior.legacyHistoryRoute = true; f.disconnectHistory();
+    await waitForStream(f, firstRun);
+    f.complete(firstRun, "Delivered after downgrade");
+    await vi.waitFor(async () => expect((await f.store.readRecord(first.id))?.status).toBe("idle"));
+    const second = await chat(f), secondRun = f.starts[1]!.runId;
+    await waitForStream(f, secondRun);
+    for (const runId of [firstRun, secondRun]) {
+      const requests = f.requests.slice(before).filter(r => r.path.endsWith("/agent/authorize") && JSON.parse(r.body).runId === runId
+        && JSON.parse(r.body).operation === "runs.events");
+      expect(requests.length).toBeGreaterThan(0);
+      expect(requests.every(r => r.userToken === f.credential)).toBe(true);
+    }
+    f.complete(secondRun, "Legacy result");
+    await vi.waitFor(async () => expect((await f.store.readRecord(second.id))?.status).toBe("idle"));
+    expect((await f.store.readEvents(first.id)).filter(event => event.text === "Delivered after downgrade")).toHaveLength(1);
+    expect(f.controls).toHaveLength(0);
+    expect(f.starts).toHaveLength(2);
+  });
+
   it("retains the last observed run on history denial, refreshes read-only, and routes repaired facts to an old turn", async () => {
     const f = await publicProviderFixture(true); fixtures.push(f);
     const record = await chat(f), priorId = f.starts[0]!.runId;

@@ -28,6 +28,7 @@ export class ProviderHarnessRun implements HarnessRun {
   private busy = false;
   private detached = false;
   private observationWaiting = false;
+  private installationObservedRun?: string;
   private observationFailures = 0;
   private retryTimer?: NodeJS.Timeout;
   private readonly controls = new Map<string, string>();
@@ -104,11 +105,14 @@ export class ProviderHarnessRun implements HarnessRun {
 
   waitForAdmission(): Promise<void> { return this.admission; }
 
-  private async observe(readOnlySnapshots = false): Promise<void> {
+  private async observe(readOnlySnapshots = false, useInstallationHistory = true): Promise<void> {
     const context = this.context!, runId = context.state.runId!;
     try {
       const execution = this.execution!;
-      if (await context.installationHistory?.() || this.detached || this.execution !== execution || context.state.runId !== runId) return;
+      const shared = useInstallationHistory && await context.installationHistory?.();
+      if (this.detached || this.execution !== execution || context.state.runId !== runId) return;
+      if (shared) { this.installationObservedRun = runId; return; }
+      this.installationObservedRun = undefined;
       await execution.observe(undefined, continuation => this.continueReserved(continuation), {
         observed: async () => {
           this.observationFailures = 0;
@@ -138,6 +142,14 @@ export class ProviderHarnessRun implements HarnessRun {
     this.observationWaiting = false;
     clearTimeout(this.retryTimer);
     this.observation = this.observe(true).catch(async error => { if (!this.detached) await this.context?.unavailable(error); });
+  }
+
+  /** A provider downgrade ends this subscription. The same live actor can still read this run. */
+  onInstallationHistoryUnsupported(): void {
+    const state = this.context?.state;
+    if (this.detached || this.stopRequested || !state?.runId || this.installationObservedRun !== state.runId || state.run?.stopConfirmed) return;
+    this.installationObservedRun = undefined;
+    this.observation = this.observe(true, false).catch(async error => { if (!this.detached) await this.context?.unavailable(error); });
   }
 
   /** Receipts may resume an existing operator-authorized control. The feed cannot admit one. */
