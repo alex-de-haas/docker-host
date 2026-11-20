@@ -18,12 +18,12 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0).reverse()) await fixture.close();
   vi.restoreAllMocks(); vi.unstubAllEnvs();
 });
-async function fixture(options: { enabled?: boolean; offered?: boolean; available?: boolean; permission?: boolean; subagents?: boolean; legacyWorkflowCore?: boolean } = {}) {
+async function fixture(options: { enabled?: boolean; offered?: boolean; available?: boolean; permission?: boolean; subagents?: boolean; legacyWorkflowCore?: boolean; installationHistory?: boolean } = {}) {
   vi.stubEnv("HOSTY_APP_ID", consumer.appId); vi.stubEnv("HOSTY_APP_INSTALLATION_ID", consumer.installationId);
   vi.stubEnv("HOSTY_CORE_ORIGIN", undefined); vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "fixture-service");
   vi.spyOn(ProviderClient.prototype, "permissions").mockResolvedValue({ required: [], optional: ["providers.task-executor"],
     granted: options.permission === false ? [] : ["providers.task-executor"] });
-  const f = await publicProviderFixture(); fixtures.push(f);
+  const f = await publicProviderFixture(options.installationHistory); fixtures.push(f);
   f.behavior.legacyWorkflowCore = options.legacyWorkflowCore;
   const settings = new SettingsStore(path.join(f.root, "workflow-settings"));
   await settings.update({ mcpProviders: { [CORE_PROVIDER_ID]: options.enabled !== false } });
@@ -442,6 +442,40 @@ it("uses the persisted task provider source when it differs from this consumer i
   await expect(manager.providerWorkflow(record.id, input, invocation, async () => invocation)).rejects.toMatchObject({ code: "workflow_source_mismatch" });
   expect(taskAction).not.toHaveBeenCalled();
 });
+
+it("preserves the new admission and its workflow while installation history delivers the earlier turn's terminal", async () => {
+  const { f, manager, store, record, state, input, invocation } = await admitted({ subagents: true, installationHistory: true });
+  const first = state.runId!;
+  f.complete(first, "Finished original turn");
+  await vi.waitFor(async () => expect((await store.readRecord(record.id))!.status).toBe("idle"), { timeout: 5000 });
+  const initial = f.requests.length;
+  let releaseLookup!: () => void, releaseStart!: () => void;
+  f.behavior.sessionLookupGate = new Promise(resolve => { releaseLookup = resolve; });
+  f.behavior.startGate = new Promise(resolve => { releaseStart = resolve; });
+  const posted = manager.postMessage(record.id, "Continue in this chat", f.credential, [], { actorUserId: f.owner, clientRequestId: randomUUID() });
+  try {
+    await vi.waitFor(() => expect(f.requests.slice(initial).some(req => req.method === "GET"
+      && req.path.endsWith("/sessions/" + state.sessionId))).toBe(true), { timeout: 5000 });
+    const prior = f.snapshot(first);
+    const messages = [...prior.messages!, { id: "late", role: "assistant" as const, state: "complete" as const, text: "Late original detail" }];
+    f.update(first, { messages });
+    await vi.waitFor(async () => expect((await store.readEvents(record.id)).some(event => event.text === "Late original detail")).toBe(true), { timeout: 5000 });
+    expect((await store.readRecord(record.id))!.status).toBe("running");
+    releaseLookup();
+    await vi.waitFor(() => expect(f.authorizations.filter(req => req.operation === "runs.start")).toHaveLength(2), { timeout: 5000 });
+    const agent = { ...input.agent, runId: (await store.readProviderExecution(record.id))!.runId! };
+    const actor = { ...invocation, kind: "agent-sessions" as const, agentExecution: agent };
+    expect(agent.runId).not.toBe(first);
+    // A chat persisted by an older Harness can still show the previous turn's idle status.
+    const beforeProjection = (await store.readRecord(record.id))!;
+    expect(beforeProjection.providerObservedRunId).toBe(first);
+    await store.saveRecord({ ...beforeProjection, status: "idle" });
+    expect(await manager.providerWorkflow(record.id, { ...input, action: "subagent-profiles", agent }, actor, async () => actor)).toMatchObject({ profiles: [{ name: "Reviewer" }] });
+    await expect(manager.providerWorkflow(record.id, input, invocation, async () => invocation)).rejects.toMatchObject({ code: "workflow_binding_mismatch" });
+  } finally { releaseLookup(); releaseStart(); await posted; }
+  f.complete(f.starts[1]!.runId, "Finished resumed turn");
+  await vi.waitFor(async () => expect((await store.readRecord(record.id))!.status).toBe("idle"), { timeout: 5000 });
+}, 20000);
 
 it("rejects a new workflow dispatch after the admitted public run has authoritatively stopped", async () => {
   const { f, manager, record, state, input, invocation, taskAction } = await admitted();

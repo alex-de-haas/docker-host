@@ -47,7 +47,7 @@ export async function publicProviderFixture(installationHistory = false) {
   const controls: Array<{ runId: string; input: Record<string, unknown>; path: string }> = [];
   const managers: SessionManager[] = [];
   const behavior: { startGate?: Promise<void>; cancel: "confirmed" | "unavailable"; reconcile: "confirmed" | "unavailable";
-    failSessionLookup?: boolean; failHistoryTokenOnce?: boolean; rejectHistoryStream?: boolean; legacyWorkflowCore?: boolean;
+    sessionLookupGate?: Promise<void>; failSessionLookup?: boolean; failHistoryTokenOnce?: boolean; rejectHistoryStream?: boolean; legacyWorkflowCore?: boolean;
     legacyHistoryRoute?: boolean; capabilitiesTimeoutAfterStart?: boolean; snapshotIssue?: "denied" | "timeout";
     loseNextStartResponse?: boolean; keepReservationAfterCancel?: boolean; deferPredictions?: boolean; beforeCancel?: (runId: string) => void;
     connectionRevision: string } = { cancel: "confirmed", reconcile: "confirmed", connectionRevision: "1" };
@@ -134,6 +134,7 @@ export async function publicProviderFixture(installationHistory = false) {
     if (route === "/connections/account/models") return json({ revision: "1", models: [{ id: "model", reasoningEfforts: [null] }], defaultModel: "model" });
     if (parts[0] === "sessions" && parts.length === 2) {
       const id = parts[1]!;
+      if (method === "GET" && behavior.sessionLookupGate) await behavior.sessionLookupGate;
       if (method === "GET" && behavior.failSessionLookup) return error("provider_unavailable", "Session lookup temporarily unavailable.", 503);
       if (method === "PUT") {
         const configuration = JSON.parse(body).configuration as AgentConfiguration;

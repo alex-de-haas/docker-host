@@ -709,7 +709,14 @@ export class SessionManager {
           throw new AppContextError(403, "workflow_action_unavailable", "This subagent action is outside the admitted conversation workflow.");
       } else if (!(taskActions as readonly string[]).includes(input.action) || input.action.startsWith("task-legacy-"))
         throw new AppContextError(403, "workflow_action_unavailable", "This action is outside the admitted task workflow.");
-      if (!recovery?.retained && (state.run?.stopConfirmed || !["running", "awaiting_approval", "awaiting_question", "suggesting"].includes(record.status)))
+      // The provider can call back before its start response or first state update. An idle
+      // projection for the previous turn does not override the exact signed admission.
+      const beforeFirstProjection = record.status === "idle" && record.providerObservedRunId !== agent.runId && !state.cancellations?.[agent.runId]
+        && (state.run?.ref.id === agent.runId && state.run.state === "running" && state.run.freshness === "current"
+          || Object.values(state.mutations ?? {}).some(request => request.operation === "runs.start" && request.runId === agent.runId));
+      if (!recovery?.retained && (record.sourceAdmission?.previousProviderRunId === agent.runId || record.providerStopProof?.runId === agent.runId
+        || state.run?.ref.id === agent.runId && state.run.stopConfirmed
+        || !beforeFirstProjection && !["running", "awaiting_approval", "awaiting_question", "suggesting"].includes(record.status)))
         throw new AppContextError(409, "workflow_run_inactive", "This provider execution is no longer active.");
     };
     await guard();
@@ -832,8 +839,8 @@ export class SessionManager {
     if (this.stopping) throw new Error("Installation history is stopping.");
     if (fact.item.kind === "event" && fact.item.event.type === "message.delta") {
       const live = this.live.get(id), state = this.providerStates.get(id);
-      if (live?.record.createdBy === fact.userId && state?.sessionId === fact.sessionId && state.runId === fact.runId
-        && state.run && state.run.generation === fact.generation && !state.run.stopConfirmed) {
+      if (live?.record.createdBy === fact.userId && live.record.sourceAdmission?.previousProviderRunId !== fact.runId
+        && state?.sessionId === fact.sessionId && state.runId === fact.runId && state.run && state.run.generation === fact.generation && !state.run.stopConfirmed) {
         const event = fact.item.event;
         this.fanOut(live, { seq: live.record.lastEventSeq, ts: event.occurredAt, type: "assistant_delta",
           text: String(event.data.text ?? ""), providerSource: providerTranscriptSource(state.run, event.source) });
@@ -859,6 +866,8 @@ export class SessionManager {
       fact = { ...fact, item: { ...fact.item, event: { ...event, data: { ...event.data, name } } } };
     }
     const { item } = fact;
+    // A new admission owns the conversation before the provider stages its new run UUID.
+    const currentRun = () => state.runId === fact.runId && session.record.sourceAdmission?.previousProviderRunId !== fact.runId;
     if (fact.sourceHistoryIncomplete) {
       const key = fact.runId + ":source-history-incomplete";
       const seen = this.providerProjectedIds.get(id) ?? projectedIds(await this.store.readEvents(id));
@@ -866,7 +875,7 @@ export class SessionManager {
       if (!seen.has(key)) {
         await this.append(id, { type: "notice", message: "Some earlier events are unavailable in the provider's retained history.",
           providerEventId: key, providerGeneration: fact.generation,
-          providerSource: { provider, runId: fact.runId, generation: fact.generation, agentId: "root" }, providerHistoryEarlier: state.runId !== fact.runId });
+          providerSource: { provider, runId: fact.runId, generation: fact.generation, agentId: "root" }, providerHistoryEarlier: !currentRun() });
         seen.add(key);
       }
     }
@@ -875,7 +884,7 @@ export class SessionManager {
     const sourceSequence = BigInt(item.kind === "event" ? item.event.sequence : item.snapshot.lastSequence);
     // Latest state may already include this fact. Its original transcript slot still needs filling.
     const renderFact = async () => {
-      if (position) await this.importHistoricalTranscript(session, projectHistoryFact(provider, fact), item, state.runId !== fact.runId, position);
+      if (position) await this.importHistoricalTranscript(session, projectHistoryFact(provider, fact), item, !currentRun(), position);
     };
     if (position || stateOnly) {
       const active = state.run?.ref.id === fact.runId && state.run.generation === fact.generation ? state.run : undefined;
@@ -889,7 +898,7 @@ export class SessionManager {
       const reconciled = reconcileHistoryProjection(previous, priorClock, item, stateOnly);
       if (reconciled) {
         const { projection, clock } = reconciled;
-        if (state.runId === fact.runId && (!state.run || state.run.generation === fact.generation)) {
+        if (currentRun() && (!state.run || state.run.generation === fact.generation)) {
           const advances = !held || sourceSequence > BigInt(held.lastSequence);
           const applied: AgentWatchItem = advances && item.kind === "event" ? item : { kind: "snapshot", snapshot: projection.snapshot };
           const handle = session.run;
@@ -897,7 +906,7 @@ export class SessionManager {
           await this.projectProviderItem(session, applied, state, true, projection, fact.replayed || !advances, partial, clock);
           if (!fact.replayed && advances && handle instanceof ProviderHarnessRun) handle.onHistoryObserved(item);
         }
-        if (state.runId !== fact.runId && session.record.parentSessionId && session.record.subagentAssignmentRunId === fact.runId && projection.snapshot.stopConfirmed)
+        if (!currentRun() && session.record.parentSessionId && session.record.subagentAssignmentRunId === fact.runId && projection.snapshot.stopConfirmed)
           this.trackSubagents(this.subagents.observe(session.record.parentSessionId, id, projection.snapshot, stateOnly || clock.details !== clock.lifecycle));
         await renderFact();
         return this.store.saveHistoryRun(id, fact.principalId, projection.snapshot, clock);
@@ -912,7 +921,7 @@ export class SessionManager {
     if (!projection) {
       throw new Error("The provider did not supply the first snapshot for this run's history.");
     }
-    const current = state.runId === fact.runId && (!state.run || state.run.generation === fact.generation
+    const current = currentRun() && (!state.run || state.run.generation === fact.generation
       && sourceSequence >= BigInt(state.run.lastSequence) && BigInt(projection.snapshot.revision) >= BigInt(state.run.revision));
     if (current) {
       const handle = session.run;
@@ -921,7 +930,7 @@ export class SessionManager {
     } else {
       // Older turns may gain evidence after a newer turn starts. Preserve the origin in the
       // journal and leave the current turn's controls, status, usage and pending questions alone.
-      await this.importHistoricalTranscript(session, projection, item, state.runId !== fact.runId);
+      await this.importHistoricalTranscript(session, projection, item, !currentRun());
       if (session.record.parentSessionId && session.record.subagentAssignmentRunId === fact.runId && projection.snapshot.stopConfirmed)
         this.trackSubagents(this.subagents.observe(session.record.parentSessionId, id, projection.snapshot, false));
     }
@@ -1015,7 +1024,8 @@ export class SessionManager {
   private receiveProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState, replayed = false): Promise<void> {
     const handled = this.serialize(session.record.id, async () => {
       // A slow read may finish behind admission of the next turn on this chat's lane.
-      if (this.providerStates.get(session.record.id)?.runId !== value.runId) return;
+      const runId = item.kind === "snapshot" ? item.snapshot.ref.id : item.event.runId;
+      if (runId !== value.runId || this.providerStates.get(session.record.id)?.runId !== runId) return;
       await this.projectProviderItem(session, item, value, true, undefined, replayed);
     });
     this.inFlightEvents.add(handled);
@@ -1040,6 +1050,8 @@ export class SessionManager {
       const projection = history ?? (previous ? reduceAgentRunProjection(previous, item)
         : item.kind === "snapshot" ? createAgentRunProjection(item.snapshot) : undefined);
       if (!projection) throw new AppContextError(409, "resync_required", "Read the provider run snapshot before following its events.");
+      if (projectStatus && session.record.sourceAdmission?.previousProviderRunId === projection.snapshot.ref.id)
+        return this.importHistoricalTranscript(session, projection, item, true);
       const retainedRun = session.record.providerExecution?.run;
       const next = { ...value, run: projection.snapshot, cursor: projection.cursor, historyClock };
       session.record.providerExecution = next;
@@ -3812,7 +3824,8 @@ export class SessionManager {
           session.record.providerPlatformContext = await platformSkillContext();
         const admissionRunId = randomUUID();
         session.record.sourceAdmission = { ...(clientRequestId ? { clientRequestId } : {}), runId: admissionRunId, state: "preparing",
-          ...(this.connections?.remote && context.subagentRunId ? { subagentRunId: context.subagentRunId } : {}) };
+          ...(this.connections?.remote && context.subagentRunId ? { subagentRunId: context.subagentRunId } : {}),
+          ...(this.connections?.remote && session.record.providerExecution?.runId ? { previousProviderRunId: session.record.providerExecution.runId } : {}) };
         await this.store.saveRecord(session.record);
         if (clientRequestId) {
           // This boundary precedes transcript publication and provider start/send. A crash here is
