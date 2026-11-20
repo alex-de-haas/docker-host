@@ -65,7 +65,7 @@ internal sealed partial class PublicationService
             catch (Exception ex) when (ex is IOException or JsonException) { /* A verified publication may still have a newer retained observation. */ }
             if (!MatchesExternalSnapshot(snapshot, tree, binding.Repository, binding.Connection.Id, binding.TargetBranch)) snapshot = null;
             var record = await ReadInspectionRecordAsync(tree.Id, ct);
-            if (record is null || record.WorkspaceId != tree.Id || !record.Owner.SameIdentity(tree.Owner) ||
+            if (record is null || !await CanInspectRecordAsync(record, tree, userId, ct) ||
                 record.ConnectionId != binding.Connection.Id || record.Provider != binding.Source.Descriptor.Id ||
                 record.Repository != binding.Repository || record.HeadRepository != binding.Repository || record.TargetBranch != binding.TargetBranch)
                 record = null;
@@ -181,7 +181,7 @@ internal sealed partial class PublicationService
             if (!owner.IsExternal)
             {
                 var record = await Read(tree.Id, ct);
-                if (record is null) continue;
+                if (record is null || record.WorkspaceId != tree.Id || record.Owner.UserId != owner.UserId) continue;
                 record = await ObserveAsync(tree.Id, null, ct);
                 if (record.Observation is { State: "merged", Complete: true, Head: { } head } && head == record.PublishedHead)
                     result[tree.Id] = head;

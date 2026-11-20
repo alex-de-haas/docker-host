@@ -16,9 +16,13 @@ internal sealed partial class DevelopmentWorkspaceService
     private async Task<AppRecord> RequireLocalRemoteApp(DevelopmentWorkspace w, string appId, CancellationToken ct, bool validateGrant = true, bool localOnly = false)
     {
         var app = await apps.GetAppAsync(appId, ct);
-        if (app is null || !w.Apps.Any(a => a.AppId == appId && a.Installation == app.InstalledAt) ||
-            app.SourceState is not { Type: "local-git" } source)
+        if (app?.SourceState is not { } source || !w.Apps.Any(a => a.AppId == appId && a.Installation == app.InstalledAt))
             throw Error("source_changed", "The local app source binding changed. Retained source and worktree are unchanged.");
+        if (source.Type == "git" && source.Repository is { } repository &&
+            LogicalRepositoryIdentity(repository) == LogicalRepositoryIdentity(w.Repository))
+            throw Error("local_remote_not_applicable", "This worktree already uses the app's registered Git repository. For pull requests, use pr_connections and pr_list.");
+        if (source.Type != "local-git")
+            throw Error("source_changed", "The registered source no longer matches this worktree's local Git binding.");
         var canonical = paths.ResolveManagedCheckoutPath(appId);
         var sourceApp = app;
         if (source.LocalOverridePath != canonical)

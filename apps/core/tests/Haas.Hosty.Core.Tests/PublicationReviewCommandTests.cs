@@ -5,6 +5,43 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     [Fact]
+    public async Task PublicationReview_SameProvidersPublishingSessionCanSupplyTheOwnersRegisteredPullRequest()
+    {
+        var owner = new WorkspaceOwner("independent.agent", DateTimeOffset.UtcNow, "admin", "preparing-session");
+        var f = await ExternalPublicationFixture(owner);
+        var template = (await f.F.Apps.GetAppAsync(SourceTestApp))!;
+        var provider = template with { Id = owner.AppId, InstalledAt = owner.Installation, GrantedCorePermissions = [] };
+        var consumer = template with { Id = "independent.consumer",
+            GrantedCorePermissions = [CoreAppPermissions.AgentProviders, CoreAppPermissions.Sources, CoreAppPermissions.PublicationWrite] };
+        await f.F.Apps.UpsertAppAsync(provider);
+        await f.F.Apps.UpsertAppAsync(consumer);
+        var publisher = owner with { SessionId = "publishing-session" };
+        var source = new CoreAppPermissionSource(consumer.Id, consumer.InstalledAt);
+        await f.Service.CommandAsync(f.W.Id, publisher, "configure",
+            new(Guid.NewGuid().ToString(), ConnectionId: "connection"), default, canonical: true, permissionSource: source);
+        var published = await f.Service.CommandAsync(f.W.Id, publisher, "publish",
+            new(Guid.NewGuid().ToString(), f.Provider.Head, Title: "Contribution"), default, canonical: true, permissionSource: source);
+
+        var command = new PublicationReviewCommand(Guid.NewGuid().ToString(), published.Url!, f.Provider.Head, "thread",
+            ConnectionId: "connection", Body: "Reviewed", AuthorIntent: true);
+        Task<PublicationReviewResult> Reply(string userId, PublicationReviewCommand input) =>
+            f.Service.CommandReviewAsync(f.W, userId, "reply", input, default);
+        Assert.Equal("publication_forbidden", (await Assert.ThrowsAsync<PublicationException>(() => Reply("another-admin", command))).Code);
+        Assert.Equal("publication_connection_conflict", (await Assert.ThrowsAsync<PublicationException>(() =>
+            Reply(owner.UserId, command with { ConnectionId = "different-account" }))).Code);
+        Assert.Equal("publication_pr_mismatch", (await Assert.ThrowsAsync<PublicationException>(() =>
+            Reply(owner.UserId, command with { PullRequestUrl = "https://github.com/another/repo/pull/42" }))).Code);
+        Assert.Equal("publication_pr_mismatch", (await Assert.ThrowsAsync<PublicationException>(() =>
+            Reply(owner.UserId, command with { PullRequestUrl = "https://github.com/owner/repo/pull/43" }))).Code);
+        Assert.Equal(0, f.Provider.ReviewReplies);
+        Assert.Equal("succeeded", (await Reply(owner.UserId, command)).State);
+        await f.F.Apps.UpsertAppAsync(consumer with { GrantedCorePermissions = [CoreAppPermissions.AgentProviders] });
+        Assert.Equal("publication_forbidden", (await Assert.ThrowsAsync<PublicationException>(() =>
+            Reply(owner.UserId, command with { RequestId = Guid.NewGuid().ToString() }))).Code);
+        Assert.Equal(1, f.Provider.ReviewReplies);
+    }
+
+    [Fact]
     public async Task ExternalReviewReply_RequiresExplicitIntentBoundPrAndWorkspaceOwnersAccount()
     {
         var f = await ExternalPublicationFixture();

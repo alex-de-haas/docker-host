@@ -74,7 +74,7 @@ internal sealed partial class CoreCapabilityAuthorization
                     scope => scope.Kind == "provider" && scope.TargetAppId == providerAppId && scope.ProviderKind == kind && scope.Key == key, ct, requireActivity: !retainedTask && origin.TaskWorkflow is null);
                 if (actor.UserId != user.Id) throw new AppIdentityException("permission_denied", "The originating user changed.");
             }
-            caller = new(user, AppPrincipal(app), app, null) { Authority = origin, EffectivePermissions = currentAssistant?.EffectivePermissions, AgentExecution = currentAssistant?.AgentExecution };
+            caller = new(user, AppPrincipal(app), app, null) { Authority = origin, EffectivePermissions = currentAssistant?.EffectivePermissions, PermissionSource = currentAssistant?.PermissionSource, AgentExecution = currentAssistant?.AgentExecution };
         }
         else
         {

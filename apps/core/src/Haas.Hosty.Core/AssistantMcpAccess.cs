@@ -7,7 +7,7 @@ namespace Haas.Hosty.Core;
 internal sealed record AssistantMcpTokenRequest(string TargetAppId, string? SessionId = null);
 internal sealed record AssistantMcpClaims(string Caller, string Audience, string UserId, string GrantHash,
     DateTimeOffset CallerInstallation, DateTimeOffset? TargetInstallation, string GrantRevision, long Expires, string? SessionId = null, string? LeaseRevision = null, bool DiscoveryOnly = false, CoreTaskMcpBinding? Task = null, string? AgentAdmissionRef = null, string? AgentTargetKey = null, string[]? AgentAllowedTools = null);
-internal sealed record AssistantMcpActor(string UserId, string Role, AppRecord Caller, bool DiscoveryOnly = false, IReadOnlyList<string>? AllowedTools = null, IReadOnlyList<string>? DeniedTools = null, IReadOnlyList<string>? EffectivePermissions = null, string? AgentExecution = null);
+internal sealed record AssistantMcpActor(string UserId, string Role, AppRecord Caller, bool DiscoveryOnly = false, IReadOnlyList<string>? AllowedTools = null, IReadOnlyList<string>? DeniedTools = null, IReadOnlyList<string>? EffectivePermissions = null, string? AgentExecution = null, CoreAppPermissionSource? PermissionSource = null);
 
 // A separate signed format is never accepted by session, delegated-token or app API validators.
 // Receiving MCP handlers introspect every call, so policy and parent-session revocation apply online.

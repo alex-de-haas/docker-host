@@ -36,7 +36,16 @@ internal sealed partial class PublicationService
             foreach (var tree in trees)
             {
                 if (tree.Owner.IsExternal) await ExternalConnection(tree, ct);
-                else { await RequireOwner(tree.Owner, ct); await workspaces.RequireParticipationSourceAsync(tree, actor.UserId, ct); }
+                var publication = await Read(tree.Id, ct);
+                // An empty sibling contributes no provider reads to this workspace subscription.
+                if (publication is null && tree.PullRequests.Length == 0) continue;
+                if (publication is not null && (publication.WorkspaceId != tree.Id || publication.Owner.UserId != actor.UserId))
+                    throw new PublicationException("forbidden", "The publication belongs to another worktree or source account.");
+                if (publication?.PermissionSource is { } source)
+                    await RequireOwner(publication.Owner, ct, source);
+                else if (!tree.Owner.IsExternal)
+                    await RequireOwner(tree.Owner, ct);
+                await workspaces.RequireParticipationSourceAsync(tree, actor.UserId, ct);
                 references.UnionWith(tree.PullRequests);
             }
         }
@@ -75,7 +84,7 @@ internal sealed partial class PublicationService
             if (!await workspaces.CanObserveInBackgroundAsync(id, ct)) return false;
             var record = await Read(id, ct);
             if (record is null) return false;
-            await RequireOwner(record.Owner, ct);
+            await RequireOwner(record.Owner, ct, record.PermissionSource);
             var tree = await workspaces.Read(id, null, ct);
             await workspaces.RequireParticipationSourceAsync(tree, record.Owner.UserId, ct);
             if (record.Number is null) { await Observe(record, ct); return true; }
@@ -89,7 +98,7 @@ internal sealed partial class PublicationService
                 return DisplayReferenceObservation(result, record.HeadRepository, record.TargetBranch);
             }, ct);
             if (!await workspaces.CanObserveInBackgroundAsync(id, ct)) return false;
-            await RequireOwner(record.Owner, ct);
+            await RequireOwner(record.Owner, ct, record.PermissionSource);
             await workspaces.RequireParticipationSourceAsync(await workspaces.Read(id, null, ct), record.Owner.UserId, ct);
             // Merge/release evidence still goes through the original verifier with its policy.
             if (observation.State == "merged" || record.CleanupRequested) await Observe(record, ct);
