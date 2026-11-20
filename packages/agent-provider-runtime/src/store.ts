@@ -21,7 +21,7 @@ export type RunRecord = {
   blockingQuestionSince?: Record<string, string>;
   workspaceRelease?: { requestId: string; state: "pending" | "released" };
   nativeSequence: number; nativeRevision: number; nativeUsageSequence?: number; nativeGeneration?: string; privateRequest?: unknown;
-  cancelFence?: boolean; decisionsFenced?: boolean; reservedFor?: { runId: string; requestId: string; decisionId: string; configurationRevision: string }; startIntent?: boolean; nativeMessageId?: string; completedAt?: string; workspaces?: Array<{ id: string; revision: string; path: string; leaseId: string }>; decisionLinks?: Record<string, string>; proxyDecisions?: string[]; deadline?: string;
+  cancelFence?: boolean; decisionsFenced?: boolean; reservedFor?: { runId: string; requestId: string; decisionId: string; configurationRevision: string }; startIntent?: boolean; nativeMessageId?: string; completedAt?: string; workspaces?: Array<{ id: string; revision: string; path: string; leaseId: string; leasePending?: boolean }>; decisionLinks?: Record<string, string>; proxyDecisions?: string[]; deadline?: string;
 };
 export type SessionRecord = {
   version: 1; id: string; hash: string; owner: Actor; session: AgentSession; configurations: Record<string, ConfigurationRecord>;

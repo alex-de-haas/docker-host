@@ -41,6 +41,7 @@ export class NativeExecution implements ExecutionDriver {
   private pendingSync = new Map<string, Promise<void>>();
   private pendingCleanup = new Map<string, Promise<void>>();
   private syncAgain = new Set<string>();
+  private readonly admittedPreparations = new Set<string>();
   private timer?: NodeJS.Timeout;
   private maintenance?: Promise<void>;
   private closing = false;
@@ -76,9 +77,11 @@ export class NativeExecution implements ExecutionDriver {
     try {
       const initial = await this.store.run(runId); if (initial.record.snapshot.stopConfirmed) return;
       const admittedAuthority = await this.authority.admit(initial.record.admissionRef, initial.record.snapshot.generation) as { ceiling?: AgentAuthorizationRequest["ceiling"] } | null;
-      await this.mcp.workflow.configure(runId, initial.record.admissionRef, admittedAuthority?.ceiling?.workflow);
+      this.admittedPreparations.add(runId);
       let { session, record } = await this.store.run(runId);
+      if (record.snapshot.stopConfirmed) return;
       if (record.snapshot.phase === "cancelling") { await this.failBeforeStart(runId, "Cancelled before native admission.", true); return; }
+      await this.mcp.workflow.configure(runId, record.admissionRef, admittedAuthority?.ceiling?.workflow);
       const input = record.input!, configuration = session.configurations[input.configurationRevision]!;
       if (configuration.configuration.skills?.length) {
         if (!configuration.pinRequestId) throw new AgentApiError("skill_snapshot_unavailable", "The original skill snapshot identity is unavailable.", 503);
@@ -89,10 +92,24 @@ export class NativeExecution implements ExecutionDriver {
       if (resources.some(value => value.kind !== "worktree")) throw new AgentApiError("unsupported_resource", "Only a revisioned Core worktree is supported as an execution directory.", 422);
       for (const workspace of workspaces) {
         const resolved = await this.authority.workspace<{ id: string; revision: string; path: string }>(record.admissionRef, "resolve", { workspaceId: workspace.id, expectedRevision: workspaceRevision(workspace.revision) });
-        await this.store.exclusive(async () => { const fresh = await this.store.run(runId); (fresh.record.workspaces ??= []).push({ ...resolved, revision: String(resolved.revision), leaseId: randomUUID() }); await this.store.save(fresh.session); });
-        ({ session, record } = await this.store.run(runId));
-        const binding = record.workspaces!.find(value => value.id === resolved.id)!;
-        await this.authority.workspace(record.admissionRef, "lease", { workspaceId: workspace.id, leaseId: binding.leaseId, requestId: stableUuid(`${runId}:${workspace.id}:lease`), title: "Native agent execution", viewerPath: "/" });
+        const leaseId = randomUUID();
+        const pending = await this.store.exclusive(async () => {
+          const fresh = await this.store.run(runId);
+          if (fresh.record.snapshot.stopConfirmed || fresh.record.snapshot.phase === "cancelling") return false;
+          (fresh.record.workspaces ??= []).push({ ...resolved, revision: String(resolved.revision), leaseId, leasePending: true });
+          await this.store.save(fresh.session);
+          return true;
+        });
+        if (!pending) { this.mcp.close(runId); await this.failBeforeStart(runId, "Cancelled before native admission.", true); return; }
+        await this.authority.workspace(record.admissionRef, "lease", { workspaceId: workspace.id, leaseId, requestId: stableUuid(`${runId}:${workspace.id}:lease`), title: "Native agent execution", viewerPath: "/" });
+        ({ session, record } = await this.store.exclusive(async () => {
+          const fresh = await this.store.run(runId);
+          const binding = fresh.record.workspaces!.find(value => value.leaseId === leaseId)!;
+          delete binding.leasePending;
+          await this.store.save(fresh.session);
+          return fresh;
+        }));
+        if (record.snapshot.stopConfirmed) return;
       }
       if (!workspace) await mkdir(path.join(this.data, "workspaces", sessionId), { recursive: true, mode: 0o700 });
       const mcp = await this.mcp.configure(runId, record.admissionRef, input.mcp, configuration.configuration.approvalMode === "autonomous");
@@ -116,12 +133,14 @@ export class NativeExecution implements ExecutionDriver {
           promptSuggestions: configuration.configuration.predictions?.enabled === true, nativeTools: configuration.configuration.nativeTools, subagents: configuration.configuration.subagents,
           ...(session.nativeId ? { resumeHarnessSessionId: session.nativeId, requireNativeResume: true } : {}) } };
       this.requests.set(request, runId);
-      const admitted = await this.store.exclusive(async () => { const fresh = await this.store.run(runId);
-        if (fresh.record.snapshot.phase === "cancelling" || fresh.record.snapshot.stopConfirmed) return false;
-        fresh.record.startIntent = true; await this.store.save(fresh.session); await this.engine.submit(runId, request); return true; });
-      if (!admitted) { this.mcp.close(runId); await this.failBeforeStart(runId, "Cancelled before native admission.", true); }
+      const stopReason = await this.store.exclusive(async () => { const fresh = await this.store.run(runId);
+        if (fresh.record.snapshot.phase === "cancelling" || fresh.record.snapshot.stopConfirmed) return "Cancelled before native admission.";
+        if (deadlineReached(fresh.record)) return "Execution deadline reached before native dispatch.";
+        fresh.record.startIntent = true; await this.store.save(fresh.session); await this.engine.submit(runId, request); return null; });
+      if (stopReason) { this.mcp.close(runId); await this.failBeforeStart(runId, stopReason, true); }
       await this.synchronize(runId);
     } catch (error) { this.mcp.close(runId); await this.failBeforeStart(runId, error instanceof AgentApiError ? error.message : "Native execution could not be prepared. Inspect provider availability."); }
+    finally { this.admittedPreparations.delete(runId); }
   }
   private async failBeforeStart(id: string, message: string, cancelled = false): Promise<void> {
     const native = await this.journal.load(id).catch(error => { if (error instanceof WorkerApiError && error.status === 404) return null; throw error; });
@@ -277,22 +296,29 @@ export class NativeExecution implements ExecutionDriver {
         continue;
       }
       if (!record.snapshot.stopConfirmed) {
-        try { await this.authority.renew(record.admissionRef);
-          const pinned = session.configurations[record.snapshot.configurationRevision];
-          if (pinned?.configuration.skills?.length) {
-            if (!pinned.pinRequestId) throw new AgentApiError("skill_snapshot_unavailable", "The original skill snapshot identity is unavailable.", 503);
-            requirePinnedSnapshot(pinned, await this.authority.skills(record.admissionRef, pinned.pinRequestId, pinned.pinRequestId, pinned.configuration.skills));
-          }
-          if (record.deadline && Date.now() >= Date.parse(record.deadline)) throw new Error("Execution deadline reached.");
-          for (const workspace of record.workspaces ?? []) {
-            const activity = await this.authority.workspace<{ stopRequested?: boolean }>(record.admissionRef, "activity", { workspaceId: workspace.id, leaseId: workspace.leaseId, requestId: randomUUID(), sequence: Date.now(), status: record.snapshot.state });
-            if (activity.stopRequested) throw new AgentApiError("workspace_stop_requested", "Core requested this execution to stop using its workspace.", 409);
-          }
+        try {
+          if (deadlineReached(record)) throw new Error("Execution deadline reached.");
+          // Core rejects renewal until it has acknowledged admission. Native revisions also cover retained older runs.
+          if (this.admittedPreparations.has(id) || record.startIntent || record.nativeRevision >= 0)
+            await this.renewExecution(session, record);
         } catch { await this.cancel(id, stableUuid(`${id}:authority-expired`)).catch(() => {}); }
       }
       await this.parkOverdueQuestion(id).catch(() => {});
       if (record.snapshot.pending.length) await this.decisions(session, record).catch(() => {});
       if (record.decisionLinks || record.decisionDeliveries || record.snapshot.pending.length) await syncDecisionDeliveries(this.store, this.controller, this.authority, id).catch(() => {});
+    }
+  }
+  private async renewExecution(session: SessionRecord, record: RunRecord): Promise<void> {
+    await this.authority.renew(record.admissionRef);
+    const pinned = session.configurations[record.snapshot.configurationRevision];
+    if (pinned?.configuration.skills?.length) {
+      if (!pinned.pinRequestId) throw new AgentApiError("skill_snapshot_unavailable", "The original skill snapshot identity is unavailable.", 503);
+      requirePinnedSnapshot(pinned, await this.authority.skills(record.admissionRef, pinned.pinRequestId, pinned.pinRequestId, pinned.configuration.skills));
+    }
+    for (const workspace of record.workspaces ?? []) {
+      if (workspace.leasePending) continue;
+      const activity = await this.authority.workspace<{ stopRequested?: boolean }>(record.admissionRef, "activity", { workspaceId: workspace.id, leaseId: workspace.leaseId, requestId: randomUUID(), sequence: Date.now(), status: record.snapshot.state });
+      if (activity.stopRequested) throw new AgentApiError("workspace_stop_requested", "Core requested this execution to stop using its workspace.", 409);
     }
   }
   private async parkOverdueQuestion(id: string): Promise<void> {
@@ -377,6 +403,7 @@ export class NativeExecution implements ExecutionDriver {
     await this.connections.shutdown();
   }
 }
+function deadlineReached(record: RunRecord): boolean { return !!record.deadline && Date.now() >= Date.parse(record.deadline); }
 function requirePinnedSnapshot(configuration: ConfigurationRecord, pinned: Awaited<ReturnType<ProviderAuthority["skills"]>>): void {
   const identities = (skills: Array<{ skillId: string; digest: string }>) => JSON.stringify(skills.map(skill => ({ skillId: skill.skillId, digest: skill.digest })).sort((a, b) => a.skillId.localeCompare(b.skillId) || a.digest.localeCompare(b.digest)));
   if (!configuration.snapshotId || !configuration.skillPath || !configuration.snapshotDigest)
