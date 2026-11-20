@@ -232,4 +232,128 @@ describe("native authority renewal and stop reconciliation", () => {
     expect(await reconcile(f, id)).toMatchObject({ state: "applied" });
     expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true); expect((await f.store.load(f.sessionId)).session.activeRun).toBeNull();
   });
+
+  it("retires the exact completed run with unresolved effects across restart and workspace cleanup retry", async () => {
+    const f = await fixture();
+    vi.spyOn(f.driver, "maintain").mockResolvedValue();
+    let cleanupAvailable = false;
+    const release = vi.mocked(f.authority.workspace).mockImplementation(async () => {
+      if (!cleanupAvailable) throw new Error("The original Core release reply was lost.");
+      return { state: "released" } as never;
+    });
+    const id = await start(f);
+    await vi.waitFor(() => expect(f.starts).toHaveBeenCalledOnce());
+    const { onEvent } = f.starts.mock.calls[0]![0] as HarnessStartOptions;
+    onEvent({ type: "native_effect", id: "unfinished-effect", state: "started" });
+    onEvent({ type: "result", status: "success" });
+    await vi.waitFor(async () => expect(await f.controller.snapshot(id)).toMatchObject({
+      state: "unknown", stopConfirmed: false, effects: { unresolvedCallIds: expect.any(Array) },
+    }));
+    const native = (await f.driver.engine.journal.load(id)).receipt;
+    expect(native).toMatchObject({ state: "completed", exitConfirmed: true, effects: { "unfinished-effect": "started" } });
+    const snapshot = await f.controller.snapshot(id);
+    expect(snapshot.effects.unresolvedCallIds).toHaveLength(1);
+    const input = { command: "retire", requestId: randomUUID(), expectedGeneration: snapshot.generation, expectedRevision: snapshot.revision } as const;
+    const body = JSON.stringify(input);
+    await expect(f.controller.control(id, input, body, { ...f.actor, userId: "another-user" })).rejects.toMatchObject({ status: 404 });
+    await expect(f.controller.control(id, input, body, f.actor)).rejects.toMatchObject({ code: "retirement_cleanup_pending", status: 503, retryable: true });
+    const before = await f.store.run(id);
+    expect(before.session.retirement).toEqual({ runId: id, requestId: input.requestId, nativeGeneration: native.generation, nativeRevision: native.revision });
+    expect(before.record.controls[input.requestId]!.receipt.state).toBe("accepted");
+    expect(before.record.workspaceRelease).toEqual({ requestId: expect.any(String), state: "pending" });
+    const startInput: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "resume", input: { text: "Must stay fenced" } };
+    await expect(f.controller.startRun(f.sessionId, randomUUID(), startInput, JSON.stringify(startInput), f.actor)).rejects.toMatchObject({ code: "session_retired" });
+    await f.close();
+
+    cleanupAvailable = true;
+    const reopenedStore = new ProviderStore(path.join(f.directory, "sessions"), f.provider);
+    await reopenedStore.initialize();
+    const reopened = new ProviderController(reopenedStore, f.authority, f.connections, fixtureCapabilities);
+    const driver = new NativeExecution(reopened, reopenedStore, f.authority, f.connections,
+      new AttachmentStore(path.join(f.directory, "assets"), f.provider), f.directory, () => "http://127.0.0.1:1");
+    reopened.driver = driver;
+    cleanup.push(() => reopened.close());
+    await driver.initialize();
+    await driver.maintain();
+
+    const applied = await reopened.control(id, input, body, f.actor);
+    expect(applied).toMatchObject({ requestId: input.requestId, state: "applied", generation: snapshot.generation });
+    expect(await reopened.control(id, input, body, f.actor)).toEqual(applied);
+    expect(release.mock.calls).toEqual(Array.from({ length: 2 }, () =>
+      ["original-admission", "release_all", { requestId: before.record.workspaceRelease!.requestId }]));
+    const after = await reopenedStore.run(id);
+    expect(after.session).toMatchObject({ deleted: true, session: { activeRun: null } });
+    expect(await reopenedStore.list(f.actor)).toEqual([]);
+    expect(await reopened.snapshot(id)).toMatchObject({ state: "unknown", stopConfirmed: false, effects: snapshot.effects });
+    expect((await driver.engine.journal.load(id)).receipt).toEqual(native);
+    await expect(reopened.startRun(f.sessionId, randomUUID(), startInput, JSON.stringify(startInput), f.actor)).rejects.toMatchObject({ code: "session_retired" });
+    const configure = { requestId: randomUUID(), expectedSessionRevision: after.session.session.revision, configuration: { connection: { id: "account", revision: "1" } } };
+    await expect(reopened.configureSession(f.sessionId, configure, JSON.stringify(configure), f.actor)).rejects.toMatchObject({ code: "session_retired" });
+    expect(f.starts).toHaveBeenCalledOnce();
+  });
+
+  it("does not admit retirement without confirmed native exit", async () => {
+    const f = await fixture(), id = await start(f);
+    await vi.waitFor(() => expect(f.starts).toHaveBeenCalledOnce());
+    const snapshot = await f.controller.snapshot(id);
+    const input = { command: "retire", requestId: randomUUID(), expectedGeneration: snapshot.generation, expectedRevision: snapshot.revision } as const;
+    await expect(f.controller.control(id, input, JSON.stringify(input), f.actor)).rejects.toMatchObject({ code: "retirement_exit_unconfirmed", status: 409 });
+    const retained = await f.store.run(id);
+    expect(retained.session.retirement).toBeUndefined();
+    expect(retained.session.session.activeRun?.id).toBe(id);
+    expect(retained.record.controls[input.requestId]).toBeUndefined();
+    expect(f.authority.workspace).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("requires tracked SDK stop proof for an interrupted retirement (proof: %s)", async confirmed => {
+    const f = await fixture(), maintain = f.driver.maintain.bind(f.driver);
+    vi.spyOn(f.driver, "maintain").mockResolvedValue();
+    const id = randomUUID(), previousRunId = randomUUID(), previousReleaseId = randomUUID();
+    const input: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start", input: { text: "Original input" } };
+    const session = await f.store.load(f.sessionId);
+    const run = f.store.makeRun(session, id, f.actor, JSON.stringify(input), input);
+    session.runs[id] = run;
+    session.session.activeRun = run.snapshot.ref;
+    if (confirmed) {
+      const previous = f.store.makeRun(session, previousRunId, { ...f.actor, admissionRef: "previous-admission" }, JSON.stringify(input), input);
+      previous.snapshot.state = "succeeded";
+      previous.snapshot.phase = "terminal";
+      previous.snapshot.stopConfirmed = true;
+      previous.workspaceRelease = { requestId: previousReleaseId, state: "pending" };
+      session.runs[previousRunId] = previous;
+    }
+    await f.store.save(session);
+    await f.driver.engine.journal.exclusive(async () => {
+      await f.driver.engine.journal.accept(id, { conversationId: f.sessionId,
+        binding: { connectionId: "account", connectionRevision: 1, harnessKind: "fixture-engine" },
+        selection: { model: null, reasoningEffort: null }, resource: { kind: "conversation", id: f.sessionId },
+        input: "Original input", options: {}, autoAllowedPrefixes: [] });
+      await f.driver.engine.journal.append(id, { type: "native_effect", id: "unresolved", state: "started" });
+      await f.driver.engine.journal.update(id, "interrupted");
+    });
+    const processes = await TrackedNativeProcesses.create(f.directory, id, run.snapshot.generation);
+    if (confirmed) await processes.confirmSdkStop();
+    expect(await processes.stop()).toMatchObject({ stopped: confirmed, allClosed: true, sealed: true });
+    const native = (await f.driver.engine.journal.load(id)).receipt;
+    expect(native).toMatchObject({ state: "interrupted", exitConfirmed: false, effects: { unresolved: "started" } });
+    const snapshot = await f.controller.snapshot(id);
+    const control = { command: "retire", requestId: randomUUID(), expectedGeneration: snapshot.generation, expectedRevision: snapshot.revision } as const;
+    const result = f.controller.control(id, control, JSON.stringify(control), f.actor);
+    if (confirmed) {
+      await expect(result).resolves.toMatchObject({ state: "applied", requestId: control.requestId });
+      expect((await f.store.run(id)).session.session.activeRun).toBeNull();
+      expect(f.authority.workspace).toHaveBeenCalledExactlyOnceWith("original-admission", "release_all", expect.any(Object));
+      await maintain();
+      expect(f.authority.workspace).toHaveBeenCalledTimes(2);
+      expect(f.authority.workspace).toHaveBeenLastCalledWith("previous-admission", "release_all", { requestId: previousReleaseId });
+      expect((await f.store.run(previousRunId)).record.workspaceRelease).toEqual({ requestId: previousReleaseId, state: "released" });
+    } else {
+      await expect(result).rejects.toMatchObject({ code: "retirement_exit_unconfirmed", status: 409 });
+      expect((await f.store.run(id)).session.session.activeRun?.id).toBe(id);
+      expect(f.authority.workspace).not.toHaveBeenCalled();
+    }
+    expect((await f.driver.engine.journal.load(id)).receipt).toEqual(native);
+    expect(await f.controller.snapshot(id)).toMatchObject({ state: "unknown", stopConfirmed: false, effects: snapshot.effects });
+    expect(f.starts).not.toHaveBeenCalled();
+  });
 });

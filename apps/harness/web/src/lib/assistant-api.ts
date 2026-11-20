@@ -157,12 +157,12 @@ export async function renameSession(sessionId: string, title: string): Promise<A
 }
 
 /** Deletes a session and everything it kept: its record, its transcript, and any run still going. */
-export async function deleteSession(sessionId: string): Promise<void> {
-  await call(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+export async function deleteSession(sessionId: string, signal?: AbortSignal): Promise<void> {
+  await call(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE", signal });
 }
 
-export async function getSession(sessionId: string): Promise<AssistantSession> {
-  return (await call(`/sessions/${encodeURIComponent(sessionId)}`)).json() as Promise<AssistantSession>;
+export async function getSession(sessionId: string, signal?: AbortSignal): Promise<AssistantSession> {
+  return (await call(`/sessions/${encodeURIComponent(sessionId)}`, { cache: "no-store", signal })).json() as Promise<AssistantSession>;
 }
 
 export type MessageReceipt = { clientRequestId: string; state: "accepted" | "unknown" | "rejected"; eventSeq?: number; error?: { code: string; message: string } };

@@ -1,11 +1,14 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { publicProviderFixture, type PublicProviderFixture } from "../agent-providers/test-fixture.js";
+import { DevelopmentClient } from "./development.js";
+import { AgentSessionService } from "../agent-sessions/service.js";
 
 const fixtures: PublicProviderFixture[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const fixture of fixtures.splice(0)) await fixture.close(); });
-async function fixture() {
-  const f = await publicProviderFixture(); fixtures.push(f);
+async function fixture(development?: DevelopmentClient) {
+  const fixture = await publicProviderFixture(); fixtures.push(fixture);
+  const f = development ? { ...fixture, ...fixture.makeManager({ development }) } : fixture;
   const session = await f.manager.createSession({ createdBy: f.owner });
   const original = randomUUID();
   await f.manager.postMessage(session.id, "Original immutable input", f.credential, [], { actorUserId: f.owner, clientRequestId: original });
@@ -98,4 +101,107 @@ it("rejects another actor before reading or controlling the provider execution",
   await expect(f.manager.recoverExecution(f.session.id, "another-user", { requestId: randomUUID(), consumerExitConfirmed: true })).rejects.toMatchObject({ code: "session_not_found" });
   expect(f.requests).toHaveLength(reads);
   expect(f.controls).toEqual([]);
+});
+
+it("retires a retained stopped run only on explicit owner Delete and detaches without deleting the workspace", async () => {
+  const core = new DevelopmentClient("http://core.invalid", "unrelated.consumer", "fixture-service");
+  const call = vi.spyOn(core, "call").mockResolvedValue({});
+  const f = await fixture(core); await f.interrupt(); f.behavior.retire = "confirmed";
+  call.mockClear();
+  const other = await f.manager.createSession({ createdBy: f.owner });
+  const existing = (await f.manager.getSession(f.session.id))!;
+  existing.workspaceAssociation = { id: "shared-source", revision: 2 };
+  existing.developmentLease = randomUUID();
+  existing.developmentLeaseState = "stopped";
+  existing.workspaceActivitySequence = 7;
+  await f.store.saveRecord(existing);
+  await f.manager.shutdown();
+  const { manager } = f.makeManager({ development: core });
+  const retention = vi.spyOn(core, "retention")
+    .mockResolvedValueOnce({ kind: "workspace", workflow: { state: "in-progress", revision: 4 }, resourcesFinished: true })
+    .mockResolvedValueOnce({ kind: "chat", workflow: null, resourcesFinished: true, sessionDetached: true });
+  const activity = vi.spyOn(core, "activity").mockResolvedValue({ workspaceId: "shared-source", revision: 2, state: "active", stopRequested: false });
+  call.mockResolvedValue({ workspace: { id: "shared-source", revision: 3 } });
+
+  expect(await manager.sweepRetention(new Date("2100-01-01T00:00:00Z"), f.session.id)).toEqual([]);
+  expect(f.controls).toEqual([]);
+  await expect(manager.deleteSession(f.session.id, "another-user", f.credential, true)).rejects.toMatchObject({ code: "session_not_found" });
+  expect(f.controls).toEqual([]);
+
+  const actor = { userId: f.owner, principalId: "owner", hostRole: "host.admin" as const };
+  const observer = new AgentSessionService(manager, f.provider);
+  const visible = await observer.list(actor, { provider: f.provider, conversation: { provider: f.provider, id: f.session.id } });
+  const attached = visible.sessions.find(session => session.activeRuns.some(run => run.id === existing.agentRunId))!;
+  expect(attached).toBeDefined();
+  const observation = attached.activeRuns.find(run => run.id === existing.agentRunId)!;
+
+  const before = f.snapshot(f.runId);
+  expect(await manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
+  expect(f.controls).toEqual([{ runId: f.runId, path: `/runs/${f.runId}/controls`,
+    input: { command: "retire", requestId: expect.any(String), expectedGeneration: before.generation, expectedRevision: before.revision } }]);
+  expect(activity).toHaveBeenCalledWith(f.session.id, f.credential,
+    { status: "idle", stopped: true, leaseId: existing.developmentLease, sequence: 8 });
+  expect(call).toHaveBeenCalledExactlyOnceWith(f.session.id, f.credential, "detach",
+    expect.objectContaining({ workspaceId: "shared-source", expectedRevision: 2 }));
+  expect(retention.mock.calls.every(([, , cleanup]) => !cleanup)).toBe(true);
+  expect(await f.store.readRecord(f.session.id)).toBeNull();
+  expect(await f.store.readRecord(other.id)).not.toBeNull();
+  expect(await observer.getSession(actor, attached.ref)).toMatchObject({ activeRuns: [], conversation: null });
+  const retired = await observer.getRun(actor, observation);
+  expect(retired).toMatchObject({ state: "unknown", stopConfirmed: false, conversation: null });
+  await expect(observer.cancel(actor, { run: observation, expectedRevision: retired.revision, requestId: randomUUID() }, async () => {}))
+    .rejects.toMatchObject({ code: "run_retired" });
+  expect(f.controls).toHaveLength(1);
+  expect(f.snapshot(f.runId)).toMatchObject({ stopConfirmed: false, effects: { certainty: "unknown", unresolvedCallIds: ["command"] } });
+  expect(f.starts).toHaveLength(1);
+});
+
+it("replays the exact owner retirement after a lost response and restart without sending again", async () => {
+  const f = await fixture(); await f.interrupt();
+  f.behavior.retire = "confirmed"; f.behavior.loseNextRetireResponse = true;
+  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toThrow("lost the retirement response");
+  const retirement = (await f.store.readRecord(f.session.id))?.providerRetirement;
+  expect(retirement).toMatchObject({ runId: f.runId, state: "pending" });
+  await f.manager.shutdown();
+  const next = f.makeManager();
+  await expect(next.manager.postMessage(f.session.id, "Late input", f.credential)).rejects.toMatchObject({ code: "session_deletion_pending" });
+  await expect(next.manager.deleteSession(f.session.id, f.owner, f.credential)).rejects.toMatchObject({ code: "session_deletion_pending" });
+  expect(await next.manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
+  const attempts = f.requests.filter(request => request.method === "POST" && request.path.endsWith(`/runs/${f.runId}/controls`));
+  expect(attempts.map(request => request.body)).toEqual([retirement?.request.body, retirement?.request.body]);
+  expect(f.controls.filter(control => control.input.command === "retire")).toHaveLength(1);
+  expect(f.starts).toHaveLength(1);
+  expect(await next.store.readRecord(f.session.id)).toBeNull();
+});
+
+it("uses the same Delete confirmation when Stop leaves unresolved effects", async () => {
+  const f = await fixture();
+  f.behavior.cancel = "unresolved"; f.behavior.retire = "confirmed";
+  expect(await f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
+  expect(f.controls.map(control => control.input.command ?? "cancel")).toEqual(["cancel", "retire"]);
+  expect(await f.store.readRecord(f.session.id)).toBeNull();
+  expect(f.starts).toHaveLength(1);
+});
+
+it.each([true, false])("keeps a run with unverified exit when Stop fails (interactive owner %s)", async interactive => {
+  const f = await fixture(); await f.interrupt(); f.behavior.cancel = "unavailable";
+  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, interactive)).rejects.toMatchObject({ code: "exit_unconfirmed" });
+  expect(f.controls.filter(control => control.input.command === "retire")).toHaveLength(interactive ? 1 : 0);
+  expect(f.controls.filter(control => control.path.endsWith("/cancel"))).toHaveLength(1);
+  expect((await f.store.readRecord(f.session.id))?.providerRetirement).toBeUndefined();
+  expect((await f.store.readEvents(f.session.id)).some(event => event.text === "Original immutable input")).toBe(true);
+});
+
+it.each(["admitting", undefined] as const)("retains a separate Harness lease with %s stop evidence", async state => {
+  const f = await fixture(); await f.interrupt();
+  f.behavior.retire = "confirmed"; f.behavior.cancel = "unavailable";
+  const existing = (await f.manager.getSession(f.session.id))!;
+  existing.developmentLease = randomUUID();
+  existing.developmentLeaseState = state;
+  await f.store.saveRecord(existing);
+  await f.manager.shutdown();
+  const { manager } = f.makeManager();
+  await expect(manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toMatchObject({ code: "exit_unconfirmed" });
+  expect(f.controls.map(control => control.input.command ?? "cancel")).toEqual(["cancel"]);
+  expect((await f.store.readRecord(f.session.id))?.developmentLease).toBe(existing.developmentLease);
 });

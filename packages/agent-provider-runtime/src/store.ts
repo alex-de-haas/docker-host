@@ -25,6 +25,7 @@ export type SessionRecord = {
   version: 1; id: string; hash: string; owner: Actor; session: AgentSession; configurations: Record<string, ConfigurationRecord>;
   configurationRequests: Record<string, { hash: string; revision: string }>;
   runs: Record<string, RunRecord>; nativeId?: string; deleted?: boolean; createdAt: string;
+  retirement?: { runId: string; requestId: string; nativeGeneration: string; nativeRevision: number };
 };
 export const bytesHash = (body: string | Uint8Array) => createHash("sha256").update(body).digest("hex");
 export const valueHash = (value: unknown) => bytesHash(JSON.stringify(value));

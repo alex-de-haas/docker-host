@@ -85,6 +85,16 @@
       }
     },
     {
+      "method": "POST",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/controls",
+      "body": {
+        "requestId": "44444444-4444-4444-8444-444444444444",
+        "expectedGeneration": "33333333-3333-4333-8333-333333333333",
+        "expectedRevision": "1",
+        "command": "retire"
+      }
+    },
+    {
       "method": "PUT",
       "path": "/attachments/44444444-4444-4444-8444-444444444444/chunks/0",
       "body": {
@@ -160,6 +170,17 @@
           "kind": "tool_result",
           "output": "fabricated"
         }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/controls",
+      "body": {
+        "requestId": "44444444-4444-4444-8444-444444444444",
+        "expectedGeneration": "33333333-3333-4333-8333-333333333333",
+        "expectedRevision": "1",
+        "command": "retire",
+        "stopped": true
       }
     }
   ]

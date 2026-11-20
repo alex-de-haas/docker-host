@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-10-10
-updated: 2026-11-17
+updated: 2026-11-18
 summary: Extract independent local agent-provider apps consumed by Docker-hosted Harness, with explicit discovery, authority, recovery and host-tool readiness.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -69,6 +69,12 @@ the installed provider. Ordinary session history remains intact.
 Owner approval, 2026-11-17: repair provider access after ordinary updates first, then settle Claude
 background Bash cards from native command outcomes. Add regressions, publish both corrections
 through CI and review, merge, update the ordinary host and verify both behaviors live.
+
+Owner approval, 2026-11-18: let the conversation owner delete a session with one confirmation
+when provider-owned evidence establishes native exit, even if historical tool outcomes remain
+unknown. This applies to runs retained before the change, including the stopped Plan Review run
+from November 17. Keep the existing workspace and unknown outcome evidence. Actual live or
+unverified execution continues through the normal Stop path.
 
 ## Accepted Delivery Scope
 
@@ -1003,6 +1009,8 @@ neither caching nor a universal inference API is a prerequisite to this provider
 - [x] D29. Authorize current agent requests after a provider permission revision changes, while retaining the original run admission and refusing stale credentials. Verify repeated operations with the same consumer authority and a separate provider installation.
 
 - [x] D30. Settle Claude background Bash cards with the outcome of the exact native command, including commands owned by children that have already yielded. Verify attribution, late completion and preservation of final answer delivery.
+
+- [x] D31. Let explicit owner-confirmed session deletion retire an exact provider run with proved native exit and unresolved tool outcomes, including retained terminal journals. Retain unknown outcomes and source, fence continuation, release only the original execution claims, and verify retry and refusal behavior.
 
 ### Implementation Order
 

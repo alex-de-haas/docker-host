@@ -149,7 +149,7 @@ export function validateAgentCancelInput(value: unknown): asserts value is Agent
 /** This validates an attestation's shape only. Providers must independently confirm actual native exit. */
 export function validateAgentRunControlInput(value: unknown): asserts value is AgentRunControlInput {
   if (!object(value)) fail("An execution control is required.");
-  const fields: Record<string, string[]> = { park: ["decisionId", "decisionRevision", "reason"], barrier: ["barrierId", "kind", "generation", "acknowledgedSequence", "snapshot"], reconcile: ["stopped", "evidence"], liveConfigure: ["mcp"], mcpPolicy: ["mcp"], predictions: ["enabled"] };
+  const fields: Record<string, string[]> = { park: ["decisionId", "decisionRevision", "reason"], barrier: ["barrierId", "kind", "generation", "acknowledgedSequence", "snapshot"], reconcile: ["stopped", "evidence"], retire: [], liveConfigure: ["mcp"], mcpPolicy: ["mcp"], predictions: ["enabled"] };
   if (typeof value.command !== "string" || !fields[value.command]) fail("Unsupported execution control.", 422, "unsupported_capability");
   shape(value, ["requestId", "expectedGeneration", "expectedRevision", "command", ...fields[value.command]!], "execution control"); controlBase(value);
   if (value.command === "park" && (!opaque(value.decisionId) || !decimal(value.decisionRevision) || value.reason !== undefined && !bounded(value.reason, 8192))) fail("Parking requires the exact pending decision.");

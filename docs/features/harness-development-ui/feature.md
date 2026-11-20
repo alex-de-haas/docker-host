@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-13
+updated: 2026-11-20
 summary: Harness combines conversations and workspace groups in Sessions, with shared navigation, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -204,9 +204,11 @@ including verified execution stop, independent workspace detachment and resource
 away from the current conversation. Deleting the selected session clears its draft and route selection;
 deleting another session preserves the selected conversation. A terminal deletion event detaches
 the session immediately, including when a locally initiated DELETE loses its HTTP response.
-A failed deletion request also reconciles against a fresh authenticated session inventory, including
-rows that have no active event stream. Confirmed absence removes only that session and its draft;
-an unavailable inventory or a retained session preserves local state and the error for retry.
+Harness emits this event after it deletes the stored conversation. A refusal to delete, including
+an unconfirmed provider stop, appears in the dialog. If the DELETE response is lost or times out,
+Harness checks the selected session through its authenticated API. Both requests have deadlines.
+A confirmed missing session clears its row and draft. When the session still exists or its status
+is unavailable, the dialog shows the error and allows the owner to close it or retry.
 
 Manageable workspace rows offer a trailing trash shortcut with the same hover, keyboard-focus and
 touch reachability as conversation deletion. It opens the existing workspace deletion dialog for
@@ -1039,6 +1041,8 @@ and documentation validation pass. [Local runtime acceptance](../harness-local-r
 records the startup/recovery measurements; Linux and Windows lifecycle checks are not run locally.
 
 ## Testing Expectations
+
+- Exercise a stalled Delete request, a failed status check and a provider refusal. Verify draft retention, retry, and terminal event delivery after durable removal.
 
 - Verify first-message and inventory-only title propagation without a reload, newer manual and
   cross-window renames against delayed metadata/rename replies, session-switch isolation and draft

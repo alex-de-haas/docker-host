@@ -503,20 +503,44 @@ it("detaches on a local deletion event even if the HTTP response is lost", async
   expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBeNull();
   expect(window.location.search).toBe("");
   expect(button("Delete Conversation")).toBeNull();
-  await act(async () => reject(new Error("Lost HTTP response")));
   expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(vi.mocked(api.deleteSession).mock.lastCall?.[1]?.aborted).toBe(true);
+  await act(async () => reject(new Error("Lost HTTP response")));
   expect(container.textContent).not.toContain("Lost HTTP response");
   expect(container.textContent).not.toContain("deleted in another window");
   expect(api.createSession).not.toHaveBeenCalled();
 });
-it("preserves an active conversation and draft when deletion is not confirmed", async () => {
-  vi.mocked(api.deleteSession).mockRejectedValue(new Error("Workspace is unfinished"));
-  await renderDeletion(); await openDelete();
+it.each([
+  ["exit_unconfirmed", "Native exit is unconfirmed"],
+  ["retirement_pending", "Retry Delete session to finish the original request"],
+])("shows %s without waiting for another session read", async (code, message) => {
+  vi.mocked(api.deleteSession).mockRejectedValue(new api.AssistantApiError(code, message, 503));
+  await renderDeletion();
+  vi.mocked(api.getSession).mockClear().mockImplementation(() => new Promise(() => {}));
+  await openDelete();
+  expect(api.getSession).not.toHaveBeenCalled();
   expect(input().value).toBe("My retained draft");
   expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe(JSON.stringify({ sessionId: record.id }));
   expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("My retained draft");
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Workspace is unfinished");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(message);
   expect(window.location.search).toBe("?session=session-one");
+});
+it("unlocks deletion and keeps the draft when both the request and session lookup stall", async () => {
+  await renderDeletion();
+  vi.useFakeTimers();
+  try {
+    vi.mocked(api.deleteSession).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(api.getSession).mockImplementation(() => new Promise(() => {}));
+    await openDelete();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("Deletion could not be confirmed in time");
+    expect(dialog.querySelector<HTMLButtonElement>("button[disabled]")).toBeNull();
+    expect(vi.mocked(api.deleteSession).mock.lastCall?.[1]?.aborted).toBe(true);
+    expect(vi.mocked(api.getSession).mock.calls.some(([, signal]) => signal?.aborted)).toBe(true);
+    expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("My retained draft");
+    expect(window.location.search).toBe("?session=session-one");
+  } finally { vi.useRealTimers(); }
 });
 it("ignores a late terminal event after HTTP deletion has already detached the session", async () => {
   vi.mocked(api.deleteSession).mockResolvedValue(undefined);
@@ -536,7 +560,7 @@ it("reports deletion from another window while detaching the active session", as
   expect(api.deleteSession).not.toHaveBeenCalled();
 });
 
-it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active deletion response with %s inventory", async outcome => {
+it.each(["deleted", "retained", "unavailable", "route missing"])("reconciles a lost non-active deletion response with a %s target session", async outcome => {
   const other = { ...record, id: "other-session", title: "Other conversation" };
   vi.mocked(api.listSessions).mockResolvedValue([record, other]);
   vi.mocked(api.deleteSession).mockRejectedValue(new Error("Lost deletion response"));
@@ -544,10 +568,14 @@ it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active de
   await renderDeletion();
   expect(api.streamEvents).toHaveBeenCalledTimes(1);
   expect(api.streamEvents).toHaveBeenCalledWith(record.id, expect.any(Function), expect.any(AbortSignal), expect.any(Function));
-  if (outcome === "deleted") vi.mocked(api.listSessions).mockResolvedValue([record]);
-  if (outcome === "unavailable") vi.mocked(api.listSessions).mockRejectedValue(new Error("Inventory unavailable"));
+  const missing = new api.AssistantApiError("session_not_found", "Session not found.", 404);
+  vi.mocked(api.getSession).mockResolvedValue(other);
+  if (outcome === "deleted") vi.mocked(api.getSession).mockRejectedValue(missing);
+  if (outcome === "unavailable") vi.mocked(api.getSession).mockRejectedValue(new Error("Session lookup unavailable"));
+  if (outcome === "route missing") vi.mocked(api.getSession).mockRejectedValue(new api.AssistantApiError("not_found", "Unknown route.", 404));
   await openDelete("Other conversation");
-  expect(api.listSessions).toHaveBeenCalledTimes(2);
+  expect(api.getSession).toHaveBeenCalledWith(other.id, expect.any(AbortSignal));
+  expect(api.listSessions).toHaveBeenCalledTimes(1);
   expect(input().value).toBe("My retained draft");
   expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe(JSON.stringify({ sessionId: record.id }));
   expect(window.location.search).toBe("?session=session-one");
@@ -561,7 +589,7 @@ it.each(["deleted", "retained", "unavailable"])("reconciles a lost non-active de
     expect(localStorage.getItem("hosty.assistant.draft.other-session")).toBe("Other retained draft");
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Lost deletion response");
     vi.mocked(api.deleteSession).mockRejectedValue(new Error("Request failed (404)."));
-    vi.mocked(api.listSessions).mockResolvedValue([record]);
+    vi.mocked(api.getSession).mockRejectedValue(missing);
     await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Delete session")!.click());
     expect(button("Delete Other conversation")).toBeNull();
     expect(document.querySelector('[role="dialog"]')).toBeNull();

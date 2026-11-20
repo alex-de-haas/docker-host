@@ -1,6 +1,6 @@
 ---
 created: 2026-10-25
-updated: 2026-11-06
+updated: 2026-11-18
 summary: Core workspaces support concurrent private sessions, permission-based source access, attributable activity and independent conversation lifetimes.
 components: [apps/core, apps/harness]
 ---
@@ -115,9 +115,9 @@ when none are attached. Own chat rows select the conversation and highlight the 
 Used by, without an enclosing card. Its information tooltip explains shared files,
 private conversations and concurrent editing. It does not show the viewer's technical role or offer
 user invitations: session association does not manage access. Each accessible own session has a
-three-dot menu with Detach session and Delete session, disabled while activity is running, waiting
-or unconfirmed. Delete opens a confirmation and removes only the chosen conversation after detaching it;
-server refusal keeps the dialog open with its error and leaves shared source intact.
+three-dot menu with Detach session and Delete session. Detach requires an inactive chat. Delete opens
+one confirmation, removes the chosen conversation after detaching it, and shows any refusal in that
+same dialog.
 Other participants expose metadata only. Source lifecycle/review actions remain on the right.
 Source views say Workspace changes because a diff is not attributable to one chat.
 
@@ -127,8 +127,12 @@ association actions retain exact request IDs for retry, scoped to the authentica
 Late results cannot navigate a view that has moved to another workspace. Existing observation events
 update participation without duplicating source subscriptions per session.
 
-Deleting a chat stops and detaches only that chat and removes its private history/cache. Dirty
-shared source and other sessions survive, including deletion of the original creator's chat.
+Deleting a chat stops and detaches only that chat and removes its private history and cache. For an
+owner-confirmed Delete, a provider that verifies native exit can retire the execution even when
+some tool outcomes remain unknown. Delete waits for the original execution claims to release.
+An unverified execution requires a confirmed Stop. Dirty shared source and other sessions survive,
+including deletion of the original creator's chat. The [provider retirement contract](../agent-provider-interface/feature.md)
+covers retained evidence and retry behavior.
 Session-owned unfinished resources still need explicit Finish when deleting only a chat. Workspace Delete
 coordinates removal of its attached resources under workspace management authority, including resources
 created by another user. It accepts dirty source and retained leases without requiring Pause or Complete. Retained histories
@@ -145,6 +149,8 @@ fresh consumer checks.
 
 - Verify highlighted sidebar selection, retained drafts, no top session tabs, and narrow-screen access.
   Confirm Delete targets the chosen own chat, preserves source, and retains errors in its dialog.
+  Verify that retained terminal runs with unresolved outcomes use the same confirmation and that an
+  unverified execution continues to hold its resource claims.
 - Verify direct creation from the plus and attachment from its adjacent icon, excluding bound/active chats;
   preserve private chat boundaries, retry identity, dialog focus return and workspace-switch isolation.
 

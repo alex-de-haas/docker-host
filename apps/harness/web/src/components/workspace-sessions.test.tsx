@@ -264,6 +264,22 @@ it("confirms deletion of the chosen own session and preserves the dialog on refu
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   expect(refresh).toHaveBeenCalledTimes(2);
 });
+it("offers one Delete confirmation for an own chat with unconfirmed activity", async () => {
+  const space = workspace();
+  space.participation!.sessions[1].status = "unknown";
+  const remove = vi.fn().mockResolvedValue(undefined);
+  await act(async () => root.render(<WorkspaceSessions workspace={space} refresh={() => {}} onDelete={remove} />));
+  await openSessionMenu("My chat");
+  const menu = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+  expect(menu.find(node => node.textContent === "Detach session")?.getAttribute("aria-disabled")).toBe("true");
+  await act(async () => menu.find(node => node.textContent === "Delete session…")!.click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Any unreported tool outcomes stay unknown.");
+  expect(remove).not.toHaveBeenCalled();
+  await act(async () => button("Delete session").click());
+  expect(remove).toHaveBeenCalledExactlyOnceWith("second");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+});
+
 it("cancels deletion without removing or detaching a session", async () => {
   const remove = vi.fn();
   await act(async () => root.render(<WorkspaceSessions workspace={workspace()} refresh={() => {}} onDelete={remove} />));

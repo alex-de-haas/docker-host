@@ -11,7 +11,7 @@ export const AGENT_CAPABILITIES = {
   noNativeTools: "native-tools.none", skills: "skills.catalog", exclusiveSkills: "skills.exclusive-selection",
   coreMcp: "mcp.core", externalMcp: "mcp.external", modelChange: "model.change-on-resume",
   nextTurnDecisions: "decisions.next-turn", nativeSubagents: "subagents.native", park: "runs.park",
-  barrier: "runs.barrier", reconcile: "runs.reconcile", liveConfigure: "runs.live-configure",
+  barrier: "runs.barrier", reconcile: "runs.reconcile", retire: "runs.retire", liveConfigure: "runs.live-configure",
   predictions: "predictions", connectionUsage: "connections.usage",
   approvalMode: "configuration.approval-mode",
   mcpPolicy: "mcp.policy-update", consumerWorkflow: "workflow.consumer",
@@ -113,6 +113,8 @@ export type AgentRunControlInput = { requestId: string; expectedGeneration: stri
   | { command: "park"; decisionId: string; decisionRevision: Revision; reason?: string }
   | { command: "barrier"; barrierId: string; kind: "task_adoption" | "child_wait" | "source_rebind" | "limits" | "human_input"; generation: Revision; acknowledgedSequence: Revision; snapshot?: string }
   | { command: "reconcile"; stopped: true; evidence?: string }
+  /** Requires provider-owned exit evidence. Applied retirement preserves uncertain tool outcomes. */
+  | { command: "retire" }
   | { command: "liveConfigure"; mcp: AgentMcpSelection }
   | { command: "mcpPolicy"; mcp: AgentMcpSelection }
   | { command: "predictions"; enabled: boolean }

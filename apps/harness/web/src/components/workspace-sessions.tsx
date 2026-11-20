@@ -43,7 +43,7 @@ export function WorkspaceSessions({ workspace, sessionId, running, refresh, onSe
           <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="size-6 shrink-0 text-muted-foreground" disabled={busy || retry || removing} aria-label={`Session actions for ${s.title}`}><MoreHorizontal className="size-3.5" aria-hidden /></Button></DropdownMenuTrigger>
           <DropdownMenuContent align="end" onCloseAutoFocus={event => { if (deleting) event.preventDefault(); }}>
             <DropdownMenuItem disabled={busy || retry || removing || !inactive} onSelect={() => void command("detach", {}, s.sessionId)}>Detach session</DropdownMenuItem>
-            {onDelete && <DropdownMenuItem variant="destructive" disabled={busy || retry || removing || !inactive} onSelect={() => { setDeleteError(""); setDeleting({ sessionId: s.sessionId, title: s.title || "Untitled session" }); }}>Delete session…</DropdownMenuItem>}
+            {onDelete && <DropdownMenuItem variant="destructive" disabled={busy || retry || removing || (!inactive && s.status !== "unknown")} onSelect={() => { setDeleteError(""); setDeleting({ sessionId: s.sessionId, title: s.title || "Untitled session" }); }}>Delete session…</DropdownMenuItem>}
           </DropdownMenuContent>
         </DropdownMenu> : <span className="shrink-0 text-muted-foreground">Private chat</span>}
       </li>;
@@ -55,7 +55,7 @@ export function WorkspaceSessions({ workspace, sessionId, running, refresh, onSe
     </div>)}
     <Dialog open={deleting !== null} onOpenChange={open => { if (!open && !removalPending.current) setDeleting(null); }}>
       <DialogContent showCloseButton={!removing} onCloseAutoFocus={event => { event.preventDefault(); section.current?.querySelector<HTMLButtonElement>("button")?.focus(); }}>
-        <DialogHeader><DialogTitle>Delete session?</DialogTitle><DialogDescription>Delete “{deleting?.title}” and its conversation history? This cannot be undone. The session is detached; workspace files and other conversations are retained.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Delete session?</DialogTitle><DialogDescription>Delete “{deleting?.title}” and its conversation history? This cannot be undone. The session is detached; workspace files and other conversations are retained. Any unreported tool outcomes stay unknown.</DialogDescription></DialogHeader>
         {deleteError && <p role="alert" className="text-sm text-destructive-foreground">{deleteError}</p>}
         <DialogFooter><Button variant="outline" disabled={removing} onClick={() => setDeleting(null)}>Keep session</Button>
           <Button variant="destructive" disabled={removing || busy || retry} onClick={async () => {

@@ -23,7 +23,7 @@ export async function publicProviderFixture() {
   const selection = { provider, connection: { id: "account", revision: "1" } };
   const connectionId = agentSelectionId(selection), owner = "operator", credential = "test-owner-authority";
   const capabilities: AgentCapabilities = { version: 1, eventVersions: ["agent-event.1"],
-    capabilities: ["session.resume", "configuration.resume-compatible", "decisions.questions", "runs.barrier", "runs.park", "runs.reconcile", AGENT_CAPABILITIES.consumerWorkflow],
+    capabilities: ["session.resume", "configuration.resume-compatible", "decisions.questions", "runs.barrier", "runs.park", "runs.reconcile", AGENT_CAPABILITIES.retire, AGENT_CAPABILITIES.consumerWorkflow],
     limits: { maxCommandBytes: 1048576, maxEventBytes: 1048576, maxSnapshotBytes: 1048576, maxReplayBytes: 4194304,
       replayRetentionMs: 86400000, maxControls: 100, maxPageSize: 100 }, configuration: { resumeCompatible: [] } };
   const sessions = new Map<string, AgentSession>(), runs = new Map<string, AgentRunSnapshot>();
@@ -34,7 +34,8 @@ export async function publicProviderFixture() {
   const starts: Array<{ runId: string; sessionId: string; input: AgentRunInput; body: string }> = [];
   const controls: Array<{ runId: string; input: Record<string, unknown>; path: string }> = [];
   const managers: SessionManager[] = [];
-  const behavior: { startGate?: Promise<void>; cancel: "confirmed" | "unavailable"; reconcile: "confirmed" | "unavailable";
+  const behavior: { startGate?: Promise<void>; cancel: "confirmed" | "unavailable" | "unresolved"; reconcile: "confirmed" | "unavailable";
+    retire?: "confirmed" | "unavailable"; loseNextRetireResponse?: boolean;
     loseNextStartResponse?: boolean; keepReservationAfterCancel?: boolean; deferPredictions?: boolean; beforeCancel?: (runId: string) => void;
     connectionRevision: string } = { cancel: "confirmed", reconcile: "confirmed", connectionRevision: "1" };
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -131,6 +132,11 @@ export async function publicProviderFixture() {
       if (parts[2] === "cancel") {
         if (behavior.cancel === "unavailable") return error("exit_unconfirmed", "The fixture cannot confirm the original native exit.", 503);
         behavior.beforeCancel?.(runId);
+        if (behavior.cancel === "unresolved") {
+          update(runId, { state: "unknown", phase: "interrupted", freshness: "last_known",
+            effects: { certainty: "unknown", unresolvedCallIds: ["command"] } });
+          return error("stop_unconfirmed", "The fixture stopped, but tool outcomes are unresolved.", 503);
+        }
         if (!behavior.keepReservationAfterCancel) for (const control of receipts.values()) if (control.run.id === runId && control.continuation?.state === "awaiting_authorization")
           control.continuation.state = "superseded";
         update(runId, { state: "cancelled", phase: "terminal", stopConfirmed: true, pending: [] });
@@ -138,10 +144,22 @@ export async function publicProviderFixture() {
       else if (parts[2] === "controls" && command.command === "reconcile") {
         if (behavior.reconcile === "unavailable") return error("exit_unconfirmed", "The fixture has no authoritative exit evidence.");
         update(runId, { state: "cancelled", phase: "terminal", stopConfirmed: true, pending: [] });
+      } else if (parts[2] === "controls" && command.command === "retire") {
+        if (behavior.retire !== "confirmed") return error("retirement_exit_unconfirmed", "The fixture has no durable native exit proof.");
+        if (command.expectedGeneration !== snapshot.generation || command.expectedRevision !== snapshot.revision)
+          return error("stale_revision", "Retirement needs the exact generation and revision.");
+        const session = sessions.get(snapshot.sessionId)!;
+        if (session.activeRun?.id !== runId) return error("retirement_stale", "Another run owns the fixture session.");
+        session.activeRun = null;
       }
       const receipt: AgentControlReceipt = { requestId, state: parts[2] === "controls" && command.command === "predictions" && behavior.deferPredictions ? "accepted" : "applied",
         run: snapshot.ref, revision: snapshot.revision, generation: snapshot.generation };
-      receipts.set(requestId, receipt); emit(runId, "control.updated", { requestId, receipt }); return json(receipt);
+      receipts.set(requestId, receipt); emit(runId, "control.updated", { requestId, receipt });
+      if (parts[2] === "controls" && command.command === "retire" && behavior.loseNextRetireResponse) {
+        delete behavior.loseNextRetireResponse;
+        throw new TypeError("Fixture lost the retirement response after committing it.");
+      }
+      return json(receipt);
     }
     return error("fixture_route", "Unexpected provider fixture route.", 404);
   };

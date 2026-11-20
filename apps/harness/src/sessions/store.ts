@@ -75,6 +75,12 @@ export interface SessionRecord {
   selectionRevision?: number;
   workerRun?: { id: string; sequence: number; generation?: string };
   workerRecovery?: { runId: string; input: import("../agent-providers/compatibility.js").WorkerRecovery; state: "pending" | "completed" };
+  /** Exact owner-confirmed Delete control, retained until the conversation is removed. */
+  providerRetirement?: {
+    runId: string;
+    request: import("@hosty-sdk/app/agent").AgentPreparedRequest<import("@hosty-sdk/app/agent").AgentControlReceipt>;
+    state: "pending" | "completed";
+  };
   providerRecovery?: { runId: string; input: import("@hosty-sdk/app/agent").AgentRunControlInput; state: "pending" | "completed" };
   retentionVersion?: 1;
   retention?: import("./retention.js").RetentionStatus;

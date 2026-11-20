@@ -45,7 +45,8 @@ import type { SettingsStore } from "../settings/store.js";
 import { CORE_PROVIDER_ID, type McpProvider, type ProviderDirectory } from "../settings/providers.js";
 import { TokenExchange, toMcpServerConfig, serverName, TOKEN_REFRESH_MARGIN_MS } from "../mcp/exchange.js";
 import { readOnlyToolNames } from "../mcp/readonly.js";
-import { AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentAttachment, type AgentMcpSelection, type AgentPendingDecision, type AgentRunSnapshot, type AgentSource, type AgentRunControlInput, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest, type AgentWatchItem } from "@hosty-sdk/app/agent";
+import { AGENT_CAPABILITIES, AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentAttachment, type AgentMcpSelection, type AgentPendingDecision, type AgentRunSnapshot, type AgentSource, type AgentRunControlInput, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest, type AgentWatchItem } from "@hosty-sdk/app/agent";
+import { prepareAgentControl } from "@hosty-sdk/app/agent/client";
 import type { MediatedProviderInvocation } from "@hosty-sdk/app/providers";
 import { CoreAgentBackend } from "../agent-providers/core.js";
 import { agentSelectionId } from "../agent-providers/directory.js";
@@ -467,6 +468,7 @@ export class SessionManager {
           mcp: currentMcp, limits: { maxDurationMs: 24 * 60 * 60 * 1000 } };
       },
       unavailable: error => this.serialize(options.sessionId, async () => {
+        if (session.record.providerRetirement || this.live.get(options.sessionId) !== session) return;
         await this.append(options.sessionId, { type: "notice", message: error instanceof Error ? error.message : "Provider observation is unavailable. Reconnect to reconcile this run." });
         // Losing observation is not execution failure, cancellation or permission to release a lease.
       }),
@@ -573,7 +575,7 @@ export class SessionManager {
       const agent = input.agent, signed = current.agentExecution, binding = state?.lastRunInput?.workflow;
       if (current.operation !== "session.workflow" || current.kind !== "task-executor" || current.key !== "default"
         || current.userId !== invocation.userId || current.principalId !== invocation.principalId || current.hostRole !== "host.admin"
-        || !record || record.createdBy !== current.userId || record.storageRecovery || !state || !signed
+        || !record || record.createdBy !== current.userId || record.storageRecovery || record.providerRetirement || !state || !signed
         || signed.sessionId !== agent.sessionId || signed.runId !== agent.runId
         || signed.provider.appId !== agent.provider.appId || signed.provider.installationId !== agent.provider.installationId || signed.provider.key !== agent.provider.key
         || state.sessionId !== agent.sessionId || state.runId !== agent.runId || state.lastRunInput?.runId !== agent.runId
@@ -601,6 +603,7 @@ export class SessionManager {
   }
 
   private async ensureProviderRun(session: LiveSession): Promise<ProviderHarnessRun> {
+    this.assertNotRetiring(session.record);
     if (session.run instanceof ProviderHarnessRun) return session.run;
     if (!session.record.selection) throw new AppContextError(409, "provider_cutover_required", "Choose a current provider for a new conversation.");
     const options = { sessionId: session.record.id, cwd: this.workDir, onEvent: () => {} };
@@ -637,7 +640,7 @@ export class SessionManager {
 
   /** The caller holds the session lane; Stop projects its final snapshot before its turn boundary. */
   private async projectProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState, projectStatus = true): Promise<void> {
-      if (this.stopping) return;
+      if (this.stopping || session.record.providerRetirement) return;
       const id = session.record.id;
       let previous = this.providerProjections.get(id);
       if (previous?.snapshot.ref.id !== value.runId) previous = undefined;
@@ -868,7 +871,7 @@ export class SessionManager {
   }
 
   private checkDecisionRecord(record: SessionRecord, wait: Pick<DecisionWait, "id" | "owner" | "snapshot" | "cancellationGeneration">): void {
-    if (record.createdBy !== wait.owner || !record.decisionWaitIds?.includes(wait.id)
+    if (record.createdBy !== wait.owner || record.providerRetirement || !record.decisionWaitIds?.includes(wait.id)
       || (record.decisionGeneration ?? 0) !== wait.cancellationGeneration || ["cancelled", "abandoned"].includes(record.status))
       throw new AppContextError(409, "stale_input", "The originating work changed or was cancelled.");
     if (decisionSnapshot(record) !== wait.snapshot) throw new AppContextError(409, "stale_input", "The reviewed instructions, provider, account or inputs changed. The answer remains saved.");
@@ -1088,7 +1091,12 @@ export class SessionManager {
       return this.messageQueues.snapshot(session.record);
     });
   }
+  private assertNotRetiring(record: SessionRecord): void {
+    if (record.providerRetirement) throw new AppContextError(409, "session_deletion_pending", "Retry Delete session to finish removing this conversation.");
+  }
+
   private assertQueueSession(record: SessionRecord): void {
+    this.assertNotRetiring(record);
     if (record.taskExecutionId) throw new AppContextError(409, "task_managed_session", "Task attempts cannot accept an ordinary conversation queue.");
     if (record.handoffPending || ["queued", "unknown"].includes(record.handoffDispatch?.state ?? ""))
       throw new AppContextError(409, "handoff_pending", "Resolve the prepared handoff before queuing another message.");
@@ -1165,7 +1173,7 @@ export class SessionManager {
     const dispatch = await this.serialize(id, async (): Promise<{ entryId: string; attempt: QueueAttempt; credential: string } | undefined> => {
       if (this.stopping) return;
       const session = await this.requireLive(id), queue = this.messageQueues.state(session.record), entry = queue.entries[0];
-      if (!entry || queue.paused || entry.state === "editing" || entry.state === "failed") return;
+      if (!entry || queue.paused || session.record.providerRetirement || entry.state === "editing" || entry.state === "failed") return;
       if (entry.attempt && ["sending", "unknown"].includes(entry.state)) {
         let receipt: StoredMessageReceipt | null;
         try { receipt = await this.store.readMessageReceipt(id, entry.attempt.clientRequestId); }
@@ -1293,7 +1301,7 @@ export class SessionManager {
       session.credential = credential;
       session.workspaceCredential = credential;
       session.credentialRefreshPending = true;
-      if (this.connections?.remote && !session.run && session.record.selection) {
+      if (this.connections?.remote && !session.run && session.record.selection && !session.record.providerRetirement) {
         const retained = await this.store.readProviderExecution(id);
         if (retained?.runId) {
           const run = new ProviderHarnessRun(() => this.providerContext(session.record.selection!, {
@@ -2588,17 +2596,70 @@ export class SessionManager {
     return record ? this.runtimeProjection(record) : null;
   }
 
+  /** Retire a stopped provider run for explicit Delete while keeping its unresolved results unknown. */
+  private async retireProviderForDeletion(session: LiveSession): Promise<boolean> {
+    const record = session.record, active = record.providerExecution;
+    // Idle workspace preparation can leave a stopped Harness lease identity. Only a provider
+    // run with no separate active or unverified native lease can use the retirement path.
+    if (!this.connections?.remote || !active?.runId || record.taskExecutionId || record.taskDispatch
+        || (record.developmentLease && record.developmentLeaseState !== "stopped") || record.workerRun || record.sourceAdmission) return false;
+    let retirement = record.providerRetirement;
+    if (retirement && (retirement.runId !== active.runId || retirement.request.runId !== active.runId
+      || retirement.request.operation !== "runs.control"))
+      throw new AppContextError(409, "retirement_stale", "The retained deletion belongs to another provider run.");
+    if (retirement?.state === "completed") {
+      await this.store.saveRecord(record);
+      return true;
+    }
+    if (!retirement && active.run?.stopConfirmed) return false;
+    const { context, execution } = await this.publicExecution(session);
+    if (!retirement) {
+      const snapshot = await execution.read(false);
+      if (snapshot.state !== "unknown" || snapshot.stopConfirmed || !snapshot.effects.unresolvedCallIds.length
+        || !(await context.client.capabilities()).capabilities.includes(AGENT_CAPABILITIES.retire)) return false;
+      const request = prepareAgentControl(snapshot.ref.id, { command: "retire", requestId: randomUUID(),
+        expectedGeneration: snapshot.generation, expectedRevision: snapshot.revision });
+      retirement = record.providerRetirement = { runId: snapshot.ref.id, request, state: "pending" };
+    }
+    const input = JSON.parse(retirement.request.body) as AgentRunControlInput;
+    if (input.command !== "retire" || active.run && input.expectedGeneration !== active.run.generation)
+      throw new AppContextError(409, "retirement_stale", "The retained deletion belongs to another provider generation.");
+    // Fence this conversation before dispatch. The prepared body and its UUID also survive a lost
+    // response or a restart while the provider releases the original run's workspace claims.
+    await this.store.saveRecord(record);
+    let receipt;
+    try { receipt = await context.client.execute(retirement.request); }
+    catch (error) {
+      if (error instanceof AgentApiError && error.status === 409
+        && ["retirement_exit_unconfirmed", "retirement_stale", "stale_revision"].includes(error.code)) {
+        // These proof or revision refusals precede provider admission. Use the regular Stop path
+        // for an unverified exit; a stale observation needs a fresh review on the next retry.
+        delete record.providerRetirement;
+        await this.store.saveRecord(record);
+        if (error.code === "retirement_exit_unconfirmed") return false;
+      }
+      throw error;
+    }
+    if (receipt.run.id !== retirement.runId || receipt.requestId !== input.requestId
+      || receipt.generation !== input.expectedGeneration || BigInt(receipt.revision) < BigInt(input.expectedRevision))
+      throw new AppContextError(502, "retirement_receipt_invalid", "The provider did not confirm this deletion request and execution generation.");
+    if (receipt.state !== "applied")
+      throw new AppContextError(503, "retirement_pending", "Provider cleanup is unconfirmed. Retry Delete session to finish the original request.");
+    retirement.state = "completed";
+    await this.store.saveRecord(record);
+    return true;
+  }
+
   /**
    * Deletes a session: its record, its transcript, and the run still producing one.
    *
-   * The run is stopped first and by the same route a cancel takes — proxy routes unregistered,
-   * refresh timer cleared — because a harness left running against a deleted session would keep
-   * minting app tokens for a conversation nobody can read any more.
+   * The run stops through cancellation unless the provider explicitly retires an already
+   * stopped run for the interactive owner. In either case cleanup precedes history removal.
    *
-   * Subscribers are told before the record goes: another tab with this session open would otherwise
-   * sit on a stream that has stopped meaning anything, and reconnect into a 404 it cannot explain.
+   * Subscribers use the terminal event to clear their drafts, even if the HTTP response is lost.
+   * Publish it only after deletion has committed.
    */
-  async deleteSession(id: string, deletedBy: string, credential?: string): Promise<boolean> {
+  async deleteSession(id: string, deletedBy: string, credential?: string, interactiveOwner = false): Promise<boolean> {
     return this.serialize(id, async () => {
       let record = this.live.get(id)?.record ?? (await this.store.readRecord(id));
       if (!record) {
@@ -2609,8 +2670,28 @@ export class SessionManager {
       const live = await this.requireLive(id);
       record = live.record;
       if (credential) live.workspaceCredential = credential;
-      await this.cancelSessionLocked(id);
-      if (await this.observations.change(state => state.runs.some(r => r.conversation === id && !r.stopConfirmed)))
+      const canRetire = interactiveOwner && !!credential;
+      if (!canRetire) this.assertNotRetiring(record);
+      let retired = canRetire && await this.retireProviderForDeletion(live);
+      if (!retired) {
+        this.assertNotRetiring(record);
+        try { await this.cancelSessionLocked(id); }
+        catch (error) {
+          // Stop can close native execution before it discovers that tool results are missing.
+          // Use the same confirmation to retire that newly stopped run.
+          if (!canRetire || !(error instanceof AgentApiError && error.code === "stop_unconfirmed")
+            || !await this.retireProviderForDeletion(live)) throw error;
+          retired = true;
+        }
+      }
+      if (retired) {
+        await live.run?.detach?.();
+        live.run = null;
+        live.runEpoch = undefined;
+        this.clearRefresh(live);
+      }
+      const retiredObservation = retired && record.providerObservedRunId === record.providerRetirement?.runId ? record.agentRunId : undefined;
+      if (await this.observations.change(state => state.runs.some(r => r.conversation === id && !r.stopConfirmed && r.id !== retiredObservation)))
         throw new AppContextError(409, "exit_unconfirmed", "Confirm this conversation's native execution has stopped before deleting its record.");
       let snapshot = await this.retentionSnapshot(record);
       if (!snapshot.resourcesFinished && !snapshot.independentEnvironments)
@@ -2626,7 +2707,10 @@ export class SessionManager {
       if (snapshot.kind === "workspace" && snapshot.workflow?.state !== "deleted") {
         const token = credential ?? live.workspaceCredential ?? live.credential;
         if (!token || !this.development) throw new AppContextError(401, "workspace_credentials_required", "Refresh Hosty credentials before detaching this conversation.");
-        const association = await this.development.activity(id, token, { status: "idle", stopped: true });
+        const stopped = { status: "idle", stopped: true };
+        const association = retired && record.developmentLease
+          ? await this.reportWorkspaceActivity(live, token, { ...stopped, leaseId: record.developmentLease })
+          : await this.development.activity(id, token, stopped);
         if (!association.workspaceId || association.revision === null) throw new AppContextError(409, "workspace_unclassified", "Recover this session's workspace association before deletion.");
         // Retain the exact request for uncertain detach recovery; never delete source here.
         let pending = record.associationRequests?.find(r => r.action === "detach" && r.state === "pending");
@@ -2645,7 +2729,8 @@ export class SessionManager {
       if (snapshot.kind === "chat" && hasResourceHistory(record) && !snapshot.sessionDetached
           && !(snapshot.independentEnvironments && snapshot.workspaceAbsent && !hasWorkspaceHistory(record)))
         throw new AppContextError(409, "resource_retained", "Reconcile retained resource history before deleting the conversation.");
-      return this.removeSessionRecord(record, deletedBy);
+      if (retiredObservation) await this.observations.retire(retiredObservation, deletedBy, id);
+      return this.removeSessionRecord(record, deletedBy, retired);
     });
   }
 
@@ -2672,10 +2757,10 @@ export class SessionManager {
     return result;
   }
 
-  private async removeSessionRecord(record: SessionRecord, deletedBy: string): Promise<boolean> {
+  private async removeSessionRecord(record: SessionRecord, deletedBy: string, providerRetired = false): Promise<boolean> {
       const id = record.id;
       const session = this.live.get(id);
-      if (this.connections?.remote) await this.finishExecution(await this.requireLive(id));
+      if (this.connections?.remote && !providerRetired) await this.finishExecution(await this.requireLive(id));
       if (session) {
         if (session.run) {
           await session.run.stop();
@@ -2684,29 +2769,34 @@ export class SessionManager {
         session.pendingApprovals.clear();
         session.pendingQuestions.clear();
         this.clearRefresh(session);
-        this.fanOut(session, {
-          // Negative, like the client's own stream errors: this event is never persisted, and reusing
-          // the last stored seq would hand subscribers a cursor value that already belongs to a real
-          // event. Nothing can reconnect with it anyway — the session it points at is being removed.
-          seq: -1,
-          ts: new Date().toISOString(),
-          type: "session_deleted",
-      });
-        session.listeners.clear();
-        this.live.delete(id);
       }
       this.proxy?.unregister(id);
       this.developmentMcp.unregister(id);
       this.environmentCreations.delete(id);
       if (record.skillExportId) await skillRequest(`/exports/${record.skillExportId}`, "DELETE");
       await this.decisions?.deleteSession(record.createdBy, id);
-      await this.store.deleteSession(id);
+      try {
+        await this.store.deleteSession(id);
+      } catch (error) {
+        // The tombstone can already exist when later file cleanup fails. Only retain a
+        // readable session for retry. A new GET must observe missing or sealed storage.
+        const retained = await this.store.readRecord(id).catch(() => null);
+        if (!retained || retained.storageRecovery) this.live.delete(id);
+        throw error;
+      }
+      if (session) {
+        this.live.delete(id);
+        // The deletion event has no journal cursor because the journal is gone.
+        this.fanOut(session, { seq: -1, ts: new Date().toISOString(), type: "session_deleted" });
+        session.listeners.clear();
+      }
       this.notifyToolActivity();
       // Reported like every other lifecycle transition, and with the administrator who asked for it:
       // the transcript this removed is exactly what an audit trail cannot recover afterwards, so an
       // unattributable deletion would be the one entry that matters least. The deleter is recorded
       // separately from the session's creator, which is a different person often enough to matter.
-      this.audit.report("ai_session_deleted", { sessionId: id, deletedBy, createdBy: record.createdBy });
+      this.audit.report("ai_session_deleted", { sessionId: id, deletedBy, createdBy: record.createdBy,
+        ...(providerRetired ? { retiredProviderRunId: record.providerRetirement?.runId } : {}) });
       return true;
   }
 
@@ -2955,6 +3045,7 @@ export class SessionManager {
         }
       }
       this.store.assertWritable(id);
+      this.assertNotRetiring(session.record);
       if (session.record.sourceAdmission) throw new AppContextError(409, "source_admission_recovery_required", "An earlier message has an unresolved admission. Review execution recovery before starting another turn.");
       if (this.stopping) throw new AppContextError(503, "harness_stopping", "Harness is stopping; the saved message was not dispatched.");
       if (this.connections?.remote && session.record.providerExecution?.runId && !session.record.providerExecution.run?.stopConfirmed)
@@ -3720,6 +3811,7 @@ export class SessionManager {
       if (!record || record.createdBy !== owner || record.agentRunId !== runId) throw new AppContextError(404, "not_found", "Execution resource not found.");
       const observed = await this.observations.change(state => state.runs.find(r => r.id === runId));
       if (!observed || expectedRevision !== null && observed.revision !== expectedRevision) throw new AppContextError(409, "revision_conflict", "Read the current execution revision.");
+      if (observed.retired) throw new AppContextError(409, "run_retired", "The conversation owner retired this execution.");
       if (observed.stopConfirmed) return;
       const live = await this.requireLive(conversation);
       if (!live.run) throw new AppContextError(503, "provider_unavailable", "The native execution handle is unavailable; its exit is not confirmed.");
@@ -3751,6 +3843,7 @@ export class SessionManager {
     await this.serialize(id, async () => {
       const session = await this.requireLive(id);
       if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
+      this.assertNotRetiring(session.record);
       if (!session.record.selection) throw new AppContextError(409, "provider_cutover_required", "Legacy executions cannot be imported or recovered through a provider. Complete the documented clean cutover.");
       if (credential) { session.credential = credential; session.workspaceCredential = credential; }
       const requestId = this.messageRequest(value.requestId);
