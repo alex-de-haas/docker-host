@@ -154,7 +154,8 @@ describe("native execution behind the public lifecycle", () => {
   it("does not release an awaiting native callback until cancellation confirms the known execution stop", async () => {
     const f = await setup(true), id = randomUUID(), command: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start", input: { text: "Ask before acting" } };
     await f.controller.startRun(f.sessionId, id, command, JSON.stringify(command), actor);
-    const waiting = await until(() => f.controller.snapshot(id), snapshot => snapshot.pending.length === 1);
+    const waiting = await until(() => f.controller.snapshot(id),
+      snapshot => snapshot.state === "waiting_for_input" && snapshot.pending.some(decision => decision.id === "pending-question"));
     expect(waiting.stopConfirmed).toBe(false); expect(f.counts().claims).toBe(1);
     const cancel = { requestId: randomUUID(), expectedGeneration: waiting.generation, expectedRevision: waiting.revision };
     await f.controller.cancel(id, cancel, JSON.stringify(cancel), actor);

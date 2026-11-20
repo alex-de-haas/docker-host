@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { workflowCapabilities } from "./subagent-workflow.js";
 import { AGENT_CAPABILITIES, AgentApiError, type AgentConfiguration, type AgentMcpSelection, type AgentPendingDecision,
   type AgentRunInput, type AgentRunSnapshot, type AgentResponseInput, type AgentControlReceipt, type AgentSessionWorkflowBinding } from "@hosty-sdk/app/agent";
 import type { AgentClient } from "@hosty-sdk/app/agent/client";
@@ -12,6 +13,8 @@ export type ProviderRunContext = {
   persistence: ProviderExecutionPersistence;
   configuration: AgentConfiguration;
   workflow?: AgentSessionWorkflowBinding;
+  negotiatedCapabilities?: string[];
+  dispatchRunId?: string;
   installationHistory?(): Promise<boolean>;
   observationContact?(runId: string, error: unknown | null): Promise<void>;
   input(text: string): Promise<Omit<AgentRunInput, "expectedSessionRevision" | "configurationRevision" | "continuation">>;
@@ -36,7 +39,7 @@ export class ProviderHarnessRun implements HarnessRun {
   private stopRequested = false;
   private disablingSuggestions?: Promise<void>;
   private readonly continuing = new Map<string, Promise<void>>();
-  constructor(private readonly load: () => Promise<ProviderRunContext>, private readonly options: HarnessStartOptions) {}
+  constructor(private readonly load: (admitting?: boolean) => Promise<ProviderRunContext>, private readonly options: HarnessStartOptions) {}
 
   send(text: string): void {
     if (this.busy || this.detached) throw new AgentApiError("session_busy", "Reconcile the current provider turn before sending another input.", 409);
@@ -54,9 +57,9 @@ export class ProviderHarnessRun implements HarnessRun {
   }
 
   private async admit(text: string): Promise<void> {
-    const context = this.context = await this.load();
+    const context = this.context = await this.load(true);
     const execution = this.execution = new ProviderExecution(context.client, context.state, context.persistence);
-    await this.requireWorkflowCapability(context.workflow);
+    await this.requireWorkflowCapability(context.workflow, context.negotiatedCapabilities);
     const configuration: AgentConfiguration = { ...structuredClone(context.configuration),
       ...(this.options.autonomy !== undefined ? { approvalMode: this.options.autonomy } : {}),
       ...(this.options.promptSuggestions !== undefined ? { predictions: { enabled: this.options.promptSuggestions } } : {}) };
@@ -98,12 +101,22 @@ export class ProviderHarnessRun implements HarnessRun {
     }
     const input = await context.input(text);
     if (this.stopRequested) throw new AgentApiError("execution_cancelled", "This admission was stopped before execution.", 409);
-    await execution.start(randomUUID(), { ...input, expectedSessionRevision: session.revision,
+    await execution.start(context.dispatchRunId ?? randomUUID(), { ...input, expectedSessionRevision: session.revision,
       configurationRevision: session.configurationRevision,
       continuation: session.nativeState === "not_created" ? "start" : "resume" }, undefined, context.workflow);
   }
 
   waitForAdmission(): Promise<void> { return this.admission; }
+
+  /** A lost native start response prevents send() from entering its observer. */
+  async observeConfirmedAdmission(): Promise<void> {
+    try { await this.admission; }
+    catch {
+      await this.observation;
+      await this.attach(true);
+      this.admission = Promise.resolve();
+    }
+  }
 
   private async observe(readOnlySnapshots = false, useInstallationHistory = true): Promise<void> {
     const context = this.context!, runId = context.state.runId!;
@@ -166,9 +179,13 @@ export class ProviderHarnessRun implements HarnessRun {
     }).catch(async error => { if (!this.detached) await this.context?.unavailable(error); });
   }
 
-  private async requireWorkflowCapability(workflow: AgentSessionWorkflowBinding | undefined): Promise<void> {
-    if (workflow && !(await this.context!.client.capabilities()).capabilities.includes(AGENT_CAPABILITIES.consumerWorkflow))
-      throw new AgentApiError("workflow_provider_unsupported", "The selected provider does not support consumer task workflows. Update it or choose a compatible provider before running this task.", 422);
+  private async requireWorkflowCapability(workflow: AgentSessionWorkflowBinding | undefined, known?: string[]): Promise<void> {
+    if (!workflow) return;
+    const available = known ?? (await this.context!.client.capabilities()).capabilities;
+    const missing = workflowCapabilities(workflow).find(capability => !available.includes(capability));
+    if (missing) throw new AgentApiError("workflow_provider_unsupported", missing === AGENT_CAPABILITIES.consumerWorkflow
+      ? "The selected provider does not support consumer task workflows. Update it or choose a compatible provider before running this task."
+      : "The selected provider no longer supports this subagent workflow.", 422);
   }
 
   async attach(observationOnly = false): Promise<void> {

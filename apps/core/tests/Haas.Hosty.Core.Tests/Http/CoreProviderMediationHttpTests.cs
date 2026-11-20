@@ -89,6 +89,62 @@ public sealed class CoreProviderMediationHttpTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DirectTaskMcpIsOverriddenOnlyByATaskWorkflow(bool withTaskWorkflow)
+    {
+        using var transport = new ProviderTransport();
+        await using var host = await Start(transport);
+        var source = await AddProvider(host, "independent.source", "tasks", []);
+        var native = await AddProvider(host, "independent.native", "agent", ["workflow.subagents"]);
+        var chat = await AddProvider(host, "independent.chat", "agent-sessions", ["session.subagents"]);
+        var permissions = new List<string> { CoreAppPermissions.AgentProviders, CoreAppPermissions.TaskProviders, CoreAppPermissions.TasksRead };
+        if (withTaskWorkflow)
+        {
+            permissions.Add(CoreAppPermissions.TaskExecutors);
+            chat = chat with { ConfirmedRoles = ["agent-sessions", "task-executor"], Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>(chat.Interfaces!) {
+                ["task-executor"] = [new("custom", "api", "/v1", 1, ["session-workflow"])] } };
+        }
+        chat = chat with { GrantedCorePermissions = permissions.ToArray() };
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(chat);
+        var credential = await BrowserAuthorityFixture.Grant(host, chat.Id, "admin");
+        await host.Services.GetRequiredService<AgentPolicyStore>().ChangeAsync(AgentMcpDirectory.CoreId,
+            new(null, true, new Dictionary<string, string>(), new Dictionary<string, AssistantTargetGrant> { [chat.Id] = new(chat.InstalledAt, "reviewed") }));
+        var sessionId = Guid.NewGuid().ToString(); var runId = Guid.NewGuid().ToString();
+        string[] tools = ["task_list", "task_get"];
+        var workflow = new CoreTaskSessionWorkflowBinding(new(chat.Id, PanelIdentity.Installation(chat), "custom"), sessionId,
+            withTaskWorkflow ? ["subagent_wait", .. tools] : ["subagent_wait"],
+            withTaskWorkflow ? JsonSerializer.SerializeToElement(new { @default = "ask", tools = new { task_get = new { mode = "disabled" } } }) : null);
+        var ceiling = JsonSerializer.SerializeToElement(new { workflow, mcp = new { targets = new[] { new { target = new { kind = "core" }, tools } } } }, JsonSerializerOptions.Web);
+        var agents = host.Services.GetRequiredService<CoreAgentExecution>();
+        var grant = await agents.Authorize(chat, credential.AccessToken, new(new(native.Id, PanelIdentity.Installation(native), "custom"),
+            "runs.start", "PUT", $"/sessions/{sessionId}/runs/{runId}", new string('c', 64), SessionId: sessionId, RunId: runId,
+            Ceiling: ceiling, Conversation: new(sessionId, "/chats/" + sessionId, "Parent")), default);
+        await agents.Admit(native, grant.AdmissionRef, default);
+        var token = await agents.McpToken(native, new(grant.AdmissionRef, new("core")), default);
+        using var client = host.CreateClient(); client.DefaultRequestHeaders.Authorization = new("Bearer", token.Token);
+        transport.Services = host.Services; transport.Provider = source;
+        var reference = new HostyTaskProviderRef(source.Id, PanelIdentity.Installation(source), "custom");
+        var task = Task(reference);
+        transport.Reply = JsonSerializer.SerializeToElement(new HostyTaskPage([task], null), JsonSerializerOptions.Web);
+        var list = await DirectEnvironmentHttpTests.Tool(client, "task_list", new { input = new CoreTaskQuery(reference) });
+        transport.Reply = JsonSerializer.SerializeToElement(task, JsonSerializerOptions.Web);
+        var get = await DirectEnvironmentHttpTests.Tool(client, "task_get", new { input = new CoreTaskGet(task.Ref) });
+        if (withTaskWorkflow)
+        {
+            Assert.Contains("current selected task provider", list.ToString());
+            Assert.Contains("disabled by its admitted selection or policy", get.ToString());
+            Assert.Empty(transport.Operations);
+        }
+        else
+        {
+            Assert.Equal(task.Ref.Id, list.GetProperty("structuredContent").GetProperty("tasks")[0].GetProperty("ref").GetProperty("id").GetString());
+            Assert.Equal(task.Ref.Id, get.GetProperty("structuredContent").GetProperty("ref").GetProperty("id").GetString());
+            Assert.Equal(["list", "get"], transport.Operations);
+        }
+    }
+
+    [Theory]
     [InlineData("tasks", "task_providers", AccessTokenScopes.McpTasksRead)]
     [InlineData("agent-sessions", "agent_session_providers", AccessTokenScopes.McpAgentSessionsRead)]
     [InlineData("conversation-history", "history_providers", AccessTokenScopes.McpHistoryRead)]

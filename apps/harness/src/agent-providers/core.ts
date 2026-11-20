@@ -45,10 +45,12 @@ export class CoreAgentBackend implements AgentDirectoryBackend {
     }));
   }
 
-  client(provider: AgentProviderRef, authority: AgentConsumerAuthority, conversation?: { sessionId: string; viewerPath: string; title: string }): AgentClient {
+  client(provider: AgentProviderRef, authority: AgentConsumerAuthority, conversation?: { sessionId: string; viewerPath: string; title: string },
+    onWorkflowCapabilities?: (capabilities: readonly string[]) => void): AgentClient {
     return new AgentClient({ provider, fetch: this.fetcher, authorize: async (request, signal) => {
       const authorization = await this.core<AgentOperationAuthorization>("/agent/authorize", authority, { provider, ...request,
         ...(request.operation === "runs.start" && conversation ? { conversation } : {}) }, signal);
+      if (request.operation === "capabilities") onWorkflowCapabilities?.(authorization.supportedWorkflowCapabilities ?? []);
       const url = new URL(authorization.baseUrl);
       if (this.options.runningInContainer && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
         url.hostname = "host.docker.internal";

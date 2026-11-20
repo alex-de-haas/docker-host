@@ -1,9 +1,9 @@
-import { AGENT_SESSION_WORKFLOW_TOOLS } from "@hosty-sdk/app/agent";
+import { AGENT_SESSION_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, type AgentSessionWorkflowTool } from "./agent.js";
 
 const object = (properties: Record<string, unknown>, required: string[] = []) => ({ type: "object", properties, required, additionalProperties: false });
 const id = { type: "string", format: "uuid" }, revision = { type: "integer", minimum: 1 }, counter = { type: "integer", minimum: 0 };
 const text = (maxLength: number) => ({ type: "string", maxLength });
-const provider = object({ appId: text(200), installationId: text(200), key: text(100) }, ["appId", "installationId", "key"]);
+const provider = object({ appId: text(200), installationId: text(200), key: text(100), implementationId: { oneOf: [text(128), { type: "null" }] } }, ["appId", "installationId", "key"]);
 const ref = object({ ...provider.properties, id }, ["appId", "installationId", "key", "id"]);
 const refs = { type: "array", items: ref, maxItems: 100 };
 const selection = object({ kind: { enum: ["option", "configuration"] }, id: text(200), revision }, ["kind", "id", "revision"]);
@@ -21,6 +21,10 @@ const requestId = { ...id, description: "A fresh globally unique UUID for a new 
 const mutation = { requestId, expectedRevision: revision };
 const writeScope = object({ mode: { enum: ["read", "write", "exclusive"] }, paths: { type: "array", items: text(2000), maxItems: 100 } }, ["mode", "paths"]);
 const schemas: Record<string, ReturnType<typeof object>> = {
+  "subagent-profiles": object({}),
+  "subagent-spawn": object({ requestId, profileId: text(200), profileRevision: revision, prompt: text(32000), title: text(200) }, ["requestId", "profileId", "profileRevision", "prompt"]),
+  "subagent-status": object({ childSessionId: id }),
+  "subagent-wait": object({ requestId, childSessionIds: { type: "array", items: id, minItems: 1, maxItems: 100 }, mode: { enum: ["any", "all"] } }, ["requestId", "childSessionIds", "mode"]),
   "task-executor-options": object({}),
   "task-options": object({ executor: provider }),
   "task-list": object({ cursor: text(200), limit: { type: "integer", minimum: 1, maximum: 100 }, status: { enum: ["Draft", "Ready", "InProgress", "Blocked", "Done", "Cancelled"] }, parentTaskRef: ref, rootTaskRef: ref, rootsOnly: { type: "boolean" }, removed: { type: "boolean" } }),
@@ -50,6 +54,10 @@ const schemas: Record<string, ReturnType<typeof object>> = {
   "task-execution-get": object({ cursor: text(200), limit: { type: "integer", minimum: 1, maximum: 100 } }),
 };
 const descriptions: Record<string, string> = {
+  "subagent-profiles": "List saved agent profiles and their current revisions for a child chat.",
+  "subagent-spawn": "Open a child chat with the selected profile and prompt. Reuse the request UUID only to recover this exact delegation.",
+  "subagent-status": "Read the state and available results of this chat’s children. Supply a child session ID to inspect one.",
+  "subagent-wait": "Register a durable wait for the selected direct children. If pending, yield this turn. The parent receives the outcome when the condition is met.",
   "task-executor-options": "Read the owning consumer executor directory: saved profile descriptions, immutable revisions and availability. Use this session-owned tool to choose task performers and recheck setup after a Decision. It never creates profiles.",
   "task-options": "Read the current executor directory: profile descriptions, immutable selection revisions and known availability. Choose existing profiles first.",
   "task-list": "List visible tasks with optional ancestry filters; in an admitted execution, read the current tree.",
@@ -69,8 +77,9 @@ const descriptions: Record<string, string> = {
   "task-execution-get": "Read this session's task binding, root plan, limits and bounded child results. Before adoption, read the current session revisions and mode.",
 };
 /** Fixed business tools only. Their schemas grant no native, Core MCP or source authority. */
-export const workflowTools = () => AGENT_SESSION_WORKFLOW_TOOLS.map(name => {
+const knownTools = [...AGENT_SESSION_WORKFLOW_TOOLS, ...AGENT_SUBAGENT_WORKFLOW_TOOLS];
+export const workflowTools = (selected: readonly AgentSessionWorkflowTool[] = AGENT_SESSION_WORKFLOW_TOOLS) => knownTools.filter(name => selected.includes(name)).map(name => {
   const action = name.replaceAll("_", "-");
-  return { name, description: descriptions[action]!, inputSchema: object({ input: schemas[action]!, source: provider }, ["input"]),
-    annotations: { readOnlyHint: ["task_executor_options", "task_options", "task_list", "task_get", "task_execution_get"].includes(name), destructiveHint: name === "task_action", openWorldHint: false } };
+  return { name, description: descriptions[action]!, inputSchema: object(name.startsWith("subagent_") ? { input: schemas[action]! } : { input: schemas[action]!, source: provider }, ["input"]),
+    annotations: { readOnlyHint: ["subagent_profiles", "subagent_status", "task_executor_options", "task_options", "task_list", "task_get", "task_execution_get"].includes(name), destructiveHint: name === "task_action", openWorldHint: false } };
 });

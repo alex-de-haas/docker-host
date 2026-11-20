@@ -67,6 +67,111 @@ async function reconcile(f: Awaited<ReturnType<typeof fixture>>, id: string) {
   return (await f.store.run(id)).record.controls[command.requestId]!.receipt;
 }
 describe("native authority renewal and stop reconciliation", () => {
+  it("waits for Core admission before renewing an accepted provider run", async () => {
+    const f = await fixture(), maintain = f.driver.maintain.bind(f.driver);
+    vi.spyOn(f.driver, "maintain").mockResolvedValue();
+    let allowAdmission!: () => void, admitted = false;
+    const pending = new Promise<void>(resolve => { allowAdmission = resolve; });
+    vi.mocked(f.authority.admit).mockImplementation(async () => { await pending; admitted = true; return {}; });
+    vi.mocked(f.authority.renew).mockImplementation(async () => {
+      if (!admitted) throw new Error("Core has not admitted this execution.");
+      return {};
+    });
+    const id = await start(f);
+    try {
+      await vi.waitFor(() => expect(f.authority.admit).toHaveBeenCalledOnce());
+      await maintain();
+      expect(f.authority.renew).not.toHaveBeenCalled();
+      expect((await f.controller.snapshot(id)).stopConfirmed).toBe(false);
+    } finally { allowAdmission(); }
+    await vi.waitFor(() => expect(f.starts).toHaveBeenCalledOnce());
+    await maintain();
+    expect(f.authority.renew).toHaveBeenCalledWith("original-admission");
+  });
+  it("renews admitted authority during preparation and reports activity only for acquired workspace leases", async () => {
+    const f = await fixture(), maintain = f.driver.maintain.bind(f.driver);
+    vi.spyOn(f.driver, "maintain").mockResolvedValue();
+    let allowLease!: () => void, acquired = false;
+    const pending = new Promise<void>(resolve => { allowLease = resolve; });
+    const workspaceId = "f".repeat(64);
+    vi.mocked(f.authority.workspace).mockImplementation(async (_ref, op) => {
+      if (op === "resolve") return { id: workspaceId, revision: 1, path: f.directory } as never;
+      if (op === "lease") { await pending; acquired = true; }
+      if (op === "activity" && !acquired) throw new Error("No such workspace lease.");
+      return {} as never;
+    });
+    const id = randomUUID(), input: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start",
+      resources: [{ kind: "worktree", id: workspaceId, revision: "1" }], input: { text: "Use my workspace" } };
+    await f.controller.startRun(f.sessionId, id, input, JSON.stringify(input), f.actor);
+    try {
+      await vi.waitFor(() => expect(f.authority.workspace).toHaveBeenCalledWith("original-admission", "lease", expect.anything()));
+      const [intent] = (await f.store.run(id)).record.workspaces!;
+      expect(intent).toMatchObject({ id: workspaceId, leasePending: true });
+      expect(f.authority.workspace).toHaveBeenCalledWith("original-admission", "lease", expect.objectContaining({ leaseId: intent!.leaseId }));
+      await maintain();
+      expect(f.authority.renew).toHaveBeenCalledWith("original-admission");
+      expect(vi.mocked(f.authority.workspace).mock.calls.map(call => call[1])).toEqual(["resolve", "lease"]);
+      expect((await f.controller.snapshot(id)).stopConfirmed).toBe(false);
+    } finally { allowLease(); }
+    await vi.waitFor(() => expect(f.starts).toHaveBeenCalledOnce());
+    await maintain();
+    expect(f.authority.workspace).toHaveBeenCalledWith("original-admission", "activity", expect.objectContaining({ workspaceId }));
+  });
+  it.each(["acknowledged", "lost"])("releases a lease when Stop races a %s acquisition response", async reply => {
+    const f = await fixture(), workspaceId = "e".repeat(64);
+    vi.spyOn(f.driver, "maintain").mockResolvedValue();
+    let deliver!: () => void, acquired = false, leasesClosed = false;
+    const response = new Promise<void>(resolve => { deliver = resolve; });
+    vi.mocked(f.authority.workspace).mockImplementation(async (_ref, op) => {
+      if (op === "resolve") return { id: workspaceId, revision: 1, path: f.directory } as never;
+      if (op === "lease") {
+        expect(leasesClosed).toBe(false);
+        acquired = true;
+        await response;
+        if (reply === "lost") throw new Error("The lease response was lost.");
+      }
+      if (op === "release_all") { leasesClosed = true; acquired = false; return { state: "released" } as never; }
+      return {} as never;
+    });
+    const id = randomUUID(), input: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start",
+      resources: [{ kind: "worktree", id: workspaceId, revision: "1" }], input: { text: "Use my workspace" } };
+    await f.controller.startRun(f.sessionId, id, input, JSON.stringify(input), f.actor);
+    try {
+      await vi.waitFor(() => expect(acquired).toBe(true));
+      expect((await f.store.run(id)).record.workspaces?.[0]).toMatchObject({ id: workspaceId, leasePending: true });
+      const snapshot = await f.controller.snapshot(id), command = { requestId: randomUUID(), expectedGeneration: snapshot.generation, expectedRevision: snapshot.revision };
+      await f.controller.cancel(id, command, JSON.stringify(command), f.actor);
+      await vi.waitFor(() => expect(leasesClosed).toBe(true));
+    } finally { deliver(); }
+    await Promise.all(f.controller.tasks);
+    expect(acquired).toBe(false);
+    expect((await f.store.run(id)).record).toMatchObject({ snapshot: { state: "cancelled", stopConfirmed: true }, workspaceRelease: { state: "released" } });
+    expect(f.starts).not.toHaveBeenCalled();
+  });
+  it.each([true, false])("never submits after a deadline expires during admission (maintenance tick: %s)", async tick => {
+    const f = await fixture(), maintain = f.driver.maintain.bind(f.driver);
+    vi.spyOn(f.driver, "maintain").mockResolvedValue();
+    let allowAdmission!: () => void;
+    const pending = new Promise<void>(resolve => { allowAdmission = resolve; });
+    vi.mocked(f.authority.admit).mockImplementation(async () => { await pending; return {}; });
+    const id = await start(f);
+    try {
+      await vi.waitFor(() => expect(f.authority.admit).toHaveBeenCalledOnce());
+      await f.store.exclusive(async () => {
+        const { session, record } = await f.store.run(id);
+        record.deadline = new Date(0).toISOString();
+        await f.store.save(session);
+      });
+      if (tick) {
+        await maintain();
+        expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true);
+        expect(f.authority.renew).not.toHaveBeenCalled();
+      }
+    } finally { allowAdmission(); }
+    await Promise.all(f.controller.tasks);
+    expect((await f.controller.snapshot(id)).state).toBe("cancelled");
+    expect(f.starts).not.toHaveBeenCalled();
+  });
   it("does not release a never-admitted cancel fence or replay its delayed identical start", async () => {
     const f = await fixture(), maintain = f.driver.maintain.bind(f.driver); vi.spyOn(f.driver, "maintain").mockResolvedValue();
     const id = randomUUID(), input: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start", input: { text: "Delayed start" } }, body = JSON.stringify(input);

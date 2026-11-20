@@ -4,7 +4,7 @@ import type { IncomingMessage } from "node:http";
 import { Readable } from "node:stream";
 import type { AgentSessionWorkflowRequest } from "@hosty-sdk/app/agent";
 import type { MediatedProviderInvocation } from "@hosty-sdk/app/providers";
-import { mediatedSessionWorkflow } from "./session-workflow-mediation.js";
+import { mediatedSessionWorkflow } from "../agent-providers/session-workflow-mediation.js";
 
 const token = "hosty_provider.2.exact.signature", sessionId = "3f236fe9-cd9c-4992-8dd2-3e17f5a4b184";
 const pathname = `/api/task-executor/v1/sessions/${sessionId}/workflow`;

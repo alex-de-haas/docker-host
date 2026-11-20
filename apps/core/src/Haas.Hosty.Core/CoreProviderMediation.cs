@@ -184,9 +184,9 @@ internal sealed partial class CoreProviderMediation(AppRegistryStore apps, AppId
             || claims.Kind != input.Kind || claims.Provider.Key != input.Key || claims.Operation != input.Operation
             || claims.Method != input.Method || claims.Path != input.Path || claims.BodyHash != input.BodyHash)
             throw new AppIdentityException("token_invalid", "The credential does not match this exact current provider operation.");
-        var policy = CoreProviderPolicy.For(claims.Kind, claims.Operation);
         if (claims.Operation == "session.workflow" || claims.AgentWorkflow is not null)
             return await IntrospectSessionWorkflow(provider, claims, input, ct);
+        var policy = CoreProviderPolicy.For(claims.Kind, claims.Operation);
         if (claims.Kind == "task-executor" && claims.Operation.StartsWith("dispatch.", StringComparison.Ordinal)
             && (claims.TaskDelegation is null || claims.Origin.Kind != "task-dispatch"
                 || claims.TaskDelegation.Dispatch != claims.Origin.TaskDispatch))

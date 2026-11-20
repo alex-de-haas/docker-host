@@ -29,7 +29,7 @@ public record HostyAgentWorkflowInvocation(HostyProviderRef Provider, string Ses
 public record HostyAgentResource(string Kind, string Id, string Revision, HostyProviderRef? Provider = null);
 /// <summary>A Core-validated direct provider endpoint and one exact request credential.</summary>
 public record HostyAgentAuthorization(HostyProviderRef Provider, string BaseUrl, string Token, DateTimeOffset ExpiresAt,
-    string AdmissionRef, DateTimeOffset AuthorityExpiresAt);
+    string AdmissionRef, DateTimeOffset AuthorityExpiresAt, string[]? SupportedWorkflowCapabilities = null);
 /// <summary>The original actor and authority ceiling rechecked by Core for this exact operation.</summary>
 public record HostyAgentInvocation(int Version, string UserId, string HostRole, string PrincipalId,
     string CallerAppId, string CallerInstallation, HostyProviderRef Provider, string Operation,

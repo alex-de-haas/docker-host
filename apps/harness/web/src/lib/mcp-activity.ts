@@ -10,7 +10,7 @@ export type McpActivity = {
 const validName = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0
   && value.length <= 256 && !/[\u0000-\u001f\u007f]/.test(value);
 
-function mcpIdentity(event: AssistantEvent): { server: string; name: string } | undefined {
+export function mcpIdentity(event: AssistantEvent): { server: string; name: string } | undefined {
   if (Object.hasOwn(event, "mcp")) {
     const metadata = event.mcp;
     if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return;

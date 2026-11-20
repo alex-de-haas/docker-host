@@ -280,6 +280,17 @@ function handle(msg) {
         turn: { id: "feedback-turn", status: "failed", error: { message: "Feedback acceptance fixture failed: " + error.message } } } }));
       return;
     }
+    if (currentTurnText.includes("CHAT_FAMILY_ACCEPTANCE") || currentTurnText.includes("Harness subagent results\n") && currentTurnText.includes("Family fixture")) {
+      const threadId = msg.params.threadId, turnId = crypto.randomUUID();
+      send({ id: msg.id, result: { turn: { id: turnId } } });
+      send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+      const item = (method, value) => send({ method, params: { threadId, turnId, item: value } });
+      void familyTurn(currentTurnText, item).then(text => {
+        item("item/completed", { type: "agentMessage", id: crypto.randomUUID(), phase: "final_answer", text });
+        send({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "completed" } } });
+      }).catch(error => send({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "failed", error: { message: error.message } } } }));
+      return;
+    }
     if (currentTurnText.includes("NATIVE_SUBAGENT_DISCLOSURE")) {
       const threadId = msg.params.threadId, turnId = "delegating-turn", child = "archive-reviewer";
       send({ id: msg.id, result: { turn: { id: turnId } } });
@@ -614,6 +625,52 @@ function handle(msg) {
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
   }
 }
+}
+
+// Exercise child chats through the same admitted MCP transport used by a native agent.
+async function familyTurn(text, emit) {
+  const wake = text.includes("Harness subagent results\n");
+  if (!wake && text.includes("CHAT_FAMILY_ACCEPTANCE:BUILD")) return "Family fixture implementation completed.";
+  if (!wake && text.includes("CHAT_FAMILY_ACCEPTANCE:QA")) return "Family fixture verification passed.";
+  const config = Object.fromEntries(argv.filter(v => v.startsWith("mcp_servers.")).map(v => {
+    const end = v.indexOf("="); return [v.slice(0, end), JSON.parse(v.slice(end + 1))];
+  }));
+  const endpoint = Object.keys(config).find(k => k.includes("hosty-workflow") && k.endsWith(".url"));
+  if (!endpoint) throw new Error("The admitted conversation has no subagent MCP server.");
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  const client = new Client({ name: "session-family-acceptance", version: "1" });
+  const token = process.env[config[endpoint.replace(/url$/, "bearer_token_env_var")]];
+  await client.connect(new StreamableHTTPClientTransport(new URL(config[endpoint]), { requestInit: { headers: { Authorization: "Bearer " + token } } }));
+  const call = async (name, input) => {
+    const observed = { type: "mcpToolCall", id: crypto.randomUUID(), server: "hosty-workflow", tool: name, arguments: { input } };
+    emit("item/started", { ...observed, status: "inProgress" });
+    const response = await client.callTool({ name, arguments: { input } });
+    emit("item/completed", { ...observed, status: response.isError ? "failed" : "completed", result: response });
+    if (response.isError) throw new Error(name + " failed: " + response.content.find(v => v.type === "text")?.text);
+    return JSON.parse(response.content.find(v => v.type === "text").text);
+  };
+  try {
+    const catalog = (await client.listTools()).tools;
+    if (!catalog.some(tool => tool.name === "subagent_spawn") || catalog.some(tool => tool.name === "task_delegate"))
+      throw new Error("Expected child chat tools with task delegation disabled");
+    const { profiles } = await call("subagent_profiles", {});
+    const delegate = async (role, prompt) => {
+      const selected = profiles.find(profile => profile.name === "Family fixture " + role);
+      if (!selected) throw new Error("Missing " + role + " profile");
+      const assignment = { requestId: crypto.randomUUID(), profileId: selected.id, profileRevision: selected.revision, prompt, title: "Family fixture " + role };
+      const spawn = await call("subagent_spawn", assignment);
+      const replay = await call("subagent_spawn", assignment);
+      if (spawn.childSessionId !== replay.childSessionId) throw new Error("Spawn replay returned a second chat");
+      const wait = await call("subagent_wait", { requestId: crypto.randomUUID(), childSessionIds: [spawn.childSessionId], mode: "all" });
+      return wait.children?.some(child => child.status === "completed") === true;
+    };
+    if (!wake && !await delegate("developer", "CHAT_FAMILY_ACCEPTANCE:BUILD")) return "Waiting for the developer.";
+    if (!text.includes("Family fixture verification passed.") && !await delegate("tester", "CHAT_FAMILY_ACCEPTANCE:QA")) return "Waiting for the tester.";
+    const { children } = await call("subagent_status", {});
+    if (children.length !== 2 || !children.every(child => child.status === "completed" && child.result)) throw new Error("Expected two completed child chats with replies");
+    return "Family fixture handoff verified.";
+  } finally { await client.close(); }
 }
 
 // Exercise the real session MCP transport and approval gate; never write task/session state.

@@ -225,6 +225,22 @@ def check(context):
         spec.loader.exec_module(module)
         module.check(context, app, app_origin, call, client)
 
+    if os.environ.get('HOSTY_SESSION_SUBAGENTS_BROWSER'):
+        import subprocess
+        connection = providers.configure_for_harness(app_origin, call, 'codex', 'Chat family acceptance', secret='synthetic-chat-family-fixture')
+        from workspace_sessions_acceptance import session_browser
+        verified = subprocess.run(['node', str(workspace/'apps/harness/test/session-subagents-browser.mjs')], check=True, cwd=workspace, stdout=subprocess.PIPE,
+            input=json.dumps({'core': (context.get('child', {}).get('previewUrl') or origin).rstrip('/'), 'harness': app_origin,
+                'harnessAppId': app, 'email': 'activation-fixture@example.test', 'password': password, 'link': link,
+                'connectionId': connection['id']}), text=True)
+        ids = json.loads(verified.stdout)
+        assert len(set(ids)) == 3
+        visitor = session_browser(context, app, app_origin, link)('subagent-visitor@example.test', 'Another operator', invited=True)
+        assert set(ids).isdisjoint(row['id'] for row in visitor.harness('/sessions')['sessions'])
+        for chat_id in ids:
+            visitor.harness('/sessions/' + chat_id, expected=404)
+        say('PASS: ordinary chat delegated implementation and verification, replayed spawn, opened both full histories, and kept all three chats private from another signed-in operator')
+
     if context.get('scenario') == 'agent-providers':
         from installation_history_acceptance import check as check_installation_history
         check_installation_history(context, app, app_origin, link, timed)

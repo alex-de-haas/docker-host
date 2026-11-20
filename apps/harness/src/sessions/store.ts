@@ -32,11 +32,16 @@ export type SessionStatus =
 export type SessionAutonomy = "normal" | "autonomous";
 
 export interface SessionRecord {
+  parentSessionId?: string;
+  subagents?: import("../subagents/types.js").SessionSubagent[];
+  subagentStartPending?: boolean;
+  subagentAssignmentRunId?: string;
+  subagentsPending?: boolean;
   agentConsumerVersion?: 1;
   /** Immutable admitted input versions remain available independently of working-file cache. */
   sourceAttachments?: import("./message-queue.js").StoredQueueAttachment[];
   /** Unsettled durable input never authorizes a new physical execution after reopening. */
-  sourceAdmission?: { clientRequestId?: string; runId: string; state: "preparing" | "dispatching" };
+  sourceAdmission?: { clientRequestId?: string; subagentRunId?: string; previousProviderRunId?: string; runId: string; state: "preparing" | "dispatching" };
   storageRecovery?: { state: "required"; code: SessionStorageError["code"]; message: string };
   messageQueue?: import("./message-queue.js").MessageQueueRecord;
   suggestionHistoryVersion?: 1;
@@ -418,6 +423,28 @@ export class SessionStore {
       record.lastEventSeq = Math.max(record.lastEventSeq, next.lastEventSeq);
     }, true);
     await this.changed(record.id);
+  }
+
+  /** The parent's durable workflow outbox contains launch and delivery identities only. */
+  async readSessionFamily(id: string): Promise<import("../subagents/types.js").SessionFamily> {
+    this.assertWritable(id);
+    try {
+      const value = JSON.parse(await readFile(path.join(this.sessionDir(id), "session-family.json"), "utf8"));
+      if (!Array.isArray(value.launches) || !Array.isArray(value.waits)) throw new Error("Invalid session family.");
+      return value;
+    } catch (error) {
+      if (absent(error)) return { launches: [], waits: [] };
+      throw this.problem(id, error, "The retained subagent workflow needs recovery.");
+    }
+  }
+
+  async saveSessionFamily(id: string, family: import("../subagents/types.js").SessionFamily): Promise<void> {
+    const content = JSON.stringify(family);
+    await this.serialize(id, async () => {
+      if (await this.deleted(id)) throw new Error("The parent chat was deleted.");
+      await stat(path.join(this.sessionDir(id), "record.json"));
+      await durableWriteFile(path.join(this.sessionDir(id), "session-family.json"), content);
+    }, true);
   }
 
   /** Independent command outbox: changing its bytes cannot overwrite a concurrent conversation edit. */

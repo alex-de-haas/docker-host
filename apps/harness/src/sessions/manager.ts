@@ -10,6 +10,8 @@ import { coreAliases } from "../mcp/core-migration.js";
 import { AgentObservations } from "../agent-sessions/observations.js";
 import { suggestionText } from "../harness/prompt-suggestion.js";
 import { SuggestionPreferences } from "./suggestion-preferences.js";
+import { SessionSubagents, stoppedAssignment } from "../subagents/service.js";
+import type { ChildLaunch, ChildWait, SessionSubagent } from "../subagents/types.js";
 import { SuggestionHistory, legacyCompatibleSuggestion } from "./suggestion-history.js";
 import { MessageQueue, type QueueAttempt, type QueueSnapshot } from "./message-queue.js";
 import type { Readable } from "node:stream";
@@ -47,7 +49,10 @@ import type { SettingsStore } from "../settings/store.js";
 import { CORE_PROVIDER_ID, type McpProvider, type ProviderDirectory } from "../settings/providers.js";
 import { TokenExchange, toMcpServerConfig, serverName, TOKEN_REFRESH_MARGIN_MS } from "../mcp/exchange.js";
 import { readOnlyToolNames } from "../mcp/readonly.js";
-import { AGENT_CAPABILITIES, AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentAttachment, type AgentMcpSelection, type AgentPendingDecision, type AgentRunSnapshot, type AgentSource, type AgentRunControlInput, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest, type AgentWatchItem } from "@hosty-sdk/app/agent";
+import { workflowGuide } from "../agent-providers/subagent-workflow.js";
+import { CHAT_WORKFLOW_PROVIDER } from "../../shared/chat-workflow.js";
+import { workflowTools } from "@hosty-sdk/app/agent/workflow-tools";
+import { AGENT_CAPABILITIES, AGENT_SUBAGENT_WORKFLOW_TOOLS, AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentAttachment, type AgentMcpSelection, type AgentPendingDecision, type AgentRunSnapshot, type AgentSource, type AgentRunControlInput, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest, type AgentWatchItem } from "@hosty-sdk/app/agent";
 import { prepareAgentControl } from "@hosty-sdk/app/agent/client";
 import type { MediatedProviderInvocation } from "@hosty-sdk/app/providers";
 import { CoreAgentBackend } from "../agent-providers/core.js";
@@ -127,6 +132,7 @@ function projectedIds(events: StoredEvent[]): Set<string> {
 }
 
 interface LiveSession {
+  subagentRunId?: string;
   suggestionAllowed?: boolean;
   suggestionContext?: string;
   suggestion?: { revision: number; attemptId?: string; state: "empty" | "collecting" | "available" | "unavailable"; text?: string; reason?: string };
@@ -286,6 +292,7 @@ export class SessionManager {
   private readonly actorCredentialRefreshes = new Map<string, { credential: string }>();
   private readonly queuePumps = new Map<string, Promise<void>>();
   private readonly queueWakeRequested = new Set<string>();
+  private readonly subagents: SessionSubagents;
   private readonly messageQueues: MessageQueue;
   private readonly suggestionHistory: SuggestionHistory;
   private serialize<T>(key: string, action: () => Promise<T>): Promise<T> {
@@ -384,6 +391,41 @@ export class SessionManager {
         if (!session?.record.providerRetirement && handle instanceof ProviderHarnessRun) handle.onInstallationHistoryUnsupported();
       }, (id, gaps) => this.updateProviderGaps(id, gaps),
       (id, provider, summary) => this.serialize(id, () => this.applyHistoryState(id, provider, summary)));
+    this.subagents = new SessionSubagents(store, {
+      parent: id => this.getSession(id),
+      profiles: async () => (await this.profiles?.read())?.profiles ?? [],
+      launch: (parent, launch) => this.launchSubagent(parent, launch),
+      resume: (parent, wait) => this.resumeSubagents(parent, wait),
+      publish: (parent, children, pending, recovering) => this.publishSubagents(parent, children, pending, recovering),
+      serialize: (key, action) => this.serialize(key, action),
+      track: work => this.trackSubagents(work),
+      admitted: (id, runId) => this.settleSubagentRun(id, runId),
+      joinWorkspace: (parent, childId) => this.joinChildWorkspace(parent, childId),
+      workspace: async parent => {
+        if (!this.development?.available) return parent.workspaceAssociation ?? undefined;
+        const credential = this.ownerCredential(parent);
+        try {
+          const current = await this.development.call(parent.id, credential, "association", {}) as { workspace: { id: string; revision: number } | null };
+          return current.workspace ?? undefined;
+        } catch (error) {
+          // A deployment may have ordinary chat/profile access without the optional source permission.
+          if (error instanceof AppContextError && error.status === 403 && !parent.workspaceAssociation && !parent.developmentWorkspaces?.length) return undefined;
+          throw error;
+        }
+      },
+      failedLaunch: (parent, id, stoppedRunId) => this.serialize(id, async () => {
+        const session = await this.requireLive(id), record = session.record;
+        if (record.parentSessionId !== parent || !record.subagentStartPending) return;
+        if (stoppedRunId) {
+          if (record.subagentAssignmentRunId !== stoppedRunId || (record.sourceAdmission && record.sourceAdmission.subagentRunId !== stoppedRunId)) return;
+          await this.setStatus(id, "cancelled");
+          delete record.sourceAdmission;
+        }
+        delete record.subagentStartPending;
+        await this.store.saveRecord(record);
+      }),
+      stopping: () => this.stopping,
+    });
     this.messageQueues = new MessageQueue(store);
     this.suggestionHistory = new SuggestionHistory(store, (id, payload) => this.append(id, payload));
     this.observations = new AgentObservations(store);
@@ -438,10 +480,10 @@ export class SessionManager {
   providerAdapter(selection: AgentConnectionSelection, capabilities: import("../harness/adapter.js").HarnessCapabilities, name: string): HarnessAdapter {
     if (!this.agentBackend) throw new ConnectionError(503, "providers_unavailable", "Agent provider access is unavailable.");
     return { name, capabilities, probe: async () => ({ available: true }),
-      start: options => new ProviderHarnessRun(() => this.providerContext(selection, options), options) };
+      start: options => new ProviderHarnessRun(admitting => this.providerContext(selection, options, admitting), options) };
   }
 
-  private async providerContext(selection: AgentConnectionSelection, options: import("../harness/adapter.js").HarnessStartOptions): Promise<ProviderRunContext> {
+  private async providerContext(selection: AgentConnectionSelection, options: import("../harness/adapter.js").HarnessStartOptions, admitting = false): Promise<ProviderRunContext> {
     const session = await this.requireLive(options.sessionId), backend = this.agentBackend!;
     const retained = this.providerStates.get(options.sessionId) ?? await this.store.readProviderExecution(options.sessionId) ?? session.record.providerExecution;
     if (retained && agentSelectionId(retained.selection) !== agentSelectionId(selection))
@@ -456,20 +498,26 @@ export class SessionManager {
       if (!credential) throw new AppContextError(401, "provider_credentials_required", "Refresh Hosty sign-in to observe or control this provider execution.");
       return credential;
     };
-    const client = backend.client(selection.provider, authority, workspaceConversation(session.record));
-    const workflow = await this.providerWorkflowBinding(options.sessionId);
-    if (session.record.taskExecutionId && !workflow)
+    let coreSupportsSubagents = false;
+    const client = backend.client(selection.provider, authority, workspaceConversation(session.record),
+      capabilities => { coreSupportsSubagents = capabilities.includes(AGENT_CAPABILITIES.sessionSubagents); });
+    const negotiatedCapabilities = admitting && this.profiles && !session.record.taskExecutionId
+      ? (await client.capabilities()).capabilities : undefined;
+    const workflow = admitting ? await this.providerWorkflowBinding(options.sessionId, coreSupportsSubagents, negotiatedCapabilities) : state.lastRunInput?.workflow;
+    if (admitting && session.record.taskExecutionId && !workflow)
       throw new AppContextError(409, "task_workflow_setup_required", "Approve Harness's optional task-executor provider permission in Core before running this task. General Core MCP access is separate.");
-    if (session.record.taskExecutionId && (!workflow!.tools?.includes("task_result") || workflow!.policy?.tools?.task_result?.mode === "disabled"))
+    if (admitting && session.record.taskExecutionId && (!workflow!.tools?.includes("task_result") || workflow!.policy?.tools?.task_result?.mode === "disabled"))
       throw new AppContextError(409, "task_workflow_setup_required", "Enable the task_result workflow tool before running this task; its explicit completion report is required.");
     // Reattached control/observer handles have no start options. Their next send must keep
     // the acknowledged standing instructions instead of configuring an empty instruction set.
     const acknowledged = options.instructionSources === undefined && options.systemPrompt === undefined
       ? structuredClone(state.appliedConfiguration?.value) : undefined;
-    if (acknowledged?.instructions) acknowledged.instructions = acknowledged.instructions.map(block => block.text.startsWith(PROVIDER_SYSTEM_PROMPT)
-      ? { ...block, text: PROVIDER_SYSTEM_PROMPT + (workflow ? "\n\n" + TASK_ORCHESTRATION_GUIDE : "") } : block);
+    const guide = workflowGuide(workflow);
+    const configureInstructions = <T extends { text: string }>(blocks: T[]) => blocks.map(block => block.text.startsWith(PROVIDER_SYSTEM_PROMPT)
+      ? { ...block, text: [PROVIDER_SYSTEM_PROMPT, guide].filter(Boolean).join("\n\n") } : block);
+    if (acknowledged?.instructions) acknowledged.instructions = configureInstructions(acknowledged.instructions);
     this.historyFeeds?.bind(selection.provider, state.sessionId, session.record.id, session.record.createdBy);
-    return { client, state, ...(workflow ? { workflow } : {}),
+    return { client, state, negotiatedCapabilities, dispatchRunId: session.subagentRunId, ...(workflow ? { workflow } : {}),
       installationHistory: async () => {
         if (!this.historyFeeds) return false;
         // Start independently of user-token/capability reads, including the first run admitted
@@ -485,7 +533,7 @@ export class SessionManager {
       },
       configuration: acknowledged ? { ...structuredClone(acknowledged), connection: selection.connection,
         approvalMode: session.record.autonomy ?? acknowledged.approvalMode ?? "normal" } : { connection: selection.connection,
-        instructions: (options.instructionSources ?? []).map((block, index) => ({ id: `harness-${index + 1}`, text: block.text })),
+        instructions: configureInstructions((options.instructionSources ?? []).map((block, index) => ({ id: `harness-${index + 1}`, text: block.text }))),
         ...(options.instructionSources?.length || !options.systemPrompt ? {} : { systemPrompt: { mode: "append" as const, text: options.systemPrompt } }),
         skills: [...new Set([...(session.record.skillIds ?? []), ...(session.record.providerPlatformContext ? [session.record.providerPlatformContext.skillId] : [])])].map(skillId => ({ skillId })),
         approvalMode: options.autonomy ?? "normal", predictions: { enabled: options.promptSuggestions === true } },
@@ -618,31 +666,41 @@ export class SessionManager {
     return Object.fromEntries(bindings);
   }
 
-  private async providerWorkflowBinding(id: string): Promise<AgentSessionWorkflowBinding | undefined> {
+  private async providerWorkflowBinding(id: string, coreSupportsSubagents: boolean, providerCapabilities?: string[]): Promise<AgentSessionWorkflowBinding | undefined> {
     const appId = process.env.HOSTY_APP_ID, installationId = process.env.HOSTY_APP_INSTALLATION_ID;
-    if (!this.taskAction || !appId || !installationId) return;
-    try {
-      if (!(await new CoreProviderClient().permissions()).granted.includes("providers.task-executor")) return;
-    } catch { return; } // Optional task setup must not prevent an ordinary conversation.
+    if (!appId || !installationId) return;
+    const supportsSubagents = coreSupportsSubagents && providerCapabilities?.includes(AGENT_CAPABILITIES.sessionSubagents) === true;
+    // Providers can implement chat delegation independently. Keep the existing task preflight on legacy and task-bound turns.
+    const includeTasks = !supportsSubagents || providerCapabilities!.includes(AGENT_CAPABILITIES.consumerWorkflow);
+    const permissions = this.taskAction && includeTasks ? await new CoreProviderClient().permissions().catch(() => null) : null;
+    const selected = [...(permissions?.granted.includes("providers.task-executor") ? AGENT_SESSION_WORKFLOW_TOOLS : []),
+      ...(supportsSubagents ? AGENT_SUBAGENT_WORKFLOW_TOOLS : [])];
+    if (!selected.length) return;
     const settings = await this.settings?.read(), core = this.providers?.core();
+    const workflowIdentity = JSON.stringify([CHAT_WORKFLOW_PROVIDER, appId, installationId]);
     const tools: NonNullable<AgentSessionWorkflowBinding["policy"]>["tools"] = {};
     for (const [key, rule] of Object.entries(settings?.mcpToolRules ?? {})) {
       let pair: unknown; try { pair = JSON.parse(key); } catch { continue; }
-      if (!Array.isArray(pair) || ![CORE_PROVIDER_ID, "hosty:development"].includes(pair[0]) || !(AGENT_SESSION_WORKFLOW_TOOLS as readonly string[]).includes(pair[1])) continue;
-      const current = pair[0] === CORE_PROVIDER_ID ? !!core && rule.identity === core.policyIdentity : rule.identity === this.mcpPolicy.localIdentity;
+      if (!Array.isArray(pair) || !(selected as readonly string[]).includes(pair[1])) continue;
+      const chatTool = AGENT_SUBAGENT_WORKFLOW_TOOLS.some(name => name === pair[1]);
+      if (chatTool ? pair[0] !== CHAT_WORKFLOW_PROVIDER : ![CORE_PROVIDER_ID, "hosty:development"].includes(pair[0])) continue;
+      const current = chatTool ? rule.identity === workflowIdentity : pair[0] === CORE_PROVIDER_ID
+        ? !!core && rule.identity === core.policyIdentity : rule.identity === this.mcpPolicy.localIdentity;
       if (tools[pair[1]]?.mode === "disabled" || tools[pair[1]]?.mode === "ask" && rule.mode !== "disabled") continue;
       const mode = rule.mode === "disabled" ? "disabled" : current && rule.definition ? rule.mode : "ask";
       tools[pair[1]] = { mode, ...(mode === "run" ? { definition: rule.definition! } : {}) };
     }
-    return { executor: { appId, installationId, key: "default" }, sessionId: id, tools: [...AGENT_SESSION_WORKFLOW_TOOLS], policy: { default: "ask", tools } };
+    return { executor: { appId, installationId, key: "default" }, sessionId: id, tools: selected, policy: { default: "ask", tools } };
   }
 
   async providerWorkflow(id: string, input: AgentSessionWorkflowRequest, invocation: MediatedProviderInvocation,
     revalidate: () => Promise<MediatedProviderInvocation>, recovery?: { retained: boolean; dispatch: (guard: () => Promise<void>) => Promise<unknown> }): Promise<unknown> {
+    const subagent = AGENT_SUBAGENT_WORKFLOW_TOOLS.some(tool => tool.replaceAll("_", "-") === input.action);
     const guard = async () => {
       const current = await revalidate(), record = await this.store.readRecord(id), state = await this.store.readProviderExecution(id);
       const agent = input.agent, signed = current.agentExecution, binding = state?.lastRunInput?.workflow;
-      if (current.operation !== "session.workflow" || current.kind !== "task-executor" || current.key !== "default" || current.implementationId != null
+      if (current.operation !== "session.workflow" || current.kind !== (subagent ? "agent-sessions" : "task-executor")
+        || current.key !== "default" || current.implementationId != null
         || current.userId !== invocation.userId || current.principalId !== invocation.principalId || current.hostRole !== "host.admin"
         || !record || record.createdBy !== current.userId || record.storageRecovery || record.providerRetirement || !state || !signed
         || signed.sessionId !== agent.sessionId || signed.runId !== agent.runId
@@ -655,12 +713,28 @@ export class SessionManager {
       const source = record.taskContext?.taskRef ?? { appId: process.env.HOSTY_APP_ID, installationId: process.env.HOSTY_APP_INSTALLATION_ID, key: "default", implementationId: null };
       if (input.source && (input.source.appId !== source.appId || input.source.installationId !== source.installationId || input.source.key !== source.key || (input.source.implementationId ?? null) !== (source.implementationId ?? null)))
         throw new AppContextError(403, "workflow_source_mismatch", "Use the exact task provider and interface bound to this session.");
-      if (!(taskActions as readonly string[]).includes(input.action) || input.action.startsWith("task-legacy-"))
+      if (subagent) {
+        const tool = AGENT_SUBAGENT_WORKFLOW_TOOLS.find(name => name.replaceAll("_", "-") === input.action)!;
+        if (input.source || !binding.tools?.includes(tool) || binding.policy?.tools?.[tool]?.mode === "disabled")
+          throw new AppContextError(403, "workflow_action_unavailable", "This subagent action is outside the admitted conversation workflow.");
+      } else if (!(taskActions as readonly string[]).includes(input.action) || input.action.startsWith("task-legacy-"))
         throw new AppContextError(403, "workflow_action_unavailable", "This action is outside the admitted task workflow.");
-      if (!recovery?.retained && (state.run?.stopConfirmed || !["running", "awaiting_approval", "awaiting_question", "suggesting"].includes(record.status)))
+      // The provider can call back before its start response or first state update. An idle
+      // projection for the previous turn does not override the exact signed admission.
+      const beforeFirstProjection = record.status === "idle" && record.providerObservedRunId !== agent.runId && !state.cancellations?.[agent.runId]
+        && (state.run?.ref.id === agent.runId && state.run.state === "running" && state.run.freshness === "current"
+          || Object.values(state.mutations ?? {}).some(request => request.operation === "runs.start" && request.runId === agent.runId));
+      if (!recovery?.retained && (record.sourceAdmission?.previousProviderRunId === agent.runId || record.providerStopProof?.runId === agent.runId
+        || state.run?.ref.id === agent.runId && state.run.stopConfirmed
+        || !beforeFirstProjection && !["running", "awaiting_approval", "awaiting_question", "suggesting"].includes(record.status)))
         throw new AppContextError(409, "workflow_run_inactive", "This provider execution is no longer active.");
     };
     await guard();
+    if (subagent) {
+      const result = await this.subagentAction(id, input.action, input.input, guard);
+      if (input.action === "subagent-profiles" || input.action === "subagent-status") await guard();
+      return result;
+    }
     if (recovery) return recovery.dispatch(guard);
     return this.workspaceAction(id, input.action as DevelopmentAction, input.input, undefined, invocation.userId, guard);
   }
@@ -676,7 +750,7 @@ export class SessionManager {
     if (session.run instanceof ProviderHarnessRun) return session.run;
     if (!session.record.selection) throw new AppContextError(409, "provider_cutover_required", "Choose a current provider for a new conversation.");
     const options = { sessionId: session.record.id, cwd: this.workDir, onEvent: () => {} };
-    const run = new ProviderHarnessRun(() => this.providerContext(session.record.selection!, options), options);
+    const run = new ProviderHarnessRun(admitting => this.providerContext(session.record.selection!, options, admitting), options);
     session.run = run;
     try { await run.attach(observationOnly); }
     catch (error) {
@@ -786,8 +860,8 @@ export class SessionManager {
     const live = this.live.get(id);
     if (fact.item.kind === "event" && fact.item.event.type === "message.delta") {
       const state = this.providerStates.get(id);
-      if (live?.record.createdBy === fact.userId && !live.record.providerRetirement && state?.sessionId === fact.sessionId && state.runId === fact.runId
-        && state.run && state.run.generation === fact.generation && !state.run.stopConfirmed) {
+      if (live?.record.createdBy === fact.userId && !live.record.providerRetirement && live.record.sourceAdmission?.previousProviderRunId !== fact.runId
+        && state?.sessionId === fact.sessionId && state.runId === fact.runId && state.run && state.run.generation === fact.generation && !state.run.stopConfirmed) {
         const event = fact.item.event;
         this.fanOut(live, { seq: live.record.lastEventSeq, ts: event.occurredAt, type: "assistant_delta",
           text: String(event.data.text ?? ""), providerSource: providerTranscriptSource(state.run, event.source) });
@@ -804,7 +878,8 @@ export class SessionManager {
       || !sameProviderRef(state.selection.provider, provider)) return;
     // Retiring seals execution and decisions. Its owner can still read transcript evidence until deletion commits.
     const fenced = !!record.providerRetirement;
-    const historical = fenced || state.runId !== fact.runId;
+    // A new turn owns the chat while the provider still knows the previous run UUID.
+    const historical = () => fenced || state.runId !== fact.runId || session.record.sourceAdmission?.previousProviderRunId === fact.runId;
     if (fenced && fact.item.kind === "event" && fact.item.event.type === "tool.output") return;
     if (fenced && state.runId === fact.runId && state.run && state.run.generation !== fact.generation)
       throw new Error("The provider changed the recorded execution generation.");
@@ -826,7 +901,7 @@ export class SessionManager {
       if (!seen.has(key)) {
         await this.append(id, { type: "notice", message: "Some earlier events are unavailable in the provider's retained history.",
           providerEventId: key, providerGeneration: fact.generation,
-          providerSource: { provider, runId: fact.runId, generation: fact.generation, agentId: "root" }, providerHistoryEarlier: historical });
+          providerSource: { provider, runId: fact.runId, generation: fact.generation, agentId: "root" }, providerHistoryEarlier: historical() });
         seen.add(key);
       }
     }
@@ -835,10 +910,10 @@ export class SessionManager {
     const sourceSequence = BigInt(item.kind === "event" ? item.event.sequence : item.snapshot.lastSequence);
     // Latest state may already include this fact. Its original transcript slot still needs filling.
     const renderFact = async () => {
-      if (position || fenced && !stateOnly) await this.importHistoricalTranscript(session, projectHistoryFact(provider, fact), item, historical, position);
+      if (position || fenced && !stateOnly) await this.importHistoricalTranscript(session, projectHistoryFact(provider, fact), item, historical(), position);
     };
     if (position || stateOnly) {
-      const active = !historical && state.run?.ref.id === fact.runId && state.run.generation === fact.generation ? state.run : undefined;
+      const active = !historical() && state.run?.ref.id === fact.runId && state.run.generation === fact.generation ? state.run : undefined;
       const useActive = active && (!retained || BigInt(active.lastSequence) >= BigInt(retained.snapshot.lastSequence));
       const held = useActive ? active : retained?.snapshot;
       const previous = held ?? snapshot;
@@ -849,7 +924,7 @@ export class SessionManager {
       const reconciled = reconcileHistoryProjection(previous, priorClock, item, stateOnly);
       if (reconciled) {
         const { projection, clock } = reconciled;
-        if (!historical && (!state.run || state.run.generation === fact.generation)) {
+        if (!historical() && (!state.run || state.run.generation === fact.generation)) {
           const advances = !held || sourceSequence > BigInt(held.lastSequence);
           const applied: AgentWatchItem = advances && item.kind === "event" ? item : { kind: "snapshot", snapshot: projection.snapshot };
           const handle = session.run;
@@ -857,6 +932,8 @@ export class SessionManager {
           await this.projectProviderItem(session, applied, state, true, projection, fact.replayed || !advances, partial, clock);
           if (!fact.replayed && advances && handle instanceof ProviderHarnessRun) handle.onHistoryObserved(item);
         }
+        if (!fenced && historical() && session.record.parentSessionId && session.record.subagentAssignmentRunId === fact.runId && projection.snapshot.stopConfirmed)
+          this.trackSubagents(this.subagents.observe(session.record.parentSessionId, id, projection.snapshot, stateOnly || clock.details !== clock.lifecycle));
         await renderFact();
         return this.store.saveHistoryRun(id, fact.principalId, projection.snapshot, clock);
       }
@@ -870,7 +947,7 @@ export class SessionManager {
     if (!projection) {
       throw new Error("The provider did not supply the first snapshot for this run's history.");
     }
-    const current = !historical && (!state.run || state.run.generation === fact.generation
+    const current = !historical() && (!state.run || state.run.generation === fact.generation
       && sourceSequence >= BigInt(state.run.lastSequence) && BigInt(projection.snapshot.revision) >= BigInt(state.run.revision));
     if (current) {
       const handle = session.run;
@@ -879,7 +956,9 @@ export class SessionManager {
     } else {
       // Older turns may gain evidence after a newer turn starts. Preserve the origin in the
       // journal and leave the current turn's controls, status, usage and pending questions alone.
-      await this.importHistoricalTranscript(session, projection, item, historical);
+      await this.importHistoricalTranscript(session, projection, item, historical());
+      if (!fenced && session.record.parentSessionId && session.record.subagentAssignmentRunId === fact.runId && projection.snapshot.stopConfirmed)
+        this.trackSubagents(this.subagents.observe(session.record.parentSessionId, id, projection.snapshot, false));
     }
     await this.store.saveHistoryRun(id, fact.principalId, projection.snapshot);
   }
@@ -971,7 +1050,8 @@ export class SessionManager {
   private receiveProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState, replayed = false): Promise<void> {
     const handled = this.serialize(session.record.id, async () => {
       // A slow read may finish behind admission of the next turn on this chat's lane.
-      if (this.providerStates.get(session.record.id)?.runId !== value.runId) return;
+      const runId = item.kind === "snapshot" ? item.snapshot.ref.id : item.event.runId;
+      if (runId !== value.runId || this.providerStates.get(session.record.id)?.runId !== runId) return;
       // A legacy observer can already be waiting here when Delete detaches it. Rejecting
       // the callback also prevents its caller from advancing its cursor or replaying a control.
       this.assertNotRetiring(session.record);
@@ -999,6 +1079,8 @@ export class SessionManager {
       const projection = history ?? (previous ? reduceAgentRunProjection(previous, item)
         : item.kind === "snapshot" ? createAgentRunProjection(item.snapshot) : undefined);
       if (!projection) throw new AppContextError(409, "resync_required", "Read the provider run snapshot before following its events.");
+      if (projectStatus && session.record.sourceAdmission?.previousProviderRunId === projection.snapshot.ref.id)
+        return this.importHistoricalTranscript(session, projection, item, true);
       const retainedRun = session.record.providerExecution?.run;
       const next = { ...value, run: projection.snapshot, cursor: projection.cursor, historyClock };
       session.record.providerExecution = next;
@@ -1224,6 +1306,12 @@ export class SessionManager {
           current.run = structuredClone(projection.snapshot); current.cursor = projection.cursor; current.historyClock = historyClock;
         }
         this.providerProjections.set(id, projection);
+        const child = projection.snapshot, prior = previous?.snapshot;
+        if (session.record.parentSessionId && session.record.subagentAssignmentRunId === child.ref.id
+          && (!prior || prior.state !== child.state || prior.phase !== child.phase || prior.stopConfirmed !== child.stopConfirmed
+            || child.state === "waiting_for_input" || child.stopConfirmed))
+          this.trackSubagents(this.subagents.observe(session.record.parentSessionId, id, child, stateOnly));
+        if (session.record.subagentsPending && projection.snapshot.stopConfirmed) this.subagents.kick(id);
       } catch (error) { this.providerProjectedIds.delete(id); this.providerAgentStatuses.delete(id); throw error; }
   }
 
@@ -1474,6 +1562,203 @@ export class SessionManager {
     }
   }
 
+  subagentAction(id: string, action: string, input: Record<string, unknown>, revalidate: () => Promise<void>): Promise<unknown> {
+    return this.subagents.action(id, action, input, revalidate);
+  }
+
+  private trackSubagents(work: Promise<void>): void {
+    this.inFlightEvents.add(work);
+    void work.catch(error => {
+      if (!this.stopping) console.warn("[subagents] A retained workflow needs reconciliation.", { code: (error as { code?: string }).code });
+    }).finally(() => this.inFlightEvents.delete(work));
+  }
+
+  private async publishSubagents(parentId: string, children: SessionSubagent[], pending: boolean, recovering: boolean): Promise<void> {
+    await this.serialize(parentId, async () => {
+      if (!await this.store.readRecord(parentId)) return;
+      const { record } = await this.requireLive(parentId);
+      const missingCheckpoint = recovering && children.some(child =>
+        JSON.stringify(record.subagents?.find(item => item.id === child.id)) !== JSON.stringify(child));
+      const history = missingCheckpoint ? await this.store.readEvents(parentId) : [];
+      for (const child of children) {
+        const previous = record.subagents?.find(item => item.id === child.id);
+        if (JSON.stringify(previous) === JSON.stringify(child)) continue;
+        record.subagents = previous ? record.subagents!.map(item => item.id === child.id ? structuredClone(child) : item)
+          : [...record.subagents ?? [], structuredClone(child)];
+        // A crash can commit the event before its record checkpoint. Reconcile that boundary.
+        const latest = history.findLast(event => event.type === "session_subagent" && (event.child as SessionSubagent)?.id === child.id);
+        if (JSON.stringify(latest?.child) !== JSON.stringify(child)) await this.append(parentId, { type: "session_subagent", child });
+        else await this.store.saveRecord(record);
+      }
+      if (!!record.subagentsPending !== pending) {
+        record.subagentsPending = pending;
+        await this.store.saveRecord(record);
+      }
+    });
+  }
+
+  private ownerCredential(parent: SessionRecord): string {
+    const session = this.live.get(parent.id);
+    this.assertNotRetiring(session?.record ?? parent);
+    const credential = session?.record.createdBy === parent.createdBy && (session.workspaceCredential ?? session.credential);
+    if (!credential) throw new AppContextError(401, "subagent_sign_in_required", "Waiting for the chat owner to reconnect to Harness.");
+    return credential;
+  }
+
+  private async launchSubagent(parent: SessionRecord, launch: ChildLaunch): Promise<void> {
+    const childId = launch.child.id;
+    const credential = this.ownerCredential(parent);
+    const record = await withAgentAuthority(async () => credential, () => this.createSession({
+      subagent: { id: childId, parentSessionId: parent.id, runId: launch.runId }, clientRequestId: childId, createdBy: parent.createdBy,
+      profileId: launch.child.profileId, profileRevision: launch.profileRevision, appIds: launch.appIds, autonomy: launch.autonomy,
+      title: launch.title ?? launch.child.profileName, ...(launch.workspace ? { context: { workspace: launch.workspace.id } } : {}),
+    }));
+    if (record.id !== childId || record.parentSessionId !== parent.id || record.createdBy !== parent.createdBy)
+      throw new AppContextError(409, "subagent_binding_changed", "The child chat does not match its recorded parent.");
+    if (launch.workspace && !record.workspaceAssociation) {
+      const prior = record.associationRequests?.findLast(attempt => attempt.action === "attach" && attempt.input.workspaceId === launch.workspace!.id);
+      let input: Record<string, unknown>;
+      if (prior && prior.state !== "rejected") input = prior.input;
+      else {
+        if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Waiting for the parent workspace.");
+        const current = await this.development.call(parent.id, credential, "association", {}) as { workspace: { id: string; revision: number } | null };
+        if (current.workspace?.id !== launch.workspace.id)
+          throw new AppContextError(409, "subagent_workspace_changed", "The original parent workspace association changed.");
+        input = { requestId: randomUUID(), workspaceId: current.workspace.id, expectedRevision: current.workspace.revision };
+      }
+      await this.workspaceAction(childId, "attach", input, credential, parent.createdBy);
+    }
+    if (launch.workspace && (await this.getSession(childId))?.workspaceAssociation?.id !== launch.workspace.id)
+      throw new AppContextError(409, "subagent_workspace_changed", "The original child workspace association changed.");
+    await this.dispatchSubagentInput(record, credential, launch.runId, launch.child.prompt, "assignment");
+    await this.serialize(childId, async () => {
+      const child = await this.requireLive(childId);
+      if (child.record.subagentStartPending) { delete child.record.subagentStartPending; await this.store.saveRecord(child.record); }
+    });
+  }
+
+  private async joinChildWorkspace(parent: SessionRecord, childId: string): Promise<void> {
+    if (!this.development?.available || parent.workspaceAssociation || parent.associationRequests?.some(request => request.action === "detach")) return;
+    const child = await this.getSession(childId);
+    if (!child || child.createdBy !== parent.createdBy || child.parentSessionId !== parent.id) return;
+    const credential = this.ownerCredential(parent);
+    const association = async (id: string) => (await this.development!.call(id, credential, "association", {}) as { workspace: { id: string; revision: number } | null }).workspace;
+    let source: { id: string; revision: number } | null;
+    try { source = await association(childId); }
+    catch (error) {
+      if (error instanceof AppContextError && error.status === 403 && !child.workspaceAssociation && !child.developmentWorkspaces?.length) return;
+      throw error;
+    }
+    if (!source || await association(parent.id)) return;
+    if (!["idle", "failed", "cancelled", "abandoned"].includes(parent.status) || parent.sourceAdmission)
+      throw new AppContextError(409, "subagent_busy", "The parent can join the child workspace when its current turn stops.");
+    const previous = parent.associationRequests?.findLast(request => request.action === "attach" && request.input.workspaceId === source.id);
+    const input = previous && previous.state !== "rejected" ? previous.input : { workspaceId: source.id, requestId: randomUUID(), expectedRevision: source.revision };
+    try { await this.workspaceAction(parent.id, "attach", input, credential, parent.createdBy); }
+    catch (error) {
+      if (error instanceof SessionBusyError || error instanceof AppContextError && error.code === "workspace_session_busy")
+        throw new AppContextError(409, "subagent_busy", "The parent can join the child workspace when its current turn stops.");
+      throw error;
+    }
+  }
+
+  private async resumeSubagents(parent: SessionRecord, wait: ChildWait): Promise<void> {
+    const credential = this.ownerCredential(parent);
+    const text = "Harness subagent results\n" + JSON.stringify({ requestId: wait.requestId, children: wait.outcomes });
+    await this.dispatchSubagentInput(parent, credential, wait.runId, text, "result");
+  }
+
+  // The public provider writes the exact run/start request before it can contact the native
+  // agent. While this matching source admission fences the conversation, a missing prepare
+  // proves that this family input has not started. Older and non-provider receipts stay fenced.
+  private beforeSubagentStart(record: SessionRecord, runId: string | undefined): boolean {
+    const source = record.sourceAdmission, provider = record.providerExecution;
+    return !!runId && !!this.connections?.remote && source?.subagentRunId === runId && source.clientRequestId === runId
+      && provider?.runId !== runId && provider?.lastRunInput?.runId !== runId
+      && !Object.values(provider?.mutations ?? {}).some(request => request.operation === "runs.start");
+  }
+
+  private async rejectUnstartedChildAssignment(record: SessionRecord): Promise<string | undefined> {
+    const { id, parentSessionId, subagentAssignmentRunId: runId } = record;
+    if (!parentSessionId || !runId || !record.subagentStartPending || !this.beforeSubagentStart(record, runId)) return;
+    const durable = await this.store.readProviderExecution(id);
+    if (!this.beforeSubagentStart({ ...record, providerExecution: durable ?? undefined }, runId)) return;
+    const receipt = await this.store.readMessageReceipt(id, runId);
+    if (receipt?.state !== "unknown" || receipt.actorUserId !== record.createdBy) return;
+    // Admission is quiescent and has no prepared provider start. The receipt fences retries
+    // and lets recovery finish publishing this Stop even if Harness exits between writes.
+    await this.store.saveMessageReceipt(id, { ...receipt, state: "rejected", error: stoppedAssignment });
+    return parentSessionId;
+  }
+
+  private async dispatchSubagentInput(record: SessionRecord, credential: string, runId: string, text: string, kind: "assignment" | "result"): Promise<void> {
+    const id = record.id;
+    const receipt = await this.store.readMessageReceipt(id, runId);
+    if (receipt?.state === "accepted" && receipt.actorUserId === record.createdBy) return;
+    if (receipt?.state === "unknown" && receipt.actorUserId === record.createdBy) {
+      const session = await this.requireLive(id);
+      this.assertNotRetiring(session.record);
+      const state = await this.store.readProviderExecution(id);
+      let confirmed = state?.run?.ref.id === runId && state.run.sessionId === state.sessionId;
+      if (!confirmed && state?.runId === runId) {
+        const request = Object.values(state.mutations ?? {}).find(request => request.operation === "runs.start" && request.runId === runId);
+        if (request) {
+          session.workspaceCredential = credential;
+          const { execution } = await this.publicExecution(session);
+          const observed = await execution.reconcileMutation(request) as AgentRunSnapshot;
+          confirmed = observed.ref.id === runId && observed.sessionId === state.sessionId;
+        }
+      }
+      if (!confirmed) confirmed = !!(await this.store.readHistoryRun(id, runId))?.snapshot;
+      if (!confirmed && !this.beforeSubagentStart(session.record, runId))
+        throw new AppContextError(409, "message_outcome_unknown", "Waiting for provider evidence for this exact turn.");
+      if (confirmed) {
+        if (session.record.providerExecution?.runId === runId) {
+          session.workspaceCredential = credential;
+          const handle = await this.ensureProviderRun(session, true);
+          await handle.observeConfirmedAdmission();
+        }
+        await this.serialize(id, async () => {
+          await this.store.saveMessageReceipt(id, { ...receipt, state: "accepted" });
+          if (session.record.sourceAdmission?.clientRequestId === runId) {
+            delete session.record.sourceAdmission;
+            await this.store.saveRecord(session.record);
+          }
+        });
+        return;
+      }
+    }
+    try {
+      await this.postMessage(id, text, undefined, [], { clientRequestId: runId, actorUserId: record.createdBy, workspaceCredential: credential,
+        expectedRevision: record.appContextRevision ?? 0, selectionRevision: record.selectionRevision ?? 0, subagentInput: kind, subagentRunId: runId });
+    } catch (error) {
+      if (error instanceof SessionBusyError) throw new AppContextError(409, "subagent_busy", "Waiting for the current conversation turn.");
+      throw error;
+    }
+  }
+
+  private async settleSubagentRun(id: string, runId: string): Promise<void> {
+    await this.serialize(id, async () => {
+      const session = await this.requireLive(id), receipt = await this.store.readMessageReceipt(id, runId);
+      if (!receipt || receipt.actorUserId !== session.record.createdBy || receipt.state === "rejected") return;
+      if (receipt.state === "unknown") await this.store.saveMessageReceipt(id, { ...receipt, state: "accepted" });
+      const record = session.record;
+      const clearAdmission = record.sourceAdmission?.clientRequestId === runId;
+      if (!clearAdmission && !record.subagentStartPending) return;
+      if (clearAdmission) delete record.sourceAdmission;
+      delete record.subagentStartPending;
+      await this.store.saveRecord(record);
+    });
+  }
+
+  async recoverSubagents(): Promise<void> {
+    for (const record of await this.store.listRecords()) {
+      if (record.storageRecovery || record.providerRetirement) continue;
+      try { await this.subagents.recover(record); }
+      catch (error) { console.warn("[subagents] Family recovery requires attention.", { sessionId: record.id, code: (error as { code?: string }).code }); }
+    }
+  }
+
   async recoverMessageQueues(): Promise<void> {
     for (const record of await this.store.listRecords()) if (record.messageQueue?.entries.length) {
       try { if (!record.storageRecovery) { await this.requireLive(record.id); this.wakeMessageQueue(record.id); } } catch { /* Isolate unavailable source sessions. */ }
@@ -1719,6 +2004,9 @@ export class SessionManager {
       session.credentialRefreshPending = false;
     });
     this.wakeMessageQueue(id);
+    const record = this.live.get(id)?.record;
+    if (record?.subagentsPending) this.subagents.kick(id);
+    if (record?.parentSessionId && record.subagentStartPending) this.subagents.kick(record.parentSessionId);
   }
 
   /** Identity readiness is independent of unrelated conversation queues; keep only the latest actor credential. */
@@ -1749,7 +2037,7 @@ export class SessionManager {
   /** Refresh every already-live conversation owned by this actor; never starts or replays a turn. */
   async refreshActorCredentials(userId: string, credential: string): Promise<void> {
     for (const record of await this.store.listRecords()) if (record.createdBy === userId
-      && (record.messageQueue?.entries.length || record.selection && (record.providerExecution?.runId || await this.store.readProviderExecution(record.id)))) await this.requireLive(record.id);
+      && (record.subagentsPending || record.messageQueue?.entries.length || record.selection && (record.providerExecution?.runId || await this.store.readProviderExecution(record.id)))) await this.requireLive(record.id);
     const results = await Promise.allSettled([...this.live.values()]
       .filter(s => s.record.createdBy === userId && (s.credential !== credential || s.workspaceCredential !== credential || s.credentialRefreshPending || s.record.messageQueue?.waiting))
       .map(s => this.refreshSessionCredentials(s.record.id, userId, credential)));
@@ -1762,6 +2050,11 @@ export class SessionManager {
 
     const snapshot = await this.providers?.read();
     this.mcpPolicy.localOwner = this.providers?.ownApplication();
+    const appId = process.env.HOSTY_APP_ID, installationId = process.env.HOSTY_APP_INSTALLATION_ID;
+    if (this.profiles && this.agentBackend && appId && installationId) {
+      // The private catalog supplies reviewed definitions for preferences. Only an admitted provider run can execute these tools.
+      await this.mcpPolicy.catalog(CHAT_WORKFLOW_PROVIDER, JSON.stringify([CHAT_WORKFLOW_PROVIDER, appId, installationId]), workflowTools(AGENT_SUBAGENT_WORKFLOW_TOOLS));
+    }
     if (!snapshot) return unavailable;
     for (const p of [this.providers?.core(), ...snapshot.providers]) {
       if (!p?.url || !p.policyIdentity) continue;
@@ -1829,7 +2122,12 @@ export class SessionManager {
   }
 
   async workspaceAction(id: string, action: DevelopmentAction, input: Record<string, unknown>, credential?: string, userId?: string, dispatchGuard?: () => Promise<void>): Promise<unknown> {
-    try { return await this.workspaceActionInner(id, action, input, credential, userId, dispatchGuard); }
+    try {
+      const result = await this.workspaceActionInner(id, action, input, credential, userId, dispatchGuard);
+      const parent = this.live.get(id)?.record.parentSessionId;
+      if (parent && ["prepare", "app-create", "recover-origin"].includes(action)) this.trackSubagents(this.subagents.workspaceChanged(parent, id));
+      return result;
+    }
     finally {
       const session = this.live.get(id);
       if (session?.record.suggestionHistoryVersion) {
@@ -2421,6 +2719,7 @@ export class SessionManager {
     autonomy?: unknown;
     browserDefaults?: unknown;
     reservedHandoffId?: string;
+    subagent?: { id: string; parentSessionId: string; runId: string };
     taskExecutionId?: string;
     taskConfiguration?: import("../tasks/configurations.js").TaskConfiguration;
   }): Promise<SessionRecord> {
@@ -2442,7 +2741,7 @@ export class SessionManager {
       const requestId = input.clientRequestId;
       if (requestId !== undefined && (typeof requestId !== "string" || !/^[a-zA-Z0-9-]{1,128}$/.test(requestId)))
         throw new AppContextError(400, "request_id_invalid", "Invalid creation request id.");
-      const fingerprint = JSON.stringify({ ...(input.taskConfiguration ? { taskConfiguration: input.taskConfiguration } : {}), ...(input.taskExecutionId ? { taskExecutionId: input.taskExecutionId } : {}), ...(input.profileId !== undefined ? { profileId: input.profileId, profileRevision: input.profileRevision } : {}), ...(input.skillIds !== undefined ? { skillIds: input.skillIds } : {}), title: normalizeTitle(input.title), context: input.context ?? null, appIds, ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}), ...(executionSelection ? { executionSelection } : {}), ...(input.autonomy !== undefined ? { autonomy: input.autonomy } : {}) });
+      const fingerprint = JSON.stringify({ ...(input.subagent ? { subagent: input.subagent } : {}), ...(input.taskConfiguration ? { taskConfiguration: input.taskConfiguration } : {}), ...(input.taskExecutionId ? { taskExecutionId: input.taskExecutionId } : {}), ...(input.profileId !== undefined ? { profileId: input.profileId, profileRevision: input.profileRevision } : {}), ...(input.skillIds !== undefined ? { skillIds: input.skillIds } : {}), title: normalizeTitle(input.title), context: input.context ?? null, appIds, ...(input.connectionId !== undefined ? { connectionId: input.connectionId } : {}), ...(executionSelection ? { executionSelection } : {}), ...(input.autonomy !== undefined ? { autonomy: input.autonomy } : {}) });
       if (typeof requestId === "string") {
         const existing = (await this.store.listRecords()).find(r => r.createdBy === input.createdBy && r.creationRequest?.id === requestId);
         if (existing) {
@@ -2508,7 +2807,8 @@ export class SessionManager {
         ...(input.taskExecutionId ? { taskExecutionId: input.taskExecutionId, autonomy: "autonomous" as const } : {}),
         retentionVersion: 1,
         executionMode: this.executionMode ?? (await this.settings?.read())?.executionMode ?? "native",
-        id: input.reservedHandoffId ?? randomUUID(),
+        id: input.subagent?.id ?? input.reservedHandoffId ?? randomUUID(),
+        ...(input.subagent ? { parentSessionId: input.subagent.parentSessionId, subagentStartPending: true, subagentAssignmentRunId: input.subagent.runId } : {}),
         ...(input.reservedHandoffId ? { handoffPending: true } : {}),
         ...binding,
         ...(this.connections ? { providerLocked: false } : {}),
@@ -3208,6 +3508,14 @@ export class SessionManager {
         if (!retained || retained.storageRecovery) this.live.delete(id);
         throw error;
       }
+      if (record.parentSessionId) this.trackSubagents(this.subagents.deleted(record.parentSessionId, id));
+      for (const child of record.subagents ?? []) this.trackSubagents(this.serialize(child.id, async () => {
+        const current = await this.store.readRecord(child.id);
+        if (current?.parentSessionId !== id || current.createdBy !== record.createdBy) return;
+        const live = await this.requireLive(child.id);
+        delete live.record.parentSessionId; delete live.record.subagentStartPending;
+        await this.store.saveRecord(live.record);
+      }));
       this.historyFeeds?.unbind(id);
       if (session) {
         this.live.delete(id);
@@ -3439,7 +3747,7 @@ export class SessionManager {
     });
   }
 
-  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { queueEntryId?: string; feedback?: FeedbackMessageReference; taskContinuation?: { id: string; generation: number; owner: string; snapshot: string }; decisionContinuation?: Pick<DecisionWait, "id" | "owner" | "snapshot" | "cancellationGeneration">; promptSuggestions?: boolean; taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
+  async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { subagentInput?: "assignment" | "result"; subagentRunId?: string; queueEntryId?: string; feedback?: FeedbackMessageReference; taskContinuation?: { id: string; generation: number; owner: string; snapshot: string }; decisionContinuation?: Pick<DecisionWait, "id" | "owner" | "snapshot" | "cancellationGeneration">; promptSuggestions?: boolean; taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
     const clientRequestId = context.clientRequestId === undefined ? undefined : this.messageRequest(context.clientRequestId);
     const actorUserId = clientRequestId ? this.messageActor(context.actorUserId) : undefined;
     if (context.feedback && (context.feedback.version !== 1 || typeof context.feedback.dispatchId !== "string"
@@ -3450,6 +3758,7 @@ export class SessionManager {
     // existing fingerprint so accepted/uncertain receipts from before cards remain replayable.
     const fingerprint = clientRequestId ? createHash("sha256").update(JSON.stringify({
       ...(context.promptSuggestions === true ? { promptSuggestions: true } : {}),
+      ...(context.subagentInput ? { subagentInput: context.subagentInput, subagentRunId: context.subagentRunId } : {}),
       actorUserId, text, attachments, appContextRevision: context.expectedRevision ?? 0,
       withoutAppDetails: context.withoutDetails === true, selectionRevision: context.selectionRevision ?? 0,
     })).digest("hex") : undefined;
@@ -3457,22 +3766,23 @@ export class SessionManager {
     const admission: { current?: { promise: Promise<void>; receipt?: StoredMessageReceipt; sourceId: string } } = {};
     const result = await this.serialize(id, async () => {
       const session = await this.requireLive(id);
+      const retryFamilyInput = this.beforeSubagentStart(session.record, context.subagentRunId);
       if (clientRequestId) {
         const receipt = await this.store.readMessageReceipt(id, clientRequestId);
         if (receipt) {
           const result = this.publicMessageReceipt(receipt, actorUserId!);
           if (receipt.fingerprint !== fingerprint)
             throw new AppContextError(409, "message_request_conflict", "This message request was already used with different message details.");
-          if (result.state === "unknown")
+          if (result.state === "unknown" && !retryFamilyInput)
             throw new AppContextError(409, "message_outcome_unknown", "This message may already have been sent. Inspect the conversation before starting another turn.");
           if (result.state === "rejected")
             throw new AppContextError(409, "message_request_rejected", "This message was not sent. Review its rejection before starting another turn.");
-          return result;
+          if (result.state === "accepted") return result;
         }
       }
       this.store.assertWritable(id);
       this.assertNotRetiring(session.record);
-      if (session.record.sourceAdmission) throw new AppContextError(409, "source_admission_recovery_required", "An earlier message has an unresolved admission. Review execution recovery before starting another turn.");
+      if (session.record.sourceAdmission && !retryFamilyInput) throw new AppContextError(409, "source_admission_recovery_required", "An earlier message has an unresolved admission. Review execution recovery before starting another turn.");
       if (this.stopping) throw new AppContextError(503, "harness_stopping", "Harness is stopping; the saved message was not dispatched.");
       if (this.connections?.remote && session.record.providerExecution?.runId && !session.record.providerExecution.run?.stopConfirmed)
         throw new AppContextError(409, "stop_unconfirmed", "The original provider execution has not confirmed native exit. Reconcile or stop it before sending another turn.");
@@ -3485,12 +3795,24 @@ export class SessionManager {
       }
       if (this.connections?.remote && Object.values(session.record.providerExecution?.mutations ?? {}).some(request => !["sessions.create", "sessions.configure"].includes(request.operation)))
         throw new AppContextError(409, "provider_request_unresolved", "Reconcile the retained provider request before sending another turn.");
+      if (context.subagentInput === "result") {
+        if (!(await this.store.readSessionFamily(id)).waits.some(wait => wait.runId === context.subagentRunId && wait.state === "ready"))
+          throw new AppContextError(409, "subagent_wait_cancelled", "The parent is no longer waiting for this result.");
+        const { status, providerExecution } = session.record;
+        const run = providerExecution?.run;
+        const confirmedFailure = status === "failed" && run?.state === "failed" && run.stopConfirmed
+          && run.ref.id === providerExecution?.runId && run.sessionId === providerExecution.sessionId;
+        if (!retryFamilyInput && status !== "idle" && status !== "suggesting" && !confirmedFailure)
+          throw new AppContextError(409, "subagent_busy", "Waiting for the parent chat to finish its current turn.");
+      }
+      if (session.record.subagentStartPending && context.subagentInput !== "assignment")
+        throw new AppContextError(409, "subagent_launch_pending", "The child is waiting for its admitted assignment.");
       if (context.decisionContinuation) this.checkDecisionRecord(session.record, context.decisionContinuation);
       if (context.taskContinuation) this.checkTaskContinuation(session.record, context.taskContinuation);
       const queue = session.record.messageQueue;
       // A validated continuation finishes the current turn; future queued messages must wait
       // for it rather than preventing the parked question or task checkpoint from resuming.
-      if (!context.decisionContinuation && !context.taskContinuation && queue?.entries.length) {
+      if (!retryFamilyInput && !context.decisionContinuation && !context.taskContinuation && queue?.entries.length) {
         const head = queue.entries[0]!;
         if (!context.queueEntryId || head.id !== context.queueEntryId || head.attempt?.clientRequestId !== clientRequestId || queue.paused)
           throw new AppContextError(409, "queue_pending", "Use the conversation queue while accepted messages are waiting.");
@@ -3511,7 +3833,7 @@ export class SessionManager {
       } else if (session.record.handoffDispatch?.state === "queued") {
         throw new AppContextError(409, "handoff_queued", "The accepted handoff is still queued. Retry its finalization.");
       }
-      if (session.record.workerRun || ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)
+      if (session.record.workerRun || !retryFamilyInput && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)
         && !(context.decisionContinuation && session.record.status === "awaiting_question" && session.record.parkedQuestionRun)) {
         throw new SessionBusyError();
       }
@@ -3540,6 +3862,10 @@ export class SessionManager {
       let messageReceipt: StoredMessageReceipt | undefined;
       let release: (() => void) | undefined;
       try {
+        if (retryFamilyInput && session.run instanceof ProviderHarnessRun) {
+          await session.run.detach(); session.run = null;
+        }
+        session.subagentRunId = context.subagentRunId;
         let selectedAdapter = this.adapter;
         if (this.connections) {
           const binding = this.bindingFor(session.record);
@@ -3633,7 +3959,9 @@ export class SessionManager {
         if (this.connections?.remote && !session.record.providerPlatformContext)
           session.record.providerPlatformContext = await platformSkillContext();
         const admissionRunId = randomUUID();
-        session.record.sourceAdmission = { ...(clientRequestId ? { clientRequestId } : {}), runId: admissionRunId, state: "preparing" };
+        session.record.sourceAdmission = { ...(clientRequestId ? { clientRequestId } : {}), runId: admissionRunId, state: "preparing",
+          ...(this.connections?.remote && context.subagentRunId ? { subagentRunId: context.subagentRunId } : {}),
+          ...(this.connections?.remote && session.record.providerExecution?.runId ? { previousProviderRunId: session.record.providerExecution.runId } : {}) };
         await this.store.saveRecord(session.record);
         if (clientRequestId) {
           // This boundary precedes transcript publication and provider start/send. A crash here is
@@ -3649,14 +3977,16 @@ export class SessionManager {
           }
         }
         if (this.connections) session.record.providerLocked = true;
-        const messageEventSeq = await this.append(id, {
-          type: "user_message",
+        const previousInput = retryFamilyInput ? (await this.store.readEvents(id)).findLast(event => event.clientRequestId === clientRequestId
+          && (event.type === "subagent_assignment" || event.type === "subagent_continuation")) : undefined;
+        const messageEventSeq = previousInput?.seq ?? await this.append(id, {
+          type: context.subagentInput === "result" ? "subagent_continuation" : context.subagentInput === "assignment" ? "subagent_assignment" : "user_message",
           ...(clientRequestId ? { clientRequestId } : {}),
           ...(feedback ? { feedback } : {}),
           executionSelection: session.record.executionSelection ?? { model: null, reasoningEffort: null },
           selectionRevision: session.record.selectionRevision ?? 0,
           // The native resume envelope is private coordinator input, not operator-facing prose.
-          text: context.taskContinuation ? "Continue the task with its saved child results." : context.decisionContinuation ? "Continue with the saved answer." : text,
+          text: context.subagentInput === "result" ? "Continue with the saved subagent results." : context.taskContinuation ? "Continue the task with its saved child results." : context.decisionContinuation ? "Continue with the saved answer." : text,
           appContext: snapshot,
           ...(attached.length > 0 ? { attachments: attached.map((file) => file.name), attachmentDigests: Object.fromEntries(attached.map(file => [file.name,
             session.record.sourceAttachments?.findLast(candidate => candidate.name === file.name)?.digest])) } : {}),
@@ -3681,7 +4011,7 @@ export class SessionManager {
           session.mcpSignature = JSON.stringify([mcpServers ?? {}, session.mcpTargetSignature]);
           // Standing instructions are prompt text; selected skill packages use native discovery.
           const skillExport = !this.connections?.remote && this.settings && this.providers ? await prepareSkills(id, this.settings, session.record.skillIds) : undefined;
-          const taskGuide = !this.connections?.remote || await this.providerWorkflowBinding(id) ? TASK_ORCHESTRATION_GUIDE : "";
+          const taskGuide = this.connections?.remote ? "" : TASK_ORCHESTRATION_GUIDE;
           const instructionSources: import("../harness/context-sources.js").InstructionText[] = [
             { source: "platform" as const, text: session.record.providerPlatformContext?.text ?? skillExport?.platformIntroduction?.text.trim() ?? "" },
             { source: "runtime" as const, text: (this.connections?.remote ? PROVIDER_SYSTEM_PROMPT : docker ? DOCKER_SYSTEM_PROMPT : HOST_SYSTEM_PROMPT) + (taskGuide ? "\n\n" + taskGuide : "") },
@@ -3726,7 +4056,7 @@ export class SessionManager {
           // Starting a native adapter may itself have effects, even if it throws before returning.
           dispatched = true;
           const handle = selectedAdapter.start({
-            requireNativeResume: !!context.decisionContinuation || !!context.taskContinuation,
+            requireNativeResume: context.subagentInput === "result" || !!context.decisionContinuation || !!context.taskContinuation,
             promptSuggestions: session.suggestionAllowed,
             operation: session.record.taskExecutionId ? "task" : "chat",
             skillExportId: skillExport?.id,
@@ -3790,7 +4120,7 @@ export class SessionManager {
             message: known ? error.message.slice(0, 500) : "The message was not sent. Review the conversation and try again.",
           } });
         }
-        if (!dispatched && session.record.sourceAdmission) {
+        if (!dispatched && session.record.sourceAdmission && (!retryFamilyInput || messageReceipt)) {
           // Only a known pre-effect failure may settle preparation; uncertain storage stays sealed.
           this.store.assertWritable(id);
           delete session.record.sourceAdmission;
@@ -4308,6 +4638,7 @@ export class SessionManager {
 
   async cancelSession(id: string): Promise<boolean> {
     try {
+      if ((await this.getSession(id))?.subagentsPending) await this.subagents.cancelWaits(id);
       await this.serialize(id, async () => {
         const session = await this.requireLive(id);
         if (session.record.messageQueue?.entries.length) {
@@ -4384,6 +4715,7 @@ export class SessionManager {
     this.proxy?.unregister(id);
     this.developmentMcp.unregister(id);
     const execution = session.record.providerExecution;
+    const stoppedAssignmentParent = await this.rejectUnstartedChildAssignment(session.record);
     const alreadyFinished = execution && stopped?.stopConfirmed && (stopped.state === "succeeded" || stopped.state === "failed");
     if (alreadyFinished) {
       // Stop can be the first observer to learn the original turn already has a final result.
@@ -4391,10 +4723,12 @@ export class SessionManager {
     } else {
       await this.setStatus(id, "cancelled", false, stopped?.stopConfirmed === true);
     }
-    if (this.connections?.remote && session.record.sourceAdmission) {
+    if (this.connections?.remote && (stoppedAssignmentParent || session.record.sourceAdmission)) {
       delete session.record.sourceAdmission;
+      if (stoppedAssignmentParent) delete session.record.subagentStartPending;
       await this.store.saveRecord(session.record);
     }
+    if (stoppedAssignmentParent) this.subagents.kick(stoppedAssignmentParent);
     if (!alreadyFinished) this.audit.report("ai_session_cancelled", { sessionId: id });
     return !alreadyFinished;
   }
@@ -4450,6 +4784,7 @@ export class SessionManager {
   async shutdown(): Promise<void> {
     this.mcpPolicy.close();
     this.stopping = true;
+    this.subagents.close();
     // Start the event deadline before native shutdown and final metadata writes. A slow store
     // must not defer the deadline until after its own pending writes have completed.
     const draining = this.drainHarnessEvents();
@@ -5095,6 +5430,7 @@ export class SessionManager {
       status,
     });
     if (status === "idle") this.wakeMessageQueue(id);
+    if (session.record.subagentsPending && ["idle", "failed", "cancelled", "abandoned"].includes(status)) this.subagents.kick(id);
   }
 
   private activityEvent(session: LiveSession): StoredEvent {

@@ -62,6 +62,17 @@ explicit per-run workflow binding. Tool selection and Ask/Run/Disabled policy be
 binding; Core enforces the selected subset and Disabled rules, and the provider handles Ask through
 its own durable Decisions. The default workflow policy is Ask.
 
+Providers advertise `workflow.subagents` for chat delegation. Consumers also check Core's
+`supportedWorkflowCapabilities` on an ordinary agent operation authorization. Earlier Core versions
+omit this field, so a consumer can continue chatting without requesting these tools. Consumers explicitly select
+`subagent_profiles`, `subagent_spawn`, `subagent_status` and `subagent_wait` in `workflow.tools`.
+These actions use the originating conversation and its reviewed `agent-sessions` v1 interface
+with the `session.subagents` capability. The provider sends the admitted reference and action
+over the same business channel. Core signs the exact callback and checks the original actor.
+An omitted tool list selects the legacy task catalog. A mixed list requires both interfaces.
+Delegation carries no reusable user credential. Launching a child or resuming a parent follows
+the consumer's ordinary authorization for its chosen provider.
+
 Core MCP remains a separate connection with its existing target grants, originating-consumer
 rules and tool policy. The bounded business channel leaves those grants unchanged and supports
 consumer task tools while general Core MCP is disabled. Core also exposes task workflow wrappers

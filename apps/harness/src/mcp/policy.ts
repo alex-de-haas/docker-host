@@ -1,3 +1,4 @@
+import { CHAT_WORKFLOW_PROVIDER, isPrivateToolProvider } from "../../shared/chat-workflow.js";
 import { randomUUID, createHash } from "node:crypto";
 import { migrateCorePolicy, migratedTool, coreAliases } from "./core-migration.js";
 import type { SettingsStore } from "../settings/store.js";
@@ -137,7 +138,8 @@ export class McpToolPolicy {
 
   /** Validate the whole editor before its single settings-file write. */
   preparePreferences(defaults: Record<string, ProviderDefault>, rules: Record<string, ToolRule>) {
-    if (!validDefaults(defaults) || !validRules(rules) || Object.entries(rules).some(([key, r]) => r.mode === "disabled" && JSON.parse(key)[0] !== "hosty:development"))
+    if (!validDefaults(defaults) || Object.hasOwn(defaults, CHAT_WORKFLOW_PROVIDER) || !validRules(rules)
+      || Object.entries(rules).some(([key, r]) => r.mode === "disabled" && !isPrivateToolProvider(JSON.parse(key)[0])))
       throw new Error("Invalid invocation preferences. Disable tools through Core access review.");
     for (const [provider, rule] of Object.entries(defaults)) {
       if (this.catalogs.get(provider)?.identity !== rule.identity) throw new Error("Refresh the changed tool catalog before saving.");

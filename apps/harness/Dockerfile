@@ -21,6 +21,7 @@ COPY apps/harness/src/harness/activity.ts apps/harness/src/harness/context-mcp.t
 COPY apps/harness/src/profiles/types.ts apps/harness/src/profiles/
 COPY apps/harness/src/prompt-templates/types.ts apps/harness/src/prompt-templates/
 COPY apps/harness/src/sessions/transcript-edit-types.ts apps/harness/src/sessions/
+COPY apps/harness/src/subagents/types.ts apps/harness/src/subagents/
 ENV NEXT_TELEMETRY_DISABLED=1 HOSTY_HARNESS_BOUNDED_BUILD=1
 RUN npm run build --workspace @haas/hosty-harness-web -- --webpack
 

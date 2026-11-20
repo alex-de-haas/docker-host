@@ -3,12 +3,19 @@ import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError } from "@hosty-sdk/app/providers";
 import type { AgentSessionQuery, NativeSessionRef, RunRef, RunCancel } from "@hosty-sdk/app/agent-sessions";
 import { AppContextError } from "../sessions/app-context.js";
+import { mediatedSessionWorkflow } from "../agent-providers/session-workflow-mediation.js";
 import type { AgentSessionService } from "./service.js";
 
 export async function agentSessionRoute(request: IncomingMessage, response: ServerResponse, url: URL, service: AgentSessionService): Promise<boolean> {
   const root = "/api/agent-sessions/v1";
   if (url.pathname !== root && !url.pathname.startsWith(root + "/")) return false;
   try {
+    const workflow = await mediatedSessionWorkflow(request, url, service.provider.key, "agent-sessions");
+    if (workflow) {
+      const result = await service.workflow(workflow.sessionId, await workflow.read(), workflow.invocation, workflow.validate);
+      sendResult(response, result);
+      return true;
+    }
     const route = url.pathname.slice(root.length), operation = route.slice(1).replaceAll("/", ".");
     if (request.method !== "POST" || url.search || !["sessions.query", "sessions.get", "runs.get", "runs.cancel", "runs.notifications"].includes(operation)) throw new ProviderError("not_found", "Unknown execution observation operation.", 404);
     const token = request.headers.authorization?.match(/^Bearer (hosty_provider\.2\.[^\s]+)$/)?.[1];
@@ -28,13 +35,17 @@ export async function agentSessionRoute(request: IncomingMessage, response: Serv
       : operation === "runs.get" ? await service.getRun(actor, input.run as RunRef)
       : await service.cancel(actor, input as RunCancel, validate);
     await validate();
-    const payload = JSON.stringify(result);
-    if (Buffer.byteLength(payload) > 1024 * 1024) throw new ProviderError("budget_exceeded", "Execution observations are bounded to 1 MiB.", 429);
-    response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(payload);
+    sendResult(response, result);
     } finally { response.off("close", disconnected); }
   } catch (error) {
     if (!(error instanceof ProviderError) && !(error instanceof AppContextError)) throw error;
     response.writeHead(error.status, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify({ error: { code: error.code, message: error.message, retryable: error.status >= 500 } }));
   }
   return true;
+}
+
+function sendResult(response: ServerResponse, result: unknown) {
+  const payload = JSON.stringify(result);
+  if (Buffer.byteLength(payload) > 1024 * 1024) throw new ProviderError("budget_exceeded", "Session responses are bounded to 1 MiB.", 429);
+  response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(payload);
 }

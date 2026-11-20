@@ -64,16 +64,16 @@ internal sealed partial class CoreAgentExecution
         {
             Object(workflow, "executor", "sessionId", "tools", "policy"); Text(workflow, "sessionId", 200);
             if (workflow.TryGetProperty("tools", out var selectedTools) && selectedTools.ValueKind != JsonValueKind.Null
-                && (selectedTools.ValueKind != JsonValueKind.Array || selectedTools.GetArrayLength() > CoreProviderMediation.SessionWorkflowActions.Length
+                && (selectedTools.ValueKind != JsonValueKind.Array || selectedTools.GetArrayLength() > CoreProviderMediation.AllWorkflowTools.Count
                     || selectedTools.EnumerateArray().Any(t => t.ValueKind != JsonValueKind.String
-                        || !CoreProviderMediation.SessionWorkflowActions.Select(a => a.Replace('-', '_')).Contains(t.GetString(), StringComparer.Ordinal))))
-                throw Invalid("Select only the bounded task workflow tool names.");
+                        || !CoreProviderMediation.AllWorkflowTools.Contains(t.GetString()!))))
+                throw Invalid("Select only the bounded session workflow tool names.");
             if (workflow.TryGetProperty("policy", out var workflowPolicy) && workflowPolicy.ValueKind != JsonValueKind.Null)
             {
                 ValidateMcpPolicy(workflowPolicy);
                 if (workflowPolicy.TryGetProperty("tools", out var rules) && rules.ValueKind == JsonValueKind.Object
-                    && rules.EnumerateObject().Any(t => !CoreProviderMediation.SessionWorkflowActions.Select(a => a.Replace('-', '_')).Contains(t.Name, StringComparer.Ordinal)))
-                    throw Invalid("Task workflow policy applies only to its declared task tools.");
+                    && rules.EnumerateObject().Any(t => !CoreProviderMediation.AllWorkflowTools.Contains(t.Name)))
+                    throw Invalid("Session workflow policy applies only to declared tools.");
             }
             if (!workflow.TryGetProperty("executor", out var executor)) throw Invalid("A workflow executor reference is required.");
             ProviderMetadata(executor);

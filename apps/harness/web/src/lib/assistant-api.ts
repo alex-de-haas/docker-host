@@ -5,11 +5,14 @@ import { appFetch, APP_SESSION_RESTORED } from "@hosty-sdk/app/browser-auth";
 import { openEventStream } from "./event-stream";
 import { loadBrowserAgentDefaults, type BrowserAgentDefaults } from "./browser-agent-preferences";
 import type { QuestionAnswers } from "../../../src/agent-providers/decision-identity";
+import type { SessionSubagent } from "../../../src/subagents/types";
 
 // App-local requests carry this document's app grant or same-origin cookie.
 // MCP delegation requires separate authority on the server.
 
 export type AssistantEvent = {
+  child?: SessionSubagent;
+  subagents?: SessionSubagent[];
   seq: number;
   ts: string;
   type: string;
@@ -28,6 +31,8 @@ export type AssistantQuestion = {
 
 export type ProviderHistoryGap = { sessionId: string; epoch: string; archiveGeneration?: string; from: number; to: number; unavailable?: boolean };
 export type AssistantSession = {
+  parentSessionId?: string;
+  subagents?: SessionSubagent[];
   providerHistoryGaps?: ProviderHistoryGap[];
   providerHistoryContact?: { runId: string; observedAt: string; reason: "denied" | "invalid" | "unavailable" };
   workerRun?: { id: string; sequence: number; generation?: string };

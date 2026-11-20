@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { AGENT_CAPABILITIES, type AgentAuthorizationRequest, type AgentCapabilities, type AgentConfiguration, type AgentControlReceipt, type AgentEvent, type AgentRunInput,
+import { AGENT_CAPABILITIES, AGENT_SESSION_WORKFLOW_TOOLS, type AgentAuthorizationRequest, type AgentCapabilities, type AgentConfiguration, type AgentControlReceipt, type AgentEvent, type AgentRunInput,
   type AgentRunSnapshot, type AgentSession, type AgentSource } from "@hosty-sdk/app/agent";
 import { AuditReporter } from "../audit.js";
 import type { HarnessAdapter } from "../harness/adapter.js";
@@ -17,9 +17,9 @@ import { CoreAgentBackend } from "./core.js";
 import { AgentConnectionDirectory, agentSelectionId } from "./directory.js";
 
 /** Test-only public HTTP/SSE peer. It contains no engine, worker transport or provider credentials. */
-export async function publicProviderFixture(installationHistory = false) {
+export async function publicProviderFixture(installationHistory = false, implementationId?: string) {
   const root = await mkdtemp(path.join(os.tmpdir(), "hosty-public-provider-"));
-  const provider = { appId: "independent.example", installationId: "installation-one", key: "coding" };
+  const provider = { appId: "independent.example", installationId: "installation-one", key: "coding", ...(implementationId ? { implementationId } : {}) };
   const selection = { provider, connection: { id: "account", revision: "1" } };
   const connectionId = agentSelectionId(selection), owner = "operator", credential = "test-owner-authority";
   const capabilities: AgentCapabilities = { version: 1, eventVersions: ["agent-event.1"],
@@ -48,7 +48,7 @@ export async function publicProviderFixture(installationHistory = false) {
   const managers: SessionManager[] = [];
   const behavior: { startGate?: Promise<void>; cancel: "confirmed" | "unavailable" | "unresolved"; reconcile: "confirmed" | "unavailable";
     retire?: "confirmed" | "unavailable"; loseNextRetireResponse?: boolean;
-    failHistoryTokenOnce?: boolean; rejectHistoryStream?: boolean;
+    sessionLookupGate?: Promise<void>; failSessionLookup?: boolean; failHistoryTokenOnce?: boolean; rejectHistoryStream?: boolean; legacyWorkflowCore?: boolean;
     legacyHistoryRoute?: boolean; capabilitiesTimeoutAfterStart?: boolean; snapshotIssue?: "denied" | "timeout";
     loseNextStartResponse?: boolean; keepReservationAfterCancel?: boolean; deferPredictions?: boolean; beforeCancel?: (runId: string) => void;
     connectionRevision: string } = { cancel: "confirmed", reconcile: "confirmed", connectionRevision: "1" };
@@ -91,12 +91,16 @@ export async function publicProviderFixture(installationHistory = false) {
       }
       if (url.pathname.endsWith("/agent/authorize")) {
         const authorization = JSON.parse(body) as AgentAuthorizationRequest; authorizations.push(authorization);
+        if (behavior.legacyWorkflowCore && authorization.ceiling?.workflow?.tools?.some(name =>
+          !AGENT_SESSION_WORKFLOW_TOOLS.some(legacy => legacy === name)))
+          return error("invalid_input", "Select only the legacy task workflow tool names.", 400);
         if (authorization.operation === "runs.start" && authorization.runId) {
           const actor = new Headers(init?.headers).get("X-Hosty-User-Token");
           runOwners.set(authorization.runId, actor === credential ? owner : actor?.replace(/^user:/, "") ?? owner);
         }
         return json({ provider, baseUrl: "http://provider.test/api/agent/v1/coding", token: "exact-operation-fixture",
-          expiresAt: new Date(Date.now() + 60000).toISOString(), admissionRef: randomUUID() });
+          expiresAt: new Date(Date.now() + 60000).toISOString(), admissionRef: randomUUID(),
+          ...(behavior.legacyWorkflowCore ? {} : { supportedWorkflowCapabilities: [AGENT_CAPABILITIES.sessionSubagents] }) });
       }
       return error("fixture_route", "Unexpected Core fixture route.", 404);
     }
@@ -131,6 +135,8 @@ export async function publicProviderFixture(installationHistory = false) {
     if (route === "/connections/account/models") return json({ revision: "1", models: [{ id: "model", reasoningEfforts: [null] }], defaultModel: "model" });
     if (parts[0] === "sessions" && parts.length === 2) {
       const id = parts[1]!;
+      if (method === "GET" && behavior.sessionLookupGate) await behavior.sessionLookupGate;
+      if (method === "GET" && behavior.failSessionLookup) return error("provider_unavailable", "Session lookup temporarily unavailable.", 503);
       if (method === "PUT") {
         const configuration = JSON.parse(body).configuration as AgentConfiguration;
         const session: AgentSession = { ref: { provider, id }, revision: "1", configurationRevision: "1", configurationDigest: digest(configuration),
@@ -158,7 +164,7 @@ export async function publicProviderFixture(installationHistory = false) {
         runs.set(runId, snapshot); events.set(runId, []); session.activeRun = snapshot.ref; session.nativeState = "available";
         publishHistory(sessionId, runId, runOwners.get(runId) ?? owner, { kind: "snapshot", snapshot });
       }
-      if (behavior.loseNextStartResponse) { delete behavior.loseNextStartResponse; throw new TypeError("Fixture lost the start response after admission."); }
+      if (behavior.loseNextStartResponse) { delete behavior.loseNextStartResponse; throw new TypeError("fetch failed", { cause: new Error("Fixture lost the start response after admission.") }); }
       return json(runs.get(runId));
     }
     if (parts[0] === "runs") {

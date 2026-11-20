@@ -27,7 +27,7 @@ export class ProviderMcp {
         this.preferences = { ...previous, ...patch }; return structuredClone(this.preferences);
       }
     } }, notify, settled, 24 * 60 * 60 * 1000, runId => this.autonomous.has(runId));
-    this.workflow = new ProviderWorkflow(authority, notify, settled);
+    this.workflow = new ProviderWorkflow(authority, notify, settled, runId => this.autonomous.has(runId));
     this.proxy = new McpProxy(async (runId, key) => {
       const target = this.targets.get(key); if (!target || target.runId !== runId) return null;
       const minted = await authority.mcp(target.admissionRef, target.target, target.tools);

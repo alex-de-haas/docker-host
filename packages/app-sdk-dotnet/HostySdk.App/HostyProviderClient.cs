@@ -142,7 +142,7 @@ public sealed partial class HostyProviderClient(HttpClient http, HostyAppOptions
         if (result.Version != 2 || result.Kind != kind || result.Key != key || result.Operation != input.Operation
             || string.IsNullOrWhiteSpace(result.UserId) || string.IsNullOrWhiteSpace(result.PrincipalId) || result.ResourceIds is null)
             throw new HostyProviderException("token_invalid", "Core returned an invalid mediated invocation.", 401);
-        if (input.Operation == "session.workflow" && (kind != "task-executor" || result.AgentExecution is not { } execution
+        if (input.Operation == "session.workflow" && (kind is not ("task-executor" or "agent-sessions") || result.AgentExecution is not { } execution
             || !Guid.TryParse(execution.SessionId, out _) || !Guid.TryParse(execution.RunId, out _)
             || execution.Provider is null || string.IsNullOrWhiteSpace(execution.Provider.AppId) || string.IsNullOrWhiteSpace(execution.Provider.InstallationId)
             || string.IsNullOrWhiteSpace(execution.Provider.Key)))

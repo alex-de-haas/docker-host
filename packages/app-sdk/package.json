@@ -1,6 +1,6 @@
 {
   "name": "@hosty-sdk/app",
-  "version": "0.53.0",
+  "version": "0.54.0",
   "description": "Hosty app auth: session state machine, recovery bridge, Core revalidation, and the embedder responder.",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -43,6 +43,7 @@
     "./feedback/server": "./src/feedback-server.ts",
     "./agent-sessions": "./src/agent-sessions.ts",
     "./agent": "./src/agent.ts",
+    "./agent/workflow-tools": "./src/agent-workflow-tools.ts",
     "./agent/client": "./src/agent-client.ts",
     "./agent/server": "./src/agent-server.ts",
     "./agent/schemas": "./src/agent-schemas.ts",

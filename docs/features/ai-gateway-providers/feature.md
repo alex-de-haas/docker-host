@@ -213,11 +213,15 @@ consumer binds its task-executor interface, logical conversation and a fixed set
 to the provider admission. The provider's local workflow tool adapter calls Core's bounded business
 API; Core mediates the original actor and exact public provider session/run to Harness. It does not
 create general Core MCP access or change a disabled Core connection. Without the optional
-task-executor permission, ordinary conversations omit task instructions and workflow tools;
+task-executor permission, ordinary conversations omit task instructions and task tools;
 task-bound admission reports the missing setup before starting native work. A disabled required
 `task_result` tool also prevents task admission.
 The selected provider must declare `workflow.consumer`; Harness checks it before fresh and
 resumed workflow turns and retains that requirement in the immutable prepared run command.
+
+Chat subagent tools use the `workflow.subagents` capability and the consumer's reviewed
+`agent-sessions` callback. The explicit tool selection supports child chats with or without
+the task workflow. See the [provider contract](../agent-provider-interface/feature.md).
 
 Workflow invocation rules are immutable for the admitted turn and apply to the next turn when
 changed. Explicit task-specific Disabled rules remain disabled, and Run requires the same tool
