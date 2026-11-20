@@ -195,6 +195,34 @@ it("reconciles a lost child start response and retries its parent's original pre
   expect((await store.readEvents(childSessionId)).filter(event => event.type === "subagent_assignment")).toHaveLength(1);
 }, 15000);
 
+it.each([false, true])("delivers a ready child result only after confirmed parent failure and honors explicit Stop (%s)", async stopped => {
+  const { f, record: parent, state, manager, store, profiles } = await admitted({ subagents: true, permission: false, installationHistory: true });
+  const profile = (await profiles!.read()).profiles[0]!;
+  const { childSessionId } = await manager.subagentAction(parent.id, "subagent-spawn", {
+    requestId: randomUUID(), profileId: profile.id, profileRevision: profile.revision, prompt: "Complete the delegated review.",
+  }, async () => {}) as { childSessionId: string };
+  const childRunId = (await store.readSessionFamily(parent.id)).launches[0]!.runId;
+  await vi.waitFor(async () => expect(await store.readMessageReceipt(childSessionId, childRunId)).toMatchObject({ state: "accepted" }), { timeout: 5000 });
+  const ticket = { requestId: randomUUID(), childSessionIds: [childSessionId], mode: "all" };
+  expect(await manager.subagentAction(parent.id, "subagent-wait", ticket, async () => {})).toMatchObject({ state: "pending" });
+  f.update(state.runId!, { state: "unknown", phase: "interrupted", freshness: "last_known", stopConfirmed: false });
+  await vi.waitFor(async () => expect((await store.readRecord(parent.id))!.status).toBe("failed"), { timeout: 5000 });
+  f.complete(childRunId, "Review complete");
+  const wait = async () => (await store.readSessionFamily(parent.id)).waits[0]!;
+  await vi.waitFor(async () => expect((await wait()).state).toBe("ready"), { timeout: 5000 });
+  const wakeId = (await wait()).runId;
+  expect(await store.readMessageReceipt(parent.id, wakeId)).toBeNull();
+  expect(f.starts).toHaveLength(2);
+  if (stopped) await manager.cancelSession(parent.id);
+  f.update(state.runId!, { state: "failed", phase: "terminal", stopConfirmed: true, freshness: "current",
+    result: { status: "failed", error: { code: "provider_failed", message: "The parent failed.", retryable: false } } });
+  await vi.waitFor(async () => expect((await wait()).state).toBe(stopped ? "cancelled" : "delivered"), { timeout: 5000 });
+  await manager.recoverSubagents();
+  expect(await manager.subagentAction(parent.id, "subagent-wait", ticket, async () => {})).toMatchObject({ state: stopped ? "cancelled" : "delivered" });
+  expect(f.starts.filter(start => start.runId === wakeId)).toHaveLength(stopped ? 0 : 1);
+  expect((await store.readEvents(parent.id)).filter(event => event.type === "subagent_continuation")).toHaveLength(stopped ? 0 : 1);
+}, 15000);
+
 it("keeps ordinary chat available without a workflow when its task-executor permission is absent", async () => {
   const { f, state, settings, initialSettings } = await admitted({ enabled: false, permission: false });
   const start = f.authorizations.find(request => request.operation === "runs.start")!;

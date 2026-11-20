@@ -1711,8 +1711,6 @@ export class SessionManager {
         return;
       }
     }
-    if (kind === "result" && !this.beforeSubagentStart(record, runId) && (record.status !== "idle" && record.status !== "suggesting" || record.messageQueue?.entries.length))
-      throw new AppContextError(409, "subagent_busy", "Waiting for the parent chat and its operator queue.");
     try {
       await this.postMessage(id, text, undefined, [], { clientRequestId: runId, actorUserId: record.createdBy, workspaceCredential: credential,
         expectedRevision: record.appContextRevision ?? 0, selectionRevision: record.selectionRevision ?? 0, subagentInput: kind, subagentRunId: runId });
@@ -3781,8 +3779,16 @@ export class SessionManager {
       }
       if (this.connections?.remote && Object.values(session.record.providerExecution?.mutations ?? {}).some(request => !["sessions.create", "sessions.configure"].includes(request.operation)))
         throw new AppContextError(409, "provider_request_unresolved", "Reconcile the retained provider request before sending another turn.");
-      if (context.subagentInput === "result" && !(await this.store.readSessionFamily(id)).waits.some(wait => wait.runId === context.subagentRunId && wait.state === "ready"))
-        throw new AppContextError(409, "subagent_wait_cancelled", "The parent is no longer waiting for this result.");
+      if (context.subagentInput === "result") {
+        if (!(await this.store.readSessionFamily(id)).waits.some(wait => wait.runId === context.subagentRunId && wait.state === "ready"))
+          throw new AppContextError(409, "subagent_wait_cancelled", "The parent is no longer waiting for this result.");
+        const { status, providerExecution } = session.record;
+        const run = providerExecution?.run;
+        const confirmedFailure = status === "failed" && run?.state === "failed" && run.stopConfirmed
+          && run.ref.id === providerExecution?.runId && run.sessionId === providerExecution.sessionId;
+        if (!retryFamilyInput && status !== "idle" && status !== "suggesting" && !confirmedFailure)
+          throw new AppContextError(409, "subagent_busy", "Waiting for the parent chat to finish its current turn.");
+      }
       if (session.record.subagentStartPending && context.subagentInput !== "assignment")
         throw new AppContextError(409, "subagent_launch_pending", "The child is waiting for its admitted assignment.");
       if (context.decisionContinuation) this.checkDecisionRecord(session.record, context.decisionContinuation);
