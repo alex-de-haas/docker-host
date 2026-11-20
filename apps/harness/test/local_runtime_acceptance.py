@@ -194,8 +194,10 @@ def check(context):
 
     if os.environ.get('HOSTY_NATIVE_SUBAGENTS_BROWSER'):
         import subprocess
+        connection = providers.configure_for_harness(app_origin, call, 'codex', 'Native child disclosure', secret='synthetic-native-child-fixture')
         result = subprocess.run(['node', str(workspace/'apps/harness/test/native-subagents-browser.mjs')],
-            input=json.dumps({'core':(context.get('child', {}).get('previewUrl') or origin).rstrip('/'), 'harness':app_origin, 'appId':app, 'email':'activation-fixture@example.test', 'password':password, 'link':link}),
+            input=json.dumps({'core':(context.get('child', {}).get('previewUrl') or origin).rstrip('/'), 'harness':app_origin, 'appId':app,
+                'email':'activation-fixture@example.test', 'password':password, 'link':link, 'connectionId':connection['id']}),
             text=True, cwd=workspace)
         assert result.returncode == 0, 'Native subagent browser acceptance failed'
 

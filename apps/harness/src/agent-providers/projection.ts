@@ -156,7 +156,7 @@ function selection(value: Record<string, unknown>): NonNullable<AgentRunSnapshot
 export function reduceAgentRunProjection(current: AgentRunProjection, item: AgentWatchItem, sparseHistory = false): AgentRunProjection {
   if (item.kind === "snapshot") return replace(current, item.snapshot);
   const { event } = item;
-  try { validateAgentEvent(event); } catch { invalid("invalid event"); }
+  try { validateAgentEvent(event); } catch { invalid(event.type === "agent.updated" ? "invalid agent status" : "invalid event"); }
   cursor(item.cursor);
   if (event.runId !== current.snapshot.ref.id) invalid("event belongs to another run");
   if (event.generation !== current.snapshot.generation) invalid("execution generation changed");
@@ -195,7 +195,11 @@ export function reduceAgentRunProjection(current: AgentRunProjection, item: Agen
     if (!sameSource(supplied, event.source)) invalid("agent status source changed");
     const agents = structuredClone(snapshot.agents ?? []), index = agents.findIndex(agent => agent.agentId === supplied.agentId);
     if (index >= 0 && !sameSource(agents[index], supplied)) invalid("agent parent changed");
-    if (index < 0) agents.push(structuredClone(supplied)); else agents[index] = structuredClone(supplied);
+    // The transcript retains each prompt and response at its original native position. Accumulating
+    // those event payloads again in the lifecycle snapshot can exceed its one-MiB wire allowance.
+    const status = { ...structuredClone(event.source), state: supplied.state,
+      ...(supplied.stopConfirmed !== undefined ? { stopConfirmed: supplied.stopConfirmed } : {}) };
+    if (index < 0) agents.push(status); else agents[index] = status;
     snapshot.agents = agents;
   }
   else if (event.type === "selection.updated" && event.source.parentAgentId === undefined) snapshot.selection = selection(event.data);

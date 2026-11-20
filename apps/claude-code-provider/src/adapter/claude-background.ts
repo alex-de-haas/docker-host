@@ -21,7 +21,7 @@ export class ClaudeBackgroundLifecycle {
   private overflowed = false;
   idle = false;
   constructor(private readonly source: (parent: string) => HarnessEventSource | undefined,
-    private readonly emit: (event: HarnessEvent) => void) {}
+    private readonly emit: (event: HarnessEvent, parent?: string) => void) {}
   get busy(): boolean {
     if (this.unknown || this.overflowed) return true;
     const live = this.level ?? new Set([...this.tasks].filter(([, task]) => task.background && !terminal(task.state)).map(([id]) => id));
@@ -136,7 +136,7 @@ export class ClaudeBackgroundLifecycle {
     if (projected && (!terminal(task.state) || terminal(projected))) task.state = projected;
     if (task.agent && !task.ambient && task.parent && before !== JSON.stringify(task)) {
       const source = this.source(task.parent);
-      if (source) this.emit({ type: "agent_status", ...source, state: task.state, stopConfirmed: false, source });
+      if (source) this.emit({ type: "agent_status", ...source, state: task.state, stopConfirmed: false, source }, task.parent);
     }
     return true;
   }

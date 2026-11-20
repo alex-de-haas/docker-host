@@ -32,6 +32,20 @@ it("projects the actual0.167 started/completed forms and only the exact complete
   expect(f.events.some(event => event.type === "result" || event.type === "agent_status" && event.stopConfirmed)).toBe(false);
 });
 
+it("reads the active assignment before completion and the exact final answer from the verified child turn", async () => {
+  const events: HarnessEvent[] = [], prompt = { type: "userMessage", content: [{ type: "text", text: "Check versions" }] };
+  const final = { type: "agentMessage", phase: "final_answer", text: "Versions agree" };
+  const value = history([prompt, { ...final, phase: "commentary", text: "Working" }, final, { ...final, delivery: "async", text: "A question" }]);
+  const observer = new CodexChildren("run", new Map(), async () => value, event => events.push(event), () => true,
+    async () => ({ data: [{ id: "child-turn", rootTurnId: "root-turn", status: "inProgress", items: [prompt] }] }));
+  observer.observe(activity("started"), "root-thread", "root-turn", 1);
+  await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "agent_status", state: "running", prompt: "Check versions" })));
+  observer.observe(activity("completed"), "root-thread", "root-turn", 1);
+  await observer.finish(1);
+  expect(events).toContainEqual(expect.objectContaining({ type: "agent_status", state: "succeeded", prompt: "Check versions", response: "Versions agree" }));
+  expect(JSON.stringify(events)).not.toContain("A question");
+});
+
 it("ignores foreign/stale root activity and never infers a parent from agentPath or receiverAgents", async () => {
   const f = fixture();
   f.observe({ ...activity("started"), turnId: "stale-root-turn" });

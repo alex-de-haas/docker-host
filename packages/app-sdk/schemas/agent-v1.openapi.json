@@ -4233,6 +4233,56 @@
         ],
         "additionalProperties": false
       },
+      "ChildAgent": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "parentAgentId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "parentToolCallId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_for_input",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "unknown"
+            ]
+          },
+          "stopConfirmed": {
+            "type": "boolean"
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "response": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "promptTruncated": {
+            "type": "boolean"
+          },
+          "responseTruncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "agentId",
+          "state"
+        ],
+        "additionalProperties": true
+      },
       "PendingDecision": {
         "type": "object",
         "properties": {
@@ -4611,40 +4661,7 @@
             "type": "array",
             "maxItems": 1024,
             "items": {
-              "type": "object",
-              "properties": {
-                "agentId": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
-                },
-                "parentAgentId": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
-                },
-                "parentToolCallId": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
-                },
-                "state": {
-                  "enum": [
-                    "queued",
-                    "running",
-                    "waiting_for_input",
-                    "succeeded",
-                    "failed",
-                    "cancelled",
-                    "unknown"
-                  ]
-                },
-                "stopConfirmed": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "agentId",
-                "state"
-              ],
-              "additionalProperties": true
+              "$ref": "#/components/schemas/ChildAgent"
             }
           },
           "selection": {
@@ -6264,6 +6281,12 @@
               "properties": {
                 "data": {
                   "type": "object",
+                  "properties": {
+                    "agent": {
+                      "$ref": "#/components/schemas/ChildAgent"
+                    }
+                  },
+                  "required": [],
                   "additionalProperties": true
                 }
               }

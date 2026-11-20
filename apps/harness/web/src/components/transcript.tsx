@@ -383,7 +383,7 @@ function TranscriptEditFiles({ edits, reviewContext }: { edits: RecordedFileEdit
 // thirty rows, so the row carries the model's own description (or the path, the pattern, the query)
 // and the raw input waits behind a click — a transcript that showed every input would be a wall of
 // JSON with the conversation somewhere inside it.
-function ToolRow({ toolName, input, appNames, mcp, output, command, approval }: {
+export function ToolRow({ toolName, input, appNames, mcp, output, command, approval }: {
   toolName: string; input: unknown; appNames?: Record<string, string>; mcp?: unknown; output?: ToolOutput; command?: { outcome?: CommandOutcome; legacy: boolean }; approval?: ApprovalDecision;
 }) {
   const [open, setOpen] = useState(false);
