@@ -838,7 +838,7 @@ export class SessionManager {
       if (position || fenced && !stateOnly) await this.importHistoricalTranscript(session, projectHistoryFact(provider, fact), item, historical, position);
     };
     if (position || stateOnly) {
-      const active = state.run?.ref.id === fact.runId && state.run.generation === fact.generation ? state.run : undefined;
+      const active = !historical && state.run?.ref.id === fact.runId && state.run.generation === fact.generation ? state.run : undefined;
       const useActive = active && (!retained || BigInt(active.lastSequence) >= BigInt(retained.snapshot.lastSequence));
       const held = useActive ? active : retained?.snapshot;
       const previous = held ?? snapshot;
@@ -972,6 +972,9 @@ export class SessionManager {
     const handled = this.serialize(session.record.id, async () => {
       // A slow read may finish behind admission of the next turn on this chat's lane.
       if (this.providerStates.get(session.record.id)?.runId !== value.runId) return;
+      // A legacy observer can already be waiting here when Delete detaches it. Rejecting
+      // the callback also prevents its caller from advancing its cursor or replaying a control.
+      this.assertNotRetiring(session.record);
       await this.projectProviderItem(session, item, value, true, undefined, replayed);
     });
     this.inFlightEvents.add(handled);
@@ -3062,6 +3065,13 @@ export class SessionManager {
         if (error.code === "retirement_exit_unconfirmed") return false;
       }
       throw error;
+    } finally {
+      if (record.providerRetirement) {
+        await session.run?.detach?.();
+        session.run = null;
+        session.runEpoch = undefined;
+        this.clearRefresh(session);
+      }
     }
     if (receipt.run.id !== retirement.runId || receipt.requestId !== input.requestId
       || receipt.generation !== input.expectedGeneration || BigInt(receipt.revision) < BigInt(input.expectedRevision))
@@ -3106,12 +3116,6 @@ export class SessionManager {
             || !await this.retireProviderForDeletion(live)) throw error;
           retired = true;
         }
-      }
-      if (retired) {
-        await live.run?.detach?.();
-        live.run = null;
-        live.runEpoch = undefined;
-        this.clearRefresh(live);
       }
       const retiredObservation = retired && record.providerObservedRunId === record.providerRetirement?.runId ? record.agentRunId : undefined;
       if (await this.observations.change(state => state.runs.some(r => r.conversation === id && !r.stopConfirmed && r.id !== retiredObservation)))

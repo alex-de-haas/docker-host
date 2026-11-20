@@ -221,9 +221,14 @@ it("reads retained snapshots without attaching a legacy run observer during reti
   const f = await fixture(); await f.interrupt();
   f.behavior.retire = "confirmed"; f.behavior.loseNextRetireResponse = true;
   await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toThrow("lost the retirement response");
+  f.complete(f.runId, "Legacy observer detail");
+  await f.manager.refreshProviderHistory(f.session.id, f.owner, f.credential);
+  expect(await f.store.readEvents(f.session.id)).toContainEqual(expect.objectContaining({ text: "Legacy observer detail", providerHistoryEarlier: true }));
+  expect((await f.manager.getSession(f.session.id))?.providerExecution?.run).toMatchObject({ state: "unknown", stopConfirmed: false });
   await f.manager.shutdown();
   const { manager, store } = f.makeManager();
-  f.complete(f.runId, "Retained snapshot detail");
+  const snapshot = f.snapshot(f.runId);
+  f.update(f.runId, { messages: [...snapshot.messages ?? [], { id: "last", role: "assistant", state: "complete", text: "Retained snapshot detail" }] });
   const previous = f.requests.length;
   await manager.refreshProviderHistory(f.session.id, f.owner, f.credential);
   expect(await store.readEvents(f.session.id)).toContainEqual(expect.objectContaining({ text: "Retained snapshot detail", providerHistoryEarlier: true }));
