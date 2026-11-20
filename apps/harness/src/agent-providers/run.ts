@@ -108,6 +108,16 @@ export class ProviderHarnessRun implements HarnessRun {
 
   waitForAdmission(): Promise<void> { return this.admission; }
 
+  /** A lost native start response prevents send() from entering its observer. */
+  async observeConfirmedAdmission(): Promise<void> {
+    try { await this.admission; }
+    catch {
+      await this.observation;
+      await this.attach(true);
+      this.admission = Promise.resolve();
+    }
+  }
+
   private async observe(readOnlySnapshots = false, useInstallationHistory = true): Promise<void> {
     const context = this.context!, runId = context.state.runId!;
     try {

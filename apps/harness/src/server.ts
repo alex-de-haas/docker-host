@@ -1,3 +1,4 @@
+import { isPrivateToolProvider } from "../shared/chat-workflow.js";
 import { DecisionsService } from "./decisions/service.js";
 import { decisionsRoute } from "./decisions/routes.js";
 import { DecisionError } from "@hosty-sdk/app/decisions";
@@ -572,7 +573,7 @@ async function route(
     await settings.transform(latest => {
       if (body.revision !== mcpPreferencesRevision(latest)) throw new AppContextError(409, "settings_changed", "Invocation preferences changed. Reload before saving.");
       const rules = { ...latest.mcpToolRules };
-      for (const key of Object.keys(rules)) if (rules[key]?.mode === "disabled" ? migratedDenials.has(key) || JSON.parse(key)[0] === "hosty:development" && removeRules.includes(key) : resetProviders.includes(JSON.parse(key)[0]) || removeRules.includes(key)) delete rules[key];
+      for (const key of Object.keys(rules)) if (rules[key]?.mode === "disabled" ? migratedDenials.has(key) || isPrivateToolProvider(JSON.parse(key)[0]) && removeRules.includes(key) : resetProviders.includes(JSON.parse(key)[0]) || removeRules.includes(key)) delete rules[key];
       return { mcpDefaults: { ...latest.mcpDefaults, ...prepared.defaults }, mcpToolRules: { ...rules, ...prepared.rules } };
     });
     sendJson(response, 200, { revision: mcpPreferencesRevision(await settings.read()) }); return;

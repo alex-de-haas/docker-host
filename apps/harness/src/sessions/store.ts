@@ -41,7 +41,7 @@ export interface SessionRecord {
   /** Immutable admitted input versions remain available independently of working-file cache. */
   sourceAttachments?: import("./message-queue.js").StoredQueueAttachment[];
   /** Unsettled durable input never authorizes a new physical execution after reopening. */
-  sourceAdmission?: { clientRequestId?: string; runId: string; state: "preparing" | "dispatching" };
+  sourceAdmission?: { clientRequestId?: string; subagentRunId?: string; runId: string; state: "preparing" | "dispatching" };
   storageRecovery?: { state: "required"; code: SessionStorageError["code"]; message: string };
   messageQueue?: import("./message-queue.js").MessageQueueRecord;
   suggestionHistoryVersion?: 1;

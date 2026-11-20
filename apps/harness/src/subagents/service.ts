@@ -246,8 +246,10 @@ export class SessionSubagents {
   }
 
   private retryable(error: unknown): boolean {
-    const reason = error as { status?: number; code?: string };
-    return reason.status === 503 || reason.status === 429 || ["provider_busy", "provider_unavailable", "workspace_revision_conflict"].includes(reason.code ?? "");
+    const reason = error as { status?: number; code?: string; retryable?: boolean };
+    const transportInterrupted = error instanceof TypeError && error.message === "fetch failed"
+      || error instanceof DOMException && error.name === "TimeoutError";
+    return transportInterrupted || reason.retryable === true || reason.status === 503 || reason.status === 429 || ["provider_busy", "provider_unavailable", "workspace_revision_conflict"].includes(reason.code ?? "");
   }
   private failure(error: unknown): Pick<SessionSubagent, "status" | "result" | "detail"> {
     const reason = error as { status?: number; code?: string; message?: string };

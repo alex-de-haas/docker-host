@@ -49,6 +49,8 @@ import { CORE_PROVIDER_ID, type McpProvider, type ProviderDirectory } from "../s
 import { TokenExchange, toMcpServerConfig, serverName, TOKEN_REFRESH_MARGIN_MS } from "../mcp/exchange.js";
 import { readOnlyToolNames } from "../mcp/readonly.js";
 import { workflowGuide } from "../agent-providers/subagent-workflow.js";
+import { CHAT_WORKFLOW_PROVIDER } from "../../shared/chat-workflow.js";
+import { workflowTools } from "@hosty-sdk/app/agent/workflow-tools";
 import { AGENT_CAPABILITIES, AGENT_SUBAGENT_WORKFLOW_TOOLS, AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentAttachment, type AgentMcpSelection, type AgentPendingDecision, type AgentRunSnapshot, type AgentSource, type AgentRunControlInput, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest, type AgentWatchItem } from "@hosty-sdk/app/agent";
 import type { MediatedProviderInvocation } from "@hosty-sdk/app/providers";
 import { CoreAgentBackend } from "../agent-providers/core.js";
@@ -493,8 +495,7 @@ export class SessionManager {
       capabilities => { coreSupportsSubagents = capabilities.includes(AGENT_CAPABILITIES.sessionSubagents); });
     const negotiatedCapabilities = admitting && this.profiles && !session.record.taskExecutionId
       ? (await client.capabilities()).capabilities : undefined;
-    const workflow = admitting ? await this.providerWorkflowBinding(options.sessionId,
-      coreSupportsSubagents && negotiatedCapabilities?.includes(AGENT_CAPABILITIES.sessionSubagents) === true) : state.lastRunInput?.workflow;
+    const workflow = admitting ? await this.providerWorkflowBinding(options.sessionId, coreSupportsSubagents, negotiatedCapabilities) : state.lastRunInput?.workflow;
     if (admitting && session.record.taskExecutionId && !workflow)
       throw new AppContextError(409, "task_workflow_setup_required", "Approve Harness's optional task-executor provider permission in Core before running this task. General Core MCP access is separate.");
     if (admitting && session.record.taskExecutionId && (!workflow!.tools?.includes("task_result") || workflow!.policy?.tools?.task_result?.mode === "disabled"))
@@ -656,19 +657,26 @@ export class SessionManager {
     return Object.fromEntries(bindings);
   }
 
-  private async providerWorkflowBinding(id: string, supportsSubagents: boolean): Promise<AgentSessionWorkflowBinding | undefined> {
+  private async providerWorkflowBinding(id: string, coreSupportsSubagents: boolean, providerCapabilities?: string[]): Promise<AgentSessionWorkflowBinding | undefined> {
     const appId = process.env.HOSTY_APP_ID, installationId = process.env.HOSTY_APP_INSTALLATION_ID;
     if (!appId || !installationId) return;
-    const permissions = this.taskAction ? await new CoreProviderClient().permissions().catch(() => null) : null;
+    const supportsSubagents = coreSupportsSubagents && providerCapabilities?.includes(AGENT_CAPABILITIES.sessionSubagents) === true;
+    // Providers can implement chat delegation independently. Keep the existing task preflight on legacy and task-bound turns.
+    const includeTasks = !supportsSubagents || providerCapabilities!.includes(AGENT_CAPABILITIES.consumerWorkflow);
+    const permissions = this.taskAction && includeTasks ? await new CoreProviderClient().permissions().catch(() => null) : null;
     const selected = [...(permissions?.granted.includes("providers.task-executor") ? AGENT_SESSION_WORKFLOW_TOOLS : []),
       ...(supportsSubagents ? AGENT_SUBAGENT_WORKFLOW_TOOLS : [])];
     if (!selected.length) return;
     const settings = await this.settings?.read(), core = this.providers?.core();
+    const workflowIdentity = JSON.stringify([CHAT_WORKFLOW_PROVIDER, appId, installationId]);
     const tools: NonNullable<AgentSessionWorkflowBinding["policy"]>["tools"] = {};
     for (const [key, rule] of Object.entries(settings?.mcpToolRules ?? {})) {
       let pair: unknown; try { pair = JSON.parse(key); } catch { continue; }
-      if (!Array.isArray(pair) || ![CORE_PROVIDER_ID, "hosty:development"].includes(pair[0]) || !(selected as readonly string[]).includes(pair[1])) continue;
-      const current = pair[0] === CORE_PROVIDER_ID ? !!core && rule.identity === core.policyIdentity : rule.identity === this.mcpPolicy.localIdentity;
+      if (!Array.isArray(pair) || !(selected as readonly string[]).includes(pair[1])) continue;
+      const chatTool = AGENT_SUBAGENT_WORKFLOW_TOOLS.some(name => name === pair[1]);
+      if (chatTool ? pair[0] !== CHAT_WORKFLOW_PROVIDER : ![CORE_PROVIDER_ID, "hosty:development"].includes(pair[0])) continue;
+      const current = chatTool ? rule.identity === workflowIdentity : pair[0] === CORE_PROVIDER_ID
+        ? !!core && rule.identity === core.policyIdentity : rule.identity === this.mcpPolicy.localIdentity;
       if (tools[pair[1]]?.mode === "disabled" || tools[pair[1]]?.mode === "ask" && rule.mode !== "disabled") continue;
       const mode = rule.mode === "disabled" ? "disabled" : current && rule.definition ? rule.mode : "ask";
       tools[pair[1]] = { mode, ...(mode === "run" ? { definition: rule.definition! } : {}) };
@@ -1620,6 +1628,16 @@ export class SessionManager {
     await this.dispatchSubagentInput(parent, credential, wait.runId, text, "result");
   }
 
+  // The public provider writes the exact run/start request before it can contact the native
+  // agent. While this matching source admission fences the conversation, a missing prepare
+  // proves that this family input has not started. Older and non-provider receipts stay fenced.
+  private beforeSubagentStart(record: SessionRecord, runId: string | undefined): boolean {
+    const source = record.sourceAdmission, provider = record.providerExecution;
+    return !!runId && !!this.connections?.remote && source?.subagentRunId === runId && source.clientRequestId === runId
+      && provider?.runId !== runId && provider?.lastRunInput?.runId !== runId
+      && !Object.values(provider?.mutations ?? {}).some(request => request.operation === "runs.start");
+  }
+
   private async dispatchSubagentInput(record: SessionRecord, credential: string, runId: string, text: string, kind: "assignment" | "result"): Promise<void> {
     const id = record.id;
     const receipt = await this.store.readMessageReceipt(id, runId);
@@ -1638,17 +1656,25 @@ export class SessionManager {
         }
       }
       if (!confirmed) confirmed = !!(await this.store.readHistoryRun(id, runId))?.snapshot;
-      if (!confirmed) throw new AppContextError(409, "message_outcome_unknown", "Waiting for provider evidence for this exact turn.");
-      await this.serialize(id, async () => {
-        await this.store.saveMessageReceipt(id, { ...receipt, state: "accepted" });
-        if (session.record.sourceAdmission?.clientRequestId === runId) {
-          delete session.record.sourceAdmission;
-          await this.store.saveRecord(session.record);
+      if (!confirmed && !this.beforeSubagentStart(session.record, runId))
+        throw new AppContextError(409, "message_outcome_unknown", "Waiting for provider evidence for this exact turn.");
+      if (confirmed) {
+        if (session.record.providerExecution?.runId === runId) {
+          session.workspaceCredential = credential;
+          const handle = await this.ensureProviderRun(session, true);
+          await handle.observeConfirmedAdmission();
         }
-      });
-      return;
+        await this.serialize(id, async () => {
+          await this.store.saveMessageReceipt(id, { ...receipt, state: "accepted" });
+          if (session.record.sourceAdmission?.clientRequestId === runId) {
+            delete session.record.sourceAdmission;
+            await this.store.saveRecord(session.record);
+          }
+        });
+        return;
+      }
     }
-    if (kind === "result" && (record.status !== "idle" && record.status !== "suggesting" || record.messageQueue?.entries.length))
+    if (kind === "result" && !this.beforeSubagentStart(record, runId) && (record.status !== "idle" && record.status !== "suggesting" || record.messageQueue?.entries.length))
       throw new AppContextError(409, "subagent_busy", "Waiting for the parent chat and its operator queue.");
     try {
       await this.postMessage(id, text, undefined, [], { clientRequestId: runId, actorUserId: record.createdBy, workspaceCredential: credential,
@@ -1967,6 +1993,11 @@ export class SessionManager {
 
     const snapshot = await this.providers?.read();
     this.mcpPolicy.localOwner = this.providers?.ownApplication();
+    const appId = process.env.HOSTY_APP_ID, installationId = process.env.HOSTY_APP_INSTALLATION_ID;
+    if (this.profiles && this.agentBackend && appId && installationId) {
+      // The private catalog supplies reviewed definitions for preferences. Only an admitted provider run can execute these tools.
+      await this.mcpPolicy.catalog(CHAT_WORKFLOW_PROVIDER, JSON.stringify([CHAT_WORKFLOW_PROVIDER, appId, installationId]), workflowTools(AGENT_SUBAGENT_WORKFLOW_TOOLS));
+    }
     if (!snapshot) return unavailable;
     for (const p of [this.providers?.core(), ...snapshot.providers]) {
       if (!p?.url || !p.policyIdentity) continue;
@@ -3596,21 +3627,22 @@ export class SessionManager {
     const admission: { current?: { promise: Promise<void>; receipt?: StoredMessageReceipt; sourceId: string } } = {};
     const result = await this.serialize(id, async () => {
       const session = await this.requireLive(id);
+      const retryFamilyInput = this.beforeSubagentStart(session.record, context.subagentRunId);
       if (clientRequestId) {
         const receipt = await this.store.readMessageReceipt(id, clientRequestId);
         if (receipt) {
           const result = this.publicMessageReceipt(receipt, actorUserId!);
           if (receipt.fingerprint !== fingerprint)
             throw new AppContextError(409, "message_request_conflict", "This message request was already used with different message details.");
-          if (result.state === "unknown")
+          if (result.state === "unknown" && !retryFamilyInput)
             throw new AppContextError(409, "message_outcome_unknown", "This message may already have been sent. Inspect the conversation before starting another turn.");
           if (result.state === "rejected")
             throw new AppContextError(409, "message_request_rejected", "This message was not sent. Review its rejection before starting another turn.");
-          return result;
+          if (result.state === "accepted") return result;
         }
       }
       this.store.assertWritable(id);
-      if (session.record.sourceAdmission) throw new AppContextError(409, "source_admission_recovery_required", "An earlier message has an unresolved admission. Review execution recovery before starting another turn.");
+      if (session.record.sourceAdmission && !retryFamilyInput) throw new AppContextError(409, "source_admission_recovery_required", "An earlier message has an unresolved admission. Review execution recovery before starting another turn.");
       if (this.stopping) throw new AppContextError(503, "harness_stopping", "Harness is stopping; the saved message was not dispatched.");
       if (this.connections?.remote && session.record.providerExecution?.runId && !session.record.providerExecution.run?.stopConfirmed)
         throw new AppContextError(409, "stop_unconfirmed", "The original provider execution has not confirmed native exit. Reconcile or stop it before sending another turn.");
@@ -3632,7 +3664,7 @@ export class SessionManager {
       const queue = session.record.messageQueue;
       // A validated continuation finishes the current turn; future queued messages must wait
       // for it rather than preventing the parked question or task checkpoint from resuming.
-      if (!context.decisionContinuation && !context.taskContinuation && queue?.entries.length) {
+      if (!retryFamilyInput && !context.decisionContinuation && !context.taskContinuation && queue?.entries.length) {
         const head = queue.entries[0]!;
         if (!context.queueEntryId || head.id !== context.queueEntryId || head.attempt?.clientRequestId !== clientRequestId || queue.paused)
           throw new AppContextError(409, "queue_pending", "Use the conversation queue while accepted messages are waiting.");
@@ -3653,7 +3685,7 @@ export class SessionManager {
       } else if (session.record.handoffDispatch?.state === "queued") {
         throw new AppContextError(409, "handoff_queued", "The accepted handoff is still queued. Retry its finalization.");
       }
-      if (session.record.workerRun || ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)
+      if (session.record.workerRun || !retryFamilyInput && ["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)
         && !(context.decisionContinuation && session.record.status === "awaiting_question" && session.record.parkedQuestionRun)) {
         throw new SessionBusyError();
       }
@@ -3682,6 +3714,9 @@ export class SessionManager {
       let messageReceipt: StoredMessageReceipt | undefined;
       let release: (() => void) | undefined;
       try {
+        if (retryFamilyInput && session.run instanceof ProviderHarnessRun) {
+          await session.run.detach(); session.run = null;
+        }
         session.subagentRunId = context.subagentRunId;
         let selectedAdapter = this.adapter;
         if (this.connections) {
@@ -3776,7 +3811,8 @@ export class SessionManager {
         if (this.connections?.remote && !session.record.providerPlatformContext)
           session.record.providerPlatformContext = await platformSkillContext();
         const admissionRunId = randomUUID();
-        session.record.sourceAdmission = { ...(clientRequestId ? { clientRequestId } : {}), runId: admissionRunId, state: "preparing" };
+        session.record.sourceAdmission = { ...(clientRequestId ? { clientRequestId } : {}), runId: admissionRunId, state: "preparing",
+          ...(this.connections?.remote && context.subagentRunId ? { subagentRunId: context.subagentRunId } : {}) };
         await this.store.saveRecord(session.record);
         if (clientRequestId) {
           // This boundary precedes transcript publication and provider start/send. A crash here is
@@ -3792,7 +3828,9 @@ export class SessionManager {
           }
         }
         if (this.connections) session.record.providerLocked = true;
-        const messageEventSeq = await this.append(id, {
+        const previousInput = retryFamilyInput ? (await this.store.readEvents(id)).findLast(event => event.clientRequestId === clientRequestId
+          && (event.type === "subagent_assignment" || event.type === "subagent_continuation")) : undefined;
+        const messageEventSeq = previousInput?.seq ?? await this.append(id, {
           type: context.subagentInput === "result" ? "subagent_continuation" : context.subagentInput === "assignment" ? "subagent_assignment" : "user_message",
           ...(clientRequestId ? { clientRequestId } : {}),
           ...(feedback ? { feedback } : {}),
@@ -3933,7 +3971,7 @@ export class SessionManager {
             message: known ? error.message.slice(0, 500) : "The message was not sent. Review the conversation and try again.",
           } });
         }
-        if (!dispatched && session.record.sourceAdmission) {
+        if (!dispatched && session.record.sourceAdmission && (!retryFamilyInput || messageReceipt)) {
           // Only a known pre-effect failure may settle preparation; uncertain storage stays sealed.
           this.store.assertWritable(id);
           delete session.record.sourceAdmission;

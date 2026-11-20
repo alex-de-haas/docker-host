@@ -6,7 +6,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { AGENT_SESSION_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, type AgentSessionWorkflowBinding } from "@hosty-sdk/app/agent";
 import { ProviderMcp } from "./mcp.js";
 import type { ProviderAuthority } from "./core.js";
-import { workflowTools } from "./workflow-tools.js";
+import { workflowTools } from "@hosty-sdk/app/agent/workflow-tools";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });

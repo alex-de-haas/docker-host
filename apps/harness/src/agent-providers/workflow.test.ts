@@ -1,3 +1,4 @@
+import { CHAT_WORKFLOW_PROVIDER } from "../../shared/chat-workflow.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -38,7 +39,7 @@ async function fixture(options: { enabled?: boolean; offered?: boolean; availabl
   if (profiles) f.capabilities.capabilities.push(AGENT_CAPABILITIES.sessionSubagents);
   const { manager, store } = f.makeManager({ settings, providers, profiles });
   const taskAction = vi.fn(async () => ({ recorded: true })); manager.taskAction = taskAction;
-  return { f, manager, store, settings, initialSettings, providers, taskAction };
+  return { f, manager, store, settings, initialSettings, providers, profiles, taskAction };
 }
 async function admitted(options: Parameters<typeof fixture>[0] = {}) {
   const value = await fixture(options), { f, manager, store } = value;
@@ -91,6 +92,108 @@ it.each([false, true])("keeps ordinary turns available on an older Core with tas
   const instructions = f.sessions.get(state.sessionId)!.configuration!.instructions?.map(block => block.text).join(" ") ?? "";
   expect(instructions).not.toContain("subagent_spawn");
 });
+
+it("uses a provider's child-only workflow even when Harness also holds the task permission", async () => {
+  const { f, manager, store } = await fixture({ subagents: true, permission: true });
+  f.capabilities.capabilities = f.capabilities.capabilities.filter(capability => capability !== AGENT_CAPABILITIES.consumerWorkflow);
+  const record = await manager.createSession({ createdBy: f.owner });
+  await manager.postMessage(record.id, "Delegate from this chat", f.credential, [], { actorUserId: f.owner, clientRequestId: randomUUID() });
+  const input = (await store.readProviderExecution(record.id))!.lastRunInput!;
+  expect(input.workflow?.tools).toEqual([...AGENT_SUBAGENT_WORKFLOW_TOOLS]);
+  expect(input.input.requiredCapabilities).toEqual([AGENT_CAPABILITIES.sessionSubagents]);
+  expect(f.sessions.get(f.starts[0]!.sessionId)!.configuration!.instructions?.map(block => block.text).join(" ")).not.toContain(TASK_ORCHESTRATION_GUIDE);
+});
+
+it("pins discovered private tool preferences to the next child-chat binding without enabling another MCP target", async () => {
+  const { f, manager, settings } = await fixture({ subagents: true, permission: false, enabled: false });
+  const scope = CHAT_WORKFLOW_PROVIDER;
+  await manager.discoverMcpTools(f.credential);
+  const catalog = manager.mcpPolicy.snapshot().find(entry => entry.provider === scope)!;
+  expect(catalog.tools.map(tool => tool.name)).toEqual([...AGENT_SUBAGENT_WORKFLOW_TOOLS]);
+  expect(manager.mcpPolicy.snapshot().filter(entry => entry.provider !== scope)
+    .some(entry => entry.tools.some(tool => tool.name === "subagent_spawn"))).toBe(false);
+  const key = (tool: string) => JSON.stringify([scope, tool]);
+  const { rules } = manager.mcpPolicy.preparePreferences({}, {
+    [key("subagent_spawn")]: { identity: catalog.identity, mode: "ask" },
+    [key("subagent_wait")]: { identity: catalog.identity, mode: "disabled" },
+    [key("subagent_status")]: { identity: catalog.identity, mode: "run" },
+  });
+  expect(rules[key("subagent_status")]?.definition).toMatch(/^[a-f0-9]{64}$/);
+  expect(() => manager.mcpPolicy.preparePreferences({ [scope]: { identity: catalog.identity, mode: "run" } }, {})).toThrow();
+  expect(() => manager.mcpPolicy.preparePreferences({}, { [key("subagent_status")]: { identity: "another-installation", mode: "run" } })).toThrow();
+  expect(() => manager.mcpPolicy.preparePreferences({}, { [key("task_create")]: { identity: catalog.identity, mode: "run" } })).toThrow();
+  await settings.transform(current => ({ mcpToolRules: { ...current.mcpToolRules, ...rules } }));
+  const record = await manager.createSession({ createdBy: f.owner });
+  await manager.postMessage(record.id, "Use the saved child-chat policy", f.credential, [], { actorUserId: f.owner, clientRequestId: randomUUID() });
+  const workflow = f.authorizations.find(request => request.operation === "runs.start")!.ceiling!.workflow!;
+  expect(workflow.tools).toEqual([...AGENT_SUBAGENT_WORKFLOW_TOOLS]);
+  expect(workflow.policy).toEqual({ default: "ask", tools: {
+    subagent_spawn: { mode: "ask" }, subagent_wait: { mode: "disabled" },
+    subagent_status: { mode: "run", definition: rules[key("subagent_status")]!.definition },
+  } });
+  expect(f.starts[0]!.input.mcp?.targets).toEqual([]);
+});
+
+it.each([false, true])("recovers the original child admission after temporarily unavailable preflight (restart %s)", async restart => {
+  const { f, manager, store, settings, providers, profiles } = await fixture({ subagents: true, permission: false });
+  const parent = await manager.createSession({ createdBy: f.owner });
+  await manager.refreshSessionCredentials(parent.id, f.owner, f.credential);
+  const profile = (await profiles!.read()).profiles[0]!;
+  f.behavior.failSessionLookup = true;
+  const child = await manager.subagentAction(parent.id, "subagent-spawn", {
+    requestId: randomUUID(), profileId: profile.id, profileRevision: profile.revision, prompt: "Review after provider recovery.",
+  }, async () => {}) as { childSessionId: string };
+  const childId = child.childSessionId;
+  await vi.waitFor(async () => expect((await store.readSessionFamily(parent.id)).launches[0]?.child.status).toBe("unknown"));
+  const runId = (await store.readSessionFamily(parent.id)).launches[0]!.runId;
+  expect(f.starts).toHaveLength(0);
+  expect(await store.readMessageReceipt(childId, runId)).toMatchObject({ state: "unknown" });
+  let active = manager;
+  if (restart) {
+    await manager.shutdown();
+    active = f.makeManager({ settings, providers, profiles }).manager;
+    await active.recoverSubagents();
+  }
+  f.behavior.failSessionLookup = false;
+  if (restart) await active.refreshActorCredentials(f.owner, f.credential);
+  await vi.waitFor(async () => expect(await store.readMessageReceipt(childId, runId)).toMatchObject({ state: "accepted" }), { timeout: 5000 });
+  expect(f.starts.map(start => start.runId)).toEqual([runId]);
+  expect((await store.readEvents(childId)).filter(event => event.type === "subagent_assignment")).toHaveLength(1);
+  f.complete(runId, "Checked");
+  await vi.waitFor(async () => expect((await store.readSessionFamily(parent.id)).launches[0]!.child).toMatchObject({ status: "completed", result: "Checked" }));
+});
+
+it("reconciles a lost child start response and retries its parent's original preflight without repeating either input", async () => {
+  const { f, record: parent, manager, store, profiles } = await admitted({ subagents: true, permission: false });
+  const profile = (await profiles!.read()).profiles[0]!;
+  f.behavior.loseNextStartResponse = true;
+  const { childSessionId } = await manager.subagentAction(parent.id, "subagent-spawn", {
+    requestId: randomUUID(), profileId: profile.id, profileRevision: profile.revision, prompt: "Return a review.",
+  }, async () => {}) as { childSessionId: string };
+  const { runId } = (await store.readSessionFamily(parent.id)).launches[0]!;
+  await vi.waitFor(async () => expect(await store.readMessageReceipt(childSessionId, runId)).toMatchObject({ state: "accepted" }), { timeout: 5000 });
+  const submissions = f.requests.filter(request => request.method === "PUT" && request.path.endsWith("/runs/" + runId));
+  expect(submissions).toHaveLength(2);
+  expect(submissions[0]!.body).toBe(submissions[1]!.body);
+  const ticket = await manager.subagentAction(parent.id, "subagent-wait", {
+    requestId: randomUUID(), childSessionIds: [childSessionId], mode: "all",
+  }, async () => {});
+  expect(ticket).toMatchObject({ state: "pending" });
+  f.complete(f.starts[0]!.runId, "Waiting for review");
+  await vi.waitFor(async () => expect((await manager.getSession(parent.id))?.status).toBe("idle"));
+  const previousRequests = f.requests.length;
+  f.behavior.failSessionLookup = true;
+  f.complete(runId, "Reviewed");
+  const wakeId = (await store.readSessionFamily(parent.id)).waits[0]!.runId;
+  await vi.waitFor(() => expect(f.requests.slice(previousRequests).some(request => request.method === "GET"
+    && request.path.endsWith("/sessions/" + f.starts[0]!.sessionId))).toBe(true), { timeout: 5000 });
+  expect(await store.readMessageReceipt(parent.id, wakeId)).toMatchObject({ state: "unknown" });
+  f.behavior.failSessionLookup = false;
+  await vi.waitFor(async () => expect((await store.readSessionFamily(parent.id)).waits[0]!.state).toBe("delivered"), { timeout: 5000 });
+  expect(f.starts.map(start => start.runId)).toEqual([f.starts[0]!.runId, runId, wakeId]);
+  expect((await store.readEvents(parent.id)).filter(event => event.type === "subagent_continuation")).toHaveLength(1);
+  expect((await store.readEvents(childSessionId)).filter(event => event.type === "subagent_assignment")).toHaveLength(1);
+}, 15000);
 
 it("keeps ordinary chat available without a workflow when its task-executor permission is absent", async () => {
   const { f, state, settings, initialSettings } = await admitted({ enabled: false, permission: false });

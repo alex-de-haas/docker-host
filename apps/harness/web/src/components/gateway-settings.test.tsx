@@ -404,6 +404,51 @@ it("uses the migrated policy and revision from initial discovery on the first sa
   const preferences = vi.mocked(call).mock.calls.find(args => args[0] === "/settings/mcp/preferences")!;
   expect(JSON.parse(preferences[1]!.body as string).revision).toBe("after-migration");
 });
+
+function chatWorkflowCatalog() {
+  const provider = "hosty:chat-workflow";
+  data.toolCatalogs!.push({ provider, identity: "chat-1", tools: [{ name: "subagent_spawn" }, { name: "subagent_wait" }] });
+  return (name: string) => JSON.stringify([provider, name]);
+}
+async function chooseApproval(label: string, option: string) {
+  const control = container.querySelector<HTMLElement>(`[aria-label="Approval for ${label}"]`)!;
+  await act(async () => control.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === option)!);
+}
+
+it("saves explicit child-chat Ask and Disabled as local preferences without Core review", async () => {
+  const key = chatWorkflowCatalog();
+  await render(); await click(button("Chat subagents"));
+  expect(container.querySelector('[aria-label="Allow Chat subagents"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Approval for subagent_spawn"]')?.textContent).toBe("Follow session mode");
+  await chooseApproval("subagent_spawn", "Ask");
+  await click(document.getElementById("tool-hosty:chat-workflow-subagent_wait")!);
+  await save();
+  expect(vi.mocked(call).mock.calls.map(([endpoint]) => endpoint)).toEqual(["/settings/mcp/preferences"]);
+  expect(JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string)).toMatchObject({ defaults: {}, resetProviders: [],
+    rules: { [key("subagent_spawn")]: { identity: "chat-1", mode: "ask" }, [key("subagent_wait")]: { identity: "chat-1", mode: "disabled" } } });
+});
+
+it.each(["Chat subagents", "all enabled tools"])("pins bulk %s changes only for offered enabled child-chat tools", async label => {
+  const key = chatWorkflowCatalog();
+  data.settings.mcpToolRules![key("subagent_wait")] = { identity: "chat-1", mode: "disabled" };
+  await render(); await chooseApproval(label, "Do not ask"); await save();
+  expect(vi.mocked(call).mock.calls.map(([endpoint]) => endpoint)).toEqual(["/settings/mcp/preferences"]);
+  const input = JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string);
+  expect(input.rules).toEqual({ [key("subagent_spawn")]: { identity: "chat-1", mode: "run" } });
+  expect(input.defaults).not.toHaveProperty("hosty:chat-workflow");
+  expect(input.resetProviders).not.toContain("hosty:chat-workflow");
+  expect(input.removeRules).toEqual([]);
+});
+
+it("restores the session's approval mode by removing the child-chat rule", async () => {
+  const key = chatWorkflowCatalog();
+  data.settings.mcpToolRules![key("subagent_spawn")] = { identity: "chat-1", mode: "ask" };
+  await render(); await click(button("Chat subagents")); await chooseApproval("subagent_spawn", "Follow session mode"); await save();
+  expect(vi.mocked(call).mock.calls.map(([endpoint]) => endpoint)).toEqual(["/settings/mcp/preferences"]);
+  expect(JSON.parse(vi.mocked(call).mock.calls[0]![1]!.body as string)).toMatchObject({ defaults: {}, rules: {}, removeRules: [key("subagent_spawn")] });
+});
+
 it("labels the remaining local tools with the actual owning application", async () => {
   data.toolCatalogs!.push({ provider: "hosty:development", identity: "local", localOwner: { appId: "custom.agent", displayName: "Independent assistant" }, tools: [{ name: "task_result" }] });
   await render();

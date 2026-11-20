@@ -5,7 +5,7 @@ import { McpToolPolicy } from "./internal/mcp/policy.js";
 import type { ProxyTarget } from "./internal/mcp/proxy.js";
 import { PROTOCOL_VERSION } from "./internal/mcp/upstream.js";
 import type { AssistantSettings } from "./internal/settings/store.js";
-import { workflowTools } from "./workflow-tools.js";
+import { workflowTools } from "@hosty-sdk/app/agent/workflow-tools";
 
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
