@@ -138,6 +138,31 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.True(f.Provider.Observed > before);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Publication_CompletionEvidenceRequiresMatchingWorktreeAndSourceAccountOwner(bool foreignUser)
+    {
+        var f = await PublicationFixture();
+        var record = await f.Service.CommandAsync(f.W.Id, f.W.Owner, "publish",
+            new(Guid.NewGuid().ToString(), f.W.Observation!.Head, Title: "Contribution"), default);
+        if (foreignUser)
+        {
+            var userId = "other-publisher";
+            await f.Users.UpdateAsync(state => state with
+            {
+                Users = [.. state.Users, state.Users[0] with { Id = userId }],
+                ProviderConnections = [.. state.ProviderConnections!, state.ProviderConnections![0] with { UserId = userId, Id = "other-connection" }]
+            });
+            record = record with { Owner = record.Owner with { UserId = userId }, ConnectionId = "other-connection" };
+        }
+        else record = record with { WorkspaceId = new string('e', 64) };
+        await JsonStorage.WriteAsync(Path.Combine(f.F.Paths.CoreRoot, "development/publications", f.W.Id + ".json"), record);
+        var reads = f.Provider.Observed;
+        Assert.Empty(await f.Service.MergedWorkspaceHeadsAsync(f.W.Owner, default, f.W.Owner.UserId));
+        Assert.Equal(reads, f.Provider.Observed);
+    }
+
     [Fact]
     public async Task WorkspacePause_ExternalBatchStopsQueuedRequestsAfterPause()
     {

@@ -65,6 +65,7 @@ internal sealed class ExternalWorkspaceMcpAuthorization(UserDirectoryStore users
 
 internal sealed record ExternalWorkspaceMcpCaller(string UserId, string PrincipalId, string Label, AppRecord? App = null, CoreCallerAuthority? Authority = null)
 {
+    internal CoreAppPermissionSource? PermissionSource { get; init; }
     internal WorkspaceActivationActor ActivationActor() => App is null
         ? new(UserId, "direct-mcp", Principal: PrincipalId)
         : new(UserId, "app-mcp", App.Id, App.InstalledAt, PrincipalId,
