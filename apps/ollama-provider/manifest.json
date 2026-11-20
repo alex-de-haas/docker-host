@@ -161,7 +161,8 @@
           "runs.live-configure",
           "decisions.auto-allow",
           "mcp.policy-update",
-          "runs.reconcile"
+          "runs.reconcile",
+          "runs.retire"
         ]
       }
     ]

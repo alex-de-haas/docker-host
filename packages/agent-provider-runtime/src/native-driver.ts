@@ -64,6 +64,7 @@ export class NativeExecution implements ExecutionDriver {
     for (const session of await this.store.records()) for (const run of Object.values(session.runs)) {
       this.observe(run.snapshot.ref.id);
       await this.synchronize(run.snapshot.ref.id);
+      if (session.retirement?.runId === run.snapshot.ref.id) continue;
       if (!run.reservedFor) await this.reconcileOwnedStop(run.snapshot.ref.id).catch(() => {});
       if (!run.snapshot.stopConfirmed && session.session.activeRun?.id === run.snapshot.ref.id) await this.failBeforeStart(run.snapshot.ref.id, "Provider restarted before native admission; the input was not replayed.");
     }
@@ -134,6 +135,10 @@ export class NativeExecution implements ExecutionDriver {
     await this.cleanup(id);
   }
   synchronize(id: string): Promise<void> {
+    if (this.closing) return this.pendingSync.get(id) ?? Promise.resolve();
+    return this.scheduleSync(id);
+  }
+  private scheduleSync(id: string): Promise<void> {
     const old = this.pendingSync.get(id); if (old) { this.syncAgain.add(id); return old; }
     const task = (async () => {
       do {
@@ -150,7 +155,7 @@ export class NativeExecution implements ExecutionDriver {
       const { record } = await this.store.run(id); if (record.snapshot.stopConfirmed && !record.reservedFor) await this.cleanup(id);
     })();
     this.pendingSync.set(id, task);
-    void task.finally(() => { if (this.pendingSync.get(id) === task) { this.pendingSync.delete(id); if (this.syncAgain.delete(id)) void this.synchronize(id).catch(() => {}); } }).catch(() => {});
+    void task.finally(() => { if (this.pendingSync.get(id) === task) { this.pendingSync.delete(id); if (this.syncAgain.delete(id)) void this.scheduleSync(id).catch(() => {}); } }).catch(() => {});
     return task;
   }
   async cancel(id: string, requestId: string): Promise<void> {
@@ -161,7 +166,9 @@ export class NativeExecution implements ExecutionDriver {
     // A preparing start observes the durable cancelling phase before native admission.
   }
   async respond(id: string, input: AgentResponseInput): Promise<void> {
-    await this.authority.renew((await this.store.run(id)).record.admissionRef);
+    const { session, record } = await this.store.run(id);
+    if (session.retirement) throw new AgentApiError("run_fenced", "This run no longer accepts decision responses.", 409);
+    await this.authority.renew(record.admissionRef);
     if (input.response.kind === "approval" && this.mcp.resolve(id, input.decisionId, input.response.decision === "allow")) return;
     const native = await this.journal.load(id), frame = native.receipt.pending?.find(frame => {
       const event = frame.event; return event.type === "approval_request" && event.approvalId === input.decisionId || event.type === "question_request" && event.questionId === input.decisionId;
@@ -172,8 +179,10 @@ export class NativeExecution implements ExecutionDriver {
         : { kind: "question", id: input.decisionId, answers: questionAnswers((await this.store.run(id)).record.controls[input.requestId]!.decision!, input.response) }) });
   }
   async control(id: string, input: AgentRunControlInput): Promise<void> {
+    const { session, record } = await this.store.run(id);
+    if (session.retirement) throw new AgentApiError("session_retired", "This native session has been retired.", 409);
     if (input.command === "reconcile") { await this.reconcileOwnedStop(id, input.requestId); return; }
-    const native = await this.journal.load(id), { session, record } = await this.store.run(id);
+    const native = await this.journal.load(id);
     if (input.command === "park") {
       const frame = native.receipt.pending?.find(frame => frame.event.type === "question_request" && frame.event.questionId === input.decisionId && String(frame.sequence) === input.decisionRevision);
       if (!frame) throw new AgentApiError("stale_decision", "The native question cannot be parked.", 409);
@@ -199,6 +208,28 @@ export class NativeExecution implements ExecutionDriver {
       if (!(await this.engine.configure(id, mcp.servers, mcp.prefixes)).applied) throw new AgentApiError("configuration_not_applied", "Native configuration was not applied.", 409);
     }
   }
+  async retirementEvidence(run: RunRecord): Promise<{ nativeGeneration: string; nativeRevision: number }> {
+    const id = run.snapshot.ref.id;
+    const native = await this.journal.load(id).catch(error => {
+      if (error instanceof WorkerApiError && error.status === 404) return null;
+      throw error;
+    });
+    const receipt = native?.receipt;
+    if (run.input && !run.reservedFor && !this.engine.ownsExecution(id)
+      && receipt?.conversationId === run.snapshot.sessionId && receipt.generation === run.nativeGeneration
+      && (receipt.state === "interrupted" || receipt.exitConfirmed === true && ["completed", "failed", "cancelled"].includes(receipt.state))) {
+      // A provider crash can leave an interrupted journal after the tracked SDK and tree have stopped.
+      const evidence = await TrackedNativeProcesses.readEvidence(this.data, id, run.snapshot.generation);
+      if (evidence.stopped && evidence.allClosed)
+        return { nativeGeneration: receipt.generation, nativeRevision: receipt.revision };
+    }
+    throw new AgentApiError("retirement_exit_unconfirmed", "The provider has not confirmed native exit for this execution.", 409);
+  }
+
+  async releaseRetired(id: string): Promise<void> {
+    await this.cleanup(id, true);
+  }
+
   private async reconcileOwnedStop(id: string, requestId = stableUuid(`${id}:native-stop-proof`)): Promise<void> {
     const { record } = await this.store.run(id), native = await this.journal.load(id).catch(error => { if (error instanceof WorkerApiError && error.status === 404) return null; throw error; });
     if (record.snapshot.stopConfirmed) return;
@@ -212,7 +243,9 @@ export class NativeExecution implements ExecutionDriver {
     await this.synchronize(id);
   }
   private async proxyDecision(id: string, event: { approvalId: string; toolName: string; input: unknown }) {
-    await this.store.exclusive(async () => { const { session, record } = await this.store.run(id); const decision: AgentPendingDecision = { id: event.approvalId, revision: "1", kind: "approval", delivery: "continue_run", toolName: event.toolName, input: event.input };
+    await this.store.exclusive(async () => { const { session, record } = await this.store.run(id);
+      if (session.retirement) return;
+      const decision: AgentPendingDecision = { id: event.approvalId, revision: "1", kind: "approval", delivery: "continue_run", toolName: event.toolName, input: event.input };
       (record.proxyDecisions ??= []).push(decision.id); record.snapshot.pending.push(decision); record.snapshot.state = "waiting_for_input"; record.snapshot.phase = "waiting";
       this.store.lifecycle(record); this.store.emit(record, "decision.requested", { decisionId: decision.id, decision }); await this.store.save(session);
     });
@@ -233,6 +266,16 @@ export class NativeExecution implements ExecutionDriver {
   private async pump(): Promise<void> {
     for (const session of await this.store.records()) for (const record of Object.values(session.runs)) {
       const id = record.snapshot.ref.id;
+      if (record.input && record.snapshot.stopConfirmed && !record.reservedFor && record.workspaceRelease?.state !== "released")
+        await this.cleanup(id, true).catch(() => {});
+      if (session.retirement) {
+        const { runId, requestId } = session.retirement;
+        if (runId === id && record.controls[requestId]?.receipt.state !== "applied")
+          await this.controller.finishRetirement(id, requestId).catch(() => {});
+        if (record.decisionLinks || record.decisionDeliveries)
+          await syncDecisionDeliveries(this.store, this.controller, this.authority, id).catch(() => {});
+        continue;
+      }
       if (!record.snapshot.stopConfirmed) {
         try { await this.authority.renew(record.admissionRef);
           const pinned = session.configurations[record.snapshot.configurationRevision];
@@ -247,8 +290,6 @@ export class NativeExecution implements ExecutionDriver {
           }
         } catch { await this.cancel(id, stableUuid(`${id}:authority-expired`)).catch(() => {}); }
       }
-      if (record.input && record.snapshot.stopConfirmed && !record.reservedFor && record.workspaceRelease?.state !== "released")
-        await this.cleanup(id, true).catch(() => {});
       await this.parkOverdueQuestion(id).catch(() => {});
       if (record.snapshot.pending.length) await this.decisions(session, record).catch(() => {});
       if (record.decisionLinks || record.decisionDeliveries || record.snapshot.pending.length) await syncDecisionDeliveries(this.store, this.controller, this.authority, id).catch(() => {});
@@ -300,7 +341,8 @@ export class NativeExecution implements ExecutionDriver {
     const intent = await this.store.exclusive(async () => {
       const { session, record } = await this.store.run(id);
       // Reservation/cancel-fence placeholders never admitted an execution or acquired its leases.
-      if (!record.input || !record.snapshot.stopConfirmed || record.reservedFor) return null;
+      const stopped = record.snapshot.stopConfirmed || session.retirement?.runId === id;
+      if (!record.input || !stopped || record.reservedFor) return null;
       const fresh = !record.workspaceRelease;
       if (fresh) {
         record.workspaceRelease = { requestId: stableUuid(`${id}:release-all`), state: "pending" };
@@ -322,7 +364,18 @@ export class NativeExecution implements ExecutionDriver {
       record.workspaceRelease.state = "released"; await this.store.save(session);
     });
   }
-  async close(): Promise<void> { this.closing = true; clearInterval(this.timer); await this.engine.close("Provider is shutting down."); await Promise.allSettled([...this.pendingSync.values(), ...this.pendingCleanup.values(), ...(this.maintenance ? [this.maintenance] : [])]); for (const dispose of this.subscriptions.values()) dispose(); await this.connections.shutdown(); }
+  async close(): Promise<void> {
+    clearInterval(this.timer);
+    await this.engine.close("Provider is shutting down.");
+    if (this.maintenance) await Promise.allSettled([this.maintenance]);
+    for (const dispose of this.subscriptions.values()) dispose();
+    this.closing = true;
+    // Journal notifications can queue another projection during the preceding pass's final read.
+    while (this.pendingSync.size || this.pendingCleanup.size) {
+      await Promise.allSettled([...this.pendingSync.values(), ...this.pendingCleanup.values()]);
+    }
+    await this.connections.shutdown();
+  }
 }
 function requirePinnedSnapshot(configuration: ConfigurationRecord, pinned: Awaited<ReturnType<ProviderAuthority["skills"]>>): void {
   const identities = (skills: Array<{ skillId: string; digest: string }>) => JSON.stringify(skills.map(skill => ({ skillId: skill.skillId, digest: skill.digest })).sort((a, b) => a.skillId.localeCompare(b.skillId) || a.digest.localeCompare(b.digest)));

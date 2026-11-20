@@ -12,6 +12,7 @@ type Progress = { state: DecisionContinuationState; reason?: DecisionContinuatio
 function progress(session: SessionRecord, record: RunRecord, delivery: DecisionDelivery): Progress {
   if (delivery.rejected) return { state: record.decisionsFenced ? "cancelled" : "failed", reason: record.decisionsFenced ? "cancelled" : "stale_input" };
   const control = record.controls[delivery.input.requestId]?.receipt;
+  if (session.retirement?.runId === (control?.continuation?.run.id ?? record.snapshot.ref.id)) return { state: "cancelled", reason: "cancelled" };
   if (!control || control.state === "accepted") return { state: "blocked", reason: "unknown_admission" };
   if (control.state === "unknown") return { state: "blocked", reason: "unknown_admission" };
   if (control.state === "rejected") return { state: "failed", reason: "provider_failed" };

@@ -62,6 +62,7 @@ import { hasMessageContent, indexAttachments, takeChosenFiles, takePastedImages 
 import { approvalDecisions, cancelledQuestions, questionAnswers, transcriptDecisionId, ToolActivity, TranscriptEvent } from "@/components/transcript";
 import type { QuestionAnswers } from "../../../src/agent-providers/decision-identity";
 import { retryHandoff } from "@/lib/assistant-api";
+import { deleteAndReconcileSession } from "@/lib/session-deletion";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, draftStorageText, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
 import { forgetPendingSend, readPendingSend, PENDING_SEND_PREFIX, PENDING_SEND_CHANGED, withPendingSendLock, retryPendingSend, type PendingSend } from "@/lib/pending-send";
@@ -69,7 +70,6 @@ import { useSessionListRefresh } from "@/lib/use-session-list-refresh";
 import { activityTime, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import {
   createSession,
-  deleteSession,
   getHealth,
   stopSession,
   getSession,
@@ -285,7 +285,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // Reach the current deletion handler from the stream without stale state.
   const deletedSessionRef = useRef<(sessionId: string, local: boolean) => void>(() => {});
   // A terminal stream event can confirm a local deletion before its HTTP response arrives.
-  const pendingDeletes = useRef(new Map<string, { confirmed: boolean }>());
+  const pendingDeletes = useRef(new Map<string, AbortController>());
 
   const mentionInputRef = useRef<AppMentionInputHandle>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -658,7 +658,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         }
         if (event.type === "session_deleted") {
           const pending = pendingDeletes.current.get(record.id);
-          if (pending) pending.confirmed = true;
+          pending?.abort();
           // Always detach immediately, even when this tab initiated the request. The HTTP response
           // may never arrive; a confirmed terminal event is already sufficient evidence of success.
           deletedSessionRef.current(record.id, !!pending);
@@ -1154,21 +1154,13 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   const remove = useCallback(async (sessionId: string) => {
     setError(null);
-    // The deletion event can arrive before its HTTP response.
-    const pending = { confirmed: false };
-    pendingDeletes.current.set(sessionId, pending);
+    const confirmation = new AbortController();
+    pendingDeletes.current.set(sessionId, confirmation);
     try {
-      await deleteSession(sessionId);
+      await deleteAndReconcileSession(sessionId, confirmation.signal);
     } catch (cause) {
-      if (!pending.confirmed) {
-        // Other navigation rows have no active stream. Reconcile a lost response against the
-        // authenticated inventory, preserving local state if deletion cannot be established.
-        const observed = await listSessions().catch(() => null);
-        if (!pending.confirmed && (!observed || observed.some(entry => entry.id === sessionId))) {
-          setError(cause instanceof Error ? cause.message : String(cause));
-          throw cause;
-        }
-      }
+      setError(cause instanceof Error ? cause.message : String(cause));
+      throw cause;
     } finally {
       pendingDeletes.current.delete(sessionId);
     }

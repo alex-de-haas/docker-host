@@ -27,6 +27,7 @@ export type SessionRecord = {
   version: 1; id: string; hash: string; owner: Actor; session: AgentSession; configurations: Record<string, ConfigurationRecord>;
   configurationRequests: Record<string, { hash: string; revision: string }>;
   runs: Record<string, RunRecord>; nativeId?: string; deleted?: boolean; createdAt: string;
+  retirement?: { runId: string; requestId: string; nativeGeneration: string; nativeRevision: number };
 };
 export const bytesHash = (body: string | Uint8Array) => createHash("sha256").update(body).digest("hex");
 export const valueHash = (value: unknown) => bytesHash(JSON.stringify(value));
@@ -152,7 +153,11 @@ export class ProviderStore {
     const sessions: AgentSession[] = [];
     for (const file of await readdir(this.directory)) {
       if (!file.endsWith(".json") || !safe(file.slice(0, -5))) continue;
-      const record = await this.load(file.slice(0, -5)); if (!record.deleted && sameActor(record.owner, actor) && sameProvider(record.session.ref.provider, this.provider)) sessions.push(record.session);
+      const record = await this.load(file.slice(0, -5));
+      if (record.deleted || !sameActor(record.owner, actor) || !sameProvider(record.session.ref.provider, this.provider)) continue;
+      const retirement = record.retirement;
+      if (retirement && record.runs[retirement.runId]?.controls[retirement.requestId]?.receipt.state === "applied") continue;
+      sessions.push(record.session);
     }
     return sessions.sort((a, b) => a.ref.id.localeCompare(b.ref.id));
   }

@@ -40,10 +40,11 @@ test('agent providers check scripted native transports and a production Docker c
   const plan = suitePlan('agent-providers', { platform: 'darwin', node: '/path with space/node' });
   assert.deepEqual(plan.steps.slice(0, 2).map(step => step.args[0]), ['build', 'build']);
   assert.deepEqual(plan.steps[2], { file: '/path with space/node', args: ['scripts/check-agent-provider-native.mjs'], env: {} });
-  const image = plan.steps[4].env.HOSTY_AGENT_PROVIDERS_API_IMAGE;
+  const image = plan.steps[3].args[4];
   assert.match(image, /^hosty-harness-api-acceptance:[a-f0-9-]{36}$/);
   assert.deepEqual(plan.steps[3].args, ['build', '-f', 'apps/harness/Dockerfile', '-t', image, '.']);
-  assert.notEqual(suitePlan('agent-providers').steps[4].env.HOSTY_AGENT_PROVIDERS_API_IMAGE, image);
+  assert.deepEqual(plan.steps[4].env, { HOSTY_AGENT_PROVIDERS_API_IMAGE: image });
+  assert.notEqual(suitePlan('agent-providers').steps[3].args[4], image);
   assert.deepEqual(plan.steps[4].args, ['scripts/check-workspace-activation.py', '.', 'agent-providers', '--managed']);
   assert.ok(plan.prerequisites.some(step => step.file === 'docker'));
   assert.equal(plan.steps.filter(step => step.file === 'docker').length, 1);

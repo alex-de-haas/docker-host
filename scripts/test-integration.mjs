@@ -68,8 +68,10 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker,
         command(node, ['--version']), command(node, ['-e', "require('node:child_process').execSync('npm --version', {stdio:'inherit'})"])], steps: [
         build(core), build(cli),
-        ...(suite === 'agent-providers' ? [command(node, ['scripts/check-agent-provider-native.mjs'])] : []),
-        ...(image ? [command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', image, '.'])] : []),
+        ...(image ? [
+          command(node, ['scripts/check-agent-provider-native.mjs']),
+          command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', image, '.']),
+        ] : []),
         command(python, ['scripts/check-workspace-activation.py', '.', suite, '--managed'], image ? { HOSTY_AGENT_PROVIDERS_API_IMAGE: image } : {}),
       ] };
     }

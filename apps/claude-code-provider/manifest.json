@@ -163,6 +163,7 @@
           "decisions.auto-allow",
           "mcp.policy-update",
           "runs.reconcile",
+          "runs.retire",
           "subagents.native"
         ]
       }

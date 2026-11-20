@@ -618,6 +618,49 @@ describe("gateway", () => {
     }
   });
 
+  it("keeps the subscription through a failed deletion and confirms only the successful retry", async () => {
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    const terminal = vi.fn();
+    const subscription = await manager.subscribe(record.id, 0, event => {
+      if (event.type === "session_deleted") terminal();
+    });
+    const deletion = vi.spyOn(store, "deleteSession").mockRejectedValueOnce(new Error("Storage unavailable"));
+    try {
+      await expect(manager.deleteSession(record.id, record.createdBy)).rejects.toThrow("Storage unavailable");
+      expect(terminal).not.toHaveBeenCalled();
+      expect(await store.readRecord(record.id)).not.toBeNull();
+      await manager.deleteSession(record.id, record.createdBy);
+      expect(terminal).toHaveBeenCalledTimes(1);
+      expect(await store.readRecord(record.id)).toBeNull();
+    } finally {
+      subscription.unsubscribe();
+      deletion.mockRestore();
+    }
+  });
+
+  it("reads the tombstone when deletion fails after the source is removed", async () => {
+    const record = await manager.createSession({ createdBy: "user_admin" });
+    const terminal = vi.fn();
+    const subscription = await manager.subscribe(record.id, 0, event => {
+      if (event.type === "session_deleted") terminal();
+    });
+    const remove = store.deleteSession.bind(store);
+    const deletion = vi.spyOn(store, "deleteSession").mockImplementationOnce(async id => {
+      await remove(id);
+      throw new Error("Cleanup confirmation lost");
+    });
+    try {
+      await expect(manager.deleteSession(record.id, record.createdBy)).rejects.toThrow("Cleanup confirmation lost");
+      expect(terminal).not.toHaveBeenCalled();
+      const read = await call(`/api/sessions/${record.id}`, { method: "GET" });
+      expect(read.status).toBe(404);
+      expect(await read.json()).toMatchObject({ code: "session_not_found" });
+    } finally {
+      subscription.unsubscribe();
+      deletion.mockRestore();
+    }
+  });
+
   it("ends the event stream of a session that is deleted under it", async () => {
     const created = await call("/api/sessions", { method: "POST", body: JSON.stringify({}) });
     const record = (await created.json()) as { id: string };
@@ -629,8 +672,6 @@ describe("gateway", () => {
 
     await call(`/api/sessions/${record.id}`, { method: "DELETE" });
 
-    // Read to the end: the subscriber is told before the record goes, and the connection closes —
-    // otherwise another tab sits on a stream that has stopped meaning anything.
     let received = "";
     for (;;) {
       const { done, value } = await reader.read();
