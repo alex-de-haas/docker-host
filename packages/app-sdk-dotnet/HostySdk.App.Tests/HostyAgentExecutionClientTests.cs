@@ -215,6 +215,77 @@ public sealed class HostyAgentExecutionClientTests
         }
     }
 
+    [Theory]
+    [InlineData(181, true)]
+    [InlineData(180, false)]
+    public async Task LiveAndRangeUseSeparateRoutesAtOneBoundary(long replayPosition, bool valid)
+    {
+        var provider = new HostyProviderRef("another.provider", "installation", "agent");
+        var generation = Guid.NewGuid().ToString();
+        object Fact(long position) => new { sessionId = "s", runId = "r", generation, userId = "u", principalId = "p",
+            sessionPosition = position, epoch = "archive", cursor = "cursor-" + position,
+            item = new { kind = "event", cursor = "run-position", @event = new {
+                schemaVersion = "agent-event.1", runId = "r", generation, sequence = position.ToString(),
+                revision = "1", occurredAt = DateTimeOffset.UtcNow, type = "message.completed",
+                source = new { agentId = "root" }, data = new { messageId = "reply", text = "hello" }
+            } } };
+        using var http = new HttpClient(new Handler(request =>
+        {
+            var uri = request.RequestUri!;
+            Assert.Equal("Bearer history", request.Headers.Authorization!.ToString());
+            var content = uri.AbsolutePath switch
+            {
+                "/history/live" when uri.Query == "?after=old-receipt" => new StringContent("event: ready\ndata: {\"through\":\"boundary\"}\n\n" +
+                    $"event: observation\nid: cursor-211\ndata: {JsonSerializer.Serialize(Fact(211))}\n\n", Encoding.UTF8, "text/event-stream"),
+                "/history/range" when uri.Query.Contains("through=boundary") && uri.Query.Contains("from=181") =>
+                    new StringContent(JsonSerializer.Serialize(new { observations = new[] { Fact(replayPosition) }, nextPosition = (long?)null }), Encoding.UTF8, "application/json"),
+                _ => throw new InvalidOperationException(uri.ToString())
+            };
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        }));
+        var client = new HostyAgentExecutionClient(http, provider, (_, _) => throw new InvalidOperationException());
+        var binding = new HostyAgentHistoryBinding("history", DateTimeOffset.UtcNow.AddHours(1), "http://provider.test");
+        await using var live = client.LiveHistoryAsync(binding, "old-receipt").GetAsyncEnumerator();
+        Assert.True(await live.MoveNextAsync());
+        var boundary = Assert.IsType<string>(live.Current.Through);
+        Assert.True(await live.MoveNextAsync());
+        Assert.Equal(211L, live.Current.Observation?.SessionPosition);
+        var reading = client.HistoryRangeAsync(binding, boundary, "s", "archive", 181, 181);
+        if (valid) Assert.Equal(181L, Assert.Single((await reading).Observations).SessionPosition);
+        else await Assert.ThrowsAsync<HostyProviderException>(() => reading);
+    }
+
+    [Theory]
+    [InlineData("boundary", 4, true)]
+    [InlineData("new-boundary", 4, false)]
+    [InlineData("boundary", 9007199254740992L, false)]
+    public async Task HistoryStatesVerifyTheRequestedBoundaryAndDurablePosition(string returnedBoundary, long head, bool valid)
+    {
+        var provider = new HostyProviderRef("provider", "installation", "agent");
+        var state = new
+        {
+            sessionId = "session-b", userId = "user", principalId = "actor", epoch = "epoch", head,
+            snapshot = new { @ref = new { provider, id = "run" }, sessionId = "session-b", generation = Guid.NewGuid().ToString(),
+                revision = "2", state = "running", phase = "executing", freshness = "current", observedAt = DateTimeOffset.UtcNow,
+                configurationRevision = "1", lastSequence = "8", cursor = "run-receipt", pending = Array.Empty<object>(),
+                effects = new { certainty = "known", unresolvedCallIds = Array.Empty<string>() } }
+        };
+        using var http = new HttpClient(new Handler(req =>
+        {
+            Assert.Equal("/history/states?through=boundary&limit=16&afterSession=session-a", req.RequestUri!.PathAndQuery);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { through = returnedBoundary, sessions = new[] { state },
+                    nextSession = (string?)null }), Encoding.UTF8, "application/json")
+            });
+        }));
+        var client = new HostyAgentExecutionClient(http, provider, (_, _) => throw new InvalidOperationException());
+        var binding = new HostyAgentHistoryBinding("history", DateTimeOffset.UtcNow.AddHours(1), "http://provider.test");
+        var reading = client.HistoryStatesAsync(binding, "boundary", "session-a", 16);
+        if (valid) Assert.Equal(head, Assert.Single((await reading).Sessions).Head);
+        else await Assert.ThrowsAsync<HostyProviderException>(() => reading);
+    }
+
     private sealed class Handler(Func<HttpRequestMessage, Task<HttpResponseMessage>> callback) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) => callback(request);

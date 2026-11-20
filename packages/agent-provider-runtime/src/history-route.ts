@@ -7,11 +7,16 @@ import type { ProviderController } from "./controller.js";
 import type { HistoryAuthority } from "./history.js";
 
 export async function serveHistory(controller: ProviderController, request: IncomingMessage, response: ServerResponse, url: URL) {
-  controller.requireCapabilities(["installation-history"]);
+  const route = url.pathname.split("/").at(-1);
+  const live = route === "live";
+  controller.requireCapabilities(route === "events" ? ["installation-history"] : ["installation-history", "installation-history.live"]);
   if (request.method !== "GET") throw new AgentApiError("method_not_allowed", "History is read-only.", 405);
   const paged = request.headers.accept?.split(",").some(value => value.split(";")[0]?.trim() === "application/json");
   const keys = Array.from(url.searchParams.keys());
-  if (new Set(keys).size !== keys.length || keys.some(key => !(paged ? ["after", "through", "limit"] : ["after"]).includes(key)))
+  const allowed = route === "states" ? ["through", "afterSession", "limit"]
+    : route === "range" ? ["through", "epoch", "sessionId", "from", "to", "limit"]
+    : paged && !live ? ["after", "through", "limit"] : ["after"];
+  if (new Set(keys).size !== keys.length || keys.some(key => !allowed.includes(key)))
     throw new AgentApiError("invalid_input", "Unknown or duplicate history query parameter.", 400);
   const bearer = request.headers.authorization?.match(/^Bearer (\S+)$/i)?.[1];
   if (!bearer) throw new AgentApiError("token_required", "An installation history credential is required.", 401);
@@ -26,26 +31,40 @@ export async function serveHistory(controller: ProviderController, request: Inco
   };
   const actor = await authorize();
   let after = agentReplayCursor(url.searchParams.get("after"), typeof request.headers["last-event-id"] === "string" ? request.headers["last-event-id"] : undefined);
-  if (paged) {
-    const limit = url.searchParams.get("limit");
-    if (limit !== null && !/^[1-9][0-9]{0,2}$/.test(limit)) throw new AgentApiError("invalid_input", "Invalid history page size.", 400);
-    return history.page(actor, after, url.searchParams.get("through") ?? undefined, limit === null ? 32 : Number(limit));
+  const param = (name: string) => url.searchParams.get(name) ?? undefined;
+  const positive = (name: string, fallback?: number) => {
+    const value = param(name);
+    if (value === undefined && fallback !== undefined) return fallback;
+    if (!value || !/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value)))
+      throw new AgentApiError("invalid_input", "Invalid numeric history parameter.", 400);
+    return Number(value);
+  };
+  const limit = positive("limit", 32);
+  if (limit > 100) throw new AgentApiError("invalid_input", "Invalid history page size.", 400);
+  if (route === "states") return history.states(actor, param("through"), param("afterSession"), limit);
+  if (route === "range") {
+    const sessionId = param("sessionId"), epoch = param("epoch"), through = param("through"), from = positive("from"), to = positive("to");
+    if (!sessionId || sessionId.length > 512 || !epoch || !through || to < from)
+      throw new AgentApiError("invalid_input", "Invalid session history range.", 400);
+    return history.range(actor, through, sessionId, epoch, from, to, limit);
   }
-  // Reject a foreign, expired or ahead cursor before committing SSE headers.
-  history.page(actor, after, undefined, 1);
+  if (paged && !live) return history.page(actor, after, param("through"), limit);
+  // The live mode validates the previous ancestry receipt but always starts at the current boundary.
+  const boundary = history.currentBoundary(actor, after);
+  if (live) after = boundary;
   const abort = new AbortController();
   const close = () => { abort.abort(); if (!response.destroyed) response.end(); };
   const send = async (chunk: string) => {
     if (abort.signal.aborted || Date.now() >= Date.parse(actor.expiresAt)) throw new Error("History subscription ended.");
     if (!response.write(chunk)) await once(response, "drain", { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5_000)]) });
   };
-  let busy = false, pending = false;
+  let busy = false, pending = false, ready = false;
   const drain = async () => {
     busy = true;
     try {
       while (pending && !abort.signal.aborted) {
         pending = false;
-        let page = history.page(actor, after, undefined, 32, true);
+        let page = history.page(actor, after, undefined, 32, true, live);
         for (;;) {
           for (const { cursor, ...observation } of page.observations) {
             await send("id: " + cursor + "\nevent: observation\ndata: " + JSON.stringify(observation) + "\n\n");
@@ -53,13 +72,13 @@ export async function serveHistory(controller: ProviderController, request: Inco
           }
           if (!page.nextCursor || abort.signal.aborted) break;
           await setImmediate();
-          page = history.page(actor, after, page.through, 32, true);
+          page = history.page(actor, after, page.through, 32, true, live);
         }
       }
     } catch { close(); }
     finally { busy = false; }
   };
-  const flush = () => { pending = true; if (!busy) void drain(); };
+  const flush = () => { pending = true; if (ready && !busy) void drain(); };
   const unsubscribe = history.subscribe(actor, flush);
   response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
   const finished = new Promise<void>(resolve => {
@@ -74,6 +93,9 @@ export async function serveHistory(controller: ProviderController, request: Inco
   }, 30_000);
   const heartbeat = setInterval(() => { void send(": keepalive\n\n").catch(close); }, 15_000);
   const expiry = setTimeout(close, Date.parse(actor.expiresAt) - Date.now());
-  try { await send(": ready\n\n"); flush(); await finished; }
+  try {
+    await send(live ? "event: ready\ndata: " + JSON.stringify({ through: boundary }) + "\n\n" : ": ready\n\n");
+    ready = true; flush(); await finished;
+  }
   finally { unsubscribe(); clearInterval(check); clearInterval(heartbeat); clearTimeout(expiry); }
 }

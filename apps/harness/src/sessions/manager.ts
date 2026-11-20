@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { taskReferenceKey } from "@hosty-sdk/app/tasks";
 import { TASK_ORCHESTRATION_GUIDE, taskActions } from "../tasks/tools.js";
 import { decisionSnapshot, continuationInput, type DecisionWait } from "../decisions/waits.js";
@@ -48,14 +49,14 @@ import { readOnlyToolNames } from "../mcp/readonly.js";
 import { AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentAttachment, type AgentMcpSelection, type AgentPendingDecision, type AgentRunSnapshot, type AgentSource, type AgentRunControlInput, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest, type AgentWatchItem } from "@hosty-sdk/app/agent";
 import type { MediatedProviderInvocation } from "@hosty-sdk/app/providers";
 import { CoreAgentBackend } from "../agent-providers/core.js";
-import { ProviderHistoryFeeds, type HistoryContactIssue } from "../agent-providers/history.js";
-import type { AgentHistoryObservation, AgentProviderRef } from "@hosty-sdk/app/agent";
+import { ProviderHistoryFeeds, type HistoryContactIssue, type ProviderHistoryGap } from "../agent-providers/history.js";
+import type { AgentHistoryObservation, AgentHistorySessionState, AgentProviderRef } from "@hosty-sdk/app/agent";
 import { agentSelectionId } from "../agent-providers/directory.js";
 import type { AgentConnectionSelection } from "../agent-providers/types.js";
 import { withAgentAuthority } from "../agent-providers/context.js";
 import { ProviderHarnessRun, type ProviderRunContext } from "../agent-providers/run.js";
 import { providerDecisionCard, providerDecisionCardId, type QuestionAnswers } from "../agent-providers/decision-identity.js";
-import { createAgentRunProjection, historyMessages, reduceAgentRunProjection, type AgentRunProjection } from "../agent-providers/projection.js";
+import { createAgentRunProjection, historyMessages, projectHistoryFact, reduceAgentRunProjection, type AgentRunProjection } from "../agent-providers/projection.js";
 import { nativeAgentStatus, nativeAgentStatusIdentity, providerAgentKey, providerTranscriptSource, transcriptToolId, type NativeAgentStatusEvent } from "../agent-providers/transcript-source.js";
 import { ProviderExecution, type ProviderExecutionState } from "../agent-providers/execution.js";
 import { readFile } from "node:fs/promises";
@@ -105,6 +106,21 @@ function browserModelDefault(models: Record<string, unknown> | undefined, connec
 
 export interface SessionListener {
   (event: StoredEvent): void;
+}
+
+type HistoryPosition = { sessionId: string; epoch: string; archiveGeneration?: string; position: number };
+function positionKey(identity: string, value: HistoryPosition): string {
+  return JSON.stringify([identity, value.sessionId, value.epoch, value.archiveGeneration, value.position]);
+}
+function projectedIds(events: StoredEvent[]): Set<string> {
+  const seen = new Set<string>();
+  for (const event of events) {
+    if (typeof event.providerEventId === "string") {
+      seen.add(event.providerEventId);
+      if (event.providerHistoryPosition) seen.add(positionKey(event.providerEventId, event.providerHistoryPosition as HistoryPosition));
+    }
+  }
+  return seen;
 }
 
 interface LiveSession {
@@ -260,6 +276,7 @@ export class SessionManager {
   private historyIndex?: Promise<void>;
   private historyIndexIncomplete = false;
   private readonly providerFiles = new Map<string, Array<{ name: string; path: string }>>();
+  private readonly importingPosition = new AsyncLocalStorage<{ chatId: string; runId: string; position: HistoryPosition; replayed: boolean }>();
   private readonly providerProjectedIds = new Map<string, Set<string>>();
   private readonly providerAgentStatuses = new Map<string, Map<string, NativeAgentStatusEvent>>();
   private readonly operations = new Map<string, Promise<unknown>>();
@@ -361,7 +378,8 @@ export class SessionManager {
       (id, issue) => this.updateProviderContact(id, issue), id => {
         const handle = this.live.get(id)?.run;
         if (handle instanceof ProviderHarnessRun) handle.onInstallationHistoryUnsupported();
-      });
+      }, (id, gaps) => this.updateProviderGaps(id, gaps),
+      (id, provider, summary) => this.serialize(id, () => this.applyHistoryState(id, provider, summary)));
     this.messageQueues = new MessageQueue(store);
     this.suggestionHistory = new SuggestionHistory(store, (id, payload) => this.append(id, payload));
     this.observations = new AgentObservations(store);
@@ -719,8 +737,37 @@ export class SessionManager {
     }
   }
 
+  private updateProviderGaps(id: string, gaps: ProviderHistoryGap[]): Promise<void> {
+    return this.serialize(id, async () => {
+      const record = this.live.get(id)?.record ?? await this.store.readRecord(id);
+      if (!record || JSON.stringify(record.providerHistoryGaps ?? []) === JSON.stringify(gaps)) return;
+      record.providerHistoryGaps = gaps.length ? gaps : undefined;
+      await this.store.saveRecord(record);
+      const live = this.live.get(id);
+      if (live) this.fanOut(live, { type: "provider_history_gaps", seq: record.lastEventSeq,
+        ts: new Date().toISOString(), gaps });
+    });
+  }
+
+  private async applyHistoryState(id: string, provider: AgentProviderRef, summary: AgentHistorySessionState): Promise<void> {
+    const { snapshot } = summary, state = this.providerStates.get(id);
+    if (!state || state.runId !== snapshot.ref.id || state.sessionId !== summary.sessionId) return;
+    if (state.run && (state.run.generation !== snapshot.generation || BigInt(state.run.revision) > BigInt(snapshot.revision)
+      || BigInt(state.run.lastSequence) > BigInt(snapshot.lastSequence))) return;
+    await this.importProviderFact(id, provider, { ...summary, runId: snapshot.ref.id, generation: snapshot.generation,
+      item: { kind: "snapshot", snapshot }, cursor: snapshot.cursor, replayed: true }, undefined, true);
+  }
+
   /** Import is serialized with operator actions on the original chat; it never creates a chat. */
-  private async importInstallationObservation(id: string, provider: AgentProviderRef, fact: AgentHistoryObservation & { replayed?: boolean }): Promise<void> {
+  private async importInstallationObservation(id: string, provider: AgentProviderRef, fact: AgentHistoryObservation & { replayed?: boolean; recoveryGeneration?: string }): Promise<void> {
+    const position = fact.sessionPosition !== undefined && fact.epoch
+      ? { sessionId: fact.sessionId, epoch: fact.epoch, position: fact.sessionPosition, archiveGeneration: fact.recoveryGeneration } : undefined;
+    if (position) return this.importingPosition.run({ chatId: id, runId: fact.runId, position, replayed: fact.replayed === true },
+      () => this.importProviderFact(id, provider, fact, position));
+    return this.importProviderFact(id, provider, fact);
+  }
+
+  private async importProviderFact(id: string, provider: AgentProviderRef, fact: AgentHistoryObservation & { replayed?: boolean }, position?: HistoryPosition, stateOnly = false): Promise<void> {
     if (this.stopping) throw new Error("Installation history is stopping.");
     if (fact.item.kind === "event" && fact.item.event.type === "message.delta") {
       const live = this.live.get(id), state = this.providerStates.get(id);
@@ -740,41 +787,84 @@ export class SessionManager {
     if (session.record.createdBy !== fact.userId || state.sessionId !== fact.sessionId
       || state.selection.provider.installationId !== provider.installationId || state.selection.provider.appId !== provider.appId
       || state.selection.provider.key !== provider.key) return;
-    const { item } = fact;
     const retained = await this.store.readHistoryRun(id, fact.runId);
     if (retained && (retained.principalId !== fact.principalId || retained.snapshot.generation !== fact.generation))
       throw new Error("The provider changed the recorded history owner or execution generation.");
+    if (position && fact.item.kind === "event" && fact.item.event.type === "tool.completed"
+      && (!fact.item.event.data.name || fact.item.event.data.name === "unknown")) {
+      const event = fact.item.event, toolId = String(event.data.toolCallId);
+      const previous = retained?.snapshot.tools?.find(tool => tool.id === toolId && tool.source?.agentId === event.source.agentId);
+      const name = previous?.name ?? (await this.outputCalls(session)).get(transcriptToolId(fact.runId, event.source, toolId)) ?? "unknown";
+      fact = { ...fact, item: { ...fact.item, event: { ...event, data: { ...event.data, name } } } };
+    }
+    const { item } = fact;
+    if (fact.sourceHistoryIncomplete) {
+      const key = fact.runId + ":source-history-incomplete";
+      const seen = this.providerProjectedIds.get(id) ?? projectedIds(await this.store.readEvents(id));
+      this.providerProjectedIds.set(id, seen);
+      if (!seen.has(key)) {
+        await this.append(id, { type: "notice", message: "Some earlier events are unavailable in the provider's retained history.",
+          providerEventId: key, providerGeneration: fact.generation,
+          providerSource: { provider, runId: fact.runId, generation: fact.generation, agentId: "root" }, providerHistoryEarlier: state.runId !== fact.runId });
+        seen.add(key);
+      }
+    }
     const snapshot = item.kind === "snapshot" ? item.snapshot
       : item.event.type === "run.updated" ? item.event.data.snapshot as AgentRunSnapshot : undefined;
     const sourceSequence = BigInt(item.kind === "event" ? item.event.sequence : item.snapshot.lastSequence);
+    // Latest state may already include this fact. Its original transcript slot still needs filling.
+    const renderFact = async () => {
+      if (position) await this.importHistoricalTranscript(session, projectHistoryFact(provider, fact), item, state.runId !== fact.runId, position);
+    };
     if (retained && (sourceSequence < BigInt(retained.snapshot.lastSequence)
-      || sourceSequence === BigInt(retained.snapshot.lastSequence) && item.kind === "event")) return;
-    const previous = retained?.snapshot;
-    const projection = previous ? reduceAgentRunProjection(createAgentRunProjection(previous), item, true)
+      || sourceSequence === BigInt(retained.snapshot.lastSequence) && item.kind === "event")) return renderFact();
+    const previous = retained?.snapshot ?? ((position || stateOnly) && state.run?.ref.id === fact.runId && state.run.generation === fact.generation ? state.run : undefined);
+    if (position && previous && (sourceSequence <= BigInt(previous.lastSequence) || item.kind === "event" && BigInt(item.event.revision) < BigInt(previous.revision))) return renderFact();
+    // A state page omits transcript and accounting fields. Preserve evidence already held for this run.
+    const stateItem = stateOnly && previous && item.kind === "snapshot"
+      ? { ...item, snapshot: { ...previous, ...item.snapshot } } : item;
+    const projection = previous ? reduceAgentRunProjection(createAgentRunProjection(previous), stateItem, true)
       : snapshot ? createAgentRunProjection(snapshot) : undefined;
-    if (!projection) throw new Error("The provider did not supply the first snapshot for this run's history.");
+    if (!projection) {
+      if (position) return renderFact();
+      throw new Error("The provider did not supply the first snapshot for this run's history.");
+    }
     const current = state.runId === fact.runId && (!state.run || state.run.generation === fact.generation
       && sourceSequence >= BigInt(state.run.lastSequence) && BigInt(projection.snapshot.revision) >= BigInt(state.run.revision));
     if (current) {
       const handle = session.run;
-      await this.projectProviderItem(session, item, state, true, projection, fact.replayed);
+      await this.projectProviderItem(session, stateItem, state, true, projection, fact.replayed, stateOnly);
       if (!fact.replayed && handle instanceof ProviderHarnessRun) handle.onHistoryObserved(item);
-    } else {
+    } else if (!position) {
       // Older turns may gain evidence after a newer turn starts. Preserve the origin in the
       // journal and leave the current turn's controls, status, usage and pending questions alone.
       await this.importHistoricalTranscript(session, projection, item, state.runId !== fact.runId);
     }
+    await renderFact();
     await this.store.saveHistoryRun(id, fact.principalId, projection.snapshot);
   }
 
-  private async importHistoricalTranscript(session: LiveSession, projection: AgentRunProjection, item: AgentWatchItem, earlier: boolean): Promise<void> {
+  private async importHistoricalTranscript(session: LiveSession, projection: AgentRunProjection, item: AgentWatchItem, earlier: boolean, position?: HistoryPosition): Promise<void> {
     const id = session.record.id, snapshot = projection.snapshot, runId = snapshot.ref.id;
-    const seen = this.providerProjectedIds.get(id) ?? new Set((await this.store.readEvents(id))
-      .map(event => event.providerEventId).filter((key): key is string => typeof key === "string"));
+    const seen = this.providerProjectedIds.get(id) ?? projectedIds(await this.store.readEvents(id));
+    const specific = position && item.kind === "event" && item.event.type !== "run.updated" ? item.event : undefined;
     this.providerProjectedIds.set(id, seen);
     const append = async (key: string, event: HarnessEvent | ({ type: "approval_decision" | "question_answered" } & Record<string, unknown>), source?: AgentSource) => {
       const identity = runId + ":" + key;
-      if (seen.has(identity)) return;
+      if (seen.has(identity)) {
+        // A prior snapshot or a pre-upgrade chat may have shown this item without its original position.
+        const original = specific && (specific.type === "message.completed" && event.type === "assistant_text"
+          || specific.type === "tool.started" && event.type === "tool_use"
+          || specific.type === "tool.completed" && (event.type === "command_result" || event.type === "tool_result")
+          || specific.type === "decision.requested" && (event.type === "approval_request" || event.type === "question_request")
+          || specific.type === "decision.resolved" && (event.type === "approval_decision" || event.type === "question_answered"));
+        if (position && original && !seen.has(positionKey(identity, position))) {
+          const key = positionKey(identity, position);
+          await this.append(id, { type: "provider_history_order", target: identity, providerEventId: key, providerHistoryPosition: position });
+          seen.add(key);
+        }
+        return;
+      }
       await this.append(id, { ...event, ts: item.kind === "event" ? item.event.occurredAt : snapshot.observedAt,
         providerSource: providerTranscriptSource(snapshot, source), providerHistoryEarlier: earlier,
         providerEventId: identity, providerGeneration: snapshot.generation });
@@ -785,11 +875,11 @@ export class SessionManager {
         { type: "assistant_text", text: msg.text, ...(msg.state === "interrupted" ? { incomplete: true } : {}) }, msg.source);
     for (const tool of projection.tools) {
       const key = (tool.source?.agentId ?? "root") + ":" + tool.id, toolUseId = transcriptToolId(runId, tool.source, tool.id);
-      await append("tool:" + key, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input }, tool.source);
-      const outcome = tool.state === "running" && (snapshot.stopConfirmed || snapshot.phase === "interrupted") ? "unknown" : tool.state;
-      if (outcome !== "running" && shouldRetainToolOutput(tool.name) && (outcome !== "unknown"
+      if (!specific || specific.type === "tool.started") await append("tool:" + key, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input }, tool.source);
+      const outcome = !specific && tool.state === "running" && (snapshot.stopConfirmed || snapshot.phase === "interrupted") ? "unknown" : tool.state;
+      if (outcome !== "running" && tool.name !== "unknown" && shouldRetainToolOutput(tool.name) && (outcome !== "unknown"
         || !["completed", "failed", "cancelled"].some(status => seen.has(`${runId}:output:${key}:${status}`)))) {
-        const result = sanitizeToolResult({ type: "tool_result", toolUseId, status: outcome, output: tool.output ?? "", truncated: tool.truncated });
+        const result = sanitizeToolResult({ type: "tool_result", toolUseId, status: outcome, output: tool.output ?? "", ...(tool.truncated ? { truncated: true as const } : {}) });
         if (result) await append(`output:${key}:${outcome}`, result, tool.source);
       }
       if (tool.command) {
@@ -813,14 +903,12 @@ export class SessionManager {
           { type: "question_answered", questionId: card, answers: response.answers }, decision.source);
       }
     }
-    if (snapshot.phase === "interrupted" || snapshot.state === "unknown") await append("observation-unavailable",
+    if (!specific && (snapshot.phase === "interrupted" || snapshot.state === "unknown")) await append("observation-unavailable",
       { type: "notice", message: "Provider observation was interrupted. This run's native exit is unconfirmed." });
     if (snapshot.stopConfirmed && snapshot.state === "cancelled") await append("cancelled-history",
       { type: "notice", message: "The provider confirmed cancellation of this run." });
-    if (item.kind === "event" && item.event.type === "warning" && typeof item.event.data.message === "string")
+    if (item.kind === "event" && item.event.type === "warning" && item.event.data.code !== "snapshot_truncated" && typeof item.event.data.message === "string")
       await append("warning:" + item.event.sequence, { type: "notice", message: item.event.data.message }, item.event.source);
-    if (snapshot.coverage && [snapshot.coverage.messages, snapshot.coverage.tools].includes("truncated"))
-      await append("coverage", { type: "notice", message: "The provider's retained history for this execution is incomplete." });
     if (snapshot.stopConfirmed && snapshot.state === "succeeded") await append("terminal", { type: "result", status: "success" });
     if (snapshot.stopConfirmed && snapshot.state === "failed")
       await append("terminal", { type: "error", message: snapshot.result?.error?.message ?? "Provider execution failed." });
@@ -838,7 +926,7 @@ export class SessionManager {
   }
 
   /** The caller holds the session lane; Stop projects its final snapshot before its turn boundary. */
-  private async projectProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState, projectStatus = true, history?: AgentRunProjection, replayed = false): Promise<void> {
+  private async projectProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState, projectStatus = true, history?: AgentRunProjection, replayed = false, stateOnly = false): Promise<void> {
       if (this.stopping) return;
       const id = session.record.id;
       let previous = this.providerProjections.get(id);
@@ -865,8 +953,7 @@ export class SessionManager {
       if (session.record.taskBarrier?.state === "resuming" && session.record.taskBarrier.runId !== next.runId && next.runId)
         (session.record.decisionRunIds ??= {})[session.record.taskBarrier.commandId] = next.runId;
       const retainedEvents = this.providerProjectedIds.has(id) && this.providerAgentStatuses.has(id) ? [] : await this.store.readEvents(id);
-      const seen = this.providerProjectedIds.get(id) ?? new Set(retainedEvents
-        .map(event => event.providerEventId).filter((key): key is string => typeof key === "string"));
+      const seen = this.providerProjectedIds.get(id) ?? projectedIds(retainedEvents);
       const agentStatuses = this.providerAgentStatuses.get(id) ?? new Map<string, NativeAgentStatusEvent>();
       if (!this.providerAgentStatuses.has(id)) for (const event of retainedEvents) {
         if (event.type !== "native_agent_status" || !event.providerSource) continue;
@@ -897,6 +984,8 @@ export class SessionManager {
         await this.append(id, { type: "session_status", status, ts: session.record.updatedAt });
       };
       const append = async (key: string, event: HarnessEvent, snapshotToolName?: string, source?: AgentSource, lateCommand = false) => {
+        // The state endpoint can confirm exit before its detailed terminal evidence arrives by range.
+        if (stateOnly && key === "terminal") return;
         event = { ...event, providerSource: providerTranscriptSource(projection.snapshot, source) };
         const identity = `${projection.snapshot.ref.id}:${key}`;
         if (seen.has(identity)) return;
@@ -948,9 +1037,10 @@ export class SessionManager {
           const toolUseId = transcriptToolId(projection.snapshot.ref.id, tool.source, tool.id);
           const toolKey = `${tool.source?.agentId ?? "root"}:${tool.id}`;
           if (suggesting && !seen.has(`${projection.snapshot.ref.id}:tool:${toolKey}`)) continue;
-          await append(`tool:${toolKey}`, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input }, undefined, tool.source);
+          if (tool.name !== "unknown" && !(this.importingPosition.getStore() && item.kind === "event" && item.event.type === "tool.completed"))
+            await append(`tool:${toolKey}`, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input }, undefined, tool.source);
           const outcome = history && tool.state === "running" && (projection.snapshot.stopConfirmed || projection.snapshot.phase === "interrupted") ? "unknown" : tool.state;
-          if (outcome !== "running" && (history || tool.output !== undefined) && (outcome !== "unknown"
+          if (outcome !== "running" && tool.name !== "unknown" && (history || tool.output !== undefined) && (outcome !== "unknown"
             || !["completed", "failed", "cancelled"].some(status => seen.has(`${projection.snapshot.ref.id}:output:${toolKey}:${status}`)))) await append(`output:${toolKey}:${outcome}`,
             { type: "tool_result", toolUseId, status: outcome, output: tool.output ?? "", ...(tool.truncated ? { truncated: true as const } : {}) }, tool.name, tool.source);
           if (tool.command) {
@@ -1006,7 +1096,7 @@ export class SessionManager {
             providerSource: providerTranscriptSource(projection.snapshot, item.event.source) });
         if (item.kind === "event") {
           const event = item.event, data = event.data;
-          if (event.type === "warning" && typeof data.message === "string") await append(`warning:${event.sequence}`, { type: "notice", message: data.message }, undefined, event.source);
+          if (event.type === "warning" && data.code !== "snapshot_truncated" && typeof data.message === "string") await append(`warning:${event.sequence}`, { type: "notice", message: data.message }, undefined, event.source);
           if (!replayed && event.type === "extension" && event.source.parentAgentId === undefined && data.namespace === "hosty.agent.answer" && data.name === "answer.complete")
             await append(`extension:${event.sequence}`, { type: "answer_complete" });
           if (!replayed && event.type === "extension" && event.source.parentAgentId === undefined && data.namespace === "hosty.agent.predictions" && data.name === "predictions")
@@ -1026,8 +1116,6 @@ export class SessionManager {
           if (!Number.isSafeInteger(sequence)) throw new AppContextError(502, "provider_usage_invalid", "The provider execution usage exceeds the supported accounting range.");
           await this.taskUsage?.(session.record, projection.snapshot.ref.id, { ...usage, sequence });
         }
-        if (projection.snapshot.coverage && [projection.snapshot.coverage.messages, projection.snapshot.coverage.tools].includes("truncated"))
-          await append("coverage", { type: "notice", message: "The provider's retained snapshot is incomplete. Some native observations are unavailable; this conversation contains only the received history." });
         if (projection.snapshot.selection) await append(`selection:${createHash("sha256").update(JSON.stringify(projection.snapshot.selection)).digest("hex")}`,
           { type: "execution_model", requested: projection.snapshot.selection.requested, reported: projection.snapshot.selection.effective });
         if (projectStatus && !projection.snapshot.stopConfirmed && ["queued", "running"].includes(projection.snapshot.state)
@@ -4202,7 +4290,7 @@ export class SessionManager {
     // or when the caller already has every persisted event.
     const status: StoredEvent = {
       seq: session.record.lastEventSeq, ts: session.record.updatedAt,
-      type: "session_status", status: session.record.status, providerHistoryContact: session.record.providerHistoryContact ?? null,
+      type: "session_status", status: session.record.status, providerHistoryContact: session.record.providerHistoryContact ?? null, providerHistoryGaps: session.record.providerHistoryGaps ?? [],
     };
     // Historical statuses still close old approval cards, but only the final snapshot describes
     // current controls and signals replay readiness. Keep the flag out of the durable journal.
@@ -4614,6 +4702,10 @@ export class SessionManager {
     }
 
     await this.flushAppContextEvent(session);
+    const importing = this.importingPosition.getStore();
+    if (importing?.chatId === id && typeof payload.providerEventId === "string"
+      && payload.providerEventId.startsWith(importing.runId + ":"))
+      payload = { ...payload, providerHistoryPosition: importing.position, ...(importing.replayed ? { providerHistoryRecovered: true } : {}) };
 
     if (payload.type === "prompt_suggestion_created" && !session.record.suggestionHistoryVersion) {
       session.record.suggestionHistoryVersion = 1; await this.store.saveRecord(session.record);
@@ -4639,6 +4731,8 @@ export class SessionManager {
       session.record.lastEventSeq = Math.max(session.record.lastEventSeq, event.seq);
       await this.store.saveRecord(session.record);
       this.fanOut(session, event);
+      if (typeof event.providerEventId === "string" && event.providerHistoryPosition)
+        this.providerProjectedIds.get(id)?.add(positionKey(event.providerEventId, event.providerHistoryPosition as HistoryPosition));
       return event.seq;
     });
     this.sourceAppends.set(id, committed);

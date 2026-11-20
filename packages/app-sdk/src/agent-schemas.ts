@@ -81,6 +81,14 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
     pendingContinuations: list(object({ requestId: uuid, run: ref("QualifiedRef"), state: { enum: ["pending", "awaiting_authorization", "admitted", "superseded"] } }), 256) },
     ["ref", "sessionId", "generation", "revision", "state", "phase", "stopConfirmed", "freshness", "observedAt", "configurationRevision", "lastSequence", "cursor", "pending", "effects"], true),
   HistoryObservation: object(historyObservation),
+  LiveHistoryReady: object({ through: text(8192) }),
+  LiveHistoryObservation: object({ ...historyObservation, epoch: uuid, sessionPosition: positive, sourceHistoryIncomplete: { const: true } }, [...Object.keys(historyObservation), "epoch"]),
+  HistoryStates: object({ through: text(8192), nextSession: nullableText, sessions: list(object({
+    sessionId: id, userId: text(512), principalId: text(512), epoch: uuid, head: positive, snapshot: ref("RunSnapshot"), sourceHistoryIncomplete: { const: true },
+  }, ["sessionId", "userId", "principalId", "epoch", "head", "snapshot"]), 100) }),
+  HistoryRange: object({ nextPosition: { type: ["integer", "null"], minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    observations: list(object({ ...historyObservation, cursor: text(8192), epoch: uuid, sessionPosition: positive, sourceHistoryIncomplete: { const: true } },
+      [...Object.keys(historyObservation), "cursor", "epoch", "sessionPosition"]), 100) }),
   HistoryPage: object({ observations: list(object({ ...historyObservation, cursor: text(8192) }), 100),
     through: text(8192), nextCursor: { type: ["string", "null"] } }),
   Session: object({ ref: ref("QualifiedRef"), revision, configurationRevision: revision, configurationDigest: digest,
@@ -121,9 +129,26 @@ function operation(operationId: string, response: string, input?: string, pathPa
   return { operationId, security: [{ coreOperation: [] }], parameters: pathParameters.map(parameter), ...(input ? { requestBody: { required: true, content: { "application/json": { schema: ref(input) } } } } : {}),
     responses: { ...errors, ...Object.fromEntries(statuses.map(status => [String(status), { description: "Authorized durable result.", headers: { "Cache-Control": { schema: { const: "no-store" } } }, content: { "application/json": { schema: ref(response) } } }])) } };
 }
+const historySecurity = [{ installationHistory: [] }];
+const historyParam = (name: string, schema: Schema, required = false) => ({ name, in: "query", schema, required });
+const pageLimit = historyParam("limit", { type: "integer", minimum: 1, maximum: 100 });
 export const AGENT_OPENAPI: Schema = {
   openapi: "3.1.0", info: { title: "Hosty Agent Execution API", version: "1.0.0", description: "Independent provider execution. Paths are relative to the current Core-declared interface base. Exact UTF-8 command bytes and stable mutation UUIDs are retained across retries. No Harness dependency or raw native session IDs." },
   paths: {
+    "/history/live": { get: { operationId: "history.live", security: historySecurity, parameters: [historyParam("after", text(8192))],
+      description: "Open a fresh live subscription. The optional previous cursor checks archive ancestry. The ready event returns the subscribed boundary. Subsequent observation events carry an SSE id and every durable record carries its session position.",
+      responses: { ...errors, "200": { description: "Ready boundary followed by live observations.", content: {
+        "text/event-stream": { schema: { type: "string" }, "x-event-schemas": { ready: ref("LiveHistoryReady"), observation: ref("LiveHistoryObservation") } },
+      } } } } },
+    "/history/states": { get: { operationId: "history.states", security: historySecurity,
+      parameters: [historyParam("through", text(8192)), historyParam("afterSession", id), pageLimit],
+      description: "List sessions with retained runs and their state and durable session head at the supplied or current installation boundary. Pass the returned boundary on later pages.",
+      responses: { ...errors, "200": { description: "States for the calling installation.", content: { "application/json": { schema: ref("HistoryStates") } } } } } },
+    "/history/range": { get: { operationId: "history.range", security: historySecurity,
+      parameters: [historyParam("through", text(8192), true), historyParam("sessionId", id, true), historyParam("epoch", uuid, true),
+        historyParam("from", positive, true), historyParam("to", positive, true), pageLimit],
+      description: "Read an inclusive interval of durable positions for one session and history epoch. nextPosition is the first unread position in the requested interval.",
+      responses: { ...errors, "200": { description: "Ordered durable session records.", content: { "application/json": { schema: ref("HistoryRange") } } } } } },
     "/history/events": { get: { operationId: "history.events", security: [{ installationHistory: [] }],
       parameters: [{ name: "after", in: "query", schema: text(8192) }, { name: "through", in: "query", schema: text(8192) }, { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100 } }],
       description: "Resumable, read-only installation history. Frames use event: observation with an opaque installation feed position in id. Commit each observation before saving this position.",

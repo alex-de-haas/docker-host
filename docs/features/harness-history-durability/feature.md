@@ -31,6 +31,19 @@ shows when the run was last observed. Missing legacy evidence stays visible as a
 [provider history contract](../agent-provider-interface/feature.md#installation-history-delivery)
 describes retention, paging and stream authorization.
 
+With a provider that advertises `installation-history.live`, Harness opens the live subscription
+first. At its ready boundary it reads each owned session's state and durable head. Incoming live
+messages are visible while independent HTTP requests fill older gaps. A late state response or an
+older run's record cannot move the current execution backwards.
+
+For each bound chat, Harness stores the inclusive intervals it has applied. It commits transcript
+entries under stable source identities before recording coverage. Retrying after a crash can repeat
+the request without duplicating the message. Each reconnect subtracts all stored intervals from
+the confirmed head. For example, a chat with 1–140 and 181–185 at head 210 requests 141–180 and
+186–210 separately. Record 211 can appear while both requests are outstanding. Each gap has its
+own marker and remaining count in source order. Explicitly unavailable ranges retain a marker.
+Legacy providers keep the ordered history path.
+
 An explicit Stop first reads the exact provider run. When that read finds a confirmed success or
 failure, Harness records the final answer, available tool results and the original outcome. Stop
 can still cancel an active run and fence a reserved continuation. A native turn may finish
@@ -214,7 +227,23 @@ parent-directory sync is explicitly omitted. The optional heavyweight `tasks`
 integration suite is not selected. Core/CLI fixture builds retain the existing
 ILCompiler advisory/analyzer warnings and complete without errors.
 
+## Live Recovery Verification On 2026-11-19
+
+A managed child Core ran the production Harness build, a local provider with a scripted native
+peer, and three open browser chats across two password-authenticated users. Two Harness stops
+left two separate ranges outstanding in one chat. Both owners received new messages while repair
+was held. Releasing the later range cleared only its marker. After both repairs, each transcript
+contained its ten tagged messages in source order, including one copy of each deliberately
+redelivered event. Both owners' requests for the other owner's chats were denied.
+
 ## Testing Expectations
+
+- Run `HOSTY_LIVE_HISTORY_ACCEPTANCE=1 npm run test:integration -- agent-providers` with Chrome
+  and Playwright. Use two signed-in owners and three chats. Interrupt delivery twice, including a
+  Harness restart, keep both repair ranges pending, deliver a new message and close the later gap
+  first. Check each owner's visible messages, marker positions, order and unique fact identities.
+- Reopen the store after interruption between transcript and coverage writes. Retry overlapping
+  pages, test an older state arriving after a newer update, and preserve explicit unavailable ranges.
 
 - Damage the execution metadata or root record of one conversation and deliver a later result to
   a different owner. The healthy chat receives its final answer immediately. Repair the damaged

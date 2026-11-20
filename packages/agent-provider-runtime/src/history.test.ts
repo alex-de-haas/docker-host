@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { DatabaseSync } from "node:sqlite";
+import { watchLiveAgentHistory, readAgentHistoryStates, readAgentHistoryRange } from "@hosty-sdk/app/agent/client";
 import { copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -8,6 +10,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { AgentWatchItem } from "@hosty-sdk/app/agent";
 import { validateAgentRunSnapshot } from "@hosty-sdk/app/agent/server";
 import { ProviderStore, type VerifiedOperation } from "./store.js";
+import { projectEvent, publicSource, publicToolId } from "./projection.js";
+import type { HarnessEvent } from "./internal/harness/adapter.js";
 import { ProviderController } from "./controller.js";
 import { fixtureCapabilities } from "./test-support/provider.js";
 import { agentRoutes, json } from "./server.js";
@@ -78,6 +82,43 @@ it("recovers three offline conversations for two owners through one installation
   expect(reopened.history.page(alice, first.through).observations).toHaveLength(1);
   expect(() => reopened.history.page(foreign, first.through)).toThrowError(expect.objectContaining({ status: 410 }));
   expect(reopened.history.page({ ...alice, callerAppId: "different.app" }).observations).toEqual([]);
+});
+
+it("recovers evicted tool names for isolated live and range completions without copying protected output", async () => {
+  const store = await openStore(), { run, session, runId } = await admitted(store);
+  const append = (event: HarnessEvent) => projectEvent(store, session, run, {
+    runId, generation: "native", sequence: run.nativeSequence + 1, event,
+  });
+  const child = { agentId: "child", parentAgentId: "root" }, setup = "mcp__hosty-workspaces__environment_setup";
+  append({ type: "tool_use", toolUseId: "long", toolName: "Command", input: {} });
+  append({ type: "tool_use", toolUseId: "long", toolName: setup, input: {}, source: child });
+  for (let i = 0; i < 16; i++) append({ type: "tool_use", toolUseId: "other-" + i, toolName: "Read", input: {} });
+  expect(run.snapshot.tools?.every(tool => tool.name === "Read")).toBe(true);
+  await store.save(session);
+  const before = store.history.currentBoundary(alice);
+  append({ type: "tool_result", toolUseId: "long", output: "public result", status: "completed" });
+  append({ type: "tool_result", toolUseId: "long", output: "private setup result", status: "completed", source: child });
+  // A v1 completion can omit its name. A matching call ID from another agent cannot identify it.
+  const otherSource = { agentId: "another-agent" }, id = publicToolId("long");
+  store.emit(run, "tool.completed", { toolCallId: id, output: "unclassified result", state: "failed" }, otherSource);
+  store.emit(run, "tool.started", { toolCallId: id, name: "Later" }, otherSource);
+  store.emit(run, "tool.completed", { toolCallId: id, output: "named from start", state: "completed" });
+  await store.save(session);
+  const live = store.history.page(alice, before, undefined, 10, true, true).observations;
+  expect(live[0]?.item).toMatchObject({ event: { data: { toolCallId: id, name: "Command", output: "public result" } } });
+  expect(live[1]?.item).toMatchObject({ event: { source: publicSource(child), data: { name: setup, state: "completed" } } });
+  expect(live[2]?.item).toMatchObject({ event: { source: otherSource, data: { state: "failed" } } });
+  expect(live[4]?.item).toMatchObject({ event: { data: { name: "Command", output: "named from start" } } });
+  expect(JSON.stringify(live)).not.toMatch(/private setup result|unclassified result/);
+
+  const db = new DatabaseSync(path.join(store.directory, "installation-history.sqlite"));
+  try { db.exec("DROP INDEX history_tool_start"); } finally { db.close(); }
+  const reopened = await openStore(store.directory);
+  const inventory = reopened.history.states(alice), state = inventory.sessions[0]!;
+  for (const completion of live.filter(row => eventType(row.item) === "tool.completed")) {
+    const n = completion.sessionPosition!;
+    expect(reopened.history.range(alice, inventory.through, session.id, state.epoch, n, n, 1).observations).toEqual([completion]);
+  }
 });
 
 it("retains an interrupted execution and its later confirmed outcome at distinct replay positions", async () => {
@@ -189,6 +230,10 @@ it("adopts legacy snapshots with an explicit coverage gap when detailed replay i
   const upgraded = await openStore(old.directory);
   const entries = upgraded.history.page(alice).observations;
   expect(entries).toHaveLength(2);
+  const states = upgraded.history.states(alice), state = states.sessions[0]!;
+  expect(state.sourceHistoryIncomplete).toBe(true);
+  expect(upgraded.history.range(alice, states.through, state.sessionId, state.epoch, 1, 2, 2)
+    .observations.every(row => row.sourceHistoryIncomplete)).toBe(true);
   expect(entries[0]!.item).toMatchObject({ kind: "snapshot", snapshot: { lastSequence: "0", state: "unknown", freshness: "unavailable" } });
   expect(entries[1]!.item).toMatchObject({ kind: "snapshot", snapshot: { lastSequence: "8", coverage: { messages: "truncated" }, messages: [{ text: "last known answer" }] } });
   for (const entry of entries) if (entry.item.kind === "snapshot") validateAgentRunSnapshot(entry.item.snapshot);
@@ -201,6 +246,91 @@ it("reads a committed status even while native synchronization is awaiting furth
   controller.driver = { synchronize: () => new Promise<void>(resolve => { settle = resolve; }) } as never;
   try { expect((await controller.snapshot(runId, alice, { committedOnly: true })).ref.id).toBe(runId); }
   finally { settle(); }
+});
+
+it("migrates v1 per-installation history into stable session positions across runs and restarts", async () => {
+  const store = await openStore(), { session, run } = await admitted(store);
+  const another = await admitted(store, bob);
+  store.emit(run, "message.completed", { messageId: "old", text: "from v1" }); await store.save(session);
+  const original = store.history.page(alice);
+  const database = new DatabaseSync(path.join(store.directory, "installation-history.sqlite"));
+  try {
+    database.exec(`
+      DROP INDEX history_session_ordinal;
+      DROP INDEX history_session_position;
+      DROP INDEX history_session_state;
+      ALTER TABLE history_facts DROP COLUMN ordinal;
+      ALTER TABLE history_facts DROP COLUMN state_run_start;
+    `);
+  } finally { database.close(); }
+  const reopened = await openStore(store.directory);
+  const states = reopened.history.states(alice, original.through);
+  const first = states.sessions.find(s => s.sessionId === session.id)!;
+  expect(first.head).toBe(2);
+  expect(states.sessions.find(s => s.sessionId === another.session.id)?.head).toBe(1);
+  const later = reopened.makeRun(session, randomUUID(), alice, "{}");
+  session.runs[later.snapshot.ref.id] = later;
+  reopened.lifecycle(later); await reopened.save(session);
+  // Late evidence about the previous run must not promote it above the newer run.
+  reopened.lifecycle(run); await reopened.save(session);
+  expect(reopened.history.states(alice).sessions.find(s => s.sessionId === session.id)).toMatchObject({ head: 4, snapshot: { ref: later.snapshot.ref } });
+  expect(reopened.history.states(alice, original.through).sessions.find(s => s.sessionId === session.id)).toEqual(first);
+  const data = reopened.history.range(alice, original.through, session.id, first.epoch, 1, 2, 10);
+  expect(data.observations.map(f => f.sessionPosition)).toEqual([1, 2]);
+  expect(data.observations.map(f => f.item)).toEqual(original.observations.filter(f => f.sessionId === session.id).map(f => f.item));
+});
+
+it("streams new observations across a fixed boundary while the SDK independently pages older session records", async () => {
+  const store = await openStore(), { session, run } = await admitted(store);
+  await admitted(store, bob);
+  const foreign = await admitted(store, { ...alice, callerInstallation: "another-installation" });
+  const history = async () => ({ ...alice, provider, expiresAt: new Date(Date.now() + 60_000).toISOString() });
+  const controller = new ProviderController(store, { history } as unknown as ProviderAuthority, {} as never, fixtureCapabilities);
+  const handler = agentRoutes(controller, {} as never);
+  const server = createServer((req, res) => {
+    void handler(req, res, new URL(req.url!, "http://test.invalid")).catch(err => json(res, err.status ?? 500, { error: { code: err.code } }));
+  });
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected test port");
+  const signal = new AbortController();
+  const options = { url: "http://127.0.0.1:" + address.port + "/api/agent/v1/history/events", token: "history", provider, signal: signal.signal };
+  let onReady!: (boundary: string) => void;
+  const ready = new Promise<string>(resolve => { onReady = resolve; });
+  const stream = watchLiveAgentHistory({ ...options, onReady });
+  try {
+    const first = stream.next();
+    const through = await ready;
+    store.emit(run, "message.delta", { messageId: "new", text: "n" });
+    store.emit(run, "message.completed", { messageId: "new", text: "new" });
+    run.snapshot.state = "succeeded"; run.snapshot.phase = "terminal"; run.snapshot.stopConfirmed = true;
+    store.lifecycle(run); await store.save(session);
+    const transient = (await first).value!;
+    expect(transient.sessionId).toBe(session.id); expect(transient.sessionPosition).toBeUndefined();
+    const complete = (await stream.next()).value!;
+    expect(complete.sessionPosition).toBe(2); expect(complete.item).toMatchObject({ event: { type: "message.completed" } });
+    const initial = await readAgentHistoryStates({ ...options, through, limit: 1 });
+    const second = await readAgentHistoryStates({ ...options, through, afterSession: initial.nextSession!, limit: 1 });
+    const sessions = [...initial.sessions, ...second.sessions];
+    expect(sessions.map(s => s.userId).sort()).toEqual(["alice", "bob"]);
+    const boundaryState = sessions.find(s => s.sessionId === session.id)!;
+    expect(boundaryState.head).toBe(1); expect(boundaryState.snapshot.stopConfirmed).toBe(false);
+    const current = await readAgentHistoryStates(options);
+    const state = current.sessions.find(s => s.sessionId === session.id)!;
+    expect(state).toMatchObject({ head: 3, snapshot: { state: "succeeded", stopConfirmed: true } });
+    const range = { ...options, through: current.through, sessionId: session.id, epoch: state.epoch, from: 1, to: 3, limit: 2 };
+    const page = await readAgentHistoryRange(range);
+    expect(page.observations.map(f => f.sessionPosition)).toEqual([1, 2]);
+    expect(page.observations[1]).toEqual(complete);
+    expect(page.observations[1]).not.toHaveProperty("sourceHistoryIncomplete");
+    expect(page.nextPosition).toBe(3);
+    expect((await readAgentHistoryRange({ ...range, from: 3 })).nextPosition).toBeNull();
+    await expect(readAgentHistoryRange({ ...range, epoch: randomUUID() })).rejects.toMatchObject({ code: "history_cursor_invalid" });
+    await expect(readAgentHistoryRange({ ...range, sessionId: foreign.session.id })).rejects.toMatchObject({ code: "history_range_unavailable" });
+  } finally {
+    signal.abort(); await stream.return(undefined);
+    const closed = once(server, "close"); server.close(); server.closeAllConnections(); await closed;
+  }
 });
 
 it("serves the same scoped facts through HTTP paging and SSE, and closes a quiet subscription on revocation", async () => {

@@ -8,6 +8,7 @@ export const AGENT_API_VERSION = 1 as const;
 export const AGENT_EVENT_VERSION = "agent-event.1" as const;
 export const AGENT_CAPABILITIES = {
   installationHistory: "installation-history",
+  liveInstallationHistory: "installation-history.live",
   resume: "session.resume", configuration: "configuration.resume-compatible", images: "input.images",
   noNativeTools: "native-tools.none", skills: "skills.catalog", exclusiveSkills: "skills.exclusive-selection",
   coreMcp: "mcp.core", externalMcp: "mcp.external", modelChange: "model.change-on-resume",
@@ -134,7 +135,10 @@ export type AgentWatchItem = { kind: "snapshot"; snapshot: AgentRunSnapshot } | 
 /** One installation feed receipt. Its cursor is independent of the per-run replay position. */
 export type AgentHistoryObservation = {
   sessionId: string; runId: string; generation: string; userId: string; principalId: string;
-  item: AgentWatchItem; cursor: string;
+  item: AgentWatchItem; cursor: string; epoch?: string; sessionPosition?: number; sourceHistoryIncomplete?: true;
+};
+export type AgentHistorySessionState = {
+  sessionId: string; userId: string; principalId: string; epoch: string; head: number; snapshot: AgentRunSnapshot; sourceHistoryIncomplete?: true;
 };
 export type AgentErrorDetail = { code: string; message: string; retryable: boolean; requestId?: string; details?: Record<string, unknown> };
 export class AgentApiError extends Error {

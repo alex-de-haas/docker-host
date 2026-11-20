@@ -42,6 +42,7 @@ export interface SessionRecord {
   /** Provider-owned execution attempt identity; distinct from chat and native session IDs. */
   agentRunId?: string;
   providerObservedRunId?: string;
+  providerHistoryGaps?: import("../agent-providers/history.js").ProviderHistoryGap[];
   providerHistoryContact?: { runId: string; observedAt: string; reason: import("../agent-providers/history.js").HistoryContactIssue };
   /** Harness's explicit caller guidance is stable with this conversation's provider configuration. */
   providerPlatformContext?: import("../skills.js").PlatformSkillContext;

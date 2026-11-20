@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { AgentClient, readAgentHistoryPage, watchAgentHistory, parseAgentSse, prepareAgentCancel, prepareAgentRun, prepareAgentSessionCreate } from "./agent-client.js";
+import { AgentClient, readAgentHistoryPage, readAgentHistoryRange, readAgentHistoryStates, watchAgentHistory, watchLiveAgentHistory, parseAgentSse, prepareAgentCancel, prepareAgentRun, prepareAgentSessionCreate } from "./agent-client.js";
 import { AgentApiError, type AgentAttachmentChunk, type AgentEvent, type AgentRunInput, type AgentRunSnapshot, type AgentSession } from "./agent.js";
 import { agentReplayCursor, encodeAgentSseEvent, validateAgentAttachmentChunk, validateAgentConfiguration, validateAgentEvent, validateAgentRequest, validateAgentResponseInput, validateAgentRunSnapshot } from "./agent-server.js";
 import { AGENT_EVENT_SCHEMA, AGENT_OPENAPI } from "./agent-schemas.js";
@@ -284,6 +284,31 @@ describe("installation history", () => {
     const query = fetcher.mock.calls[1]![0].searchParams;
     expect(query.get("after")).toBe("p");
     expect(query.get("through")).toBe("high");
+  });
+  it("only falls back for an unsupported live endpoint and rejects an observation before the ready boundary", async () => {
+    const fetcher = vi.fn();
+    const options = { url: "http://provider.test/history/events", token: "read-token", provider, fetch: fetcher, onReady: vi.fn() };
+    fetcher.mockResolvedValueOnce(Response.json({ error: { code: "unsupported_operation" } }, { status: 422 }));
+    await expect(collect(watchLiveAgentHistory(options))).rejects.toMatchObject({ code: "history_live_unsupported" });
+    fetcher.mockResolvedValueOnce(Response.json({ error: { code: "permission_denied" } }, { status: 403 }));
+    await expect(collect(watchLiveAgentHistory(options))).rejects.toMatchObject({ code: "permission_denied" });
+    fetcher.mockResolvedValueOnce(stream("event: observation\nid: pos\ndata: " + JSON.stringify(envelope()) + "\n\n"));
+    await expect(collect(watchLiveAgentHistory(options))).rejects.toMatchObject({ code: "event_invalid" });
+    expect(options.onReady).not.toHaveBeenCalled();
+  });
+  it("rejects missing durable positions, changed state identity and an incorrect next range position", async () => {
+    const fetcher = vi.fn();
+    const options = { url: "http://provider.test/history/events", token: "read-token", provider, fetch: fetcher,
+      through: "boundary", sessionId, epoch: "retained-epoch", from: 2, to: 3 };
+    const frame = { ...envelope(), cursor: "receipt", epoch: options.epoch, sessionPosition: 2 };
+    for (const page of [{ observations: [{ ...frame, sessionPosition: 3 }], nextPosition: 3 },
+      { observations: [frame], nextPosition: null }, { observations: [frame], nextPosition: 9 }]) {
+      fetcher.mockResolvedValueOnce(Response.json(page));
+      await expect(readAgentHistoryRange(options)).rejects.toMatchObject({ code: "response_invalid" });
+    }
+    fetcher.mockResolvedValueOnce(Response.json({ through: "boundary", nextSession: null, sessions: [{ ...envelope(),
+      sessionId: "different", epoch: options.epoch, head: 3, snapshot: snapshot() }] }));
+    await expect(readAgentHistoryStates(options)).rejects.toMatchObject({ code: "response_invalid" });
   });
   it("rejects a different run in an otherwise valid history page", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ through: "t", nextCursor: null, observations: [{ ...envelope(), runId: requestId, cursor: "p" }] }));

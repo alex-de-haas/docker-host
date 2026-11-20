@@ -238,7 +238,11 @@ export function TranscriptEvent({
 function TranscriptNotice({ message }: { message: string }) {
   const [open, setOpen] = useState(false);
   const summary = message.trim().replace(/\s+/g, " ");
-  const preview = summary.length > 160 ? `${summary.slice(0, 160)}…` : summary || "Assistant notice";
+  if (summary.length <= 160 && !message.trim().includes("\n"))
+    return <p className="flex items-start gap-1.5 px-1 py-1 text-xs text-muted-foreground" data-slot="transcript-notice">
+      <Info className="mt-0.5 size-3 shrink-0" aria-hidden /><span className="min-w-0 wrap-anywhere">{summary || "Assistant notice"}</span>
+    </p>;
+  const preview = open ? "Assistant notice" : summary.length > 160 ? `${summary.slice(0, 160)}…` : summary;
   const Chevron = open ? ChevronDown : ChevronRight;
   return <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 text-xs text-muted-foreground" data-slot="transcript-notice">
     <CollapsibleTrigger asChild><Button type="button" variant="ghost" size="sm"

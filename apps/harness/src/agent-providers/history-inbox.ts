@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { AgentHistoryObservation, AgentProviderRef } from "@hosty-sdk/app/agent";
+import type { AgentProviderRef } from "@hosty-sdk/app/agent";
+import type { HistoryReceipt } from "./history-coverage.js";
 import { durableMkdir, durableWriteFile, syncDirectory } from "../persistence.js";
 import type { SessionStore } from "../sessions/store.js";
 
-type Fact = AgentHistoryObservation & { replayed?: boolean };
+type Fact = HistoryReceipt;
 type Pending = { files: string[]; next: number; worker?: Promise<void> };
 const entry = /^([0-9]{16})-([a-f0-9]{64})\.json$/;
 
