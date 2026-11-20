@@ -232,6 +232,44 @@ describe("native authority renewal and stop reconciliation", () => {
     expect(await reconcile(f, id)).toMatchObject({ state: "rejected", error: { code: "exit_unconfirmed" } });
     expect((await f.controller.snapshot(id)).stopConfirmed).toBe(false);
   });
+  it("persists a coalesced terminal projection before closing provider connections", async () => {
+    const { f, id } = await retainedNativeRun();
+    const readRun = f.store.run.bind(f.store);
+    let resumeRead!: () => void;
+    const paused = new Promise<void>(resolve => { resumeRead = resolve; });
+    let signalRead!: () => void;
+    const reading = new Promise<void>(resolve => { signalRead = resolve; });
+    // Hold the post-projection read, when a new journal revision needs another synchronization.
+    const reads = vi.spyOn(f.store, "run").mockImplementationOnce(readRun).mockImplementationOnce(async (...args) => {
+      const value = await readRun(...args);
+      signalRead();
+      await paused;
+      return value;
+    });
+    let signalNativeClose!: () => void;
+    const nativeClosed = new Promise<void>(resolve => { signalNativeClose = resolve; });
+    const closeEngine = f.driver.engine.close.bind(f.driver.engine);
+    vi.spyOn(f.driver.engine, "close").mockImplementation(async (...args) => {
+      await closeEngine(...args);
+      signalNativeClose();
+    });
+    vi.spyOn(f.connections, "shutdown").mockImplementation(async () => {
+      expect((await readRun(id)).record.snapshot.stopConfirmed).toBe(true);
+    });
+    const sync = f.driver.synchronize(id);
+    try {
+      await reading;
+      await f.driver.engine.journal.update(id, "completed");
+      const coalesced = f.driver.synchronize(id);
+      const closing = f.close();
+      await nativeClosed;
+      resumeRead();
+      await Promise.all([sync, coalesced, closing]);
+    } finally {
+      resumeRead();
+      reads.mockRestore();
+    }
+  });
   it("does not turn process exit evidence into settlement of unknown tool effects", async () => {
     const { f, id, processes } = await retainedNativeRun();
     await f.driver.engine.journal.append(id, { type: "native_effect", id: "external-call", state: "unknown" });

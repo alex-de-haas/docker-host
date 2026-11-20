@@ -135,6 +135,10 @@ export class NativeExecution implements ExecutionDriver {
     await this.cleanup(id);
   }
   synchronize(id: string): Promise<void> {
+    if (this.closing) return this.pendingSync.get(id) ?? Promise.resolve();
+    return this.scheduleSync(id);
+  }
+  private scheduleSync(id: string): Promise<void> {
     const old = this.pendingSync.get(id); if (old) { this.syncAgain.add(id); return old; }
     const task = (async () => {
       do {
@@ -151,7 +155,7 @@ export class NativeExecution implements ExecutionDriver {
       const { record } = await this.store.run(id); if (record.snapshot.stopConfirmed && !record.reservedFor) await this.cleanup(id);
     })();
     this.pendingSync.set(id, task);
-    void task.finally(() => { if (this.pendingSync.get(id) === task) { this.pendingSync.delete(id); if (this.syncAgain.delete(id)) void this.synchronize(id).catch(() => {}); } }).catch(() => {});
+    void task.finally(() => { if (this.pendingSync.get(id) === task) { this.pendingSync.delete(id); if (this.syncAgain.delete(id)) void this.scheduleSync(id).catch(() => {}); } }).catch(() => {});
     return task;
   }
   async cancel(id: string, requestId: string): Promise<void> {
@@ -360,7 +364,18 @@ export class NativeExecution implements ExecutionDriver {
       record.workspaceRelease.state = "released"; await this.store.save(session);
     });
   }
-  async close(): Promise<void> { this.closing = true; clearInterval(this.timer); await this.engine.close("Provider is shutting down."); await Promise.allSettled([...this.pendingSync.values(), ...this.pendingCleanup.values(), ...(this.maintenance ? [this.maintenance] : [])]); for (const dispose of this.subscriptions.values()) dispose(); await this.connections.shutdown(); }
+  async close(): Promise<void> {
+    clearInterval(this.timer);
+    await this.engine.close("Provider is shutting down.");
+    if (this.maintenance) await Promise.allSettled([this.maintenance]);
+    for (const dispose of this.subscriptions.values()) dispose();
+    this.closing = true;
+    // Journal notifications can queue another projection during the preceding pass's final read.
+    while (this.pendingSync.size || this.pendingCleanup.size) {
+      await Promise.allSettled([...this.pendingSync.values(), ...this.pendingCleanup.values()]);
+    }
+    await this.connections.shutdown();
+  }
 }
 function requirePinnedSnapshot(configuration: ConfigurationRecord, pinned: Awaited<ReturnType<ProviderAuthority["skills"]>>): void {
   const identities = (skills: Array<{ skillId: string; digest: string }>) => JSON.stringify(skills.map(skill => ({ skillId: skill.skillId, digest: skill.digest })).sort((a, b) => a.skillId.localeCompare(b.skillId) || a.digest.localeCompare(b.digest)));
