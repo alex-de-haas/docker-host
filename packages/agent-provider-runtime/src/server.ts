@@ -1,6 +1,7 @@
+import { sameProvider } from "./provider-ref.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { once } from "node:events";
-import { AgentApiError, type AgentProviderRef, type AgentSession } from "@hosty-sdk/app/agent";
+import { AgentApiError, type AgentSession } from "@hosty-sdk/app/agent";
 import { validateAgentRequest, agentReplayCursor, encodeAgentSseEvent } from "@hosty-sdk/app/agent/server";
 import type { ProviderController } from "./controller.js";
 import type { AttachmentStore } from "./attachments.js";
@@ -14,7 +15,6 @@ export async function readCommand(request: IncomingMessage, max = 1024 * 1024): 
   for await (const part of request) { const bytes = Buffer.isBuffer(part) ? part : Buffer.from(part); length += bytes.length; if (length > max) throw new AgentApiError("payload_budget", "Command exceeds its byte allowance.", 413); parts.push(bytes); }
   try { return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(parts)); } catch { throw new AgentApiError("invalid_input", "Command is not valid UTF-8.", 400); }
 }
-function sameProvider(a: AgentProviderRef, b: AgentProviderRef): boolean { return a.appId === b.appId && a.installationId === b.installationId && a.key === b.key; }
 export function agentRoutes(controller: ProviderController, attachments: AttachmentStore) {
   return async (request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> => {
     if (!url.pathname.startsWith(API_PREFIX + "/")) return false;

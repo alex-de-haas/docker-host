@@ -28,6 +28,17 @@ it("allocates numbers and creation receipts atomically under concurrent and repl
   await expect(store.create(actor, { ...request, input: { ...human, title: "changed" } })).rejects.toMatchObject({ code: "request_conflict" });
   expect((await create()).number).toBe("NEW-17");
 });
+it("retains the selected named executor through admission and refuses a sibling task source", async () => {
+  const executor = { appId: "vendor.executor", installationId: "same-install", key: "run", implementationId: "team" };
+  const task = await action(await create({ ...app, assignee: { kind: "app", executor } }), "ready");
+  expect(task.assignee).toMatchObject({ executor });
+  expect(task.attempts[0]?.executor).toEqual(executor);
+  const reloaded = new TaskStore(directory, provider);
+  expect((await reloaded.all())[0]?.attempts[0]?.executor).toEqual(executor);
+  await expect(create({ ...human, parentTaskRef: { ...task.ref, implementationId: "other" } }))
+    .rejects.toMatchObject({ code: "unsupported_capability" });
+});
+
 it("keeps numbering provider-local and references independent from display prefixes", async () => {
   const other = new TaskStore(path.join(directory, "other"), { ...provider, appId: "other.provider" });
   const a = await create(), b = await other.create(actor, { requestId: randomUUID(), input: human });

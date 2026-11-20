@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { AgentApiError } from "@hosty-sdk/app/agent";
-import type { ProviderEngine } from "./engine.js";
+import type { ProviderEngine, EngineConnections } from "./engine.js";
 export type { ProviderEngine, NativeInputContext, NativeInputPreparer } from "./engine.js";
 export { prepareNativeInput } from "./engine.js";
 import { CoreConnectionSecrets } from "./internal/connections/secrets.js";
@@ -13,7 +13,7 @@ import { ProviderController } from "./controller.js";
 import { NativeExecution } from "./native-driver.js";
 import { agentRoutes, json } from "./server.js";
 
-export async function startAgentProvider(options: { engine: ProviderEngine; defaultPort: number }) {
+export async function startAgentProvider<C extends EngineConnections>(options: { engine: ProviderEngine<C>; defaultPort: number }) {
   const env = process.env, appId = env.HOSTY_APP_ID, installationId = env.HOSTY_APP_INSTALLATION_ID;
   const data = env.HOSTY_APP_DATA_DIR, origin = env.HOSTY_CORE_ORIGIN, serviceToken = env.HOSTY_APP_SERVICE_TOKEN;
   if (!appId || !installationId || !data || !origin || !serviceToken) throw new Error("Start this provider through Hosty Core with its own app identity and data directory.");
@@ -28,13 +28,14 @@ export async function startAgentProvider(options: { engine: ProviderEngine; defa
   const driver = new NativeExecution(controller, store, authority, connections, attachments, data, () => `http://127.0.0.1:${port}`, options.engine.prepareInput); controller.driver = driver;
   await driver.initialize();
   const api = agentRoutes(controller, attachments);
+  const interfaces = options.engine.openInterfaces?.(connections, data);
   // Settings are an app-owned Hosty-authenticated surface; importing it does not start a native agent.
   const { createProviderSettings } = await import("./settings.js");
   const settings = createProviderSettings({ definition: options.engine.settings, connections, isConnectionInUse: async id => (await store.records()).some(session => session.session.activeRun && session.session.configuration?.connection.id === id) });
   const server = createServer((request, response) => { void (async () => {
     const url = new URL(request.url ?? "/", "http://provider.invalid");
     if (url.pathname === "/healthz") { json(response, 200, { status: "ready" }); return; }
-    if (await driver.mcp.proxy.handle(request, response, url.pathname) || await settings(request, response, url.pathname) || await api(request, response, url)) return;
+    if (await driver.mcp.proxy.handle(request, response, url.pathname) || await settings(request, response, url.pathname) || await interfaces?.route(request, response, url) || await api(request, response, url)) return;
     json(response, 404, { error: { code: "not_found", message: "Unknown provider route.", retryable: false } });
   })().catch(error => {
     if (response.headersSent) { response.end(); return; }
@@ -45,7 +46,7 @@ export async function startAgentProvider(options: { engine: ProviderEngine; defa
   server.once("close", () => store.history.close());
   console.log(`[agent-provider] ${appId} ready on port ${port}.`);
   let stopping = false;
-  const close = async () => { if (stopping) return; stopping = true; await controller.close(); server.close(); server.closeAllConnections(); };
+  const close = async () => { if (stopping) return; stopping = true; interfaces?.close(); await controller.close(); server.close(); server.closeAllConnections(); };
   for (const signal of ["SIGTERM", "SIGINT"] as const) process.once(signal, () => { void close().catch(() => { process.exitCode = 1; }); });
   return { server, controller, close };
 }

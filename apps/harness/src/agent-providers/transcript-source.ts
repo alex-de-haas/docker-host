@@ -1,3 +1,4 @@
+import { providerIdentityParts } from "../../shared/provider-reference.js";
 import { createHash } from "node:crypto";
 import type { AgentRunSnapshot, AgentRunState, AgentSource } from "@hosty-sdk/app/agent";
 
@@ -40,7 +41,7 @@ export function providerTranscriptSource(snapshot: AgentRunSnapshot, source: Age
     ...(parentToolUseId ? { parentTranscriptToolUseId: parentToolUseId } : {}) };
 }
 export function providerAgentKey(source: ProviderTranscriptSource): string {
-  return JSON.stringify([source.provider.appId, source.provider.installationId, source.provider.key, source.runId, source.generation, source.agentId]);
+  return JSON.stringify([...providerIdentityParts(source.provider), source.runId, source.generation, source.agentId]);
 }
 export function nativeAgentStatus(snapshot: AgentRunSnapshot, agent: NonNullable<AgentRunSnapshot["agents"]>[number]): NativeAgentStatusEvent {
   const active = ["queued", "running", "waiting_for_input"].includes(agent.state);

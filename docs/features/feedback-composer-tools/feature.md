@@ -1,6 +1,6 @@
 ---
 created: 2026-11-02
-updated: 2026-11-04
+updated: 2026-11-20
 summary: App-provided feedback tools own forms and drafts while verified SDK source services supply selection, capture and scoped intake.
 components: [apps/core, packages/app-sdk, apps/harness, apps/shell, apps/desktop]
 ---
@@ -74,7 +74,7 @@ screenshot icon on the left, a Save comment control with a local-save confirmati
 thumbnail, size and removal action. Screenshots remain attached to their individual annotations.
 Local-save confirmation applies only to the same draft identity and revision that initiated Save;
 editing during a pending write prevents an older save from acknowledging the newer text.
-The form loads one speech-provider roster and permits one dictation operation at a time. A transcript
+The form uses the signed-in user's Dictation choice from Harness Settings → Speech and permits one dictation operation at a time. A transcript
 belongs to the field that started recording, even if another field receives focus or its callback
 changes. Target switching, screenshot actions, removal and submission wait for dictation to finish
 or be cancelled. Closing the form, changing accounts or disabling the draft cancels the recorder

@@ -30,7 +30,7 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   HTMLElement.prototype.scrollIntoView = vi.fn();
   Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] }) } });
-  api.call.mockImplementation(async (path: string) => path === "/speech/providers" ? Response.json({ granted: true, providers: [{ appId: "whisper", key: "default", displayName: "Whisper", available: true }] }) : path.startsWith("/speech/capabilities?") ? Response.json(capabilities) : new Promise<Response>(resolve => { resolveTranscript = resolve; }));
+  api.call.mockImplementation(async (path: string) => path === "/speech/providers" ? Response.json({ granted: true, binding: "local", selected: { appId: "whisper", key: "default", installationId: "one", displayName: "Whisper", available: true }, providers: [{ appId: "whisper", key: "default", installationId: "one", displayName: "Whisper", available: true }] }) : path.startsWith("/speech/capabilities?") ? Response.json(capabilities) : new Promise<Response>(resolve => { resolveTranscript = resolve; }));
   api.recordingWave.mockResolvedValue(new Blob(["wave"]));
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
@@ -59,7 +59,7 @@ it.each([
   [{ granted: false, requestable: false, providers: [] }, "Review an updated Harness manifest in Core"],
   [{ granted: false, providers: [] }, "Ask a host administrator to review its installation permissions"],
   [{ granted: true, providers: [] }, "No speech providers were found"],
-  [{ granted: true, providers: [{ appId: "whisper", key: "default", displayName: "Whisper", available: false }] }, "Whisper is unavailable"],
+  [{ granted: true, binding: "local", selected: { appId: "whisper", key: "default" }, providers: [{ appId: "whisper", key: "default", displayName: "Whisper", available: false }] }, "Whisper is unavailable"],
   [{ granted: true, providers: [{ appId: "one", key: "default", available: true }, { appId: "two", key: "default", available: true }] }, "Choose a speech provider"],
 ])("explains an unavailable microphone on keyboard focus (%j)", async (roster, message) => {
   api.call.mockResolvedValue(Response.json(roster));
@@ -92,44 +92,15 @@ it("explains temporary unavailability while sending", async () => {
   expect(button.parentElement!.getAttribute("aria-label")).toContain("while a message is being sent");
 });
 
-const chooseProvider = async (label: string) => {
-  await act(async () => document.querySelector<HTMLElement>('[aria-label="Speech provider"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
-  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === label)!;
-  expect(option).toBeDefined();
-  await act(async () => option.click());
-};
-it("preserves explicit empty and unavailable speech choices and sends the selected identity", async () => {
-  const roster = { granted: true, providers: [{ appId: "speech.one", key: "fast", displayName: "Fast speech", available: true }, { appId: "speech.two", key: "accurate", displayName: "Accurate speech", available: true }, { appId: "speech.offline", key: "default", displayName: "Offline speech", available: false }] };
+it("uses the saved named provider through the account-bound selection without a picker", async () => {
+  const cloud = { appId: "speech", installationId: "one", key: "account", implementationId: "work", displayName: "Speech · Work", available: true };
+  const roster = { granted: true, selected: cloud, binding: "my-exact-choice", providers: [cloud, { ...cloud, implementationId: "personal" }] };
   api.call.mockImplementation(async (path: string) => path === "/speech/providers" ? Response.json(roster) : path.startsWith("/speech/capabilities?") ? Response.json(capabilities) : new Promise<Response>(resolve => { resolveTranscript = resolve; }));
-  await render();
-  const dictate = () => document.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!;
-  expect(dictate().disabled).toBe(true);
-  await chooseProvider("Offline speech (unavailable)");
-  expect(dictate().disabled).toBe(true);
-  await chooseProvider("Accurate speech");
-  expect(dictate().disabled).toBe(false);
-  await chooseProvider("Speech provider…");
-  expect(dictate().disabled).toBe(true);
-  expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
-  await chooseProvider("Accurate speech");
-  await click("Dictate");
-  expect(document.querySelector('[aria-label="Speech provider"]')).toBeNull();
-  await click("Stop recording");
-  expect(api.call).toHaveBeenCalledWith("/speech/transcriptions?appId=speech.two&key=accurate", expect.objectContaining({ method: "POST", body: expect.any(Blob), signal: expect.any(AbortSignal) }));
-  await act(async () => resolveTranscript(Response.json({ text: "selected provider result" })));
-  expect(onText).toHaveBeenCalledExactlyOnceWith("selected provider result");
-});
-it("keeps an unknown speech identity after discovery refresh until an explicit selection", async () => {
-  let providers = [{ appId: "speech.one", key: "fast", displayName: "Fast speech", available: true }, { appId: "speech.two", key: "accurate", displayName: "Accurate speech", available: true }];
-  api.call.mockImplementation(async (path: string) => Response.json(path.startsWith("/speech/capabilities?") ? capabilities : { granted: true, providers }));
-  await render(); await chooseProvider("Accurate speech");
-  providers = [{ appId: "speech.one", key: "fast", displayName: "Fast speech", available: true }, { appId: "speech.three", key: "new", displayName: "New speech", available: true }];
-  await act(async () => window.dispatchEvent(new Event("focus")));
-  expect(document.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!.disabled).toBe(true);
-  expect(document.querySelector('[aria-label="Speech provider"]')?.textContent).not.toContain("Fast speech");
-  expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
-  await chooseProvider("Fast speech");
-  expect(document.querySelector<HTMLButtonElement>('[aria-label="Dictate"]')!.disabled).toBe(false);
+  await render(); expect(document.querySelector('[aria-label="Speech provider"]')).toBeNull();
+  await click("Dictate"); await click("Stop recording");
+  expect(api.call).toHaveBeenCalledWith("/speech/transcriptions?binding=my-exact-choice", expect.objectContaining({ method: "POST", body: expect.any(Blob) }));
+  await act(async () => resolveTranscript(Response.json({ text: "Work" })));
+  expect(onText).toHaveBeenCalledExactlyOnceWith("Work");
 });
 
 it("starts dictation with one microphone click and keeps compact controls inline", async () => {

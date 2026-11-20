@@ -9,14 +9,14 @@ vi.mock("./feedback-audio",()=>({recordingWave:vi.fn(async()=>({arrayBuffer:asyn
 let root: Root, element: HTMLDivElement;
 const text = vi.fn(), overall = vi.fn();
 function Form({ disabled = false, onNote = text }: { disabled?: boolean; onNote?: (value: string) => void }) {
-  const speech = useFeedbackSpeech("/feedback", disabled);
+  const speech = useFeedbackSpeech(disabled);
   return <><FeedbackSpeech speech={speech} target="note" disabled={disabled} onText={onNote}/><FeedbackSpeech speech={speech} target="overall" disabled={disabled} onText={overall}/></>;
 }
 const buttons = (name: string) => [...element.querySelectorAll("button")].filter(b => b.getAttribute("aria-label") === name);
 const click = async(name:string, index=0)=>act(async()=>{buttons(name)[index].click();});
 beforeEach(()=>{
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT",true);
-  vi.mocked(appFetch).mockResolvedValue(Response.json({granted:true,providers:[{appId:"independent.speech",key:"local",displayName:"Local",available:true}]}));
+  vi.mocked(appFetch).mockResolvedValue(Response.json({granted:true,binding:"actor-and-selection",selected:{appId:"independent.speech",installationId:"test",key:"local"},providers:[{appId:"independent.speech",installationId:"test",key:"local",displayName:"Local",available:true}]}));
   element=document.createElement("div");document.body.append(element);root=createRoot(element);
 });
 afterEach(async()=>{await act(async()=>root.unmount());element.remove();vi.useRealTimers();vi.resetAllMocks();vi.unstubAllGlobals();});

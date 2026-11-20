@@ -37,6 +37,9 @@ def check(context):
     app = manifest['id']
     context['harnessAppId'] = app
     manifest['source']['repository'] = context['repository']
+    # The synthesized install document lives outside the Git repository. Point permission reviews
+    # and runtime source observation at the real manifest inside the child's monorepo checkout.
+    manifest['source']['manifestPath'] = 'apps/harness/manifest.json'
     assert [service['key'] for service in manifest['services']] == ['api']
     docker_consumer = context.get('scenario') == 'agent-providers'
     runtime = 'docker' if docker_consumer else 'dev'
@@ -159,6 +162,10 @@ def check(context):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         module.check(context, app, app_origin, client, call, timed)
+
+    if os.environ.get('HOSTY_NAMED_SPEECH_ACCEPTANCE') == '1':
+        from named_speech_acceptance import check_named_speech
+        check_named_speech(context, app, app_origin, link, client, providers)
 
     if os.environ.get('HOSTY_LONG_SPEECH_ACCEPTANCE'):
         import importlib.util

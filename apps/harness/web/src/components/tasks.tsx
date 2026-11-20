@@ -16,7 +16,7 @@ type Directory = { provider: TaskProviderRef; users: { id: string; displayName?:
   workspaces: { workspaces: { id: string; name?: string; title?: string }[] }; warning?: string };
 const empty = (): TaskInput => ({ title: "", markdown: "", assignee: null, review: { mode: "none" }, resources: [], parentTaskRef: null, dependsOn: [] });
 const inputOf = (t: TaskRecord): TaskInput => ({ title: t.title, markdown: t.markdown, assignee: t.assignee, review: t.review, resources: t.resources, parentTaskRef: t.parentTaskRef, dependsOn: t.dependsOn });
-const key = (p: TaskProviderRef) => `${p.appId}:${p.installationId}:${p.key}`;
+const key = (p: TaskProviderRef) => p.implementationId != null ? JSON.stringify([p.appId, p.installationId, p.key, p.implementationId]) : `${p.appId}:${p.installationId}:${p.key}`;
 const selectClass = "w-full rounded-md border bg-background px-3 py-2 text-sm";
 
 export function Tasks() {
@@ -107,7 +107,7 @@ export function Tasks() {
     if (!value) { edit({ assignee: null }); return; }
     if (value.startsWith("human:")) { const u = directory.users.find(u => u.id === value.slice(6))!; edit({ assignee: { kind: "human", userId: u.id, name: u.displayName ?? u.email ?? u.id } }); return; }
     const executor = directory.executors.find(e => key(e) === value.slice(4)); if (!executor) return;
-    const ref = { appId: executor.appId, installationId: executor.installationId, key: executor.key };
+    const ref = { appId: executor.appId, installationId: executor.installationId, key: executor.key, ...(executor.implementationId != null ? { implementationId: executor.implementationId } : {}) };
     edit({ assignee: { kind: "app", executor: ref } });
     try {
       let options = executor.options, defaultId = executor.defaultId;

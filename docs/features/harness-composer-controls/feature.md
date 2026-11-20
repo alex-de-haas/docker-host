@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-13
+updated: 2026-11-20
 summary: Responsive composer controls with a durable message stack, transcript suggestions, shared agent settings and capability-aware dictation.
 components: [apps/harness]
 ---
@@ -152,11 +152,9 @@ suggestions keep their existing controls outside it.
 The microphone button starts dictation immediately. Recording uses three compact inline icons:
 a five-bar microphone signal indicator, Stop and transcribe, and Cancel to discard the recording. Starting
 and transcription show a spinner and retain cancellation. Recording status is announced to assistive
-technology, and a compact elapsed/maximum timer remains visible during recording. There is no
-dictation popover. Provider
-selection appears inline only when multiple providers need an explicit choice. On a narrow composer
-its trigger is a compact chevron; the selected provider remains in its accessible value and tooltip.
-Permission guidance,
+technology, and a compact elapsed/maximum timer remains visible during recording. The microphone uses the signed-in user's Dictation choice from
+**Settings → Speech**, shared with the feedback form. A missing or unavailable choice links to
+settings. Permission guidance,
 errors, microphone release, conversation changes and late-result suppression retain their existing
 behavior.
 
@@ -204,7 +202,7 @@ recording available.
   actions remain visible without wrapping, overlap or horizontal toolbar scrolling.
 - Check popover collision handling, focus return and nested model/provider menus in standalone and
   Shell-embedded Harness through normal Core login in a managed sandbox.
-- Verify dictation provider selection, microphone release, cancellation and late transcript
+- Verify independent speech settings, microphone release, cancellation and late transcript
   suppression through the compact entry point, elapsed/limit feedback, a 600-second fixture and
   lower provider duration/byte limits. Use controlled provider/model/usage fixtures when
   browser checks do not require real inference or credentials.

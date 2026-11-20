@@ -1,6 +1,6 @@
 {
   "name": "@hosty/codex-provider",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -16,14 +16,16 @@
     "@hosty/agent-provider-runtime": "*",
     "@hosty-sdk/app": "*",
     "@openai/codex": "0.167.0",
-    "js-tiktoken": "1.0.21"
+    "js-tiktoken": "1.0.21",
+    "ws": "8.22.2"
   },
   "devDependencies": {
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "@types/node": "^24.19.2",
     "vitest": "^5.1.0",
-    "@modelcontextprotocol/sdk": "1.32.2"
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@types/ws": "8.18.2"
   },
   "hostyAgentProvider": {
     "external": [

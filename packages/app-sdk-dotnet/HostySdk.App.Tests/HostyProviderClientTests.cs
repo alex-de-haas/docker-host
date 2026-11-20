@@ -134,6 +134,52 @@ public sealed class HostyProviderClientTests
             return new(HttpStatusCode.OK) { Content = new StringContent(value, Encoding.UTF8, "application/json") };
         }
     }
+    [Theory]
+    [InlineData("work", true)]
+    [InlineData("personal", false)]
+    public async Task StreamsOnlyFromTheSelectedImplementation(string issuedId, bool matches)
+    {
+        using var handler = new SynthesisHandler(issuedId);
+        using var http = new HttpClient(handler);
+        var client = new HostyProviderClient(http, new() { AppId = "reader", CoreOrigin = "http://core.test", ServiceToken = "private-service" });
+        var provider = new HostyProvider("voice", "Voice · Work", "text-to-speech", "default", 1, [], null, true, "install") { ImplementationId = "work" };
+        if (matches)
+        {
+            using var response = await client.SynthesizeAsync(provider, "Москва");
+            Assert.Equal(new byte[] { 1, 2 }, await response.Content.ReadAsByteArrayAsync());
+            Assert.Equal(2, handler.Calls);
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<HostyProviderException>(() => client.SynthesizeAsync(provider, "Москва"));
+            Assert.Equal("provider_changed", error.Code);
+            Assert.Equal(1, handler.Calls);
+        }
+    }
+
+    private sealed class SynthesisHandler(string issuedId) : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Calls++;
+            using var json = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            if (request.RequestUri!.Host == "core.test")
+            {
+                Assert.Equal("install", json.RootElement.GetProperty("installationId").GetString());
+                Assert.Equal("work", json.RootElement.GetProperty("implementationId").GetString());
+                var reply = $$$"""{"token":"scoped","provider":{"appId":"voice","key":"default","kind":"text-to-speech","version":1,"url":"http://voice.test/v1","installationId":"install","implementationId":"{{{issuedId}}}"}}""";
+                return new(HttpStatusCode.OK) { Content = new StringContent(reply, Encoding.UTF8, "application/json") };
+            }
+            Assert.Equal("http://voice.test/v1/speech", request.RequestUri.AbsoluteUri);
+            Assert.Equal("Bearer scoped", request.Headers.Authorization!.ToString());
+            Assert.Equal("Москва", json.RootElement.GetProperty("text").GetString());
+            var audio = new ByteArrayContent([1, 2]);
+            audio.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse("audio/pcm;rate=24000");
+            return new(HttpStatusCode.OK) { Content = audio };
+        }
+    }
+
     private sealed class Handler : HttpMessageHandler
     {
         public bool Denied { get; init; }

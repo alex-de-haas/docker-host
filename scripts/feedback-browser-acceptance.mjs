@@ -94,7 +94,7 @@ try {
   assert.equal(new URL(await page.locator('.hosty-standalone-identity img').getAttribute('src'), page.url()).pathname,'/api/hosty/ui/icon','Standalone icon uses the authenticated same-origin adapter');
   assert.equal(await page.locator('.hosty-panel-rail').count(),0);
   const standalonePages=page.getByRole('navigation',{name:'App pages',exact:true});
-  await standalonePages.getByRole('link',{name:'Workspaces',exact:true}).waitFor();
+  await standalonePages.getByRole('link',{name:'Sessions',exact:true}).waitFor();
   const documentHandle=await page.locator('.hosty-app-content').elementHandle();
   await standaloneHeader.getByRole('button',{name:'Hide navigation',exact:true}).click();
   assert.equal(await standalonePages.isVisible(),false);
@@ -102,7 +102,7 @@ try {
   await standaloneHeader.getByRole('button',{name:'Tools',exact:true}).click();
   const standaloneMenu=page.getByRole('dialog',{name:'Tools',exact:true});
   await standaloneMenu.getByRole('button',{name:'Pin Hosty Harness — Pull requests to top bar',exact:true}).click();
-  assert.equal(await page.locator('iframe').count(),0,'Pinning does not open a tool');
+  assert.equal(await page.locator('.hosty-panel-frame iframe').count(),0,'Pinning does not open a tool');
   await page.keyboard.press('Escape');
   assert.equal(await standaloneHeader.getByRole('button',{name:'Tools',exact:true}).evaluate(button=>button===document.activeElement),true);
   await page.reload();await standaloneHeader.getByRole('button',{name:'Show navigation',exact:true}).waitFor();

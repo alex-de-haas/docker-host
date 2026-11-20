@@ -6,12 +6,24 @@ import { createHash, randomUUID } from "node:crypto";
 import { copyFile, cp, lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { AgentConnections, ConnectionError, type AgentConnection, type ConnectionBinding, type AdapterPreparation, type ConnectionLogin } from "@hosty/agent-provider-runtime/connections/registry";
+import { AgentConnections, ConnectionError, type AgentConnection, type ConnectionBinding, type AdapterPreparation, type RegistryState, type ConnectionLogin } from "@hosty/agent-provider-runtime/connections/registry";
 import type { ConnectionSecrets } from "@hosty/agent-provider-runtime/connections/secrets";
 import type { HarnessAdapter } from "@hosty/agent-provider-runtime/harness/adapter";
 import { absentUsage, type ProviderUsage } from "@hosty/agent-provider-runtime/harness/provider-usage";
 import { CodexHarnessAdapter } from "./adapter/codex.js";
 import { CodexLogin, CodexLoginError, codexLoginFailure } from "./connections/codex-login.js";
+export const speechKinds = ["speech-to-text", "text-to-speech"] as const;
+export type SpeechKind = typeof speechKinds[number];
+
+function validRoles(value: unknown): value is SpeechKind[] {
+  return Array.isArray(value) && value.every(k => speechKinds.includes(k)) && new Set(value).size === value.length;
+}
+
+// Credential rotation creates a new billing destination. Labels and interface toggles do not.
+function speechId(connection: AgentConnection): string {
+  return createHash("sha256").update(connection.id).update("/").update(connection.secretKey).digest("hex");
+}
+
 type LoginState = {
   id: string;
   connectionId: string;
@@ -33,7 +45,39 @@ export class CodexConnections extends AgentConnections {
       capabilities: { promptSuggestions: true, usage: { snapshots: true, events: true, kinds: ["quota", "credits"] }, questions: true, appMcp: true, liveReconfigure: false, autoAllow: true, denyReason: false },
       authMethods: { "api-key": { credential: "required" }, chatgpt: { credential: "managed" }, "host-login": { credential: "external" } }, historyDirectories: ["sessions", "archived_sessions"] }, mode);
   }
+  speechChanged?: () => void;
+
+  protected override async save(state: RegistryState): Promise<void> {
+    const changed = this.state?.connections !== state.connections;
+    await super.save(state);
+    if (changed) this.speechChanged?.();
+  }
+
+  async speechImplementations() {
+    return this.serialize(async () => {
+      const entries = (await this.load()).connections.filter(connection =>
+        connection.auth === "api-key" && connection.publishedInterfaces?.length);
+      return Promise.all(entries.map(async connection => ({
+        id: speechId(connection), displayName: connection.name, roles: connection.publishedInterfaces!,
+        available: Boolean(await this.secretGet(connection.secretKey)),
+      })));
+    });
+  }
+
+  async speechCredential(id: string | null | undefined, kind: SpeechKind) {
+    return this.serialize(async () => {
+      const connection = (await this.load()).connections.find(account =>
+        account.auth === "api-key" && account.publishedInterfaces?.includes(kind) && speechId(account) === id);
+      if (!connection) throw new ConnectionError(409, "implementation_unavailable", "The selected speech implementation is no longer enabled.");
+      const key = await this.secretGet(connection.secretKey);
+      if (!key) throw new ConnectionError(503, "credential_unavailable", "Reconnect the selected OpenAI API connection.");
+      return key;
+    });
+  }
+
   protected override validConnection(connection: AgentConnection): boolean {
+    if (connection.publishedInterfaces !== undefined && (connection.auth !== "api-key" || !validRoles(connection.publishedInterfaces))) return false;
+    if (connection.settingsRevision !== undefined && (!Number.isSafeInteger(connection.settingsRevision) || connection.settingsRevision < 1)) return false;
     return connection.auth !== "host-login" || typeof connection.hostDirectory === "string" && path.isAbsolute(connection.hostDirectory);
   }
   protected override async connectionFields(input: Record<string, unknown>, previous: AgentConnection | null) {
@@ -43,7 +87,22 @@ export class CodexConnections extends AgentConnections {
       throw new ConnectionError(400, "provider_home_invalid", "Enter the absolute Codex home directory used for the existing host login.");
     if (hostDirectory && !path.relative(path.resolve(this.dataDir), path.resolve(hostDirectory)).startsWith(".."))
       throw new ConnectionError(400, "provider_home_invalid", "The existing login directory must be outside the provider's backed-up data directory.");
-    return hostDirectory ? { hostDirectory } : {};
+    const roles = input.publishedInterfaces !== undefined ? input.publishedInterfaces : previous?.publishedInterfaces ?? [];
+    if (auth !== "api-key") {
+      if (input.publishedInterfaces !== undefined)
+        throw new ConnectionError(400, "provider_interfaces_invalid", "Only managed OpenAI API keys can provide speech.");
+      return hostDirectory ? { hostDirectory } : {};
+    }
+    if (!validRoles(roles)) throw new ConnectionError(400, "provider_interfaces_invalid", "Select supported speech interfaces.");
+    if (roles.length) {
+      const name = typeof input.name === "string" ? input.name.trim() : previous?.name;
+      if (!name || /\p{Cc}/u.test(name))
+        throw new ConnectionError(400, "provider_name_invalid", "Published connection names cannot contain control characters.");
+      const others = (await this.load()).connections.filter(account => account.id !== previous?.id);
+      if (roles.some(kind => others.filter(account => account.publishedInterfaces?.includes(kind)).length >= 256))
+        throw new ConnectionError(409, "provider_catalog_full", "A speech interface can publish up to 256 connections.");
+    }
+    return { publishedInterfaces: roles };
   }
   protected override async connectionIdentity(connection: AgentConnection): Promise<string | undefined> {
     return connection.auth === "host-login" ? this.hostIdentity(connection) : undefined;
@@ -577,7 +636,10 @@ export const codexCapabilities: AgentCapabilities = {
 export const codexSettings: ProviderSettingsDefinition = {
   kind: "codex", name: "Codex", authentication: [
     { id: "chatgpt", label: "ChatGPT sign-in", browserLogin: true },
-    { id: "api-key", label: "API key", credential: true },
+    { id: "api-key", label: "API key", credential: true, interfaceChoices: [
+      { kind: "speech-to-text", label: "Provide speech to text" },
+      { kind: "text-to-speech", label: "Provide text to speech" },
+    ] },
     { id: "host-login", label: "Existing Codex login on this host", hostDirectory: true }],
   hostDirectory: { label: "Codex home on the Hosty server", placeholder: "/home/hosty/.codex", description: "Use an existing signed-in Codex directory accessible to this provider. Removing the connection leaves that directory and its session files in place." },
   login: { name: "ChatGPT", description: "Open ChatGPT in your browser, sign in, and enter this one-time code. You do not need the ChatGPT app." },

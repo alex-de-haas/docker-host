@@ -25,6 +25,13 @@ afterEach(async () => { history.close(); await rm(root, { recursive: true, force
 const share = async (extra: Partial<HistoryShareCreate> = {}) => history.share(owner, { ref: ref(), requestId: randomUUID(), expectedRevision: (await history.conversation(owner, ref())).revision,
   selection: { entryIds: [entry(1).id] }, recipientUserIds: [recipient.userId], includeAttachments: false, ...extra });
 
+it("binds history reads to the exact implementation while preserving existing static references", async () => {
+  await expect(history.conversation(owner, { ...ref(), provider: { ...provider, implementationId: "different" } }))
+    .rejects.toMatchObject({ status: 404 });
+  expect(await history.conversation(owner, { ...ref(), provider: { ...provider, implementationId: null } }))
+    .toEqual(await history.conversation(owner, ref()));
+});
+
 it("keeps other administrators out and excludes native state, tool inputs and account diagnostics", async () => {
   await expect(history.get(recipient, { entry: entry(1) })).rejects.toMatchObject({ code: "not_found", status: 404 });
   await expect(history.get({ ...owner, hostRole: "host.user" }, { entry: entry(1) })).rejects.toMatchObject({ status: 403 });

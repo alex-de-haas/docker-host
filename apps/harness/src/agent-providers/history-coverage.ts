@@ -1,3 +1,4 @@
+import { providerIdentityParts } from "../../shared/provider-reference.js";
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
@@ -72,7 +73,7 @@ export class ProviderHistoryCoverage {
   constructor(private readonly store: SessionStore, private readonly report: (id: string, gaps: ProviderHistoryGap[]) => Promise<void>) {}
 
   private key(provider: AgentProviderRef, scope: Scope): string {
-    return createHash("sha256").update(JSON.stringify([provider.appId, provider.installationId, provider.key,
+    return createHash("sha256").update(JSON.stringify([...providerIdentityParts(provider),
       scope.sessionId, scope.epoch, scope.generation])).digest("hex");
   }
 

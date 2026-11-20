@@ -20,12 +20,39 @@ internal sealed class AppServiceTokenService(AppServiceSigningKey key)
         return $"{Prefix}.{Version}.{appPart}.{signature}";
     }
 
+    // Runtime publication can outlive an install. Bind participating providers to their installation
+    // while preserving existing service tokens for static providers and previously adopted runtimes.
+    public string CreateRuntimeToken(AppRecord app)
+    {
+        if (!NamedProviderImplementations.Participates(app)) return CreateToken(app.Id);
+        var appPart = Base64UrlEncode(Encoding.UTF8.GetBytes(app.Id));
+        var installation = Base64UrlEncode(Encoding.UTF8.GetBytes(PanelIdentity.Installation(app)));
+        var payload = $"{Prefix}.2.{appPart}.{installation}.{NamedProviderImplementations.RuntimeScope(app)}";
+        return $"{payload}.{SignPayload(payload)}";
+    }
+
+    public bool IsInstallationToken(AppRecord app, string token)
+        => NamedProviderImplementations.Participates(app)
+            && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(CreateRuntimeToken(app)), Encoding.UTF8.GetBytes(token));
+
     public bool ValidateToken(string appId, string token)
         => string.Equals(ResolveAppId(token), appId, StringComparison.Ordinal);
 
     public string? ResolveAppId(string token)
     {
         var parts = token.Split('.');
+        if (parts is [Prefix, "2", var encodedId, var installation, var declaration, var boundSignature])
+        {
+            var payload = $"{Prefix}.2.{encodedId}.{installation}.{declaration}";
+            if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(SignPayload(payload)), Encoding.UTF8.GetBytes(boundSignature))) return null;
+            try
+            {
+                var id = Encoding.UTF8.GetString(Base64UrlDecode(encodedId));
+                CoreApiRequest.TokenValidated(token, id);
+                return id;
+            }
+            catch (FormatException) { return null; }
+        }
         if (parts is not [Prefix, Version, var appPart, var signature])
         {
             return null;
@@ -50,9 +77,10 @@ internal sealed class AppServiceTokenService(AppServiceSigningKey key)
     }
 
     private string Sign(string appId)
-        => Base64UrlEncode(HMACSHA256.HashData(
-            key.Value,
-            Encoding.UTF8.GetBytes($"hosty-app-service:{appId}")));
+        => SignPayload($"hosty-app-service:{appId}");
+
+    private string SignPayload(string value)
+        => Base64UrlEncode(HMACSHA256.HashData(key.Value, Encoding.UTF8.GetBytes(value)));
 
     private static string Base64UrlEncode(byte[] bytes)
         => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');

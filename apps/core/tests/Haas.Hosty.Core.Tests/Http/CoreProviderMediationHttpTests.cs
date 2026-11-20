@@ -89,6 +89,35 @@ public sealed class CoreProviderMediationHttpTests
     }
 
     [Fact]
+    public async Task NamedTaskDirectoryAndMediatedInvocationUseTheSameImplementation()
+    {
+        using var transport = new ProviderTransport();
+        await using var host = await Start(transport);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var provider = await AddProvider(host, "other.tasks", "tasks", [NamedProviderImplementations.Capability]);
+        await apps.PublishImplementationsAsync(provider, "tasks", new("custom", 1, [new("first", "Home", true), new("second", "Work", true)]), default);
+        transport.Provider = (await apps.GetAppAsync(provider.Id))!;
+        transport.Services = host.Services;
+        transport.Reply = JsonSerializer.SerializeToElement(new HostyTaskPage([], null), JsonSerializerOptions.Web);
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", await Issue(host, [AccessTokenScopes.McpRead, AccessTokenScopes.McpTasksRead]));
+        var legacy = await client.GetFromJsonAsync<ProviderDirectory>("/api/tasks/v1/providers");
+        Assert.Empty(legacy!.Providers);
+        var directory = await client.GetFromJsonAsync<ProviderDirectory>("/api/tasks/v1/providers?named=true");
+        Assert.Equal(["first", "second"], directory!.Providers.Select(p => p.ImplementationId));
+        Assert.All(directory.Providers, p => Assert.Null(p.Url));
+        var selected = new HostyTaskProviderRef(provider.Id, PanelIdentity.Installation(provider), "custom") { ImplementationId = "second" };
+        using var result = await client.PostAsJsonAsync("/api/tasks/v1/list", new CoreTaskQuery(selected));
+        result.EnsureSuccessStatusCode();
+        Assert.Equal("second", transport.Invocation!.ImplementationId);
+        Assert.Equal("list", transport.Invocation.Operation);
+        Assert.Equal("admin", transport.Invocation.UserId);
+        await apps.PublishImplementationsAsync(provider, "tasks", new("custom", 2, [new("first", "Home", true)]), default);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.PostAsJsonAsync("/api/tasks/v1/list", new CoreTaskQuery(selected))).StatusCode);
+        Assert.Equal(1, transport.Calls);
+    }
+
+    [Fact]
     public async Task SourceCredential_IsBoundToExactOperationBodyAndCurrentGrants()
     {
         using var transport = new ProviderTransport();

@@ -5,7 +5,7 @@ namespace Haas.Hosty.Core;
 
 // The event hub is optional only for unit fixtures that construct the store directly; production DI
 // always supplies it. When absent, commits simply publish nothing.
-internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events = null, HostyCoreRuntimeConfig? config = null)
+internal sealed partial class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events = null, HostyCoreRuntimeConfig? config = null)
 {
     // Internal observers enqueue work only; notifications are independent of lossy browser SSE.
     internal event Action<string>? Changed;
@@ -30,7 +30,8 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
     // turning a mismatch into a plain re-read.
     private readonly ConcurrentDictionary<string, CachedRecord> recordCache = new(StringComparer.Ordinal);
 
-    private sealed record CachedRecord(AppRecord Record, FileStamp Stamp);
+    private readonly ConcurrentDictionary<string, long> catalogEpochs = new(StringComparer.Ordinal);
+    private sealed record CachedRecord(AppRecord Record, FileStamp Stamp, FileStamp CatalogStamp, long CatalogEpoch);
 
     public async Task<IReadOnlyList<AppSummary>> ListAppsAsync(CancellationToken cancellationToken = default)
         => (await ListAppRecordsAsync(cancellationToken))
@@ -102,7 +103,10 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
     {
         var statePath = Path.Combine(appRoot, "state.json");
         var stamp = FileStamp.Read(statePath);
-        if (recordCache.TryGetValue(appId, out var cached) && cached.Stamp == stamp)
+        var catalogPath = Path.Combine(appRoot, NamedProviderImplementations.FileName);
+        var catalogEpoch = catalogEpochs.GetValueOrDefault(appId);
+        if (recordCache.TryGetValue(appId, out var cached) && cached.Stamp == stamp && cached.CatalogEpoch == catalogEpoch
+            && (!NamedProviderImplementations.Participates(cached.Record) || cached.CatalogStamp == FileStamp.Read(catalogPath)))
         {
             return cached.Record;
         }
@@ -116,7 +120,25 @@ internal sealed class AppRegistryStore(CoreDataPaths paths, CoreEventHub? events
 
         var record = await HydrateAppUiAsync(Migrate(document), appRoot, cancellationToken);
         record = record with { BrowserOriginScope = config?.InstanceId ?? "" };
-        recordCache[appId] = new CachedRecord(record, stamp);
+        var catalogStamp = default(FileStamp);
+        if (NamedProviderImplementations.Participates(record))
+        {
+            catalogStamp = FileStamp.Read(catalogPath);
+            try
+            {
+                var catalog = await JsonStorage.ReadAsync<NamedProviderCatalog>(catalogPath, cancellationToken);
+                if (catalog is null && catalogStamp.Exists || catalog is not null && !NamedProviderImplementations.Readable(catalog))
+                    record = record with { NamedCatalogUnreadable = true };
+                else if (catalog?.InstallationId == PanelIdentity.Installation(record)) record = record with { NamedProviders = catalog };
+            }
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+            {
+                // A damaged optional catalog must not hide the installed application or its static interfaces.
+                // Preserve its revision high-water mark on disk until the catalog can be read again.
+                record = record with { NamedCatalogUnreadable = true };
+            }
+        }
+        recordCache[appId] = new CachedRecord(record, stamp, catalogStamp, catalogEpoch);
         return record;
     }
 
@@ -485,6 +507,12 @@ internal sealed record AppRecord(
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public string BrowserOriginScope { get; init; } = "";
+
+    // Projected from a dedicated app-owned catalog. Lifecycle writes of state.json cannot overwrite it.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public NamedProviderCatalog? NamedProviders { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool NamedCatalogUnreadable { get; init; }
 }
 
 // Last observed update stage, retained through completion for reconnecting clients.
@@ -1247,7 +1275,9 @@ internal sealed record AppSummary(
             result[name] = declarations
                 .Select(declaration =>
                 {
-                    var endpoint = ResolveEndpoint(endpoints, declaration.EndpointKey);
+                    var endpoint = declaration.Capabilities?.Contains(NamedProviderImplementations.Capability) == true
+                        && declaration.EndpointKey is { } selectedKey
+                        ? ResolveDeclaredEndpoint(endpoints, selectedKey) : ResolveEndpoint(endpoints, declaration.EndpointKey);
                     return new AppInterfaceSummary(
                         declaration.Key,
                         declaration.Path,
@@ -1421,6 +1451,10 @@ internal sealed record AppSummary(
         return endpoints.FirstOrDefault(endpoint => endpoint.Public && HasEndpointOpenUrl(endpoint)) ??
             endpoints.FirstOrDefault(HasEndpointOpenUrl);
     }
+
+    // Named providers must never forward a credential or payload to an unrelated fallback endpoint.
+    internal static AppEndpointContract? ResolveDeclaredEndpoint(IReadOnlyList<AppEndpointContract> endpoints, string key)
+        => endpoints.FirstOrDefault(e => e.Key == key) ?? endpoints.FirstOrDefault(e => e.Key.EndsWith("." + key, StringComparison.Ordinal));
 
     private static bool HasEndpointOpenUrl(AppEndpointContract endpoint)
         => !string.IsNullOrWhiteSpace(endpoint.PublicOrigin) || !string.IsNullOrWhiteSpace(endpoint.Url);

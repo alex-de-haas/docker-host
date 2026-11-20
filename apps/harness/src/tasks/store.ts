@@ -1,3 +1,4 @@
+import { sameProviderRef } from "../../shared/provider-reference.js";
 import { randomUUID, createHash } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
@@ -33,8 +34,9 @@ export function resources(value: unknown): TaskResource[] {
 }
 export function providerRef(value: unknown): TaskProviderRef {
   const v = value as TaskProviderRef;
-  if (!v || !text(v.appId, 200, true) || !text(v.installationId, 200, true) || !text(v.key, 100, true)) return taskError("executor_invalid", "Choose an installed executor and interface.", 400);
-  return { appId: v.appId, installationId: v.installationId, key: v.key };
+  if (!v || !text(v.appId, 200, true) || !text(v.installationId, 200, true) || !text(v.key, 100, true)
+    || v.implementationId != null && !text(v.implementationId, 128, true)) return taskError("executor_invalid", "Choose an installed executor and interface.", 400);
+  return { appId: v.appId, installationId: v.installationId, key: v.key, ...(v.implementationId != null ? { implementationId: v.implementationId } : {}) };
 }
 export function taskRef(value: unknown): TaskRef {
   return { ...providerRef(value), id: uuid((value as TaskRef)?.id) };
@@ -170,7 +172,7 @@ export class TaskStore {
     return t;
   }
   private localRef(s: TaskState, ref: TaskRef, actor: TaskActor): TaskRecord {
-    if (fingerprint(providerRef(ref)) !== fingerprint(this.provider)) return taskError("unsupported_capability", "Relationships require the same task provider installation.");
+    if (!sameProviderRef(providerRef(ref), this.provider)) return taskError("unsupported_capability", "Relationships require the same task provider installation.");
     const task = this.find(s, ref.id, actor);
     if (task.removed) return taskError("task_removed", "Restore this task before using it in new work.");
     return task;

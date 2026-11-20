@@ -60,6 +60,13 @@ app identity or delegated token. Provider-side `ValidateAsync()` checks live aut
 Service credentials stay in the app backend and are sent only to Core. A provider credential conveys
 no general administrator authority. See [Provider consumption](../../../docs/features/provider-consumption/feature.md).
 
+For named implementations, call `ListImplementationsAsync` and save the exact app installation,
+interface key and implementation ID. Use `TextToSpeechCapabilitiesAsync` before calling
+`SynthesizeAsync(selected, text, cancellationToken)`. Dispose the streaming HTTP response after
+playback or cancellation. Providers publish each complete revision with `PublishImplementationsAsync`
+and obtain its authorized implementation ID from `ValidateAsync`.
+See the [app manifest guide](../../../skills/hosty-app-skill/references/app-manifest.md#named-provider-implementations).
+
 ## Assistant MCP credentials
 
 Use `HostyScopedTokenClient.IntrospectMcpAsync` only in MCP handlers. It sends an explicit MCP

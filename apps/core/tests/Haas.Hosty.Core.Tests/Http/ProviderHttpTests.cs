@@ -9,7 +9,134 @@ namespace Haas.Hosty.Core.Tests.Http;
 
 public sealed class ProviderHttpTests
 {
+    [Fact]
+    public async Task NamedCatalogRequiresExactPublisherAndSupportsQualifiedReplaySafeInvocations()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var tokens = host.Services.GetRequiredService<AppServiceTokenService>();
+        var caller = Record("independent.consumer") with { GrantedCorePermissions = [CoreAppPermissions.TranslationProviders] };
+        var publisher = Speech("independent.linguist") with { DisplayName = "Linguist", ConfirmedRoles = ["translation"],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
+                ["translation"] = [new("local", "api", "/local", 1, []),
+                    new("accounts", "api", "/dynamic", 1, [NamedProviderImplementations.Capability])] }
+        };
+        using var consumer = host.CreateClient();
+        consumer.DefaultRequestHeaders.Authorization = new("Bearer", tokens.CreateToken(caller.Id));
+        using var supplier = host.CreateClient();
+        supplier.DefaultRequestHeaders.Authorization = new("Bearer", tokens.CreateRuntimeToken(publisher));
+        var list = $"/api/internal/apps/{caller.Id}/providers/translation";
+        var publish = $"/api/internal/apps/{publisher.Id}/providers/translation/implementations";
+        var introspect = $"/api/internal/apps/{publisher.Id}/provider/introspect";
+        Task<HttpResponseMessage> Publish(long revision, params ProviderImplementation[] entries)
+            => supplier.PostAsJsonAsync(publish, new ProviderImplementationPublication("accounts", revision, entries));
+        Task<HttpResponseMessage> Issue(string id) => consumer.PostAsJsonAsync(list + "/token",
+            new ProviderTokenRequest(publisher.Id, "accounts", PanelIdentity.Installation(publisher), id));
+        Task<HttpResponseMessage> Validate(string token) => supplier.PostAsJsonAsync(introspect, new { token, kind = "translation", key = "accounts" });
+        await apps.UpsertAppAsync(caller);
+        Assert.Empty((await consumer.GetFromJsonAsync<JsonElement>(list + "?named=true")).GetProperty("providers").EnumerateArray());
+        await apps.UpsertAppAsync(publisher);
+        var alpha = new ProviderImplementation("provider-owned:A", "Business", true);
+        var beta = new ProviderImplementation("provider-owned:B", "Business", false);
+        var body = new ProviderImplementationPublication("accounts", 1, [alpha, beta]);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await consumer.PostAsJsonAsync(publish, body)).StatusCode);
+        using var legacyPublisher = host.CreateClient();
+        legacyPublisher.DefaultRequestHeaders.Authorization = new("Bearer", tokens.CreateToken(publisher.Id));
+        Assert.Equal(HttpStatusCode.Forbidden, (await legacyPublisher.PostAsJsonAsync(publish, body)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await supplier.PostAsJsonAsync(publish, body with { Key = "local" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Publish(1, alpha, alpha)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Publish(1, alpha, beta)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Publish(1, beta, alpha)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await Publish(1, beta)).StatusCode);
+        var visible = (await consumer.GetFromJsonAsync<JsonElement>(list + "?named=true")).GetProperty("providers").EnumerateArray().ToArray();
+        Assert.Equal(3, visible.Length);
+        var named = visible.Where(p => p.GetProperty("key").GetString() == "accounts").ToArray();
+        Assert.Equal(2, named.Length);
+        Assert.All(named, p => Assert.Equal("Business", p.GetProperty("implementationName").GetString()));
+        Assert.NotEqual(named[0].GetProperty("displayName").GetString(), named[1].GetProperty("displayName").GetString());
+        var legacy = Assert.Single((await consumer.GetFromJsonAsync<JsonElement>(list)).GetProperty("providers").EnumerateArray());
+        Assert.Equal("local", legacy.GetProperty("key").GetString());
+        Assert.Equal(HttpStatusCode.OK, (await consumer.PostAsJsonAsync(list + "/token", new ProviderTokenRequest(publisher.Id, "local"))).StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await consumer.PostAsJsonAsync(list + "/token", new ProviderTokenRequest(publisher.Id, "accounts"))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await consumer.PostAsJsonAsync(list + "/token",
+            new ProviderTokenRequest(publisher.Id, "accounts", "stale-install", alpha.Id))).StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await Issue(beta.Id)).StatusCode);
+        var issued = await Issue(alpha.Id);
+        issued.EnsureSuccessStatusCode();
+        var token = (await issued.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString()!;
+        var verification = await Validate(token); verification.EnsureSuccessStatusCode();
+        Assert.Equal(alpha.Id, (await verification.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("implementationId").GetString());
+
+        Assert.Equal(HttpStatusCode.OK, (await Publish(2, alpha with { DisplayName = "Renamed" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Validate(token)).StatusCode);
+        var freshRegistry = new AppRegistryStore(host.Services.GetRequiredService<CoreDataPaths>());
+        var reloaded = (await freshRegistry.GetAppAsync(publisher.Id))!;
+        Assert.Equal("Renamed", ProviderAccessService.Find(reloaded, "translation", "accounts", alpha.Id)!.ImplementationName);
+        Assert.Equal("provider_publication_conflict", (await Assert.ThrowsAsync<AppIdentityException>(() =>
+            freshRegistry.PublishImplementationsAsync(reloaded, "translation", body, default))).Code);
+        Assert.Equal(HttpStatusCode.OK, (await Publish(3)).StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await Validate(token)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await Publish(2, alpha)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Publish(4, alpha)).StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await Validate(token)).StatusCode);
+        await apps.UpdateAppAsync(caller.Id, current => current with { GrantedCorePermissions = [] });
+        Assert.Equal(HttpStatusCode.Forbidden, (await Issue(alpha.Id)).StatusCode);
+        await apps.UpdateAppAsync(publisher.Id, current => current with { ConfirmedRoles = [] });
+        Assert.Equal(HttpStatusCode.Forbidden, (await Publish(5, alpha)).StatusCode);
+
+        var replacement = publisher with { InstalledAt = publisher.InstalledAt.AddMinutes(1) };
+        await apps.UpsertAppAsync(replacement);
+        Assert.Null(ProviderAccessService.Find((await apps.GetAppAsync(publisher.Id))!, "translation", "accounts", alpha.Id));
+        Assert.Equal(HttpStatusCode.Forbidden, (await Publish(5, alpha)).StatusCode);
+        supplier.DefaultRequestHeaders.Authorization = new("Bearer", tokens.CreateRuntimeToken(replacement));
+        Assert.Equal(HttpStatusCode.OK, (await Publish(1, beta)).StatusCode);
+    }
+
+    [Fact]
+    public async Task ChangedDeclarationRequiresRepublishingAndDamagedCatalogPreservesStaticDiscovery()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var tokens = host.Services.GetRequiredService<AppServiceTokenService>();
+        var provider = Speech("independent.reader");
+        var oldEntry = provider.Interfaces!["speech-to-text"][0] with { Key = "dynamic", Capabilities = [NamedProviderImplementations.Capability] };
+        AppRecord WithEntry(AppInterfaceContract entry) => provider with { Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
+            { ["speech-to-text"] = [provider.Interfaces!["speech-to-text"][0], entry] } };
+        var original = WithEntry(oldEntry);
+        await apps.UpsertAppAsync(original);
+        using var supplier = host.CreateClient();
+        supplier.DefaultRequestHeaders.Authorization = new("Bearer", tokens.CreateRuntimeToken(original));
+        var endpoint = $"/api/internal/apps/{provider.Id}/providers/speech-to-text/implementations";
+        var publication = new ProviderImplementationPublication("dynamic", 1, [new("channel", "Channel", true)]);
+        Assert.Equal(HttpStatusCode.OK, (await supplier.PostAsJsonAsync(endpoint, publication)).StatusCode);
+        var first = ProviderAccessService.Find((await apps.GetAppAsync(provider.Id))!, "speech-to-text", "dynamic", "channel");
+        Assert.NotNull(first);
+
+        var updated = WithEntry(oldEntry with { Path = "/revised" });
+        await apps.UpsertAppAsync(updated);
+        Assert.Null(ProviderAccessService.Find((await apps.GetAppAsync(provider.Id))!, "speech-to-text", "dynamic", "channel"));
+        Assert.Equal(HttpStatusCode.Forbidden, (await supplier.PostAsJsonAsync(endpoint, publication)).StatusCode);
+        supplier.DefaultRequestHeaders.Authorization = new("Bearer", tokens.CreateRuntimeToken(updated));
+        Assert.Equal(HttpStatusCode.OK, (await supplier.PostAsJsonAsync(endpoint, publication)).StatusCode);
+        var rebound = ProviderAccessService.Find((await apps.GetAppAsync(provider.Id))!, "speech-to-text", "dynamic", "channel");
+        Assert.NotNull(rebound);
+        Assert.EndsWith("/revised", rebound.Url);
+        Assert.NotEqual(first.Incarnation, rebound.Incarnation);
+
+        var paths = host.Services.GetRequiredService<CoreDataPaths>();
+        var catalogPath = Path.Combine(paths.AppsRoot, provider.Id, NamedProviderImplementations.FileName);
+        var damaged = JsonSerializer.Serialize(new { installationId = PanelIdentity.Installation(provider), snapshots = new object?[] { null } });
+        await File.WriteAllTextAsync(catalogPath, damaged);
+        var fresh = new AppRegistryStore(paths);
+        var loaded = (await fresh.GetAppAsync(provider.Id))!;
+        Assert.Equal("default", Assert.Single(ProviderAccessService.Describe(loaded, "speech-to-text", true)).Key);
+        Assert.Equal("provider_catalog_unavailable", (await Assert.ThrowsAsync<AppIdentityException>(() =>
+            fresh.PublishImplementationsAsync(loaded, "speech-to-text", publication, default))).Code);
+        Assert.Equal(damaged, await File.ReadAllTextAsync(catalogPath));
+    }
+
     [Theory]
+    [InlineData("text-to-speech", CoreAppPermissions.TextToSpeechProviders)]
     [InlineData("tasks", CoreAppPermissions.TaskProviders)]
     [InlineData("task-executor", CoreAppPermissions.TaskExecutors)]
     public async Task TaskCategoriesAreIndependentConfirmedAndInstallationBound(string kind, string permission)

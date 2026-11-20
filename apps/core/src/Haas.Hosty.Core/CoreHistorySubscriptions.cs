@@ -51,7 +51,7 @@ internal sealed class CoreHistorySubscriptions(CoreHistoryAdapter history, ICloc
             var policy = CoreProviderPolicy.For("conversation-history", "notifications");
             await using var watch = new CoreProviderStreamWatch(events, context.Request, caller, stopping, async token =>
                 policy.Require(await auth.RevalidateAsync(caller.Authority!, caller.User.Id, caller.PrincipalId,
-                    policy.Kind, source.AppId, source.Key, policy.ToolName, token)));
+                    policy.Kind, source, policy.ToolName, token)));
             var cursor = context.Request.Headers["Last-Event-ID"].ToString();
             if (string.IsNullOrEmpty(cursor)) cursor = handle.Value.Initial.Cursor;
             var notification = await history.NotificationsAsync(caller, handle.Value.Initial.Conversation, cursor, 0, ct);

@@ -1,3 +1,4 @@
+import { sameProviderRef } from "../../shared/provider-reference.js";
 import { TaskAttention } from "./attention.js";
 import { TaskControls } from "./controls.js";
 import { TaskSources } from "./sources.js";
@@ -120,7 +121,7 @@ export class TaskService {
     return cleanup;
   }
   private ownScope() { return `${this.provider.appId}:${this.provider.installationId}`; }
-  private own(executor: TaskProviderRef) { return executor.appId === this.provider.appId && executor.installationId === this.provider.installationId && executor.key === this.provider.key; }
+  private own(executor: TaskProviderRef) { return sameProviderRef(executor, this.provider); }
   private remote(executor: TaskProviderRef, authority: Authority) {
     if (authority.taskDispatch) return new MediatedTaskExecutorClient(new ProviderClient(), executor, authority.taskDispatch);
     return new TaskExecutorClient(new ProviderClient(), executor, authority.credential ? async () => authority.credential! : undefined);
@@ -432,7 +433,7 @@ export class TaskService {
     const delegation = mediated?.invocation.taskDelegation;
     const source = delegation?.taskRef;
     const authority: Authority = { actor: { userId, appId: source?.appId ?? call?.callerAppId ?? null, ...(source ? { installationId: source.installationId } : call?.callerInstallation ? { installationId: call.callerInstallation } : {}) },
-      scope: source ? `${source.appId}:${source.installationId}` : call ? `${call.callerAppId}:${call.callerInstallation}` : this.ownScope(),
+      scope: source?.implementationId ? JSON.stringify([source.appId, source.installationId, source.key, source.implementationId]) : source ? `${source.appId}:${source.installationId}` : call ? `${call.callerAppId}:${call.callerInstallation}` : this.ownScope(),
       ...(mediated ? { principalId: mediated.invocation.principalId, taskDispatch: delegation?.dispatch ?? mediated.invocation.taskDispatch ?? undefined, mediatedOperation: mediated.invocation.operation, taskWorkflow: mediated.invocation.taskWorkflow } : {}),
       credential: call ? undefined : await delegationCredential(request), validate: async () => { if (delegation) { const current = await new ProviderClient().taskDispatchAuthority(delegation.dispatch); if (current.scope.executionId !== delegation.executionId || current.dispatch.userId !== userId) return taskError("execution_changed", "Execution authority changed.", 403); return; } if (await validate() !== userId) return taskError("actor_changed", "Task actor changed.", 403); } };
     if (this.closed) return taskError("tasks_stopping", "Task dispatch is stopping.", 503);
@@ -490,7 +491,7 @@ export class TaskService {
         if (method === "PUT" && !match[2]) {
           const input = await readJson() as TaskExecutionInput;
           if (call && (input.taskRef?.appId !== (source?.appId ?? call.callerAppId) || input.taskRef?.installationId !== (source?.installationId ?? call.callerInstallation)
-              || source && (input.taskRef?.id !== source.id || input.taskRef?.key !== source.key || match[1] !== delegation?.executionId)))
+              || source && (input.taskRef?.id !== source.id || !sameProviderRef(input.taskRef, source) || match[1] !== delegation?.executionId)))
             return taskError("task_provider_mismatch", "The calling provider must own the task reference.", 403);
           await send(202, await this.executor.accept(match[1]!, input, authority));
         } else if (method === "GET" && !match[2]) await send(200, await this.executor.get(match[1]!, authority));

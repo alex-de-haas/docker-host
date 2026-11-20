@@ -4,33 +4,28 @@ import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { Loader2, Mic, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { recordingWave } from "./feedback-audio";
-type Provider = { appId: string; key: string; displayName: string; available: boolean };
-type Recording = { controller: AbortController; onText: (text: string) => void; stream?: MediaStream; recorder?: MediaRecorder; timer?: ReturnType<typeof setTimeout> };
+import { useSpeechRoster } from "@/lib/use-speech-roster";
+import { currentSpeechOption } from "../../../../shared/speech-selection";
+type Recording = { binding: string; controller: AbortController; onText: (text: string) => void; stream?: MediaStream; recorder?: MediaRecorder; timer?: ReturnType<typeof setTimeout> };
 const dispose = (op: Recording | null) => { if (!op) return; op.controller.abort(); clearTimeout(op.timer); if (op.recorder?.state === "recording") op.recorder.stop(); op.stream?.getTracks().forEach(t => t.stop()); };
 
 /** One recorder and provider roster per draft; each operation owns its destination callback. */
-export function useFeedbackSpeech(path: string, disabled: boolean) {
-  const [providers, setProviders] = useState<Provider[]>([]), [choice, setChoice] = useState("");
+export function useFeedbackSpeech(disabled: boolean) {
   const [phase, setPhase] = useState<"idle" | "starting" | "recording" | "transcribing">("idle"), [error, setError] = useState("");
   const [target, setTarget] = useState<string | null>(null);
   const active = useRef<Recording | null>(null);
-  const endpoint = path + "/speech";
-  useEffect(() => {
-    const abort = new AbortController();
-    void appFetch(endpoint, { credentials: "include", signal: abort.signal }).then(async response => {
-      const value = await response.json(); if (!response.ok) throw new Error(value.message ?? "Speech input is unavailable.");
-      if (!abort.signal.aborted) { setProviders(value.granted ? value.providers ?? [] : []); if (!value.granted) setError("Speech input is not enabled for this application."); }
-    }).catch(e => { if (!abort.signal.aborted) setError(e.message); });
-    return () => { abort.abort(); dispose(active.current); active.current = null; };
-  }, [endpoint]);
+  const { roster, error: rosterError } = useSpeechRoster(value => {
+    if (active.current && (active.current.binding !== value?.binding || !value?.granted)) cancel();
+  });
+  useEffect(() => () => { dispose(active.current); active.current = null; }, []);
   // Recording cancellation synchronizes browser media resources with the disabled state.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { if (disabled) { dispose(active.current); active.current = null; setPhase("idle"); } }, [disabled]);
-  const selected = providers.find(p => JSON.stringify([p.appId, p.key]) === choice) ?? (providers.length === 1 ? providers[0] : undefined);
+  const selected = roster && currentSpeechOption(roster);
   function cancel() { dispose(active.current); active.current = null; setPhase("idle"); }
   async function start(targetId: string, onText: (text: string) => void) {
-    if (!selected?.available || disabled || active.current) return;
-    const op: Recording = { controller: new AbortController(), onText }; active.current = op;
+    if (!roster?.binding || !selected?.available || disabled || active.current) return;
+    const op: Recording = { binding: roster.binding, controller: new AbortController(), onText }; active.current = op;
     const valid = () => active.current === op && !op.controller.signal.aborted;
     setTarget(targetId); setPhase("starting"); setError("");
     try {
@@ -45,11 +40,9 @@ export function useFeedbackSpeech(path: string, disabled: boolean) {
         setPhase("transcribing");
         void (async () => {
           try {
-            const wave = await recordingWave(new Blob(chunks, { type: recorder.mimeType })); if (!valid()) return;
-            const data = new Uint8Array(await wave.arrayBuffer()); let binary = "";
-            for (let at = 0; at < data.length; at += 8192) binary += String.fromCharCode(...data.subarray(at, at + 8192));
-            const response = await appFetch(endpoint, { method: "POST", credentials: "include", signal: op.controller.signal,
-              headers: { "content-type": "application/json" }, body: JSON.stringify({ appId: selected.appId, key: selected.key, audio: btoa(binary) }) });
+            const wave = await recordingWave(new Blob(chunks, { type: recorder.mimeType }), 60); if (!valid()) return;
+            const response = await appFetch("/api/speech/feedback?binding=" + encodeURIComponent(op.binding), { method: "POST", credentials: "include", signal: op.controller.signal,
+              headers: { "content-type": "audio/wav" }, body: wave });
             const value = await response.json(); if (!response.ok) throw new Error(value.message ?? "Speech recognition failed.");
             if (valid()) { if (typeof value.text === "string" && value.text.trim()) op.onText(value.text.trim()); else setError("No speech detected."); }
           } catch (e) { if (valid()) setError(e instanceof Error ? e.message : "Speech recognition failed."); }
@@ -59,7 +52,7 @@ export function useFeedbackSpeech(path: string, disabled: boolean) {
       recorder.start(1000); setPhase("recording"); op.timer = setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, 60_000);
     } catch (e) { if (valid()) { cancel(); setError(e instanceof Error ? e.message : "Microphone access failed."); } }
   }
-  return { providers, choice, setChoice, phase, target, error, available: !!selected?.available, start, cancel,
+  return { phase, target, error: error || rosterError, unavailable: roster && !selected?.available ? (!roster.granted ? "Speech input is not enabled for Harness." : roster.selected ? roster.selected.displayName + " is unavailable." : "Choose your dictation provider in Speech settings.") : null, available: !!selected?.available, start, cancel,
     stop: () => { if (active.current?.recorder?.state === "recording") active.current.recorder.stop(); } };
 }
 
@@ -79,7 +72,7 @@ export function FeedbackSpeech({ speech, target, disabled, onText }: {
       <Button type="button" variant="ghost" size="icon-sm" aria-label="Cancel dictation" title="Cancel dictation" onClick={speech.cancel}><X /></Button>
       <span role="status" className="sr-only">{label}</span>
     </> : <Button type="button" variant="ghost" size="icon-sm" aria-label="Dictate"
-      title={speech.error || (!speech.providers.length ? "No speech provider is available" : !speech.available ? "Choose an available speech provider" : "Dictate up to one minute")}
+      title={speech.error || speech.unavailable || "Dictate up to one minute"}
       disabled={disabled || !speech.available || speech.phase !== "idle"} onClick={() => void speech.start(target, onText)}><Mic /></Button>}
   </div>;
 }

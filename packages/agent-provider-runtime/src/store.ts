@@ -1,3 +1,4 @@
+import { sameProvider } from "./provider-ref.js";
 import { createHash, randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -32,7 +33,6 @@ export const bytesHash = (body: string | Uint8Array) => createHash("sha256").upd
 export const valueHash = (value: unknown) => bytesHash(JSON.stringify(value));
 export const increment = (value: string) => (BigInt(value) + 1n).toString();
 export const sameActor = (a: Actor, b: Actor) => a.userId === b.userId && a.principalId === b.principalId && a.callerAppId === b.callerAppId && a.callerInstallation === b.callerInstallation;
-const sameProvider = (a: AgentProviderRef, b: AgentProviderRef) => a.appId === b.appId && a.installationId === b.installationId && a.key === b.key;
 const safe = (value: string) => /^[A-Za-z0-9-]{1,100}$/.test(value);
 
 /** One atomic session aggregate owns admission, its active slot, controls, events and snapshots. */

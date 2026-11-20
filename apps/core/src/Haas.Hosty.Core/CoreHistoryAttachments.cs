@@ -90,7 +90,7 @@ internal sealed partial class CoreProviderMediation
             using var response = await clients.CreateClient(ClientName).SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
             var bytes = await ReadBoundedAsync(response.Content, ct);
             if (!response.IsSuccessStatusCode) throw new CoreProviderException(response.StatusCode == System.Net.HttpStatusCode.NotFound ? "not_found" : "provider_failed", "The source did not authorize or supply this attachment range.", (int)response.StatusCode);
-            var fresh = await authorization.RevalidateAsync(caller.Authority!, caller.User.Id, caller.PrincipalId, policy.Kind, provider.AppId, provider.Key, policy.ToolName, ct);
+            var fresh = await authorization.RevalidateAsync(caller.Authority!, caller.User.Id, caller.PrincipalId, policy.Kind, provider, policy.ToolName, ct);
             policy.Require(fresh); return bytes;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)

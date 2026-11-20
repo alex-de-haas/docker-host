@@ -92,11 +92,12 @@ internal sealed record CoreProviderPolicy(string Kind, string Operation, string 
 }
 internal sealed record CoreProviderClaims(int Version, string UserId, string PrincipalId, CoreCallerAuthority Origin,
     HostyProviderRef Provider, string? ProviderRevision, string Kind, string Operation, string Method, string Path,
-    string BodyHash, string[] ResourceIds, long Expires, CoreHistoryExportScope? Export = null, CoreTaskDispatchRef? TaskDispatch = null, CoreTaskExecutorDelegation? TaskDelegation = null, CoreAgentWorkflowGrant? AgentWorkflow = null);
+    string BodyHash, string[] ResourceIds, long Expires, CoreHistoryExportScope? Export = null, CoreTaskDispatchRef? TaskDispatch = null, CoreTaskExecutorDelegation? TaskDelegation = null, CoreAgentWorkflowGrant? AgentWorkflow = null, string? ImplementationIncarnation = null);
 internal sealed record CoreProviderIntrospectionRequest(string Token, string Kind, string Key, string Operation,
     string Method, string Path, string BodyHash);
 internal sealed record CoreProviderInvocation(int Version, string UserId, string HostRole, string PrincipalId,
-    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, CoreHistoryExportScope? Export = null, CoreTaskDispatchRef? TaskDispatch = null, CoreTaskExecutorDelegation? TaskDelegation = null, CoreTaskWorkflowBinding? TaskWorkflow = null, CoreAgentWorkflowInvocation? AgentExecution = null);
+    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, CoreHistoryExportScope? Export = null, CoreTaskDispatchRef? TaskDispatch = null, CoreTaskExecutorDelegation? TaskDelegation = null, CoreTaskWorkflowBinding? TaskWorkflow = null, CoreAgentWorkflowInvocation? AgentExecution = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ImplementationId = null);
 internal sealed record CoreProviderBinding(string Token, ProviderDescriptor Descriptor);
 internal sealed record CoreProviderError(string Code, string Message, bool Retryable, string? OperationRef = null);
 internal sealed record CoreProviderFailure(CoreProviderError Error);
@@ -113,7 +114,7 @@ internal sealed partial class CoreProviderMediation(AppRegistryStore apps, AppId
     internal const string ClientName = "core-provider";
     internal const int MaxBytes = 1024 * 1024;
 
-    internal async Task<ProviderDirectory> ListAsync(CoreCapabilityCaller caller, string kind, CancellationToken ct)
+    internal async Task<ProviderDirectory> ListAsync(CoreCapabilityCaller caller, string kind, CancellationToken ct, bool named = false)
     {
         var policy = CoreProviderPolicy.For(kind, kind == "tasks" ? "list" : kind == "task-executor" ? "options" : kind == "agent-sessions" ? "sessions.get" : "capabilities");
         // Discovery carries no content, but still needs current client permission and provider access.
@@ -122,7 +123,7 @@ internal sealed partial class CoreProviderMediation(AppRegistryStore apps, AppId
         var result = new List<ProviderDescriptor>();
         foreach (var app in await apps.ListAppRecordsAsync(ct))
         {
-            var descriptors = ProviderAccessService.Describe(app, kind).ToArray();
+            var descriptors = ProviderAccessService.Describe(app, kind, named).ToArray();
             if (descriptors.Length == 0) continue;
             try { await identity.RequireAccessibleUserAsync(app.Id, caller.User.Id, ct); }
             catch (AppIdentityException) { continue; }
@@ -138,7 +139,7 @@ internal sealed partial class CoreProviderMediation(AppRegistryStore apps, AppId
         if (app is null || PanelIdentity.Installation(app) != provider.InstallationId)
             throw new CoreProviderException("provider_unavailable", "The selected provider installation is unavailable.", 503, true);
         await identity.RequireAccessibleUserAsync(app.Id, caller.User.Id, ct);
-        return ProviderAccessService.Describe(app, kind).SingleOrDefault(d => d.Key == provider.Key)
+        return ProviderAccessService.Find(app, kind, provider.Key, provider.ImplementationId)
             ?? throw new CoreProviderException("provider_unavailable", "The selected installation does not declare this interface.", 503, true);
     }
     internal async Task<CoreProviderBinding> IssueAsync(CoreCapabilityCaller caller, HostyProviderRef provider,
@@ -146,7 +147,7 @@ internal sealed partial class CoreProviderMediation(AppRegistryStore apps, AppId
     {
         ValidateReference(provider);
         if (caller.Authority is null) throw new AppIdentityException("permission_denied", "Current originating authority is required.");
-        caller = await authorization.RevalidateAsync(caller.Authority, caller.User.Id, caller.PrincipalId, policy.Kind, provider.AppId, provider.Key, policy.ToolName, ct);
+        caller = await authorization.RevalidateAsync(caller.Authority, caller.User.Id, caller.PrincipalId, policy.Kind, provider, policy.ToolName, ct);
         policy.Require(caller);
         var descriptor = await ResolveAsync(caller, provider, policy.Kind, ct);
         if (descriptor.Version != 1) throw new CoreProviderException("version_unsupported", "The selected provider does not implement version 1.", 422);
@@ -162,7 +163,7 @@ internal sealed partial class CoreProviderMediation(AppRegistryStore apps, AppId
         var app = (await apps.GetAppAsync(provider.AppId, ct))!;
         var export = await ExportScopeAsync(caller, provider, policy, ct);
         var claims = new CoreProviderClaims(2, caller.User.Id, caller.PrincipalId, caller.Authority!, provider,
-            app.PermissionRevision, policy.Kind, policy.Operation, method, path, Hash(body), resources, clock.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), export, taskDispatch, taskDelegation);
+            app.PermissionRevision, policy.Kind, policy.Operation, method, path, Hash(body), resources, clock.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), export, taskDispatch, taskDelegation, ImplementationIncarnation: descriptor.Incarnation);
         var data = Prefix + Encode(JsonSerializer.SerializeToUtf8Bytes(claims, CoreJson.TypeInfo<CoreProviderClaims>()));
         return new(data + "." + Encode(signing.Sign(Encoding.UTF8.GetBytes(data))), descriptor);
     }
@@ -190,15 +191,15 @@ internal sealed partial class CoreProviderMediation(AppRegistryStore apps, AppId
             && (claims.TaskDelegation is null || claims.Origin.Kind != "task-dispatch"
                 || claims.TaskDelegation.Dispatch != claims.Origin.TaskDispatch))
             throw new AppIdentityException("token_invalid", "Executor dispatch requires its exact Core authorization.");
-        var caller = await authorization.RevalidateAsync(claims.Origin, claims.UserId, claims.PrincipalId, claims.Kind, provider.Id, claims.Provider.Key, policy.ToolName, ct);
+        var caller = await authorization.RevalidateAsync(claims.Origin, claims.UserId, claims.PrincipalId, claims.Kind, claims.Provider, policy.ToolName, ct);
         policy.Require(caller);
         var descriptor = await ResolveAsync(caller, claims.Provider, claims.Kind, ct);
-        if (!descriptor.Available || descriptor.Version != 1 || policy.Capability is { } capability && !descriptor.Capabilities.Contains(capability))
+        if (!descriptor.Available || descriptor.Incarnation != claims.ImplementationIncarnation || descriptor.Version != 1 || policy.Capability is { } capability && !descriptor.Capabilities.Contains(capability))
             throw new AppIdentityException("provider_unavailable", "The reviewed provider interface changed or is unavailable.");
         var export = await ExportScopeAsync(caller, claims.Provider, policy, ct);
         if (CoreJson.Text(export) != CoreJson.Text(claims.Export)) throw new AppIdentityException("permission_denied", "The approved export corpus changed.");
         return new(2, caller.User.Id, caller.User.Role, caller.PrincipalId, caller.App?.Id,
-            caller.App is null ? null : PanelIdentity.Installation(caller.App), claims.Kind, claims.Provider.Key, claims.Operation, claims.ResourceIds, export, claims.TaskDispatch, claims.TaskDelegation, claims.Kind == "tasks" ? claims.Origin.TaskWorkflow : null);
+            caller.App is null ? null : PanelIdentity.Installation(caller.App), claims.Kind, claims.Provider.Key, claims.Operation, claims.ResourceIds, export, claims.TaskDispatch, claims.TaskDelegation, claims.Kind == "tasks" ? claims.Origin.TaskWorkflow : null, ImplementationId: claims.Provider.ImplementationId);
     }
     internal async Task<JsonElement> SendAsync<T>(CoreCapabilityCaller caller, HostyProviderRef provider, CoreProviderPolicy policy,
         string method, string path, T input, string[] resources, string? requestId, CancellationToken ct,
@@ -226,7 +227,7 @@ internal sealed partial class CoreProviderMediation(AppRegistryStore apps, AppId
                         (int)response.StatusCode, (int)response.StatusCode >= 500, requestId);
                 }
                 // Recheck originating grants before delivering data after a slow provider call.
-                var fresh = await authorization.RevalidateAsync(caller.Authority!, caller.User.Id, caller.PrincipalId, policy.Kind, provider.AppId, provider.Key, policy.ToolName, ct);
+                var fresh = await authorization.RevalidateAsync(caller.Authority!, caller.User.Id, caller.PrincipalId, policy.Kind, provider, policy.ToolName, ct);
                 policy.Require(fresh);
                 await ExportScopeAsync(fresh, provider, policy, ct);
                 return document.RootElement.Clone();
@@ -272,6 +273,8 @@ internal sealed partial class CoreProviderMediation(AppRegistryStore apps, AppId
     {
         if (reference is null) throw new CoreProviderException("provider_selection_required", "Select a provider installation and interface explicitly.", 400);
         ValidateId(reference.AppId); ValidateId(reference.InstallationId); ValidateId(reference.Key);
+        if (reference.ImplementationId is { } id && !NamedProviderImplementations.ValidId(id))
+            throw new CoreProviderException("invalid_reference", "Select a valid named provider implementation.", 400);
     }
     internal static void ValidateId(string? id)
     {

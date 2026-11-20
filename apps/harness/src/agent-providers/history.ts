@@ -1,3 +1,4 @@
+import { providerIdentityParts } from "../../shared/provider-reference.js";
 import { createHash } from "node:crypto";
 import { readFile, rename } from "node:fs/promises";
 import path from "node:path";
@@ -14,7 +15,7 @@ import { followLiveHistory } from "./live-history.js";
 export type { ProviderHistoryGap } from "./history-coverage.js";
 
 export type HistoryContactIssue = "denied" | "invalid" | "unavailable";
-const providerKey = (p: AgentProviderRef) => JSON.stringify([p.appId, p.installationId, p.key]);
+const providerKey = (p: AgentProviderRef) => JSON.stringify(providerIdentityParts(p));
 type InstallationFeed = { stop: AbortController; ready: Promise<boolean>; attempted: Promise<boolean>; done: Promise<void>; supported?: boolean; liveRanges?: boolean; retry?: AbortController };
 
 async function readCheckpoint(filename: string): Promise<{ cursor: string; incomplete?: string[] } | undefined> {

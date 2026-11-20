@@ -14,6 +14,7 @@ export type AgentKind = string;
 export type AuthMethod = string;
 export interface AgentConnection {
   id: string; name: string; kind: string; auth: string; revision: number; secretKey: string;
+  publishedInterfaces?: string[]; settingsRevision?: number;
   hostDirectory?: string; baseUrl?: string; importSource?: string; dockerImportIdentity?: string;
 }
 export interface RegistryState {
@@ -227,13 +228,15 @@ export abstract class AgentConnections {
         const policy = this.profile.authMethods[auth]!.credential;
         if (input.secret !== undefined && policy !== "required")
           throw new ConnectionError(400, "provider_secret_invalid", "Use this authentication method's supported account setup.");
+        if (previous && input.expectedSettingsRevision !== undefined && input.expectedSettingsRevision !== String(previous.settingsRevision ?? previous.revision))
+          throw new ConnectionError(409, "connection_changed", "Refresh this connection before changing its settings.");
         const fields = await this.connectionFields(input, previous);
         const changed = input.secret !== undefined || previous !== null && (fields.hostDirectory !== previous.hostDirectory || fields.baseUrl !== previous.baseUrl);
         if (changed && previous) this.assertInactive(previous.id);
         const connection: AgentConnection = { id: previous?.id ?? randomUUID(), name, kind: this.profile.kind, auth,
           revision: (previous?.revision ?? 0) + (!previous || changed ? 1 : 0),
           secretKey: policy === "none" ? "" : changed || !previous ? `agent.${randomUUID()}` : previous.secretKey,
-          ...fields, ...((previous?.importSource ?? importSource) ? { importSource: previous?.importSource ?? importSource } : {}) };
+          ...fields, ...(fields.publishedInterfaces !== undefined ? { settingsRevision: (previous?.settingsRevision ?? previous?.revision ?? 0) + 1 } : {}), ...((previous?.importSource ?? importSource) ? { importSource: previous?.importSource ?? importSource } : {}) };
         if (!previous && policy === "required" && input.secret === undefined)
           throw new ConnectionError(400, "provider_secret_required", "Enter the provider credential.");
         if (typeof input.secret === "string") {
@@ -557,7 +560,7 @@ export abstract class AgentConnections {
   }
   protected validConnection(_connection: AgentConnection): boolean { return true; }
   protected connectionDefaults(): Record<string, unknown> { return {}; }
-  protected async connectionFields(_input: Record<string, unknown>, _previous: AgentConnection | null): Promise<Pick<AgentConnection, "hostDirectory" | "baseUrl">> { return {}; }
+  protected async connectionFields(_input: Record<string, unknown>, _previous: AgentConnection | null): Promise<Pick<AgentConnection, "hostDirectory" | "baseUrl" | "publishedInterfaces">> { return {}; }
   protected async connectionIdentity(_connection: AgentConnection): Promise<string | undefined> { return undefined; }
   protected abstract createAdapter(connection: AgentConnection, binding: ConnectionBinding, docker: boolean): Promise<HarnessAdapter>;
   async prepareAdapter(binding: ConnectionBinding, _context: AdapterPreparation): Promise<HarnessAdapter> { return this.adapter(binding); }

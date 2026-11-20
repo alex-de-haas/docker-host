@@ -123,7 +123,7 @@ internal sealed class CoreProviderOperationStore(CoreDataPaths paths, IClock clo
                 return prior;
             }
             var (policy, scope) = await classify(); policy.Require(caller);
-            var provider = new HostyProviderRef(input.TaskRef.AppId, input.TaskRef.InstallationId, input.TaskRef.Key);
+            var provider = new HostyProviderRef(input.TaskRef.AppId, input.TaskRef.InstallationId, input.TaskRef.Key) { ImplementationId = input.TaskRef.ImplementationId };
             var forwarded = normalized.Input.Action is "ready" or "retry" or "request_changes" && scope?.Selection is { } selection
                 ? normalized.Input with { Selection = selection } : normalized.Input;
             var body = CoreProviderMediation.RequestBody(forwarded, id);

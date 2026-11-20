@@ -73,7 +73,7 @@ internal sealed class CoreProviderMcpTools(IHttpContextAccessor accessor, CoreCa
          => CoreProviderResults.Run(async () =>
         {
             var caller = await Caller("tasks", "get", cancellationToken);
-            return await workflows.SessionWorkflowAsync(caller, "task-get", WorkflowTaskInput<JsonElement>(System.Text.Json.JsonDocument.Parse("{}").RootElement, input.TaskRef.Id), cancellationToken, new(input.TaskRef.AppId, input.TaskRef.InstallationId, input.TaskRef.Key))
+            return await workflows.SessionWorkflowAsync(caller, "task-get", WorkflowTaskInput<JsonElement>(System.Text.Json.JsonDocument.Parse("{}").RootElement, input.TaskRef.Id), cancellationToken, new(input.TaskRef.AppId, input.TaskRef.InstallationId, input.TaskRef.Key) { ImplementationId = input.TaskRef.ImplementationId })
                 ?? await tasks.GetAsync(caller, input, cancellationToken);
         });
 
@@ -93,7 +93,7 @@ internal sealed class CoreProviderMcpTools(IHttpContextAccessor accessor, CoreCa
          => CoreProviderResults.Run(async () =>
         {
             var caller = await Caller("tasks", "edit", cancellationToken);
-            return await workflows.SessionWorkflowAsync(caller, "task-edit", WorkflowTaskInput(input.Input, input.TaskRef.Id), cancellationToken, new(input.TaskRef.AppId, input.TaskRef.InstallationId, input.TaskRef.Key))
+            return await workflows.SessionWorkflowAsync(caller, "task-edit", WorkflowTaskInput(input.Input, input.TaskRef.Id), cancellationToken, new(input.TaskRef.AppId, input.TaskRef.InstallationId, input.TaskRef.Key) { ImplementationId = input.TaskRef.ImplementationId })
                 ?? await tasks.EditAsync(caller, input, cancellationToken);
         });
 
@@ -103,7 +103,7 @@ internal sealed class CoreProviderMcpTools(IHttpContextAccessor accessor, CoreCa
          => CoreProviderResults.Run(async () =>
         {
             var caller = await Caller("tasks", "action", cancellationToken);
-            return await workflows.SessionWorkflowAsync(caller, "task-action", WorkflowTaskInput(input.Input, input.TaskRef.Id), cancellationToken, new(input.TaskRef.AppId, input.TaskRef.InstallationId, input.TaskRef.Key))
+            return await workflows.SessionWorkflowAsync(caller, "task-action", WorkflowTaskInput(input.Input, input.TaskRef.Id), cancellationToken, new(input.TaskRef.AppId, input.TaskRef.InstallationId, input.TaskRef.Key) { ImplementationId = input.TaskRef.ImplementationId })
                 ?? await tasks.ActionAsync(caller, input, cancellationToken);
         });
 

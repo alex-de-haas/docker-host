@@ -1,3 +1,4 @@
+import { sameProvider } from "./provider-ref.js";
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -81,13 +82,15 @@ export class InstallationHistory {
     finally { if (!this.listeners.size && this.db.isOpen) this.db.close(); }
   }
   private scope(owner: HistoryOwner) {
-    return JSON.stringify([this.provider.appId, this.provider.installationId, this.provider.key, ownerKey(owner)]);
+    const key = [this.provider.appId, this.provider.installationId, this.provider.key, ownerKey(owner)];
+    if (this.provider.implementationId != null) key.push(this.provider.implementationId);
+    return JSON.stringify(key);
   }
   /** A previously published receipt distinguishes missing archive data from a normal unpublished outbox. */
   needsRecovery(session: SessionRecord, run: RunRecord): boolean {
     if (session.deleted) return false;
     const ref = session.session.ref.provider;
-    if (ref.appId !== this.provider.appId || ref.installationId !== this.provider.installationId || ref.key !== this.provider.key) return false;
+    if (!sameProvider(ref, this.provider)) return false;
     const scope = this.scope(session.owner), receipt = run.historyReceipt;
     return this.withDatabase(() => {
       const query = "SELECT 1 FROM history_facts WHERE scope=? AND session=? AND run=? AND generation=?";
@@ -137,7 +140,7 @@ export class InstallationHistory {
   /** The session's on-disk outbox makes the database transaction replayable across a crash between stores. */
   publish(session: SessionRecord): void {
     const ref = session.session.ref.provider;
-    if (ref.appId !== this.provider.appId || ref.installationId !== this.provider.installationId || ref.key !== this.provider.key) return;
+    if (!sameProvider(ref, this.provider)) return;
     const scope = this.scope(session.owner);
     if (session.deleted) {
       this.withDatabase(() => {

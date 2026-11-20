@@ -1,3 +1,4 @@
+import { providerIdentityParts } from "../../../shared/provider-reference";
 import type { ProviderTranscriptSource } from "../../../src/agent-providers/transcript-source";
 import type { AssistantEvent } from "./assistant-api";
 import { summarizeToolUse } from "./tool-display";
@@ -19,7 +20,9 @@ export function transcriptSource(event: AssistantEvent): ProviderTranscriptSourc
   if (typeof source.agentId !== "string" || !source.agentId
     || typeof source.runId !== "string" || typeof source.generation !== "string"
     || !source.provider || typeof source.provider.appId !== "string"
-    || typeof source.provider.installationId !== "string" || typeof source.provider.key !== "string") return;
+    || typeof source.provider.installationId !== "string" || typeof source.provider.key !== "string"
+    || source.provider.implementationId != null && (typeof source.provider.implementationId !== "string"
+      || !source.provider.implementationId || source.provider.implementationId.length > 128)) return;
   return source;
 }
 export function nativeSource(event: AssistantEvent): ProviderTranscriptSource | undefined {
@@ -27,7 +30,7 @@ export function nativeSource(event: AssistantEvent): ProviderTranscriptSource | 
   return source && (source.parentAgentId || source.parentToolCallId) ? source : undefined;
 }
 export const nativeRunKey = (source: ProviderTranscriptSource): string => JSON.stringify([
-  source.provider.appId, source.provider.installationId, source.provider.key, source.runId, source.generation,
+  ...providerIdentityParts(source.provider), source.runId, source.generation,
 ]);
 export const nativeAgentKey = (source: ProviderTranscriptSource): string => JSON.stringify([nativeRunKey(source), source.agentId]);
 export const isNativeDecision = (event: AssistantEvent): boolean => ["approval_request", "approval_decision", "question_request", "question_answered"].includes(event.type);

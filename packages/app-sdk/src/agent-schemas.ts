@@ -25,7 +25,7 @@ const historyObservation = {
     object({ kind: { const: "event" }, event: ref("Event"), cursor: text(8192) })] },
 };
 export const AGENT_SCHEMAS: Record<string, Schema> = {
-  ProviderRef: object(refProperties),
+  ProviderRef: object({ ...refProperties, implementationId: { anyOf: [text(128), { type: "null" }] } }, Object.keys(refProperties)),
   QualifiedRef: object({ provider: ref("ProviderRef"), id }),
   Instruction: object({ id: text(128), text: { type: "string", maxLength: 262144 } }),
   Skill: object({ skillId: digest, expectedDigest: digest }, ["skillId"]),

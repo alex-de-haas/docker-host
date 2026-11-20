@@ -19,13 +19,27 @@ const errorAt = (id, text) => { const node=element(id);node.textContent=text;nod
 const reportError = error => { const text=error instanceof Error?error.message:String(error);if(element('editor').open)errorAt('form-error',text);else if(element('login-dialog').open)errorAt('login-error',text);else message(text,'error'); };
 const authOptions=definition.authentication.map(method=>method.id);
 for(const value of authOptions){const option=document.createElement('option');option.value=value;option.textContent=authLabels[value];element('auth').append(option);}
+function showInterfaceChoices(auth, enabled = []) {
+  const container = element('interface-choices');
+  const choices = authDefinition(auth)?.interfaceChoices ?? [];
+  container.replaceChildren();
+  container.hidden = choices.length === 0;
+  for (const choice of choices) {
+    const label = document.createElement('label'), checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = choice.kind;
+    checkbox.checked = enabled.includes(choice.kind);
+    label.append(checkbox, document.createTextNode(' ' + choice.label));
+    container.append(label);
+  }
+}
 const fields = () => {
   const auth=element('auth').value;
   element('secret-field').hidden=!authDefinition(auth)?.credential;element('secret').required=!editing&&!element('secret-field').hidden;
   element('host-field').hidden=!authDefinition(auth)?.hostDirectory;element('hostDirectory').required=authDefinition(auth)?.hostDirectory;
   element('url-field').hidden=!definition.baseUrl;element('browser-login-description').hidden=!authDefinition(auth)?.browserLogin;element('save-provider').textContent=authDefinition(auth)?.browserLogin&&!editing?'Add and sign in':'Save provider';
 };
-element('auth').addEventListener('change',()=>{element('secret').value='';fields();});fields();
+element('auth').addEventListener('change',()=>{element('secret').value='';showInterfaceChoices(element('auth').value);fields();});fields();
 function setBusy(value){busy=value;for(const node of document.querySelectorAll('button'))node.disabled=value||node.dataset.unavailable==='true'||node.dataset.loading==='true';element('connection-fields').disabled=value;element('auth').disabled=!!editing;}
 async function act(action){if(busy)return;setBusy(true);try{await action();}catch(error){reportError(error);}finally{setBusy(false);focusAfterBusy?.focus();focusAfterBusy=null;}}
 async function request(path,method='GET',body){
@@ -202,7 +216,7 @@ function clearUsage(){closeUsage(false);usageEntries.clear();usageViews.clear();
 
 function openEditor(connection=null,trigger=element('add-provider')){
   editing=connection;editorTrigger=trigger;element('connection-form').reset();element('form-title').textContent=connection?`Edit ${connection.name}`:'Add provider';element('form-description').textContent=connection?'Update this connection’s name or settings.':'Configure this provider’s connection.';
-  element('name').value=connection?.name??'';element('auth').value=connection?.auth??authOptions[0];element('auth').disabled=!!connection;element('secret').value='';element('hostDirectory').value=connection?.hostDirectory??'';element('baseUrl').value=connection?.baseUrl??'';errorAt('form-error','');fields();closeMenus();element('editor').showModal();element('name').focus();
+  element('name').value=connection?.name??'';element('auth').value=connection?.auth??authOptions[0];element('auth').disabled=!!connection;element('secret').value='';element('hostDirectory').value=connection?.hostDirectory??'';element('baseUrl').value=connection?.baseUrl??'';errorAt('form-error','');showInterfaceChoices(element('auth').value,connection?.publishedInterfaces);fields();closeMenus();element('editor').showModal();element('name').focus();
 }
 function closeEditor(){if(busy)return;element('secret').value='';editing=null;element('editor').close();(editorTrigger?.isConnected?editorTrigger:element('add-provider')).focus();}
 async function showLogin(login,epoch=++loginEpoch){
@@ -223,6 +237,10 @@ async function closeLogin(){
 }
 element('connection-form').onsubmit=event=>{event.preventDefault();void act(async()=>{
   const auth=element('auth').value,input={name:element('name').value,auth,...(editing?{expectedRevision:editing.revision}:{}),...(element('secret').value?{secret:element('secret').value}:{}),...(authDefinition(auth)?.hostDirectory?{hostDirectory:element('hostDirectory').value}:{}),...(definition.baseUrl?{baseUrl:element('baseUrl').value}:{})};
+  if (authDefinition(auth)?.interfaceChoices) {
+    input.publishedInterfaces = [...element('interface-choices').querySelectorAll('input:checked')].map(box => box.value);
+    if (editing?.settingsRevision) input.expectedSettingsRevision = editing.settingsRevision;
+  }
   const created=!editing,result=await request('/api/settings/connections'+(editing?'/'+encodeURIComponent(editing.id):''),editing?'PUT':'POST',input);
   element('secret').value='';element('editor').close();editing=null;await load('Provider saved. Existing chats keep their provider.');focusAfterBusy=element('add-provider');
   if(created&&authDefinition(auth)?.browserLogin){const saved=result?.saved;if(typeof saved?.id!=='string'||typeof saved.revision!=='string')throw new Error(`Provider saved. Refresh and choose Sign in with ${loginName} from its menu.`);focusAfterBusy=null;await showLogin(await request(`/api/settings/connections/${encodeURIComponent(saved.id)}/login`,'POST',{expectedRevision:saved.revision}));}

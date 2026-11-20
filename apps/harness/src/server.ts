@@ -19,6 +19,7 @@ import { createHostyUiResponse } from "@hosty-sdk/app/ui/server";
 import { readOwnPermissionNotice } from "@hosty-sdk/app/permissions/server";
 import { delegationCredential } from "./session-delegation.js";
 import { speechRoute } from "./speech.js";
+import { SpeechPreferences } from "./speech-preferences.js";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type ProviderInvocation } from "@hosty-sdk/app/providers";
 import { HandoffStore } from "./handoff/store.js";
@@ -85,6 +86,7 @@ export function createGatewayServer(
   const execution = new AgentSessionService(manager, history.provider);
   const feedback = new FeedbackService(manager, undefined, providers);
   const promptTemplates = new PromptTemplateStore(manager.store.dataDir);
+  const speechPreferences = new SpeechPreferences(manager.store.dataDir);
   const handoffs = new HandoffStore(manager, settings, providers);
   const eventStreams = new EventStreamTransport(manager, Date.now, connections, tasks);
   const recovered = (async () => {
@@ -107,7 +109,7 @@ export function createGatewayServer(
       const credential = readAppCredential(request) ?? request.headers.authorization?.match(/^Bearer (\S+)$/)?.[1];
       if (!credential) throw new AgentApiError("actor_required", "Sign in through Core before using a provider.", 401);
       return credential;
-    }, async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, eventStreams, tasks, feedback, history, execution, promptTemplates); })).catch((error) => {
+    }, async () => { if (await internal?.(request, response)) return; return route(request, response, manager, adapter, settings, providers, proxy, facade, connections, handoffs, eventStreams, tasks, feedback, history, execution, promptTemplates, speechPreferences); })).catch((error) => {
       if (response.destroyed) return;
       if (error instanceof ProviderError || error instanceof AgentApiError || error instanceof FeedbackError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
       if (error instanceof SessionStorageError) { sendJson(response, error.status, { code: error.code, message: error.message }); return; }
@@ -162,6 +164,7 @@ async function route(
   history: HistoryService,
   execution: AgentSessionService,
   promptTemplates: PromptTemplateStore,
+  speechPreferences: SpeechPreferences,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://gateway.local");
   const method = request.method ?? "GET";
@@ -202,7 +205,8 @@ async function route(
     return;
   }
 
-  if (url.pathname.startsWith("/api/hosty/ui/")) {
+  const legacyFeedbackSpeech = url.pathname === "/api/hosty/ui/feedback/speech";
+  if (url.pathname.startsWith("/api/hosty/ui/") && !legacyFeedbackSpeech) {
     const token = readAppCredential(request);
     const session = await resolveAppSession(token);
     const headers = new Headers();
@@ -413,7 +417,9 @@ async function route(
     sendJson(response, result.status, result.body); return;
   }
 
-  if (await speechRoute(request, response, url)) return;
+  if (legacyFeedbackSpeech && actor.via !== "app-session") throw new ProviderError("app_session_required", "Open feedback through Hosty.", 403);
+  if (await speechRoute(request, response, url, { userId: actor.userId, preferences: speechPreferences,
+    readJson: () => readJson(request, legacyFeedbackSpeech ? 6 * 1024 * 1024 : MAX_BODY_BYTES), ownsSession: async id => (await manager.getSession(id))?.createdBy === actor.userId })) return;
 
   if (url.pathname === "/api/assistant/v1/handoffs" && method === "POST") {
     const prepared = await handoffs.prepare(actor.userId, await readJson(request), consumer);

@@ -8,7 +8,7 @@ internal static class CoreHistoryEndpoints
     {
         const string root = "/api/history/v1";
         app.MapGet(root + "/providers", async (HttpRequest request, CoreCapabilityAuthorization auth, CoreHistoryAdapter history, CancellationToken ct) =>
-            await CoreProviderApi.Handle(async () => await history.ProvidersAsync(await Caller(request, auth, "capabilities", ct), ct)));
+            await CoreProviderApi.Handle(async () => await history.ProvidersAsync(await Caller(request, auth, "capabilities", ct), ct, CoreProviderApi.Named(request))));
         app.MapPost(root + "/capabilities", async (CoreHistoryProvider input, HttpRequest request, CoreCapabilityAuthorization auth, CoreHistoryAdapter history, CancellationToken ct) =>
             await CoreProviderApi.Handle(async () => await history.CapabilitiesAsync(await Caller(request, auth, "capabilities", ct), input.Provider, ct)));
         app.MapPost(root + "/conversations/query", async (CoreConversationQuery input, HttpRequest request, CoreCapabilityAuthorization auth, CoreHistoryAdapter history, CoreHistoryCursorStore cursors, CancellationToken ct) =>

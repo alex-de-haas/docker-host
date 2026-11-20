@@ -1,3 +1,4 @@
+import { sameProvider } from "./provider-ref.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -60,4 +61,12 @@ it("starts an unrelated injected engine with its declared settings and capabilit
       for (const listener of process.listeners(signal)) if (!signals.get(signal)!.includes(listener)) process.removeListener(signal, listener);
     restore(); await rm(root, { recursive: true, force: true });
   }
+});
+
+it("distinguishes implementation owners and retains static ownership across serialization", () => {
+  const entry = { appId: "other.engine", installationId: "installed", key: "default" };
+  expect(sameProvider(entry, { ...entry, implementationId: null })).toBe(true);
+  expect(sameProvider({ ...entry, implementationId: "one" }, entry)).toBe(false);
+  expect(sameProvider({ ...entry, implementationId: "one" }, { ...entry, implementationId: "two" })).toBe(false);
+  expect(sameProvider({ ...entry, implementationId: "one" }, { ...entry, implementationId: "one" })).toBe(true);
 });

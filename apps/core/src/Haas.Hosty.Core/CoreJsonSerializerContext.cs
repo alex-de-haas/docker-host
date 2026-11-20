@@ -359,6 +359,9 @@ internal static class CoreJson
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 
 // Persisted state / internal serialization roots.
+[JsonSerializable(typeof(ProviderImplementationPublication))]
+[JsonSerializable(typeof(ProviderImplementationReceipt))]
+[JsonSerializable(typeof(NamedProviderCatalog))]
 [JsonSerializable(typeof(ProviderDirectory))]
 [JsonSerializable(typeof(UiBootstrap))]
 [JsonSerializable(typeof(UiNavigationCatalog))]

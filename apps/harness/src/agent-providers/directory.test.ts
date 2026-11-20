@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { AgentConnectionDirectory } from "./directory.js";
+import { createHash } from "node:crypto";
+import { AgentConnectionDirectory, agentSelectionId } from "./directory.js";
 import type { AgentConnectionEntry, AgentDirectoryBackend, AgentProviderEntry } from "./types.js";
 
 const roots: string[] = [];
@@ -23,6 +24,19 @@ describe("consumer-owned agent selections", () => {
     const { directory } = await fixture();
     expect((await directory.list(authority)).connections).toHaveLength(1);
     expect(await directory.binding(undefined, authority)).toBeNull();
+  });
+  it("preserves static account keys and distinguishes named implementations sharing the same connection", async () => {
+    const { directory, provider } = await fixture();
+    const connection = { id: "account", revision: "1" };
+    const expected = createHash("sha256").update(JSON.stringify([provider.ref.appId, provider.ref.installationId, provider.ref.key, "account", "1"])).digest("hex");
+    expect(agentSelectionId({ provider: { ...provider.ref, implementationId: null }, connection })).toBe(expected);
+    provider.ref.implementationId = "work";
+    const work = (await directory.list(authority)).connections[0]!;
+    expect(work.id).not.toBe(expected);
+    await directory.setDefault(work.id, authority);
+    provider.ref.implementationId = "personal";
+    expect((await directory.list(authority)).connections[0]!.id).not.toBe(work.id);
+    await expect(directory.binding(undefined, authority)).rejects.toMatchObject({ code: "provider_connection_changed" });
   });
   it("pins installation and account revision without credentials or vendor identity", async () => {
     const { directory, provider, setAccounts } = await fixture();

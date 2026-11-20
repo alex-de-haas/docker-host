@@ -52,7 +52,7 @@ export function DecisionsInbox() {
       if (!history) for (const projection of sources.value.items) next.push({ ...projection, projection });
     } else unavailable("Chat permissions and recovery", sources.reason);
     if (reviews.status === "fulfilled") {
-      if (!history) for (const task of reviews.value) next.push({ id: `review:${task.ref.appId}:${task.ref.installationId}:${task.ref.key}:${task.ref.id}`, kind: "review", title: task.title, taskId: taskReferenceKey(task.ref), createdAt: task.updatedAt, task });
+      if (!history) for (const task of reviews.value) next.push({ id: task.ref.implementationId != null ? "review:" + taskReferenceKey(task.ref) : `review:${task.ref.appId}:${task.ref.installationId}:${task.ref.key}:${task.ref.id}`, kind: "review", title: task.title, taskId: taskReferenceKey(task.ref), createdAt: task.updatedAt, task });
     } else unavailable("Task reviews", reviews.reason);
     if (permissions.status === "fulfilled") {
       const state = permissions.value;
