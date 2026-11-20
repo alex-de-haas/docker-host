@@ -15,13 +15,14 @@ internal static class CoreProviderApi
         catch (SandboxException ex) { return CoreJson.Json(new CoreProviderFailure(new(ex.Code, ex.Message, false)), ex.Status); }
         catch (System.Text.Json.JsonException) { return CoreJson.Json(new CoreProviderFailure(new("provider_response_invalid", "The provider returned an invalid response.", false)), 502); }
     }
+    internal static bool Named(HttpRequest request) => string.Equals(request.Query["named"], "true", StringComparison.OrdinalIgnoreCase);
     internal static void Map(WebApplication app)
     {
         const string tasks = "/api/tasks/v1";
         app.MapGet(tasks + "/providers", async (HttpRequest request, CoreCapabilityAuthorization auth, CoreTaskAdapter service, CancellationToken ct) =>
-            await Handle(async () => await service.ProvidersAsync(await Caller(request, auth, "tasks", "list", ct), ct)));
+            await Handle(async () => await service.ProvidersAsync(await Caller(request, auth, "tasks", "list", ct), ct, Named(request))));
         app.MapPost(tasks + "/options", async (CoreTaskOptions input, HttpRequest request, CoreCapabilityAuthorization auth, CoreTaskAdapter service, CancellationToken ct) =>
-            await Handle(async () => await service.OptionsAsync(await Caller(request, auth, "tasks", "options", ct), input, ct)));
+            await Handle(async () => await service.OptionsAsync(await Caller(request, auth, "tasks", "options", ct), input, ct, Named(request))));
         app.MapPost(tasks + "/list", async (CoreTaskQuery input, HttpRequest request, CoreCapabilityAuthorization auth, CoreTaskAdapter service, CancellationToken ct) =>
             await Handle(async () => await service.ListAsync(await Caller(request, auth, "tasks", "list", ct), input, ct)));
         app.MapPost(tasks + "/get", async (CoreTaskGet input, HttpRequest request, CoreCapabilityAuthorization auth, CoreTaskAdapter service, CancellationToken ct) =>
@@ -34,7 +35,7 @@ internal static class CoreProviderApi
             await Handle(async () => await service.ActionAsync(await Caller(request, auth, "tasks", "action", ct), input, ct)));
         const string sessions = "/api/agent-sessions/v1";
         app.MapGet(sessions + "/providers", async (HttpRequest request, CoreCapabilityAuthorization auth, CoreAgentSessionAdapter service, CancellationToken ct) =>
-            await Handle(async () => await service.ProvidersAsync(await Caller(request, auth, "agent-sessions", "sessions.get", ct), ct)));
+            await Handle(async () => await service.ProvidersAsync(await Caller(request, auth, "agent-sessions", "sessions.get", ct), ct, Named(request))));
         app.MapPost(sessions + "/sessions/query", async (CoreAgentSessionQuery input, HttpRequest request, CoreCapabilityAuthorization auth, CoreAgentSessionAdapter service, CancellationToken ct) =>
             await Handle(async () => await service.ListAsync(await Caller(request, auth, "agent-sessions", "sessions.query", ct), input, ct)));
         app.MapPost(sessions + "/sessions/get", async (CoreAgentSessionGet input, HttpRequest request, CoreCapabilityAuthorization auth, CoreAgentSessionAdapter service, CancellationToken ct) =>

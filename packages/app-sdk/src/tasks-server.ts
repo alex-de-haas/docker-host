@@ -11,7 +11,8 @@ export class TaskClient {
     return this.providers.taskRequest<T>(this.provider, "tasks", route, method, input, this.userToken, signal);
   }
   private id(ref: TaskRef): string {
-    if (ref.appId !== this.provider.appId || ref.installationId !== this.provider.installationId || ref.key !== this.provider.key)
+    if (ref.appId !== this.provider.appId || ref.installationId !== this.provider.installationId || ref.key !== this.provider.key
+        || (ref.implementationId ?? null) !== (this.provider.implementationId ?? null))
       throw new Error("The task belongs to another provider installation.");
     return encodeURIComponent(ref.id);
   }

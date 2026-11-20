@@ -28,7 +28,8 @@ internal sealed partial class CoreAgentExecution
             throw new AppIdentityException("permission_denied", "A session workflow belongs to the consuming executor installation.");
         if (!AppManagementAuthorization.HasPermission(consumer, CoreAppPermissions.TaskExecutors))
             throw new AppIdentityException("app_permission_required", "Session workflows require providers.task-executor.");
-        if (!ProviderAccessService.Describe(consumer, "task-executor").Any(d => d.Key == binding.Executor.Key && d.Version == 1 && d.Capabilities.Contains("session-workflow")))
+        if (ProviderAccessService.Find(consumer, "task-executor", binding.Executor.Key, binding.Executor.ImplementationId) is not { Version: 1 } target
+            || binding.Executor.ImplementationId is not null && !target.Available || !target.Capabilities.Contains("session-workflow"))
             throw new CoreProviderException("unsupported_capability", "The consumer must declare the reviewed session-workflow executor capability.", 422);
     }
 
@@ -93,9 +94,9 @@ internal sealed partial class CoreProviderMediation
             var expectedSource = record.Authority is { } authority
                 ? (await operations.TaskDispatchAsync(authority.Dispatch, ct)).TaskAuthorization!.Scope.TaskRef : null;
             var matches = expectedSource is not null
-                ? source.AppId == expectedSource.AppId && source.InstallationId == expectedSource.InstallationId && source.Key == expectedSource.Key
+                ? source.AppId == expectedSource.AppId && source.InstallationId == expectedSource.InstallationId && source.Key == expectedSource.Key && source.ImplementationId == expectedSource.ImplementationId
                 : source.AppId == binding.Executor.AppId && source.InstallationId == binding.Executor.InstallationId
-                    && ProviderAccessService.Describe(selectedConsumer, "tasks").Any(d => d.Key == source.Key && d.Version == 1);
+                    && ProviderAccessService.Find(selectedConsumer, "tasks", source.Key, source.ImplementationId) is { Version: 1 } sourceDescriptor && (source.ImplementationId is null || sourceDescriptor.Available);
             if (!matches) throw new AppIdentityException("permission_denied", "Session task tools use their current selected task provider.");
         }
         var agent = new CoreAgentWorkflowInvocation(record.Request.Provider, record.Request.SessionId!, record.Request.RunId!);
@@ -104,12 +105,12 @@ internal sealed partial class CoreProviderMediation
         if (body.Length > MaxBytes) throw new CoreProviderException("budget_exceeded", "The workflow request exceeds 1 MiB.", 413);
         var path = "/sessions/" + Uri.EscapeDataString(binding.SessionId) + "/workflow";
         var consumer = (await apps.GetAppAsync(binding.Executor.AppId, ct))!;
-        var descriptor = ProviderAccessService.Describe(consumer, "task-executor").Single(d => d.Key == binding.Executor.Key && d.Version == 1);
-        if (!descriptor.Available || descriptor.Url is null) throw new CoreProviderException("provider_unavailable", "The workflow executor is unavailable.", 503, true);
+        var descriptor = ProviderAccessService.Find(consumer, "task-executor", binding.Executor.Key, binding.Executor.ImplementationId);
+        if (descriptor is not { Available: true, Version: 1, Url: not null }) throw new CoreProviderException("provider_unavailable", "The workflow executor is unavailable.", 503, true);
         var grant = new CoreAgentWorkflowGrant(record.Id, binding, agent);
         var expires = clock.UtcNow.AddSeconds(120); if (record.ExpiresAt < expires) expires = record.ExpiresAt;
         var claims = new CoreProviderClaims(2, record.UserId, record.PrincipalId, record.Origin, binding.Executor,
-            consumer.PermissionRevision, "task-executor", "session.workflow", "POST", path, Hash(body), [], expires.ToUnixTimeSeconds(), AgentWorkflow: grant);
+            consumer.PermissionRevision, "task-executor", "session.workflow", "POST", path, Hash(body), [], expires.ToUnixTimeSeconds(), AgentWorkflow: grant, ImplementationIncarnation: descriptor.Incarnation);
         var data = Prefix + Encode(JsonSerializer.SerializeToUtf8Bytes(claims, CoreJson.TypeInfo<CoreProviderClaims>()));
         using var request = new HttpRequestMessage(HttpMethod.Post, descriptor.Url.TrimEnd('/') + path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", data + "." + Encode(signing.Sign(Encoding.UTF8.GetBytes(data))));
@@ -143,11 +144,11 @@ internal sealed partial class CoreProviderMediation
             || CoreJson.Text(record.Origin) != CoreJson.Text(claims.Origin)
             || grant.Agent != new CoreAgentWorkflowInvocation(record.Request.Provider, record.Request.SessionId!, record.Request.RunId!))
             throw new AppIdentityException("permission_denied", "The workflow no longer belongs to this exact actor and native run.");
-        var descriptor = ProviderAccessService.Describe(consumer, "task-executor").SingleOrDefault(d => d.Key == binding.Executor.Key && d.Version == 1);
-        if (descriptor?.Available != true || !descriptor.Capabilities.Contains("session-workflow"))
+        var descriptor = ProviderAccessService.Find(consumer, "task-executor", binding.Executor.Key, binding.Executor.ImplementationId);
+        if (descriptor is not { Available: true, Version: 1 } || descriptor.Incarnation != claims.ImplementationIncarnation || !descriptor.Capabilities.Contains("session-workflow"))
             throw new AppIdentityException("provider_unavailable", "The reviewed session workflow is unavailable.");
         return new(2, record.UserId, origin.User.Role, record.PrincipalId, record.CallerAppId, PanelIdentity.Installation(consumer),
-            "task-executor", binding.Executor.Key, "session.workflow", [], AgentExecution: grant.Agent);
+            "task-executor", binding.Executor.Key, "session.workflow", [], AgentExecution: grant.Agent, ImplementationId: binding.Executor.ImplementationId);
     }
 }
 

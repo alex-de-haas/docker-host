@@ -23,7 +23,7 @@ internal sealed record CoreAgentInvocation(int Version, string UserId, string Ho
 internal sealed record CoreAgentAuthorization(string Id, CoreCallerAuthority Origin, string UserId, string PrincipalId,
     string CallerAppId, DateTimeOffset CallerInstallation, string? CallerRevision,
     CoreAgentAuthorizeRequest Request, string? ProviderRevision, DateTimeOffset ExpiresAt, bool Admitted = false,
-    CoreAgentLease[]? Leases = null, CoreAgentTaskAuthority? Authority = null, bool WorkspaceLeasesClosed = false, string? Generation = null);
+    CoreAgentLease[]? Leases = null, CoreAgentTaskAuthority? Authority = null, bool WorkspaceLeasesClosed = false, string? Generation = null, string? ImplementationIncarnation = null);
 internal sealed record CoreAgentLease(string WorkspaceId, string WorktreeId, string SessionId, string LeaseId, string? RequestId = null, bool Released = false, long? Revision = null);
 
 // Only authorization metadata is retained. Prompts, native histories and bearer secrets never enter this store.
@@ -229,7 +229,7 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
         {
             var hash = AppIdentityService.HashToken(credential);
             var actor = await identity.RequireOperationHashAsync(hash, consumer.Id,
-                s => s.Kind == "provider" && s.TargetAppId == input.Provider.AppId && s.ProviderKind == "agent" && s.Key == input.Provider.Key, ct);
+                s => s.AllowsProvider("agent", input.Provider.AppId, input.Provider.Key, input.Provider.ImplementationId), ct);
             var (user, _) = await identity.RequireAccessibleUserAsync(consumer.Id, actor.UserId, ct);
             origin = new("app", AppId: consumer.Id, Installation: consumer.InstalledAt,
                 PermissionRevision: consumer.PermissionRevision, IdentityHash: hash);
@@ -254,8 +254,9 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
         var id = input.Operation == "runs.start"
             ? Hash(requestIdentity)
             : Hash($"operation-v2:{CoreJson.Text(consumer.PermissionRevision)}:{CoreJson.Text(provider.PermissionRevision)}:{requestIdentity}");
+        if (input.Operation != "runs.start" && descriptor.Incarnation is { } generation) id = Hash($"{id}:{generation}");
         var record = await store.Put(new(id, origin, caller.User.Id, caller.PrincipalId,
-            consumer.Id, consumer.InstalledAt, consumer.PermissionRevision, input, provider.PermissionRevision, expires, Authority: input.Authority), ct);
+            consumer.Id, consumer.InstalledAt, consumer.PermissionRevision, input, provider.PermissionRevision, expires, Authority: input.Authority, ImplementationIncarnation: descriptor.Incarnation), ct);
         await ValidateRecord(provider, record, ct, admitted: false);
         var tokenExpires = clock.UtcNow.AddMinutes(2); if (record.ExpiresAt < tokenExpires) tokenExpires = record.ExpiresAt;
         var token = SignToken(Prefix, new CoreAgentToken(id, tokenExpires.ToUnixTimeSeconds()));
@@ -264,8 +265,8 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
     private static ProviderDescriptor Descriptor(AppRecord provider, HostyProviderRef reference)
     {
         if (PanelIdentity.Installation(provider) != reference.InstallationId) throw new CoreProviderException("provider_unavailable", "The provider installation changed.", 503);
-        var descriptor = ProviderAccessService.Describe(provider, "agent").SingleOrDefault(d => d.Key == reference.Key && d.Version == 1);
-        if (descriptor?.Available != true || descriptor.Url is null) throw new CoreProviderException("provider_unavailable", "The selected agent interface is unavailable.", 503);
+        var descriptor = ProviderAccessService.Find(provider, "agent", reference.Key, reference.ImplementationId);
+        if (descriptor is not { Available: true, Version: 1, Url: not null }) throw new CoreProviderException("provider_unavailable", "The selected agent interface is unavailable.", 503);
         return descriptor;
     }
     internal async Task<(CoreAgentAuthorization Record, CoreCapabilityCaller Origin)> ValidateRecord(AppRecord provider,
@@ -274,7 +275,8 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
         if (record.Request.Provider.AppId != provider.Id || record.Request.Provider.InstallationId != PanelIdentity.Installation(provider)
             || record.ProviderRevision != provider.PermissionRevision || record.ExpiresAt <= clock.UtcNow
             || admitted && !record.Admitted) throw new AppIdentityException("permission_denied", "This execution authority is unavailable.");
-        Descriptor(provider, record.Request.Provider);
+        if (Descriptor(provider, record.Request.Provider).Incarnation != record.ImplementationIncarnation)
+            throw new AppIdentityException("permission_denied", "The admitted provider implementation changed.");
         var consumer = await apps.GetAppAsync(record.CallerAppId, ct);
         if (consumer is null || consumer.InstalledAt != record.CallerInstallation || consumer.PermissionRevision != record.CallerRevision
             || !AppManagementAuthorization.HasPermission(consumer, CoreAppPermissions.AgentProviders))
@@ -289,7 +291,7 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
         else
         {
             origin = await authorization.RevalidateAsync(record.Origin, record.UserId, record.PrincipalId,
-                "agent", provider.Id, record.Request.Provider.Key, "agent_invoke", ct, retainedTask: record.Admitted);
+                "agent", record.Request.Provider, "agent_invoke", ct, retainedTask: record.Admitted);
             origin.Require("", CoreAppPermissions.AgentProviders);
         }
         if (!AppAccessPolicy.IsAdmin(origin.User)) throw new AppIdentityException("admin_required", "Native execution requires a current administrator.");

@@ -20,6 +20,7 @@ internal sealed record PlatformCapability(
 internal static class PlatformCapabilities
 {
     public const string Assistant = "assistant";
+    public const string TextToSpeech = "text-to-speech";
     public const string SpeechToText = "speech-to-text";
     public const string Translation = "translation";
     public const string Tasks = "tasks";
@@ -27,7 +28,7 @@ internal static class PlatformCapabilities
     public const string ConversationHistory = "conversation-history";
     public const string AgentSessions = "agent-sessions";
     public const string Agent = "agent";
-    public static readonly IReadOnlyList<string> ConsentRoles = [Assistant, SpeechToText, Translation, Tasks, TaskExecutor, ConversationHistory, AgentSessions, Agent];
+    public static readonly IReadOnlyList<string> ConsentRoles = [Assistant, SpeechToText, TextToSpeech, Translation, Tasks, TaskExecutor, ConversationHistory, AgentSessions, Agent];
 
     // Only recognized consent-bearing roles participate; legacy provisioning slots stay unchanged.
     public static IReadOnlyList<string> RequestedRoles(IReadOnlyList<string> provides)
@@ -35,6 +36,7 @@ internal static class PlatformCapabilities
 
     public static string DescribeRole(string role) => role switch
     {
+        TextToSpeech => "Generate spoken audio from text for authorized apps",
         SpeechToText => "Provide speech recognition for authorized apps",
         Translation => "Provide text translation for authorized apps using configured translation accounts",
         Tasks => "Store and manage tasks for authorized callers",

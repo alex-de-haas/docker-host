@@ -6,8 +6,8 @@ namespace Haas.Hosty.Core;
 internal sealed partial class CoreHistoryAdapter(CoreProviderMediation providers, AppIdentityService identity,
     UserDirectoryStore users, IClock clock)
 {
-    internal Task<ProviderDirectory> ProvidersAsync(CoreCapabilityCaller caller, CancellationToken ct)
-        => providers.ListAsync(caller, "conversation-history", ct);
+    internal Task<ProviderDirectory> ProvidersAsync(CoreCapabilityCaller caller, CancellationToken ct, bool named = false)
+        => providers.ListAsync(caller, "conversation-history", ct, named);
     internal async Task<HostyHistoryCapabilities> CapabilitiesAsync(CoreCapabilityCaller caller, HostyProviderRef provider, CancellationToken ct)
     {
         var result = await Send<JsonElement?>(caller, provider, "capabilities", "GET", "/capabilities", null, [], null, ct);

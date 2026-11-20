@@ -57,13 +57,24 @@ it("revalidates retained bytes and the signed execution at every dispatch guard 
 });
 
 it("preserves an optional qualified task source in the exact signed body without assuming its identity", async () => {
-  const fetcher = introspection(), source = { appId: "another.task-source", installationId: "source-installation", key: "work" };
+  const fetcher = introspection(), source = { appId: "another.task-source", installationId: "source-installation", key: "work", implementationId: "board-a" };
   const value = { ...workflow(), action: "task-get", source }, body = JSON.stringify(value);
   const mediated = (await mediatedSessionWorkflow(request(body), new URL(pathname, "http://consumer.test")))!;
   expect(await mediated.read()).toEqual(value);
   const [, init] = fetcher.mock.calls[0]! as unknown as [URL, RequestInit];
   expect(JSON.parse(String(init.body)).bodyHash).toBe(createHash("sha256").update(body).digest("hex"));
   await mediated.validate(); expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it("rejects a sibling named agent on dispatch after admitting the exact selected implementation", async () => {
+  const named = { ...agent, provider: { ...agent.provider, implementationId: "work" } };
+  const fetcher = introspection({ ...invocation(), agentExecution: named });
+  const body = JSON.stringify({ ...workflow(), agent: named });
+  const mediated = (await mediatedSessionWorkflow(request(body), new URL(pathname, "http://consumer.test")))!;
+  expect((await mediated.read()).agent).toEqual(named);
+  fetcher.mockImplementationOnce(async () => Response.json({ ...invocation(), agentExecution: { ...named,
+    provider: { ...named.provider, implementationId: "personal" } } }));
+  await expect(mediated.validate()).rejects.toMatchObject({ code: "permission_denied", status: 403 });
 });
 
 it("compares signed agent fields independently of JSON object field order", async () => {

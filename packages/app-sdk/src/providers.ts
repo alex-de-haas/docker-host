@@ -1,5 +1,5 @@
 /** Provider categories supported by Core. Task execution does not expose model/profile configuration. */
-export type ProviderKind = "agent" | "speech-to-text" | "assistant" | "translation" | "tasks" | "task-executor" | "conversation-history" | "agent-sessions";
+export type ProviderKind = "agent" | "speech-to-text" | "text-to-speech" | "assistant" | "translation" | "tasks" | "task-executor" | "conversation-history" | "agent-sessions";
 export type ProviderDescriptor = {
   appId: string; displayName: string; kind: ProviderKind; key: string;
   version: number | null; capabilities: string[]; url: string | null; available: boolean;
@@ -8,16 +8,22 @@ export type ProviderDescriptor = {
     kind?: "panel" | "navigation" | "entrypoint"; panelId?: string | null }> | null;
   /** Opaque Core installation identity; compare for equality, never parse. */
   installationId?: string | null;
+  /** Opaque provider-owned ID, scoped to this installation, kind and declared key. */
+  implementationId?: string | null;
+  implementationName?: string | null;
 };
+export type ProviderSelection = Pick<ProviderDescriptor, "appId" | "key" | "installationId" | "implementationId">;
+export type ProviderImplementation = { id: string; displayName: string; available: boolean };
+export type ProviderImplementationSnapshot = { revision: number; implementations: ProviderImplementation[] };
 export type AppPermissionState = { required: string[]; optional: string[]; granted: string[]; reviewAvailable?: boolean; unsupportedRequired?: string[]; status?: string };
-export type ProviderInvocation = { callerAppId: string; callerInstallation: string; userId: string | null; hostRole: string | null; kind: ProviderKind; key: string };
+export type ProviderInvocation = { callerAppId: string; callerInstallation: string; userId: string | null; hostRole: string | null; kind: ProviderKind; key: string; implementationId?: string | null };
 /** Core-mediated v2 invocations carry the original principal; direct clients have no app identity. */
 export type MediatedProviderInvocation = {
   /** Present for exact session.workflow requests under retained admitted agent authority. */
   agentExecution?: import("./agent.js").AgentExecutionReference;
   taskWorkflow?: TaskWorkflowBinding;
   version: 2; callerAppId: string | null; callerInstallation: string | null; userId: string; hostRole: string;
-  principalId: string; kind: ProviderKind; key: string; operation: string; resourceIds: string[];
+  principalId: string; kind: ProviderKind; key: string; implementationId?: string | null; operation: string; resourceIds: string[];
   taskDispatch?: TaskDispatchRef | null;
   taskDelegation?: { dispatch: TaskDispatchRef; taskRef: import("./tasks.js").TaskRef; executionId: string | null } | null;
   export?: { grantId: string; revision: string; ownerUserId: string; provider: import("./agent-sessions.js").ProviderRef; conversationIds: string[] | null } | null;
@@ -26,6 +32,8 @@ export type MediatedProviderInvocation = {
 export type MediatedProviderRequest = { operation: string; method: string; path: string; body: Uint8Array | string };
 export type SpeechResult = { text: string; language?: string | null };
 export type SpeechCapabilities = { version: 1; mediaTypes: string[]; maxBytes: number; maxDurationSeconds: number; backend: string; ready: boolean };
+export type TextToSpeechCapabilities = { version: 1; mediaTypes: string[]; maxCharacters: number; backend: string; ready: boolean };
+export type SpeechSynthesisRequest = { text: string };
 export type TranslationRequest = { text: string; targetLanguage: string; sourceLanguage?: string; format?: "text" | "markdown" };
 export type TranslationResult = { text: string; targetLanguage: string; sourceLanguage: string };
 export type TranslationCapabilities = { version: 1; formats: string[]; maxCharacters: number; maxSegmentCharacters: number; maxBytes: number; maxOutputBytes: number; timeoutSeconds: number; backend: string; ready: boolean; reason?: string };

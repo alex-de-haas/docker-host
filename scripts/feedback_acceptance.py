@@ -88,7 +88,7 @@ def check(context, app_origin, link):
     assert h('/sessions')['sessions'] == before_sessions
     say('PASS: revision-checked edits preserve evidence/context; exact mutation replay and permanent deletion prevent resurrection')
 
-    if not os.environ.get('HOSTY_FEEDBACK_BROWSER_ONLY'):
+    def check_processing():
         # Previewing the Core catalog does not grant tool execution. Review the installed
         # assistant's access on this disposable child's normal administrator confirmation page.
         review_path = '/install/agents/'+urllib.parse.quote(caps['appId'], safe='')+'/hosty:core'
@@ -132,7 +132,13 @@ def check(context, app_origin, link):
                     assert any(name in approval['tool'] for name in ['feedback_current','feedback_image','feedback_result','prepare']), approval
                     h('/sessions/'+session['id']+'/approvals/'+approval['id'], {'decision':'allow'})
                 last = next(d for d in h('/feedback')['dispatches'] if d['id']==attempt['id'])
-                if last['state'] in ('failed','cancelled','rejected') and last['state'] != state: raise AssertionError(last)
+                if last['state'] in ('failed', 'cancelled', 'rejected') and last['state'] != state:
+                    run = (session.get('providerExecution') or {}).get('run') or {}
+                    error = (run.get('result') or {}).get('error') or {}
+                    message = context['sanitize_diagnostic'](str(error.get('message') or last.get('error') or ''))
+                    message = re.sub(r'https?://[^\s"<>]+', '[URL]', message)
+                    raise AssertionError(f"Feedback dispatch {last['state']}, run={run.get('state')}, "
+                                         f"code={error.get('code')}: {message[:400]}")
                 return last['state'] == state
             wait_for(ready, 180)
             return last
@@ -185,6 +191,15 @@ def check(context, app_origin, link):
             assert not retained['snapshot'] and not retained.get('outcomes')
             assert retained['input']['instruction']==''
         say('PASS: repeat history, partial outcome and workspace deletion of all bound reports with history redaction')
+    processing_error = None
+    if not os.environ.get('HOSTY_FEEDBACK_BROWSER_ONLY'):
+        try:
+            check_processing()
+        except (AssertionError, TimeoutError) as error:
+            processing_error = error
+            say('Feedback processing check failed; continuing with the independent browser check in this child.')
+            if str(error).startswith('Feedback dispatch '): say(str(error))
+
     # The same child owns Shell, so embedding uses real Core app launch and SDK frame policy.
     shell_manifest = json.loads((workspace/'apps/shell/manifest.json').read_text())
     shell_manifest['source']['repository'] = context['repository']
@@ -228,3 +243,5 @@ def check(context, app_origin, link):
         log = context['root']/'apps'/shell_manifest['id']/'logs/web.log'
         if log.is_file(): say(context['sanitize_diagnostic'](log.read_text()[-10000:]))
     assert result.returncode == 0, 'Feedback browser acceptance failed'
+    if processing_error is not None:
+        raise processing_error

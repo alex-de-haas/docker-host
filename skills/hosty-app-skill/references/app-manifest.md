@@ -225,7 +225,7 @@ Declare platform interfaces the app exposes for other components to discover wit
 }
 ```
 
-Core validates names and keys as kebab tokens, unique keys per interface and absolute paths. An `assistant`, `speech-to-text`, `translation`, `tasks`, `task-executor`, `conversation-history` or `agent-sessions` declaration also requires a positive integer `version` and a list of unique capability names (kebab tokens or dot-qualified tokens such as `history.search.text`, at most 200 characters); clients support version 1 and refuse unsupported versions. Core preserves these fields through installation, persistence, update and discovery, and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `assistant` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
+Core validates names and keys as kebab tokens, unique keys per interface and absolute paths. An `assistant`, `speech-to-text`, `text-to-speech`, `translation`, `tasks`, `task-executor`, `conversation-history` or `agent-sessions` declaration also requires a positive integer `version` and a list of unique capability names (kebab tokens or dot-qualified tokens such as `history.search.text`, at most 200 characters); clients support version 1 and refuse unsupported versions. Core preserves these fields through installation, persistence, update and discovery, and surfaces the declarations on the apps API with each declaration resolved to a ready-to-call URL, so clients can gate features on an installed provider — e.g. Shell identifies assistants by the confirmed `assistant` role plus the `assistant` interface. Declaring an interface does not grant the app anything; it is discovery metadata. See `docs/features/ai-agent-bridge/feature.md` ("Manifest Interfaces And Registry").
 
 The version-1 base contract accepts prompt text and app IDs through prepare/finalize, returning a conversation reference and provider-owned UI destination. `attachments` adds raw uploads of any type, with a guaranteed floor of ten files of 10,000,000 bytes each. Use `@hosty-sdk/app/assistant` and retain request/upload identities across retries. See `docs/features/hosty-harness-rename/feature.md` for routes, expiry and recovery. Interface metadata is separate from endpoint transport and UI navigation.
 
@@ -267,7 +267,7 @@ as a separate tab and owns its choice for Ask assistant. The role does not repla
 
 A translation supplier declares `provides: ["translation"]` and `interfaces.translation` entries with version 1. Each key identifies an independently selectable implementation. Consumers request `providers.translation` and call the server SDK with the selected app ID/key. See `docs/features/translation-provider/feature.md` for the text/Markdown request contract and limits.
 
-Core supports `optionalCorePermissions` and category-wide `providers.speech-to-text` /
+Core supports `optionalCorePermissions` and category-wide `providers.speech-to-text` / `providers.text-to-speech` /
 `providers.translation` / `providers.assistant` consumer permissions. A grant covers listing and use of every confirmed provider
 in that category. Required/optional lists must be disjoint; optional offers start unchecked and can
 be changed in Shell app settings through Core confirmation. Apps read effective choices through
@@ -282,6 +282,28 @@ against Core using the server SDK; service tokens never go to callers or another
 baseline recording format is 16 kHz mono PCM16 WAV. See
 `docs/features/provider-consumption/feature.md` for routes, limits, cancellation and assistant usage.
 `providers.agent` is not an accepted permission or interface in this release.
+
+### Named provider implementations
+
+An interface entry with the capability `implementations.named` publishes its current options
+from the provider backend. Publish a complete snapshot for each declared key through
+`ProviderClient.publishImplementations(kind, key, { revision, implementations })`.
+Each entry carries `id`, `displayName` and `available`. Keep the ID stable across renames and
+use a fresh identity when replacing an account. Persist the positive, increasing revision and
+resubmit the same snapshot after startup. An empty list withdraws every option for that key.
+
+Consumers use `listImplementations(kind)` or `ListImplementationsAsync(kind)`. Save the app ID,
+installation ID, interface key and optional implementation ID for each selection. Use the label
+only for display. Pass the whole selection when requesting capabilities, transcription or
+synthesis. The provider resolves the exact implementation from server-side credential introspection.
+The legacy `list` and `ListAsync` methods return static entries.
+
+Text-to-speech v1 requires the reviewed provider role `text-to-speech` and the consumer grant
+`providers.text-to-speech`. The provider serves `GET /capabilities` with `version: 1`, `ready`,
+`backend`, `mediaTypes` containing `audio/pcm` and a positive `maxCharacters` up to 4,000 UTF-16
+code units. `POST /speech` accepts JSON `{"text":"..."}` and streams mono signed little-endian
+PCM16 at 24 kHz with media type `audio/pcm;rate=24000`. Cancel the request and stop generating
+when the listener stops. Keep section text and audio out of logs.
 
 ### Tasks And Task Execution
 

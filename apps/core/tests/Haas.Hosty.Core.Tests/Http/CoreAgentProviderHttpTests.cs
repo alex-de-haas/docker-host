@@ -102,6 +102,45 @@ public sealed class CoreAgentProviderHttpTests
     }
 
     [Fact]
+    public async Task AgentAuthorizationBindsNamedImplementationAndExactOperationWithoutCategoryToken()
+    {
+        var now = DateTimeOffset.UtcNow;
+        await using var host = await CoreHttpHarness.StartAsync(new TestClock(now));
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var tokens = host.Services.GetRequiredService<AppServiceTokenService>();
+        await host.Services.GetRequiredService<UserDirectoryStore>().WriteAsync(new(1,
+            [new("owner", "owner@example.test", "Owner", "host.admin", false, now, now)], [], [], []));
+        var consumer = Record("other.consumer", now) with { GrantedCorePermissions = [CoreAppPermissions.AgentProviders] };
+        var provider = Record("thirdparty.agent", now) with { RuntimeState = "running", ConfirmedRoles = ["agent"],
+            Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
+                ["agent"] = [new("native", "api", "/agent", 1, [NamedProviderImplementations.Capability])] } };
+        await apps.UpsertAppAsync(consumer); await apps.UpsertAppAsync(provider);
+        await apps.PublishImplementationsAsync(provider, "agent", new("native", 1, [new("x", "First", true), new("y", "Second", true)]), default);
+        using var caller = host.CreateClient();
+        caller.DefaultRequestHeaders.Authorization = new("Bearer", tokens.CreateToken(consumer.Id));
+        var credential = await BrowserAuthorityFixture.Grant(host, consumer.Id, "owner");
+        caller.DefaultRequestHeaders.Add("X-Hosty-User-Token", credential.AccessToken);
+        var reference = new HostyProviderRef(provider.Id, PanelIdentity.Installation(provider), "native") { ImplementationId = "x" };
+        var input = new CoreAgentAuthorizeRequest(reference, "capabilities", "GET", "/capabilities", Convert.ToHexStringLower(SHA256.HashData([])));
+        var prefix = $"/api/internal/apps/{consumer.Id}";
+        Assert.Equal(HttpStatusCode.Forbidden, (await caller.PostAsJsonAsync(prefix + "/providers/agent/token",
+            new ProviderTokenRequest(provider.Id, "native", reference.InstallationId, "x"))).StatusCode);
+        var result = await caller.PostAsJsonAsync(prefix + "/agent/authorize", input);
+        result.EnsureSuccessStatusCode();
+        var binding = (await result.Content.ReadFromJsonAsync<JsonElement>()).Deserialize(CoreJson.TypeInfo<CoreAgentBinding>())!;
+        var agent = host.Services.GetRequiredService<CoreAgentExecution>();
+        var target = (await apps.GetAppAsync(provider.Id))!;
+        var check = new CoreAgentIntrospection(binding.Token, input.Operation, input.Method, input.Path, input.BodyHash);
+        Assert.Equal(reference, (await agent.Introspect(target, check, default)).Provider);
+        await Assert.ThrowsAsync<AppIdentityException>(() => agent.Introspect(target, check with { BodyHash = new string('0', 64) }, default));
+        await apps.PublishImplementationsAsync(provider, "agent", new("native", 2, [new("y", "Second", true)]), default);
+        await apps.PublishImplementationsAsync(provider, "agent", new("native", 3, [new("x", "First", true)]), default);
+        target = (await apps.GetAppAsync(provider.Id))!;
+        await Assert.ThrowsAsync<AppIdentityException>(() => agent.Introspect(target, check, default));
+    }
+
+    [Fact]
     public async Task ProviderRevisionChangeAllowsFreshOperationsAndKeepsOldRunAdmissionFenced()
     {
         var now = DateTimeOffset.UtcNow;

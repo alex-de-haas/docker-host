@@ -80,7 +80,7 @@ function DraftEditor({ source, available, incoming, request, setBlocked, capture
     const [capturing, setCapturing] = useState(false), [imageError, setImageError] = useState('');
     const pendingImage = !!automaticScreenshot && feedbackScope(automaticScreenshot.source.capabilities) === key;
     const locked = !ready || draft.submitting || busy || capturing || captureBusy || pendingImage;
-    const speech = useFeedbackSpeech("/api/hosty/ui/feedback", locked);
+    const speech = useFeedbackSpeech(locked);
     const dictating = speech.phase !== "idle";
     useEffect(() => { setBlocked(!ready || saving || saveFailed || busy || capturing || pendingImage || dictating); }, [ready, saving, saveFailed, busy, capturing, pendingImage, dictating, setBlocked]);
     const consumedImage = useRef<AutomaticScreenshot | null>(null);
@@ -297,9 +297,7 @@ function DraftEditor({ source, available, incoming, request, setBlocked, capture
     <small role="status">{!ready ? 'Loading draft…' : saving ? 'Saving…' : saveFailed ? 'Not saved locally' : draft.revision ? 'Saved locally' : 'New report'}</small>
     {!available && <p role="status">Reopen this application to select elements or submit its saved draft.</p>}
     {legacy && <p role="status">A previous draft is still saved in the source application. Finish this draft, then reopen the tool to recover it.</p>}
-    {speech.providers.length > 1 && <label>Speech provider<select value={speech.choice} disabled={locked || dictating} onChange={e => speech.setChoice(e.target.value)}>
-      <option value="">Choose provider</option>{speech.providers.map(p => <option key={JSON.stringify([p.appId, p.key])} value={JSON.stringify([p.appId, p.key])} disabled={!p.available}>{p.displayName}</option>)}
-    </select></label>}
+    {speech.unavailable && <p className="fc-muted">{speech.unavailable} <a href="/settings/speech">Speech settings</a></p>}
     <ol>{draft.annotations.map((n, index) => <li key={n.id}>
       <div className="fc-actions"><strong>{index + 1}. {n.target?.label ?? 'Page comment'}</strong><button disabled={locked || dictating} onClick={() => update({ annotations: current.current.annotations.filter(a => a.id !== n.id) })}>Remove</button></div>
       <p className="fc-muted">{n.route}</p>

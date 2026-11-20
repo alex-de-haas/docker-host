@@ -1,5 +1,5 @@
 /** Core's version-one task contract. References bind an installation; numbers are display labels. */
-export type TaskProviderRef = { appId: string; installationId: string; key: string };
+export type TaskProviderRef = { appId: string; installationId: string; key: string; implementationId?: string | null };
 export type TaskRef = TaskProviderRef & { id: string };
 export type TaskStatus = "Draft" | "Ready" | "InProgress" | "Blocked" | "Done" | "Cancelled";
 export type TaskResource = {
@@ -79,4 +79,4 @@ export type TaskExecutorOptions = { version: 1; revision: number; options: TaskE
 export const taskStatuses: TaskStatus[] = ["Draft", "Ready", "InProgress", "Blocked", "Done", "Cancelled"];
 export const taskExecutionTerminal = (state: TaskExecutionState) => ["completed", "failed", "cancelled", "interrupted"].includes(state);
 /** Collision-free opaque reference for cross-provider links and filters; grants no task access. */
-export const taskReferenceKey = (ref: TaskRef): string => JSON.stringify([ref.appId, ref.installationId, ref.key, ref.id]);
+export const taskReferenceKey = (ref: TaskRef): string => JSON.stringify(ref.implementationId ? [ref.appId, ref.installationId, ref.key, ref.id, ref.implementationId] : [ref.appId, ref.installationId, ref.key, ref.id]);

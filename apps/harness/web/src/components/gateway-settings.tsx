@@ -1,6 +1,7 @@
 "use client";
 import { TaskLimits } from "@/components/task-limits";
 import { AgentProfiles } from "@/components/agent-profiles";
+import { SpeechSettingsPanel } from "./speech-settings";
 import { PromptTemplatesSettings } from "@/components/prompt-templates-settings";
 
 import { useCallback, useEffect, useState } from "react";
@@ -26,7 +27,7 @@ import {
   type SettingsResponse,
 } from "@/lib/api";
 
-type SettingsSection = "tasks" | "profiles" | "sources" | "skills" | "prompt" | "access" | "templates";
+type SettingsSection = "tasks" | "profiles" | "sources" | "skills" | "prompt" | "access" | "templates" | "speech";
 
 export function GatewaySettings({
   section = "profiles",
@@ -44,7 +45,7 @@ export function GatewaySettings({
   const [workflow, setWorkflow] = useState("");
   const [ordinaryDays, setOrdinaryDays] = useState("");
   const [completedDays, setCompletedDays] = useState("");
-  const needsSettings = activeSection !== "templates";
+  const needsSettings = activeSection !== "templates" && activeSection !== "speech";
 
   useEffect(() => {
     // Personal templates do not depend on access to shared Harness settings.
@@ -112,6 +113,7 @@ export function GatewaySettings({
                 ["profiles", "Agent profiles"],
                 ["tasks", "Tasks"],
                 ["templates", "Prompt templates"],
+                ["speech", "Speech"],
                 ["prompt", "Instructions and retention"],
                 ["skills", "Skills"],
                 ["access", "MCP access"],
@@ -123,6 +125,7 @@ export function GatewaySettings({
             ))}
           </TabsList>
         </div>
+        <TabsContent value="speech"><SpeechSettingsPanel /></TabsContent>
         {templatesVisited && <TabsContent value="templates" forceMount className="data-[state=inactive]:hidden"><PromptTemplatesSettings /></TabsContent>}
         {needsSettings && !data && (error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
           : <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4 shrink-0" />Loading…</p>)}

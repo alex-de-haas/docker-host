@@ -1,22 +1,30 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Haas.Hosty.Core;
 
 internal sealed record ProviderDescriptor(string AppId, string DisplayName, string Kind, string Key,
     int? Version, IReadOnlyList<string> Capabilities, string? Url, bool Available,
-    IReadOnlyList<ProviderUiSurface>? UiSurfaces = null, string? InstallationId = null);
+    IReadOnlyList<ProviderUiSurface>? UiSurfaces = null, string? InstallationId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ImplementationId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ImplementationName = null)
+{
+    [JsonIgnore]
+    internal string? Incarnation { get; init; }
+}
 internal sealed record ProviderUiSurface(string? Endpoint, string Path, string? Url, string? Kind = null, string? PanelId = null);
 internal sealed record ProviderDirectory(IReadOnlyList<ProviderDescriptor> Providers);
 internal sealed record AppPermissionState(IReadOnlyList<string> Required, IReadOnlyList<string> Optional, IReadOnlyList<string> Granted, bool ReviewAvailable = true, IReadOnlyList<string>? UnsupportedRequired = null, string Status = "known");
-internal sealed record ProviderTokenRequest(string ProviderAppId, string Key = "default");
+internal sealed record ProviderTokenRequest(string ProviderAppId, string Key = "default", string? InstallationId = null, string? ImplementationId = null);
 internal sealed record ProviderTokenResponse(string Token, DateTimeOffset ExpiresAt, ProviderDescriptor Provider);
 internal sealed record ProviderIntrospectionRequest(string Token, string Kind, string Key = "default");
-internal sealed record ProviderInvocation(string CallerAppId, string CallerInstallation, string? UserId, string? HostRole, string Kind, string Key);
+internal sealed record ProviderInvocation(string CallerAppId, string CallerInstallation, string? UserId, string? HostRole, string Kind, string Key,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ImplementationId = null);
 internal sealed record ProviderTokenClaims(string Caller, string Audience, string Kind, string Key,
     DateTimeOffset CallerInstalledAt, DateTimeOffset ProviderInstalledAt, string? CallerRevision,
-    string? ProviderRevision, string? UserId, long Expires, string? ActivityGrantHash = null);
+    string? ProviderRevision, string? UserId, long Expires, string? ActivityGrantHash = null, string? ImplementationId = null, string? Incarnation = null);
 
 // A separate token format prevents a provider invocation from becoming an administrator session.
 // Providers introspect every request: signed claims alone are insufficient after grant revocation.
@@ -27,6 +35,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
     internal static string Permission(string kind) => kind switch
     {
         "speech-to-text" => CoreAppPermissions.SpeechProviders,
+        "text-to-speech" => CoreAppPermissions.TextToSpeechProviders,
         "translation" => CoreAppPermissions.TranslationProviders,
         "assistant" => CoreAppPermissions.AssistantProviders,
         "tasks" => CoreAppPermissions.TaskProviders,
@@ -51,13 +60,13 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
             throw new AppIdentityException("app_permission_required", $"The app needs the '{Permission(kind)}' permission.");
     }
 
-    internal async Task<ProviderDirectory> ListAsync(AppRecord caller, string kind, CancellationToken ct)
+    internal async Task<ProviderDirectory> ListAsync(AppRecord caller, string kind, CancellationToken ct, bool named = false)
     {
         RequireGrant(caller, kind);
-        return new((await apps.ListAppRecordsAsync(ct)).SelectMany(p => Describe(p, kind)).ToArray());
+        return new((await apps.ListAppRecordsAsync(ct)).SelectMany(p => Describe(p, kind, named)).ToArray());
     }
 
-    internal static IEnumerable<ProviderDescriptor> Describe(AppRecord provider, string kind)
+    internal static IEnumerable<ProviderDescriptor> Describe(AppRecord provider, string kind, bool named = false)
     {
         if (provider.ConfirmedRoles?.Contains(kind, StringComparer.Ordinal) != true) yield break;
         var summary = AppSummary.From(provider);
@@ -74,14 +83,35 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
                     ? [new ProviderUiSurface(summary.EntryEndpoint, path, summary.EmbeddedUrl, "entrypoint")] : [])
                 .Where(s => s.Url is not null).Distinct().ToArray()
             : null;
+        var declarations = provider.Interfaces![kind];
+        var snapshots = named ? provider.NamedProviders?.Snapshots.Where(s => s.Kind == kind
+            && declarations.Any(e => e.Key == s.Key && s.Declaration == NamedProviderImplementations.Declaration(e))).ToDictionary(s => s.Key) : null;
+        var duplicateNames = snapshots?.Values.SelectMany(s => s.Members)
+            .GroupBy(m => m.Implementation.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in entries)
         {
             var healthy = summary.Health is null || summary.Health.Services.Where(s => s.Service == entry.Service).All(s => s.Status == "running" && s.Health is not "unhealthy" and not "starting");
-            yield return new(provider.Id, provider.DisplayName, kind, entry.Key, entry.Version,
+            var descriptor = new ProviderDescriptor(provider.Id, provider.DisplayName, kind, entry.Key, entry.Version,
                 entry.Capabilities ?? [], entry.Url,
                 provider.RuntimeState == "running" && healthy && entry.Url is not null, surfaces, PanelIdentity.Installation(provider));
+            if (!descriptor.Capabilities.Contains(NamedProviderImplementations.Capability)) { yield return descriptor; continue; }
+            if (snapshots?.GetValueOrDefault(entry.Key) is not { } snapshot) continue;
+            foreach (var member in snapshot.Members)
+            {
+                var implementation = member.Implementation;
+                var label = $"{provider.DisplayName} · {implementation.DisplayName}";
+                if (duplicateNames!.Contains(implementation.DisplayName)) label += $" ({entry.Key}/{implementation.Id})";
+                yield return descriptor with { DisplayName = label, ImplementationId = implementation.Id,
+                    ImplementationName = implementation.DisplayName, Available = descriptor.Available && implementation.Available,
+                    Incarnation = snapshot.Declaration + ":" + member.Incarnation.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+            }
         }
     }
+
+    internal static ProviderDescriptor? Find(AppRecord provider, string kind, string key, string? implementationId)
+        => Describe(provider, kind, implementationId is not null)
+            .SingleOrDefault(p => p.Key == key && p.ImplementationId == implementationId);
 
     internal async Task<ProviderTokenResponse> IssueAsync(AppRecord caller, string kind, ProviderTokenRequest input,
         string? userCredential, CancellationToken ct)
@@ -93,7 +123,10 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
             throw new AppIdentityException("provider_selection_invalid", "Select a provider and interface key.");
         var provider = await apps.GetAppAsync(input.ProviderAppId, ct)
             ?? throw new AppIdentityException("provider_unavailable", "Provider is not installed.");
-        var descriptor = Describe(provider, kind).SingleOrDefault(p => p.Key == input.Key)
+        if (input.InstallationId is not null && input.InstallationId != PanelIdentity.Installation(provider)
+            || input.ImplementationId is not null && (input.InstallationId is null || !NamedProviderImplementations.ValidId(input.ImplementationId)))
+            throw new AppIdentityException("provider_selection_invalid", "Select an exact current provider installation and implementation.");
+        var descriptor = Find(provider, kind, input.Key, input.ImplementationId)
             ?? throw new AppIdentityException("provider_unavailable", "The app does not provide this interface.");
         if (!descriptor.Available) throw new AppIdentityException("provider_unavailable", "The selected provider is not ready.");
         string? activityHash = null;
@@ -105,7 +138,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
             else
             {
                 var actor = await identity.RequireOperationHashAsync(AppIdentityService.HashToken(userCredential), caller.Id,
-                    s => s.Kind == "provider" && s.TargetAppId == provider.Id && s.ProviderKind == kind && s.Key == input.Key,
+                    s => s.AllowsProvider(kind, provider.Id, input.Key, input.ImplementationId),
                     ct, requireActivity: kind == "assistant");
                 userId = actor.UserId;
                 activityHash = AppIdentityService.HashToken(userCredential);
@@ -121,7 +154,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
             await identity.RequireAccessibleUserAsync(provider.Id, userId, ct);
         var expires = clock.UtcNow.AddMinutes(2);
         var claims = new ProviderTokenClaims(caller.Id, provider.Id, kind, input.Key, caller.InstalledAt,
-            provider.InstalledAt, caller.PermissionRevision, provider.PermissionRevision, userId, expires.ToUnixTimeSeconds(), activityHash);
+            provider.InstalledAt, caller.PermissionRevision, provider.PermissionRevision, userId, expires.ToUnixTimeSeconds(), activityHash, descriptor.ImplementationId, descriptor.Incarnation);
         var data = Prefix + Encode(JsonSerializer.SerializeToUtf8Bytes(claims, CoreJson.TypeInfo<ProviderTokenClaims>()));
         return new(data + "." + Encode(signing.Sign(Encoding.UTF8.GetBytes(data))), expires, descriptor);
     }
@@ -150,7 +183,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
         {
             if (claims.ActivityGrantHash is null) throw new AppIdentityException("reauth_required", "Renew assistant authority through Core.");
             var actor = await identity.RequireOperationHashAsync(claims.ActivityGrantHash, claims.Caller,
-                s => s.Kind == "provider" && s.TargetAppId == provider.Id && s.ProviderKind == input.Kind && s.Key == input.Key,
+                s => s.AllowsProvider(input.Kind, provider.Id, input.Key, claims.ImplementationId),
                 ct, requireActivity: claims.Kind == "assistant");
             if (actor.UserId != claims.UserId) throw new AppIdentityException("token_invalid", "Provider actor changed.");
         }
@@ -158,7 +191,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
         if (caller is null || caller.InstalledAt != claims.CallerInstalledAt || caller.PermissionRevision != claims.CallerRevision)
             throw new AppIdentityException("app_access_denied", "The caller's installation or grants changed.");
         RequireGrant(caller, input.Kind);
-        if (!Describe(provider, input.Kind).Any(p => p.Key == input.Key && p.Available))
+        if (Find(provider, input.Kind, input.Key, claims.ImplementationId) is not { Available: true } target || target.Incarnation != claims.Incarnation)
             throw new AppIdentityException("provider_unavailable", "The provider is not available.");
         string? role = null;
         if (claims.UserId is { } userId)
@@ -167,7 +200,7 @@ internal sealed class ProviderAccessService(AppRegistryStore apps, AppServiceTok
             role = actor.User.Role;
             if (input.Kind is "assistant" or "tasks" or "task-executor") await identity.RequireAccessibleUserAsync(provider.Id, userId, ct);
         }
-        return new(caller.Id, caller.InstalledAt.ToString("O"), claims.UserId, role, input.Kind, input.Key);
+        return new(caller.Id, caller.InstalledAt.ToString("O"), claims.UserId, role, input.Kind, input.Key, claims.ImplementationId);
     }
 
     private static string Encode(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
@@ -192,7 +225,17 @@ internal static class ProviderEndpoints
                     state.Status == "known", state.UnsupportedRequired, state.Status));
             }));
         app.MapGet(root + "/providers/{kind}", async (string appId, string kind, HttpRequest request, ProviderAccessService access, CancellationToken ct) =>
-            await Handle(async () => CoreJson.Json(await access.ListAsync(await access.AuthenticateAsync(appId, request, ct), kind, ct))));
+            await Handle(async () => CoreJson.Json(await access.ListAsync(await access.AuthenticateAsync(appId, request, ct), kind, ct,
+                CoreProviderApi.Named(request)))));
+        app.MapPost(root + "/providers/{kind}/implementations", async (string appId, string kind,
+            ProviderImplementationPublication input, HttpRequest request, ProviderAccessService access, AppServiceTokenService tokens,
+            AppRegistryStore apps, CancellationToken ct) => await Handle(async () =>
+            {
+                var publisher = await access.AuthenticateAsync(appId, request, ct);
+                if (!tokens.IsInstallationToken(publisher, CoreSessionAuthorization.ReadBearerToken(request) ?? ""))
+                    throw new AppIdentityException("provider_publication_denied", "A current installation-bound publisher credential is required.");
+                return CoreJson.Json(await apps.PublishImplementationsAsync(publisher, kind, input, ct));
+            })).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(512 * 1024));
         app.MapPost(root + "/providers/{kind}/token", async (string appId, string kind, ProviderTokenRequest input,
             HttpRequest request, ProviderAccessService access, CancellationToken ct) =>
             await Handle(async () => CoreJson.Json(await access.IssueAsync(await access.AuthenticateAsync(appId, request, ct), kind,
@@ -238,7 +281,9 @@ internal static class ProviderEndpoints
             return CoreJson.Json(new ErrorResponse(ex.Code, ex.Message), ex.Code switch
             {
                 "token_invalid" or "app_identity_required" or "reauth_required" => 401,
-                "provider_unavailable" => 503,
+                "provider_unavailable" or "provider_catalog_unavailable" => 503,
+                "provider_publication_invalid" => 400,
+                "provider_publication_conflict" => 409,
                 "provider_kind_invalid" or "provider_selection_invalid" => 400,
                 _ => 403,
             });

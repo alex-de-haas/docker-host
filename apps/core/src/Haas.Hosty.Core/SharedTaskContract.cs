@@ -4,9 +4,19 @@ using System.Text.Json.Serialization;
 namespace HostySdk.App;
 
 /// <summary>An explicitly selected provider installation and interface.</summary>
-public record HostyTaskProviderRef(string AppId, string InstallationId, string Key);
+public record HostyTaskProviderRef(string AppId, string InstallationId, string Key)
+{
+    /// <summary>The stable provider-owned identity when the interface publishes named implementations.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ImplementationId { get; init; }
+}
 /// <summary>A task UUID qualified by its supplying installation; Number is never an identifier.</summary>
-public record HostyTaskRef(string AppId, string InstallationId, string Key, string Id);
+public record HostyTaskRef(string AppId, string InstallationId, string Key, string Id)
+{
+    /// <summary>The stable provider-owned identity when the interface publishes named implementations.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ImplementationId { get; init; }
+}
 /// <summary>A live reference or a pinned revision, without copied content or access authority.</summary>
 public record HostyTaskResourceVersion(string Mode, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Revision = null);
 /// <summary>An app, workspace or external material reference. It grants no execution authority.</summary>

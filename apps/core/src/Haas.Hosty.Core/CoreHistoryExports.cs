@@ -68,7 +68,7 @@ internal sealed class CoreHistoryExports(CoreHistoryExportStore store, CoreProvi
         foreach (var provider in CoreHistoryExportStore.Providers(record))
         {
             var original = await authorization.RevalidateAsync(record.CreatorAuthority, record.Grant.OwnerUserId!, record.CreatorPrincipal,
-                "conversation-history", provider.AppId, provider.Key, "history_export_create", ct);
+                "conversation-history", provider, "history_export_create", ct);
             RequireExport(original);
         }
         await ValidateSourcesAsync(record, owner, ct);

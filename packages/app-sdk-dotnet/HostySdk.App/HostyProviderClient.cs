@@ -7,11 +7,30 @@ namespace HostySdk.App;
 
 /// <summary>A confirmed, versioned provider and its current availability.</summary>
 public sealed record HostyProvider(string AppId, string DisplayName, string Kind, string Key,
-    int? Version, string[] Capabilities, string? Url, bool Available, string? InstallationId = null);
+    int? Version, string[] Capabilities, string? Url, bool Available, string? InstallationId = null)
+{
+    /// <summary>Stable opaque ID within this installation, interface kind and declared key.</summary>
+    public string? ImplementationId { get; init; }
+    /// <summary>Current provider-owned display name for the implementation.</summary>
+    public string? ImplementationName { get; init; }
+}
 /// <summary>The app's reviewed permission declarations and effective grants.</summary>
 public sealed record HostyProviderPermissions(string[] Required, string[] Optional, string[] Granted);
 /// <summary>Authority for one provider invocation, revalidated against live Core state.</summary>
-public sealed record HostyProviderInvocation(string CallerAppId, string CallerInstallation, string? UserId, string? HostRole, string Kind, string Key);
+public sealed record HostyProviderInvocation(string CallerAppId, string CallerInstallation, string? UserId, string? HostRole, string Kind, string Key)
+{
+    /// <summary>The exact implementation authorized by Core, when this is a named call.</summary>
+    public string? ImplementationId { get; init; }
+}
+/// <summary>Display metadata for an implementation published by the owning provider installation.</summary>
+public sealed record HostyProviderImplementation(string Id, string DisplayName, bool Available);
+/// <summary>A complete, monotonically revisioned snapshot for a reviewed interface key.</summary>
+public sealed record HostyImplementationSnapshot(string Key, long Revision, IReadOnlyList<HostyProviderImplementation> Implementations);
+/// <summary>The accepted publication revision.</summary>
+public sealed record HostyImplementationReceipt(long Revision);
+/// <summary>The selected provider's text-to-speech capabilities and readiness.</summary>
+public sealed record HostyTextToSpeechCapabilities(int Version, string[] MediaTypes, int MaxCharacters, string Backend, bool Ready);
+internal sealed record SpeechSynthesisRequest(string Text);
 /// <summary>The recognized text. Language is absent when the engine did not report one.</summary>
 public sealed record HostySpeechResult(string Text, string? Language = null);
 /// <summary>A provider's speech input contract and readiness.</summary>
@@ -73,6 +92,20 @@ public sealed partial class HostyProviderClient(HttpClient http, HostyAppOptions
         return (await CoreAsync<ProviderList>($"/providers/{kind}", null, null, cancellationToken)).Providers;
     }
 
+    /// <summary>Discover static and named implementations. Pass the complete selection when invoking it.</summary>
+    public async Task<IReadOnlyList<HostyProvider>> ListImplementationsAsync(string kind, CancellationToken cancellationToken = default)
+    {
+        RequireKind(kind);
+        return (await CoreAsync<ProviderList>($"/providers/{kind}?named=true", null, null, cancellationToken)).Providers;
+    }
+
+    /// <summary>Publish this installation's complete snapshot for one reviewed interface entry.</summary>
+    public Task<HostyImplementationReceipt> PublishImplementationsAsync(string kind, HostyImplementationSnapshot snapshot, CancellationToken cancellationToken = default)
+    {
+        RequireKind(kind);
+        return CoreAsync<HostyImplementationReceipt>($"/providers/{kind}/implementations", snapshot, null, cancellationToken);
+    }
+
     /// <summary>Validate a credential for this provider on every request. Do not cache the result.</summary>
     public Task<HostyProviderInvocation> ValidateAsync(string token, string kind, string key = "default", CancellationToken cancellationToken = default)
     {
@@ -124,6 +157,41 @@ public sealed partial class HostyProviderClient(HttpClient http, HostyAppOptions
         using var request = ProviderRequest(binding, HttpMethod.Get, "/capabilities");
         using var response = await http.SendAsync(request, cancellationToken);
         return await ReadAsync<HostySpeechCapabilities>(response, cancellationToken);
+    }
+
+    /// <summary>Read the selected provider's text limits, audio formats and readiness.</summary>
+    public async Task<HostyTextToSpeechCapabilities> TextToSpeechCapabilitiesAsync(HostyProvider provider, CancellationToken cancellationToken = default)
+    {
+        var binding = await ConnectAsync(provider, "text-to-speech", null, cancellationToken);
+        using var request = ProviderRequest(binding, HttpMethod.Get, "/capabilities");
+        using var response = await http.SendAsync(request, cancellationToken);
+        return await ReadAsync<HostyTextToSpeechCapabilities>(response, cancellationToken);
+    }
+
+    /// <summary>Stream 24 kHz mono PCM16LE. Dispose the response to stop playback and supply a cancellation token when reading.</summary>
+    public async Task<HttpResponseMessage> SynthesizeAsync(HostyProvider provider, string text, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text.Length > 4000)
+            throw new ArgumentException("Provide between 1 and 4000 UTF-16 code units of text.", nameof(text));
+        var binding = await ConnectAsync(provider, "text-to-speech", null, cancellationToken);
+        using var request = ProviderRequest(binding, HttpMethod.Post, "/speech");
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("audio/pcm"));
+        request.Content = JsonContent.Create(new SpeechSynthesisRequest(text), ProviderJsonContext.Default.SpeechSynthesisRequest);
+        var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        try
+        {
+            if (!response.IsSuccessStatusCode) await ReadAsync<ProviderFailure>(response, cancellationToken);
+            var format = response.Content.Headers.ContentType;
+            if (!string.Equals(format?.MediaType, "audio/pcm", StringComparison.OrdinalIgnoreCase)
+                || !format!.Parameters.Any(p => p.Name.Equals("rate", StringComparison.OrdinalIgnoreCase) && p.Value == "24000"))
+                throw new HostyProviderException("provider_response_invalid", "Expected a 24 kHz PCM audio stream.", 502);
+            return response;
+        }
+        catch
+        {
+            response.Dispose();
+            throw;
+        }
     }
 
     /// <summary>Transcribe a completed recording. Audio is sent directly to the chosen provider.</summary>
@@ -182,12 +250,12 @@ public sealed partial class HostyProviderClient(HttpClient http, HostyAppOptions
     public async Task<HttpResponseMessage> SendTaskAsync(HostyTaskProviderRef provider, string kind, string? userToken,
         HttpMethod method, string route, HttpContent? content = null, CancellationToken cancellationToken = default)
     {
-        var pattern = kind == "tasks" ? @"^(?:/capabilities|/tasks(?:\?[a-zA-Z0-9%=&_-]*|/[a-zA-Z0-9-]+(?:/actions)?)?)$"
+        var pattern = kind == "tasks" ? @"^(?:/capabilities|/tasks(?:\?[a-zA-Z0-9%=&_.~-]*|/[a-zA-Z0-9-]+(?:/actions)?)?)$"
             : kind == "task-executor" ? @"^(?:/options|/executions/[a-zA-Z0-9-]+(?:/cancel)?)$" : "(?!)";
         if (!System.Text.RegularExpressions.Regex.IsMatch(route, pattern)
             || method != HttpMethod.Get && method != HttpMethod.Post && method != HttpMethod.Put && method != HttpMethod.Patch)
             throw new ArgumentException("Use a version-one task operation.", nameof(route));
-        var selection = new HostyProvider(provider.AppId, "", kind, provider.Key, 1, [], null, false, provider.InstallationId);
+        var selection = new HostyProvider(provider.AppId, "", kind, provider.Key, 1, [], null, false, provider.InstallationId) { ImplementationId = provider.ImplementationId };
         var binding = await ConnectAsync(selection, kind, userToken, cancellationToken);
         using var request = ProviderRequest(binding, method, route);
         request.Content = content;
@@ -198,7 +266,13 @@ public sealed partial class HostyProviderClient(HttpClient http, HostyAppOptions
     private async Task<ProviderBinding> ConnectAsync(HostyProvider provider, string kind, string? userToken, CancellationToken ct)
     {
         if (provider.Kind != kind) throw new ArgumentException("Provider category does not match the operation.", nameof(provider));
-        var binding = await CoreAsync<ProviderBinding>($"/providers/{kind}/token", new ProviderSelection(provider.AppId, provider.Key), userToken, ct);
+        if (provider.ImplementationId is not null && string.IsNullOrEmpty(provider.InstallationId))
+            throw new ArgumentException("A named implementation requires an installation.", nameof(provider));
+        var selection = new ProviderSelection(provider.AppId, provider.Key, provider.InstallationId, provider.ImplementationId);
+        var binding = await CoreAsync<ProviderBinding>($"/providers/{kind}/token", selection, userToken, ct);
+        if (provider.AppId != binding.Provider.AppId || kind != binding.Provider.Kind || provider.Key != binding.Provider.Key
+            || provider.ImplementationId != binding.Provider.ImplementationId)
+            throw new HostyProviderException("provider_changed", "The selected provider binding changed.", 409);
         if (binding.Provider.Version != 1 || binding.Provider.Url is null)
             throw new HostyProviderException("provider_incompatible", "Provider does not support interface version 1.", 409);
         if (provider.InstallationId is not null && binding.Provider.InstallationId != provider.InstallationId)
@@ -245,14 +319,14 @@ public sealed partial class HostyProviderClient(HttpClient http, HostyAppOptions
     }
     private static void RequireKind(string kind)
     {
-        if (kind is not ("speech-to-text" or "assistant" or "translation" or "tasks" or "task-executor" or "conversation-history" or "agent-sessions" or "agent")) throw new ArgumentException("Unknown provider category.", nameof(kind));
+        if (kind is not ("speech-to-text" or "text-to-speech" or "assistant" or "translation" or "tasks" or "task-executor" or "conversation-history" or "agent-sessions" or "agent")) throw new ArgumentException("Unknown provider category.", nameof(kind));
     }
 }
 
 internal sealed record TaskDispatchSelection(HostyTaskDispatchRef Dispatch);
 internal sealed record HistoryExportSelection(string ExportGrantId);
 internal sealed record ProviderList(HostyProvider[] Providers);
-internal sealed record ProviderSelection(string ProviderAppId, string Key);
+internal sealed record ProviderSelection(string ProviderAppId, string Key, string? InstallationId, string? ImplementationId);
 internal sealed record ProviderBinding(string Token, DateTimeOffset ExpiresAt, HostyProvider Provider);
 internal sealed record ProviderValidation(string Token, string Kind, string Key);
 internal sealed record ProviderFailure(string? Code = null, string? Message = null, ProviderFailure? Error = null);
@@ -261,7 +335,11 @@ internal sealed record MediatedProviderValidation(string Token, string Kind, str
 public record HostyMediatedProviderRequest(string Operation, string Method, string Path, ReadOnlyMemory<byte> Body);
 /// <summary>The current original caller. Direct principals have no fabricated application identity.</summary>
 public record HostyMediatedProviderInvocation(int Version, string UserId, string HostRole, string PrincipalId,
-    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, HostyHistoryExportScope? Export = null, HostyTaskDispatchRef? TaskDispatch = null, HostyTaskExecutorDelegation? TaskDelegation = null, HostyTaskWorkflowBinding? TaskWorkflow = null, HostyAgentWorkflowInvocation? AgentExecution = null);
+    string? CallerAppId, string? CallerInstallation, string Kind, string Key, string Operation, string[] ResourceIds, HostyHistoryExportScope? Export = null, HostyTaskDispatchRef? TaskDispatch = null, HostyTaskExecutorDelegation? TaskDelegation = null, HostyTaskWorkflowBinding? TaskWorkflow = null, HostyAgentWorkflowInvocation? AgentExecution = null)
+{
+    /// <summary>Authorized named implementation for the mediated operation, when selected.</summary>
+    public string? ImplementationId { get; init; }
+}
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(HostyAgentWorkflowRequest))]
 [JsonSerializable(typeof(HostyAgentAuthorize))]
@@ -303,6 +381,10 @@ public record HostyMediatedProviderInvocation(int Version, string UserId, string
 [JsonSerializable(typeof(HostyProviderInvocation))]
 [JsonSerializable(typeof(HostySpeechResult))]
 [JsonSerializable(typeof(HostySpeechCapabilities))]
+[JsonSerializable(typeof(HostyTextToSpeechCapabilities))]
+[JsonSerializable(typeof(SpeechSynthesisRequest))]
+[JsonSerializable(typeof(HostyImplementationSnapshot))]
+[JsonSerializable(typeof(HostyImplementationReceipt))]
 [JsonSerializable(typeof(HostyTranslationRequest))]
 [JsonSerializable(typeof(HostyTranslationResult))]
 [JsonSerializable(typeof(HostyTranslationCapabilities))]

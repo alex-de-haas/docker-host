@@ -8,7 +8,7 @@ internal sealed record CoreAgentHistoryBinding(string Token, DateTimeOffset Expi
 internal sealed record CoreAgentHistoryInvocation(string CallerAppId, string CallerInstallation, HostyProviderRef Provider,
     DateTimeOffset ExpiresAt);
 internal sealed record CoreAgentHistoryToken(string CallerAppId, DateTimeOffset CallerInstallation, string? CallerRevision,
-    HostyProviderRef Provider, string? ProviderRevision, DateTimeOffset ExpiresAt);
+    HostyProviderRef Provider, string? ProviderRevision, DateTimeOffset ExpiresAt, string? ImplementationIncarnation = null);
 
 internal sealed partial class CoreAgentExecution
 {
@@ -23,7 +23,7 @@ internal sealed partial class CoreAgentExecution
         var descriptor = Descriptor(provider, input.Provider);
         var expiresAt = clock.UtcNow.AddHours(4);
         var claims = new CoreAgentHistoryToken(consumer.Id, consumer.InstalledAt, consumer.PermissionRevision,
-            input.Provider, provider.PermissionRevision, expiresAt);
+            input.Provider, provider.PermissionRevision, expiresAt, descriptor.Incarnation);
         return new(SignToken(HistoryPrefix, claims), expiresAt, descriptor.Url!);
     }
 
@@ -33,7 +33,8 @@ internal sealed partial class CoreAgentExecution
         if (token.ExpiresAt <= clock.UtcNow || token.Provider.AppId != provider.Id || token.Provider.Key != input.Key ||
             token.Provider.InstallationId != PanelIdentity.Installation(provider) || token.ProviderRevision != provider.PermissionRevision)
             throw new AppIdentityException("token_invalid", "The history credential expired or its provider binding changed.");
-        _ = Descriptor(provider, token.Provider);
+        if (Descriptor(provider, token.Provider).Incarnation != token.ImplementationIncarnation)
+            throw new AppIdentityException("token_invalid", "The history provider implementation changed.");
         var consumer = await apps.GetAppAsync(token.CallerAppId, ct);
         if (consumer is null || consumer.InstalledAt != token.CallerInstallation || consumer.PermissionRevision != token.CallerRevision)
             throw new AppIdentityException("permission_denied", "The consuming installation or its reviewed grants changed.");

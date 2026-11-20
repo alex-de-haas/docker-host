@@ -67,7 +67,7 @@ internal sealed partial class CoreHistoryAdapter
         var selected = input.Providers;
         if (selected is null)
             selected = (await ProvidersAsync(caller, ct)).Providers.Where(p => p.Version == 1)
-                .Select(p => new HostyProviderRef(p.AppId, p.InstallationId!, p.Key)).ToArray();
+                .Select(p => new HostyProviderRef(p.AppId, p.InstallationId!, p.Key) { ImplementationId = p.ImplementationId }).ToArray();
         if (selected.Length > 8) throw new CoreProviderException("provider_selection_required", "Select at most eight history providers explicitly.", 400);
         foreach (var provider in selected) CoreProviderMediation.ValidateReference(provider);
         selected = selected.Distinct().OrderBy(ProviderKey, StringComparer.Ordinal).ToArray();

@@ -83,7 +83,7 @@ internal static class CoreHistoryExportEndpoints
         static string E(string? value) => WebUtility.HtmlEncode(value ?? "");
         var grant = record.Grant;
         var consumer = record.ConsumerLabel ?? (grant.Consumer!.Kind == "app" ? grant.Consumer.AppId : "The requesting client");
-        var sources = string.Join("", CoreHistoryExportStore.Providers(record).Select(p => $"<li>{E(p.AppId)} / {E(p.Key)}<br><small>Installation: {E(p.InstallationId)}</small></li>"));
+        var sources = string.Join("", CoreHistoryExportStore.Providers(record).Select(p => $"<li>{E(p.AppId)} / {E(p.Key)}{(p.ImplementationId is null ? "" : " / " + E(p.ImplementationId))}<br><small>Installation: {E(p.InstallationId)}</small></li>"));
         var corpus = grant.Corpus!.Mode == "all-owned" ? "All your conversations from these sources, including conversations you create later."
             : $"Only these {grant.Corpus.Conversations!.Length} selected conversations: <ul>" + string.Join("", grant.Corpus.Conversations.Select(c => $"<li>{E(c.Id)} ({E(c.Provider.AppId)})</li>")) + "</ul>";
         var decision = nonce is null || grant.State is not ("proposed" or "active") ? "" : $"<form method=\"post\"><input type=\"hidden\" name=\"nonce\" value=\"{E(nonce)}\"><input type=\"hidden\" name=\"revision\" value=\"{E(grant.Revision)}\">"

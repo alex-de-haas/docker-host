@@ -15,6 +15,14 @@ internal sealed partial class CoreAgentExecution
             || text.GetString() is not { Length: > 0 } s || s.Length > max || s.Any(char.IsControl))
             throw Invalid("Authorization references must be bounded metadata strings.");
     }
+    private static void ProviderMetadata(JsonElement provider)
+    {
+        Object(provider, "appId", "installationId", "key", "implementationId");
+        Text(provider, "appId"); Text(provider, "installationId"); Text(provider, "key");
+        if (provider.TryGetProperty("implementationId", out var id) && id.ValueKind != JsonValueKind.Null
+            && (id.ValueKind != JsonValueKind.String || !NamedProviderImplementations.ValidId(id.GetString())))
+            throw Invalid("Use a bounded provider implementation ID.");
+    }
     private static void ValidateResources(JsonElement resources)
     {
         if (resources.ValueKind != JsonValueKind.Array || resources.GetArrayLength() > 100) throw Invalid("Use at most 100 resource references.");
@@ -22,7 +30,8 @@ internal sealed partial class CoreAgentExecution
         {
             Object(resource, "kind", "id", "revision", "provider");
             Text(resource, "kind", 64); Text(resource, "id"); Text(resource, "revision");
-            if (resource.TryGetProperty("provider", out var provider) && provider.ValueKind != JsonValueKind.Null) { Object(provider, "appId", "installationId", "key"); Text(provider, "appId"); Text(provider, "installationId"); Text(provider, "key"); }
+            if (resource.TryGetProperty("provider", out var provider) && provider.ValueKind != JsonValueKind.Null)
+                ProviderMetadata(provider);
         }
     }
     private static void ValidateMcpPolicy(JsonElement policy)
@@ -67,8 +76,7 @@ internal sealed partial class CoreAgentExecution
                     throw Invalid("Task workflow policy applies only to its declared task tools.");
             }
             if (!workflow.TryGetProperty("executor", out var executor)) throw Invalid("A workflow executor reference is required.");
-            Object(executor, "appId", "installationId", "key");
-            Text(executor, "appId"); Text(executor, "installationId"); Text(executor, "key");
+            ProviderMetadata(executor);
             if (!Guid.TryParse(workflow.GetProperty("sessionId").GetString(), out _)) throw Invalid("Use a session workflow UUID.");
         }
         if (ceiling.TryGetProperty("resources", out var resources) && resources.ValueKind != JsonValueKind.Null) ValidateResources(resources);

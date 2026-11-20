@@ -3,26 +3,23 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Mic, Square, X } from "lucide-react";
 import { Tooltip } from "radix-ui";
-import type { ProviderDescriptor, SpeechResult } from "@hosty-sdk/app/providers";
+import type { SpeechResult } from "@hosty-sdk/app/providers";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useSpeechRoster } from "@/lib/use-speech-roster";
+import { currentSpeechOption, type SpeechOption } from "../../../shared/speech-selection";
 import { call } from "@/lib/api";
 import { recordingWave } from "@/lib/speech-audio";
 import { startSpeechActivity, type SpeechActivityFrame } from "@/lib/speech-activity";
 import { chatSpeechLimits, speechDuration, type SpeechLimits } from "../../../shared/speech";
 
-type Roster = { granted: boolean; requestable?: boolean; reviewAvailable?: boolean; providers: ProviderDescriptor[] };
-type Recording = { controller: AbortController; stream?: MediaStream; recorder?: MediaRecorder; timer?: ReturnType<typeof setTimeout>; clock?: ReturnType<typeof setInterval> };
+type Recording = { binding: string; controller: AbortController; stream?: MediaStream; recorder?: MediaRecorder; timer?: ReturnType<typeof setTimeout>; clock?: ReturnType<typeof setInterval> };
 
 /** Remount per conversation; cleanup invalidates every pending microphone/recognition operation. */
 export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; onText: (text: string) => void; onStart?: () => void }) {
-  const [roster, setRoster] = useState<Roster | null>(null);
-  const [selected, setSelected] = useState("");
   const [phase, setPhase] = useState<"idle" | "starting" | "recording" | "transcribing">("idle");
   const [error, setError] = useState("");
   const [meterStream, setMeterStream] = useState<MediaStream>();
-  const [rosterError, setRosterError] = useState("");
-  const [capabilities, setCapabilities] = useState<{ provider: ProviderDescriptor; limits?: SpeechLimits; error?: string }>();
+  const [capabilities, setCapabilities] = useState<{ provider: SpeechOption; limits?: SpeechLimits; error?: string }>();
   const [elapsed, setElapsed] = useState(0);
   const active = useRef<Recording | null>(null);
   const onResult = useRef(onText);
@@ -34,22 +31,19 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
     setWasDisabled(disabled);
     if (disabled) { setPhase("idle"); setMeterStream(undefined); }
   }
-  useEffect(() => {
-    const controller = new AbortController();
-    const refresh = () => { void call("/speech/providers", { signal: controller.signal }).then(r => r.json() as Promise<Roster>).then(value => { if (!controller.signal.aborted) { setRoster(value); setRosterError(""); } }).catch(cause => { if (!controller.signal.aborted) setRosterError(cause instanceof Error ? cause.message : "Speech providers are unavailable."); }); };
-    refresh(); window.addEventListener("focus", refresh);
-    return () => { controller.abort(); window.removeEventListener("focus", refresh); };
-  }, []);
+  const { roster, error: rosterError } = useSpeechRoster(value => {
+    if (active.current && (!value?.granted || active.current.binding !== value.binding || !currentSpeechOption(value)?.available)) cancel();
+  });
   useEffect(() => () => { dispose(active.current); active.current = null; }, []);
   useEffect(() => { if (disabled) { dispose(active.current); active.current = null; } }, [disabled]);
-  const choice = selected || (roster?.providers.length === 1 ? identity(roster.providers[0]!) : "");
-  const provider = roster?.providers.find(p => identity(p) === choice);
+  const provider = roster && currentSpeechOption(roster);
+  const binding = roster?.binding;
   const currentCapabilities = capabilities?.provider === provider ? capabilities : undefined;
   const limits = currentCapabilities?.limits;
   useEffect(() => {
-    if (!provider?.available || !roster?.granted) return;
+    if (!binding || !provider?.available || !roster?.granted) return;
     const controller = new AbortController();
-    void call(`/speech/capabilities?appId=${encodeURIComponent(provider.appId)}&key=${encodeURIComponent(provider.key)}`, { signal: controller.signal })
+    void call(`/speech/capabilities?binding=${encodeURIComponent(binding)}`, { signal: controller.signal })
       .then(response => response.json()).then(value => {
         const limits = chatSpeechLimits(value);
         if (!controller.signal.aborted) setCapabilities({ provider, limits });
@@ -57,14 +51,14 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
         if (!controller.signal.aborted) setCapabilities({ provider, error: cause instanceof Error ? cause.message : "Recording limits are unavailable." });
       });
     return () => controller.abort();
-  }, [provider, roster?.granted]);
+  }, [binding, provider, roster?.granted]);
   // Every path that ends an operation (finish, cancel, disable) also returns the phase to idle.
   const busy = phase !== "idle";
   function cancel() { dispose(active.current); active.current = null; setMeterStream(undefined); setPhase("idle"); }
   async function start() {
-    if (!provider || !provider.available || !limits || blocked.current || active.current) return;
+    if (!binding || !provider?.available || !limits || blocked.current || active.current) return;
     onStart?.();
-    const operation: Recording = { controller: new AbortController() }; active.current = operation;
+    const operation: Recording = { binding, controller: new AbortController() }; active.current = operation;
     const valid = () => active.current === operation && !operation.controller.signal.aborted && !blocked.current;
     setPhase("starting"); setError("");
     try {
@@ -84,7 +78,7 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
           try {
             const wave = await recordingWave(new Blob(chunks, { type: recorder.mimeType }), limits);
             if (!valid()) return;
-            const response = await call(`/speech/transcriptions?appId=${encodeURIComponent(provider.appId)}&key=${encodeURIComponent(provider.key)}`, {
+            const response = await call(`/speech/transcriptions?binding=${encodeURIComponent(binding)}`, {
               method: "POST", body: wave, headers: { "content-type": "audio/wav" }, signal: operation.controller.signal,
             });
             const result = await response.json() as SpeechResult;
@@ -112,20 +106,14 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
       : roster.requestable === false
         ? "This Harness installation has no optional speech-to-text permission. Review an updated Harness manifest in Core before enabling dictation."
         : "Harness has no speech-to-text permission. Ask a host administrator to review its installation permissions."
+    : roster.selected && !provider ? `${roster.selected.displayName} is unavailable. Open Speech settings to choose another provider.`
     : roster.providers.length === 0 ? "No speech providers were found. Check your speech-to-text apps in Dashboard."
-    : !provider ? "Choose a speech provider to enable dictation."
+    : !provider ? "Choose a speech provider in Speech settings to enable dictation."
     : !provider.available ? `${provider.displayName} is unavailable. Check the app's status in Dashboard.`
     : currentCapabilities?.error ? `Could not check recording limits: ${currentCapabilities.error}`
     : !limits ? "Checking recording limits…"
     : `Dictate into your draft, up to ${speechDuration(limits.maxDurationSeconds)}`;
   return <div data-slot="speech-input" role="group" aria-label="Dictation" className="inline-flex max-w-64 shrink-0 flex-wrap items-center gap-1">
-    {!busy && roster?.granted && roster.providers.length > 1 && <Select value={JSON.stringify(choice)} disabled={busy || disabled} onValueChange={value => setSelected(JSON.parse(value) as string)}>
-      <SelectTrigger data-speech-provider size="sm" aria-label="Speech provider" title={provider?.displayName ?? "Choose a speech provider"} className="max-w-40"><SelectValue /></SelectTrigger>
-      <SelectContent><SelectGroup>
-        <SelectItem value={JSON.stringify("")}>Speech provider…</SelectItem>
-        {roster.providers.map(p => <SelectItem key={identity(p)} value={JSON.stringify(identity(p))}>{p.displayName}{p.available ? "" : " (unavailable)"}</SelectItem>)}
-      </SelectGroup></SelectContent>
-    </Select>}
     {busy ? <>
       <span data-slot="speech-status" role="status" className="inline-flex size-8 items-center justify-center" title={phase === "recording" ? "Recording dictation" : phase === "starting" ? "Opening microphone…" : "Transcribing…"}>
         {phase === "recording" ? <SpeechActivityMeter stream={meterStream} /> : <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" />}
@@ -144,6 +132,7 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
         {hint}<Tooltip.Arrow className="fill-foreground" />
       </Tooltip.Content></Tooltip.Portal>
     </Tooltip.Root></Tooltip.Provider>}
+    {!disabled && !busy && roster && (!provider?.available || currentCapabilities?.error) && <a href="/settings/speech" className="text-xs underline">Speech settings</a>}
     {rosterError && <p role="alert" className="w-full text-xs text-destructive-foreground">Could not check speech providers: {rosterError}</p>}
     {error && <p role="alert" className="w-full text-xs text-destructive-foreground">{error}</p>}
   </div>;
@@ -163,7 +152,6 @@ function SpeechActivityMeter({ stream }: { stream: MediaStream | undefined }) {
       style={{ height: `${2 + Math.max(0, Math.min(1, activity.level)) * weight * 20}px` }} />)}
   </span>;
 }
-function identity(provider: ProviderDescriptor) { return JSON.stringify([provider.appId, provider.key]); }
 function dispose(operation: Recording | null) {
   if (!operation) return;
   operation.controller.abort(); clearTimeout(operation.timer);

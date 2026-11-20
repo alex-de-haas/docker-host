@@ -9,7 +9,7 @@ internal sealed record CoreAgentRunGet(HostyRunRef Run);
 internal sealed record CoreAgentRunCancel(HostyRunRef Run, string RequestId, string ExpectedRevision);
 internal sealed partial class CoreAgentSessionAdapter(CoreProviderMediation providers) : ICoreAgentRunAccess
 {
-    internal Task<ProviderDirectory> ProvidersAsync(CoreCapabilityCaller caller, CancellationToken ct) => providers.ListAsync(caller, "agent-sessions", ct);
+    internal Task<ProviderDirectory> ProvidersAsync(CoreCapabilityCaller caller, CancellationToken ct, bool named = false) => providers.ListAsync(caller, "agent-sessions", ct, named);
     internal async Task<JsonElement> ListAsync(CoreCapabilityCaller caller, CoreAgentSessionQuery input, CancellationToken ct)
     {
         if (input.Limit is < 1 or > 200 || input.Cursor?.Length > 4096) throw new CoreProviderException("invalid_input", "Use page size 1–200 and a bounded cursor.", 400);

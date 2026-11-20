@@ -54,13 +54,13 @@ internal sealed partial class CoreCapabilityAuthorization
             || receipt.Operation != "execute" || receipt.State is not ("pending" or "completed" or "unknown")
             || grant.Origin.Kind is "task-dispatch" or "task-source-read" or "history-export")
             throw new AppIdentityException("permission_denied", "This receipt does not authorize an execution dispatch.");
-        var caller = await RevalidateAsync(grant.Origin, receipt.UserId, receipt.PrincipalId, "tasks", source.AppId, source.Key, "task_action", ct, retainedTask: true);
+        var caller = await RevalidateAsync(grant.Origin, receipt.UserId, receipt.PrincipalId, "tasks", source, "task_action", ct, retainedTask: true);
         CoreProviderPolicy.For("tasks", "execute").Require(caller);
         if (grant.Scope.WorkspaceId is not null) caller.Require(AccessTokenScopes.McpWorkspaces, CoreAppPermissions.Sources);
         var provider = await registry.GetAppAsync(source.AppId, ct);
         if (provider is null || PanelIdentity.Installation(provider) != source.InstallationId
             || !AppManagementAuthorization.HasPermission(provider, CoreAppPermissions.TaskExecutors)
-            || !ProviderAccessService.Describe(provider, "tasks").Any(d => d.Key == source.Key && d.Available && d.Version == 1))
+            || ProviderAccessService.Find(provider, "tasks", source.Key, source.ImplementationId) is not { Available: true, Version: 1 })
             throw new AppIdentityException("permission_denied", "The task source no longer has its reviewed executor access.");
         return (caller, receipt);
     }
@@ -79,7 +79,7 @@ internal sealed partial class CoreProviderMediation
         await identity.RequireAccessibleUserAsync(app.Id, reference.UserId, ct);
         var executor = await apps.GetAppAsync(scope.Executor.AppId, ct);
         if (executor is null || PanelIdentity.Installation(executor) != scope.Executor.InstallationId
-            || !ProviderAccessService.Describe(executor, "task-executor").Any(d => d.Key == scope.Executor.Key && d.Version == 1 && d.Available))
+            || ProviderAccessService.Find(executor, "task-executor", scope.Executor.Key, scope.Executor.ImplementationId) is not { Available: true, Version: 1 })
             throw new CoreProviderException("provider_unavailable", "The bound executor installation is unavailable.", 503, true);
         return new(reference, scope);
     }
@@ -91,7 +91,7 @@ internal sealed partial class CoreProviderMediation
         var scope = receipt.TaskAuthorization!.Scope;
         if (input.Executor != scope.Executor || input.Operation is not ("options" or "get" or "accept" or "cancel"))
             throw new CoreProviderException("permission_denied", "Use the executor and operation bound to this task attempt.", 403);
-        var executor = new HostyProviderRef(scope.Executor.AppId, scope.Executor.InstallationId, scope.Executor.Key);
+        var executor = new HostyProviderRef(scope.Executor.AppId, scope.Executor.InstallationId, scope.Executor.Key) { ImplementationId = scope.Executor.ImplementationId };
         var childCaller = caller with { Authority = new("task-dispatch", TaskDispatch: input.Dispatch) };
         var policy = CoreProviderPolicy.For("task-executor", "dispatch." + input.Operation);
         if (input.Operation == "options")

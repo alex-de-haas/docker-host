@@ -38,10 +38,10 @@ internal sealed class CoreTaskWorkflow(CoreCapabilityAuthorization authorization
         if (scope.RootGeneration != input.RootGeneration) throw new CoreProviderException("stale_input", "The retained dispatch belongs to another root generation.", 409);
         if (scope.Executor.AppId != app.Id || scope.Executor.InstallationId != PanelIdentity.Installation(app))
             throw new AppIdentityException("permission_denied", "Only the retained executor installation may coordinate this root.");
-        var source = new HostyTaskProviderRef(scope.TaskRef.AppId, scope.TaskRef.InstallationId, scope.TaskRef.Key);
-        if (input.ParentTaskRef.AppId != source.AppId || input.ParentTaskRef.InstallationId != source.InstallationId || input.ParentTaskRef.Key != source.Key)
+        var source = new HostyTaskProviderRef(scope.TaskRef.AppId, scope.TaskRef.InstallationId, scope.TaskRef.Key) { ImplementationId = scope.TaskRef.ImplementationId };
+        if (input.ParentTaskRef.AppId != source.AppId || input.ParentTaskRef.InstallationId != source.InstallationId || input.ParentTaskRef.Key != source.Key || input.ParentTaskRef.ImplementationId != source.ImplementationId)
             throw new CoreProviderException("unsupported_capability", "Coordinated children use the root's task provider installation.", 422);
-        var descriptor = await providers.ResolveAsync(caller, new(source.AppId, source.InstallationId, source.Key), "tasks", ct);
+        var descriptor = await providers.ResolveAsync(caller, new(source.AppId, source.InstallationId, source.Key) { ImplementationId = source.ImplementationId }, "tasks", ct);
         if (descriptor.Version != 1 || !descriptor.Capabilities.Contains("parent-child") || !descriptor.Available)
             throw new CoreProviderException("unsupported_capability", "The current source must declare v1 parent-child tasks.", 422);
         var root = Read(await tasks.GetAsync(caller, new(scope.TaskRef), ct));
@@ -58,7 +58,7 @@ internal sealed class CoreTaskWorkflow(CoreCapabilityAuthorization authorization
         if (tool is null) throw new CoreProviderException("unsupported_capability", "This workflow operation is not available.", 422);
         // Check the requested tool itself against current MCP policy, not only the original launch.
         var origin = receipt.TaskAuthorization.Origin with { InvokedTool = tool, TaskWorkflow = binding };
-        caller = await authorization.RevalidateAsync(origin, caller.User.Id, caller.PrincipalId, "tasks", source.AppId, source.Key, tool, ct, retainedTask: true);
+        caller = await authorization.RevalidateAsync(origin, caller.User.Id, caller.PrincipalId, "tasks", new(source.AppId, source.InstallationId, source.Key) { ImplementationId = source.ImplementationId }, tool, ct, retainedTask: true);
         if (input.Operation == "observe") return JsonSerializer.SerializeToElement(new CoreTaskWorkflowObserve(binding, root, parent), CoreJson.TypeInfo<CoreTaskWorkflowObserve>());
         if (input.Operation == "bind_session")
         {

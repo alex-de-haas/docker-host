@@ -1586,7 +1586,6 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                   "@max-[640px]/composer:[&_:is([data-slot=provider-usage],[data-slot=context-usage])]:gap-0.5 @max-[640px]/composer:[&_:is([data-slot=provider-usage],[data-slot=context-usage])]:px-0",
                   "@max-[640px]/composer:[&_[data-slot=usage-ring]]:size-5 @max-[640px]/composer:[&_[data-slot=usage-ring]>svg]:size-5 @max-[640px]/composer:[&_.font-mono]:text-[11px]",
                   "@max-[640px]/composer:[&_[data-slot=speech-input]]:gap-0.5 @max-[640px]/composer:[&_[data-speech-control]]:size-6 @max-[640px]/composer:[&_[data-speech-control]]:p-0",
-                  "@max-[640px]/composer:[&_[data-slot=speech-input]_[data-speech-provider]]:size-6 @max-[640px]/composer:[&_[data-speech-provider]]:justify-center @max-[640px]/composer:[&_[data-speech-provider]]:gap-0 @max-[640px]/composer:[&_[data-speech-provider]]:px-0 @max-[640px]/composer:[&_[data-speech-provider]_[data-slot=select-value]]:sr-only",
                   "@max-[640px]/composer:[&_[data-slot=speech-status]]:h-6 @max-[640px]/composer:[&_[data-slot=speech-status]]:w-4 @max-[640px]/composer:[&_[data-speech-meter]]:gap-[1.5px] @max-[640px]/composer:[&_[data-speech-bar]]:w-0.5")}
                   role="group" aria-label="Message actions">
                   <div className="flex min-w-0 flex-1 items-center gap-0.5">

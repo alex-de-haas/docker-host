@@ -10,7 +10,7 @@ export type UsagePresentationPolicy = {
 };
 export type ProviderSettingsDefinition = {
   kind: string; name: string; connectionName?: string;
-  authentication: Array<{ id: string; label: string; credential?: boolean; hostDirectory?: boolean; browserLogin?: boolean }>;
+  authentication: Array<{ id: string; label: string; credential?: boolean; hostDirectory?: boolean; browserLogin?: boolean; interfaceChoices?: Array<{ kind: string; label: string }> }>;
   hostDirectory?: { label: string; placeholder: string; description: string };
   baseUrl?: { label: string; placeholder: string; description: string };
   login?: { name: string; description: string };
@@ -75,7 +75,7 @@ export function createProviderSettings(options: ProviderSettingsOptions): (reque
   const inactive = async (id: string) => { if (await options.isConnectionInUse(id)) throw new SettingsError(409, "connection_in_use", "Stop and reconcile this connection's active execution before changing it."); };
   const inventory = async () => {
     const result = await options.connections.list();
-    return { kind: definition.kind, defaultId: result.defaultId, defaults: result.defaults, connections: result.connections.filter(c => c.kind === definition.kind).map(c => ({ id: c.id, name: c.name, kind: c.kind, auth: c.auth, revision: String(c.revision), baseUrl: c.baseUrl, hostDirectory: c.hostDirectory, available: c.available, reason: c.reason })) };
+    return { kind: definition.kind, defaultId: result.defaultId, defaults: result.defaults, connections: result.connections.filter(c => c.kind === definition.kind).map(c => ({ id: c.id, name: c.name, kind: c.kind, auth: c.auth, revision: String(c.revision), baseUrl: c.baseUrl, hostDirectory: c.hostDirectory, ...(definition.authentication.find(method => method.id === c.auth)?.interfaceChoices ? { publishedInterfaces: c.publishedInterfaces ?? [], settingsRevision: String(c.settingsRevision ?? c.revision) } : {}), available: c.available, reason: c.reason })) };
   };
   return async (request, response, pathname) => {
     const method = request.method ?? "GET";
@@ -126,11 +126,21 @@ export function createProviderSettings(options: ProviderSettingsOptions): (reque
       if (connectionRoute && ["POST", "PUT", "DELETE"].includes(method)) {
         const id = connectionRoute[1], input = await body(request);
         await serial(async () => {
-          if (id) { await current(id, input); await inactive(id); }
+          const existing = id ? await current(id, input) : null;
+          if (id && existing) {
+            // Publishing an interface changes eligibility for new calls without modifying the active agent.
+            const interfacesOnly = method === "PUT" && !connectionRoute[2] && Array.isArray(input.publishedInterfaces)
+              && definition.authentication.some(auth => auth.id === existing.auth && auth.interfaceChoices?.length)
+              && (input.name === undefined || input.name === existing.name) && (input.auth === undefined || input.auth === existing.auth)
+              && Object.keys(input).every(field => ["expectedRevision", "expectedSettingsRevision", "name", "auth", "publishedInterfaces"].includes(field));
+            if (!interfacesOnly) await inactive(id);
+          }
           if (id && connectionRoute[2] === "login" && method === "POST") { if (Object.keys(input).some(k => k !== "expectedRevision")) throw new SettingsError(400, "invalid_input", "Unexpected login fields."); json(response, 200, await options.connections.startLogin(id)); }
           else if (id && !connectionRoute[2] && method === "DELETE") { await options.connections.remove(id); json(response, 200, { removed: true }); }
           else if ((!id && method === "POST" || id && method === "PUT") && !connectionRoute[2]) {
-            if (Object.keys(input).some(k => !["name", "auth", "secret", "baseUrl", "hostDirectory", "expectedRevision"].includes(k))) throw new SettingsError(400, "invalid_input", "Unexpected connection fields.");
+            const auth = input.auth ?? existing?.auth;
+            const choices = definition.authentication.find(method => method.id === auth)?.interfaceChoices;
+            if (Object.keys(input).some(k => !["name", "auth", "secret", "baseUrl", "hostDirectory", "expectedRevision", ...(choices ? ["expectedSettingsRevision", "publishedInterfaces"] : [])].includes(k))) throw new SettingsError(400, "invalid_input", "Unexpected connection fields.");
             const { expectedRevision: _revision, ...update } = input;
             const saved = await options.connections.update({ ...update, kind: definition.kind }, id);
             json(response, 200, { ...await inventory(), saved: { id: saved.id, revision: String(saved.revision) } });
@@ -165,6 +175,7 @@ export function settingsHtml(definition: ProviderSettingsDefinition): string {
 <div id="secret-field" class="field"><label for="secret">Credential</label><input id="secret" type="password" autocomplete="new-password" aria-describedby="secret-description"><p id="secret-description" class="field-description">Credentials are stored securely for this provider. Leave blank when editing to keep the current credential.</p></div>
 <div id="host-field" class="field"><label for="hostDirectory">${htmlText(host?.label ?? "Existing account directory")}</label><input id="hostDirectory" placeholder="${htmlText(host?.placeholder ?? "")}" aria-describedby="host-description"><p id="host-description" class="field-description">${htmlText(host?.description ?? "")}</p></div>
 <div id="url-field" class="field"><label for="baseUrl">${htmlText(url?.label ?? "Server URL")}</label><input id="baseUrl" type="url" maxlength="2048" placeholder="${htmlText(url?.placeholder ?? "")}" aria-describedby="url-description"><p id="url-description" class="field-description">${htmlText(url?.description ?? "")}</p></div>
+<div id="interface-choices" class="field" hidden></div>
 </fieldset><p id="form-error" class="alert alert-error" role="alert" hidden></p></div><div class="dialog-footer"><button id="save-provider" type="submit" class="button button-sm">Save provider</button><button id="clear" type="button" class="button button-outline button-sm">Cancel</button></div></form></dialog>
 <dialog id="login-dialog" class="dialog login-dialog" aria-labelledby="login-title" aria-describedby="login-description"><div class="dialog-header"><h2 id="login-title">Sign in with ${htmlText(login.name)}</h2><p id="login-description">${htmlText(login.description)}</p></div><div class="dialog-body"><div id="login-code-row" class="login-code"><code id="login-code">Preparing…</code><button id="copy-code" type="button" class="button button-ghost button-icon" aria-label="Copy code">⧉</button></div><p id="login-status" class="field-description" role="status">Waiting for confirmation…</p><p id="login-error" role="alert" class="alert alert-error" hidden></p></div><div class="dialog-footer"><button id="login-close" class="button button-outline" type="button">Cancel sign-in</button><a id="login-open" class="button" target="_blank" rel="noopener noreferrer" hidden>Open ${htmlText(login.name)}</a></div></dialog><script type="module" src="/settings-browser.mjs"></script></body></html>`;
 }

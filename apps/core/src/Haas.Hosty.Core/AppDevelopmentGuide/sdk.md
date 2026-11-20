@@ -14,6 +14,31 @@ This guide describes the packages available with this Core source, not hypotheti
 | Child Core/sandbox coordinator | /sandbox/server and /sandbox/react | No equivalent environment coordinator in this package | Use reviewed typed Core APIs; no broad host CLI bridge |
 | Browser embedding/UI integration | /embedder, /ui, /ui/react, /theme, /continuity/browser | No browser UI adapters | Implement browser contract or reuse a TS frontend |
 
+### Named provider implementations
+
+An interface entry with the capability `implementations.named` publishes its current options
+from the provider backend. Publish a complete snapshot for each declared key through
+`ProviderClient.publishImplementations(kind, key, { revision, implementations })`.
+Each entry carries `id`, `displayName` and `available`. Keep the ID stable across renames and
+use a fresh identity when replacing an account. Persist the positive, increasing revision and
+resubmit the same snapshot after startup. An empty list withdraws every option for that key.
+A named entry must resolve to one endpoint. Use the full service-qualified endpoint key when
+multiple services use the same port key. A single matching port key is sufficient. An entry
+may omit the endpoint key when the installation has exactly one endpoint.
+
+Consumers use `listImplementations(kind)` or `ListImplementationsAsync(kind)`. Save the app ID,
+installation ID, interface key and optional implementation ID for each selection. Use the label
+only for display. Pass the whole selection when requesting capabilities, transcription or
+synthesis. The provider resolves the exact implementation from server-side credential introspection.
+The legacy `list` and `ListAsync` methods return static entries.
+
+Text-to-speech v1 requires the reviewed provider role `text-to-speech` and the consumer grant
+`providers.text-to-speech`. The provider serves `GET /capabilities` with `version: 1`, `ready`,
+`backend`, `mediaTypes` containing `audio/pcm` and a positive `maxCharacters` up to 4,000 UTF-16
+code units. `POST /speech` accepts JSON `{"text":"..."}` and streams mono signed little-endian
+PCM16 at 24 kHz with media type `audio/pcm;rate=24000`. Cancel the request and stop generating
+when the listener stops. Keep section text and audio out of logs.
+
 Plain Node must not import /server: it imports `server-only` and assumes a Next/React server.
 The packaged Node bootstrap's auth.ts shows direct HTTP exchange/revalidation with the pure
 /app-code and /continuity helpers; preserve its recovery behavior when replacing the framework.

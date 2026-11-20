@@ -1,4 +1,5 @@
 import path from "node:path";
+import { sameProviderRef } from "../../shared/provider-reference.js";
 import { createHash } from "node:crypto";
 import { ProviderError, type MediatedProviderInvocation } from "@hosty-sdk/app/providers";
 import type { AgentRun, AgentSession, AgentSessionPage, AgentSessionQuery, NativeSessionRef, ProviderRef, RunRef, RunCancel, RunCancelReceipt } from "@hosty-sdk/app/agent-sessions";
@@ -11,7 +12,7 @@ type Actor = Pick<MediatedProviderInvocation, "userId" | "principalId" | "hostRo
 const stamp = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const fail = (code: string, message: string, status = 400): never => { throw new ProviderError(code, message, status); };
 const missing = (): never => fail("not_found", "Execution resource not found.", 404);
-const same = (first: ProviderRef, second: ProviderRef) => first?.appId === second.appId && first.installationId === second.installationId && first.key === second.key;
+
 const uuid = (id: string) => typeof id === "string" && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(id) ? id.toLowerCase() : fail("invalid_input", "Use an execution identity or request UUID.");
 export const executionCapabilities = ["session.read", "session.list", "run.cancel", "run.events"];
 
@@ -24,7 +25,7 @@ export class AgentSessionService {
   private actor(actor: Actor): void {
     if (!actor.userId || !actor.principalId || actor.hostRole !== "host.admin") fail("permission_denied", "Execution observations require the current administrator and resource owner.", 403);
   }
-  private reference(ref: NativeSessionRef | RunRef): string { if (!ref || !same(ref.provider, this.provider)) return missing(); return uuid(ref.id); }
+  private reference(ref: NativeSessionRef | RunRef): string { if (!ref || !sameProviderRef(ref.provider, this.provider)) return missing(); return uuid(ref.id); }
   private run(value: ObservedRun): AgentRun {
     const current = value.stopConfirmed || value.generation === this.manager.observations.generation;
     return { ref: { provider: this.provider, id: value.id }, revision: value.revision,
@@ -54,8 +55,8 @@ export class AgentSessionService {
     });
   }
   async list(actor: Actor, input: AgentSessionQuery): Promise<AgentSessionPage> {
-    this.actor(actor); if (!same(input.provider, this.provider)) return missing();
-    if (input.conversation && !same(input.conversation.provider, this.provider)) return missing();
+    this.actor(actor); if (!sameProviderRef(input.provider, this.provider)) return missing();
+    if (input.conversation && !sameProviderRef(input.conversation.provider, this.provider)) return missing();
     const limit = input.limit ?? 50; if (!Number.isInteger(limit) || limit < 1 || limit > 200) fail("invalid_input", "Use page size 1–200.");
     await this.manager.observations.synchronize();
     return this.manager.observations.change(async state => {
