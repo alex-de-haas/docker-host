@@ -16,7 +16,7 @@ export const AGENT_CAPABILITIES = {
   barrier: "runs.barrier", reconcile: "runs.reconcile", liveConfigure: "runs.live-configure",
   predictions: "predictions", connectionUsage: "connections.usage",
   approvalMode: "configuration.approval-mode",
-  mcpPolicy: "mcp.policy-update", consumerWorkflow: "workflow.consumer",
+  mcpPolicy: "mcp.policy-update", consumerWorkflow: "workflow.consumer", sessionSubagents: "workflow.subagents",
 } as const;
 export type AgentCapability = typeof AGENT_CAPABILITIES[keyof typeof AGENT_CAPABILITIES] | (string & {});
 export type AgentLimits = {
@@ -165,7 +165,8 @@ export const AGENT_SESSION_WORKFLOW_TOOLS = [
   "task_wait", "task_plan", "task_bind_workspace", "task_execution_get",
 ] as const;
 /** Optional business workflow owned by the invoking consumer, separate from native execution. */
-export type AgentSessionWorkflowTool = typeof AGENT_SESSION_WORKFLOW_TOOLS[number];
+export const AGENT_SUBAGENT_WORKFLOW_TOOLS = ["subagent_profiles", "subagent_spawn", "subagent_status", "subagent_wait"] as const;
+export type AgentSessionWorkflowTool = typeof AGENT_SESSION_WORKFLOW_TOOLS[number] | typeof AGENT_SUBAGENT_WORKFLOW_TOOLS[number];
 export type AgentSessionWorkflowBinding = {
   executor: ProviderRef; sessionId: string; tools?: AgentSessionWorkflowTool[]; policy?: AgentMcpPolicy;
 };
@@ -179,7 +180,7 @@ export type AgentAuthorizationRequest = {
   conversation?: { sessionId: string; viewerPath: string; title: string };
   ceiling?: { mcp?: AgentMcpSelection; resources?: AgentResource[]; deadline?: string; configurationRevision?: Revision; workflow?: AgentSessionWorkflowBinding };
 };
-export type AgentOperationAuthorization = { provider: AgentProviderRef; baseUrl: string; token: string; expiresAt: string; admissionRef?: string };
+export type AgentOperationAuthorization = { provider: AgentProviderRef; baseUrl: string; token: string; expiresAt: string; admissionRef?: string; supportedWorkflowCapabilities?: string[] };
 export type AgentAuthorizer = (request: AgentAuthorizationRequest, signal?: AbortSignal) => Promise<AgentOperationAuthorization>;
 /** Persist this value before a mutation; body is the exact UTF-8 JSON string used on every retry. */
 export type AgentPreparedRequest<T = unknown> = AgentAuthorizationRequest & { body: string; readonly __result?: T };

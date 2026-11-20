@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { AGENT_CAPABILITIES, type AgentAuthorizationRequest, type AgentCapabilities, type AgentConfiguration, type AgentControlReceipt, type AgentEvent, type AgentRunInput,
+import { AGENT_CAPABILITIES, AGENT_SESSION_WORKFLOW_TOOLS, type AgentAuthorizationRequest, type AgentCapabilities, type AgentConfiguration, type AgentControlReceipt, type AgentEvent, type AgentRunInput,
   type AgentRunSnapshot, type AgentSession, type AgentSource } from "@hosty-sdk/app/agent";
 import { AuditReporter } from "../audit.js";
 import type { HarnessAdapter } from "../harness/adapter.js";
@@ -47,7 +47,7 @@ export async function publicProviderFixture(installationHistory = false) {
   const controls: Array<{ runId: string; input: Record<string, unknown>; path: string }> = [];
   const managers: SessionManager[] = [];
   const behavior: { startGate?: Promise<void>; cancel: "confirmed" | "unavailable"; reconcile: "confirmed" | "unavailable";
-    failHistoryTokenOnce?: boolean; rejectHistoryStream?: boolean;
+    failHistoryTokenOnce?: boolean; rejectHistoryStream?: boolean; legacyWorkflowCore?: boolean;
     legacyHistoryRoute?: boolean; capabilitiesTimeoutAfterStart?: boolean; snapshotIssue?: "denied" | "timeout";
     loseNextStartResponse?: boolean; keepReservationAfterCancel?: boolean; deferPredictions?: boolean; beforeCancel?: (runId: string) => void;
     connectionRevision: string } = { cancel: "confirmed", reconcile: "confirmed", connectionRevision: "1" };
@@ -90,12 +90,16 @@ export async function publicProviderFixture(installationHistory = false) {
       }
       if (url.pathname.endsWith("/agent/authorize")) {
         const authorization = JSON.parse(body) as AgentAuthorizationRequest; authorizations.push(authorization);
+        if (behavior.legacyWorkflowCore && authorization.ceiling?.workflow?.tools?.some(name =>
+          !AGENT_SESSION_WORKFLOW_TOOLS.some(legacy => legacy === name)))
+          return error("invalid_input", "Select only the legacy task workflow tool names.", 400);
         if (authorization.operation === "runs.start" && authorization.runId) {
           const actor = new Headers(init?.headers).get("X-Hosty-User-Token");
           runOwners.set(authorization.runId, actor === credential ? owner : actor?.replace(/^user:/, "") ?? owner);
         }
         return json({ provider, baseUrl: "http://provider.test/api/agent/v1/coding", token: "exact-operation-fixture",
-          expiresAt: new Date(Date.now() + 60000).toISOString(), admissionRef: randomUUID() });
+          expiresAt: new Date(Date.now() + 60000).toISOString(), admissionRef: randomUUID(),
+          ...(behavior.legacyWorkflowCore ? {} : { supportedWorkflowCapabilities: [AGENT_CAPABILITIES.sessionSubagents] }) });
       }
       return error("fixture_route", "Unexpected Core fixture route.", 404);
     }

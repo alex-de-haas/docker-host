@@ -8,7 +8,7 @@ import { MessageTimestamp } from "./message-timestamp";
 import { PromptSuggestionCard } from "./prompt-suggestion";
 import { parseSuggestion, type PromptSuggestion } from "@/lib/prompt-suggestions";
 import { Fragment, useId, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Clock3, HelpCircle, Info, ShieldCheck, Wrench, X, FileCode2 } from "lucide-react";
+import { Bot, Check, ChevronDown, ChevronRight, Clock3, HelpCircle, Info, ShieldCheck, Wrench, X, FileCode2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { HostyLoader } from "../../../../../shared/web/hosty-states";
 import { Button } from "@/components/ui/button";
@@ -150,6 +150,12 @@ export function TranscriptEvent({
       const ids = Array.isArray(event.appIds) ? event.appIds.map(String) : [];
       return <div className="px-3 py-1 text-xs text-muted-foreground">{event.origin === "agent" ? "Assistant updated app context" : "App context"}: {ids.length ? ids.join(", ") : "General context"}</div>;
     }
+    case "subagent_assignment":
+      return <section aria-label="Assignment from parent chat" className="flex min-w-0 flex-col gap-1">
+        <h2 className="flex items-center gap-1 text-xs font-medium text-muted-foreground"><Bot className="size-3.5" aria-hidden />Assignment from parent chat</h2>
+        <div className="min-w-0 wrap-anywhere rounded-lg bg-muted/60 px-3 py-2"><Markdown text={String(event.text ?? "")} /></div>
+        <MessageTimestamp ts={event.ts} />
+      </section>;
     case "user_message": {
       // The files this turn carried are named here, under the message that carried them, because
       // this event is the only one that knows which message they belong to. Their upload rows draw

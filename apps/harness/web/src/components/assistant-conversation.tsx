@@ -37,6 +37,8 @@ import {
   MessageScroller, MessageScrollerButton, MessageScrollerContent,
   MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
+import { SessionSubagents, ChatLink } from "@/components/session-subagents";
+import { sessionSubagentTranscript } from "@/lib/session-subagents";
 import { orderedHistory, transcriptItems } from "@/lib/transcript-items";
 import { nativeAgentTranscript, nativeAgentKey, nativeSource, receiveTranscriptText, emptyTranscriptStreams } from "@/lib/native-subagents";
 import { NativeSubagents } from "./native-subagents";
@@ -123,6 +125,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // Retain the expected message-selected session even if fetching it fails.
   const [surfaceSessionId, setSurfaceSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<AssistantSession | null>(null);
+  const [subagentSnapshotThrough, setSubagentSnapshotThrough] = useState(0);
   const [historyGaps, setHistoryGaps] = useState<ProviderHistoryGap[]>([]);
   const sessionSnapshot = useRef<AssistantSession | null>(null);
   const titleChanges = useRef(new Map<string, number>());
@@ -498,6 +501,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setSession(record);
     sessionSnapshot.current = record;
     setHistoryGaps(record.providerHistoryGaps ?? []);
+    setSubagentSnapshotThrough(record.lastEventSeq ?? 0);
     setHealth(null);
     void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
     setError(null);
@@ -1233,7 +1237,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const attachmentIndex = useMemo(() => indexAttachments(events), [events]);
   const orderedEvents = useMemo(() => orderedHistory(events, historyGaps), [events, historyGaps]);
   const nativeTranscript = useMemo(() => nativeAgentTranscript(orderedEvents, streams.children), [orderedEvents, streams.children]);
-  const items = useMemo(() => transcriptItems(nativeTranscript.events, attachmentIndex.claimed, decidedApprovals, true), [nativeTranscript, attachmentIndex, decidedApprovals]);
+  const sessionTranscript = useMemo(() => sessionSubagentTranscript(nativeTranscript.events, session?.subagents, subagentSnapshotThrough), [nativeTranscript.events, session?.subagents, subagentSnapshotThrough]);
+  const items = useMemo(() => transcriptItems(sessionTranscript, attachmentIndex.claimed, decidedApprovals, true), [sessionTranscript, attachmentIndex, decidedApprovals]);
   const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
   const mcpActivity = useMemo(() => contextDetailsOpen ? observedMcpActivity(events) : EMPTY_MCP_ACTIVITY, [events, contextDetailsOpen]);
 
@@ -1299,6 +1304,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         ) : (
           <>
             <div className={cn("flex min-w-0 flex-1 items-center gap-2", fullPage && "basis-48")}>
+              {session?.parentSessionId && <ChatLink id={session.parentSessionId} onOpen={id => pickSession({ id })}><ArrowLeft aria-hidden />Parent chat</ChatLink>}
               {fullPage ? <>{session && renamingSessionId === session.id ? <SessionTitleInput key={session.id} title={sessionTitle ?? ""} onCommit={async title => { setRenamingSessionId(null); await rename(session.id, title); }} onCancel={() => setRenamingSessionId(null)} /> : <><h1 className="min-w-0 truncate text-sm font-medium">{session ? sessionTitle || "Untitled session" : "New session"}</h1>{session && <Button variant="ghost" size="icon-sm" aria-label="Rename session" onClick={() => setRenamingSessionId(session.id)}><Pencil className="size-3.5" /></Button>}</>}</> : <HostyNavigationBoundary><Sparkles className="h-4 w-4 shrink-0" aria-hidden /><span className="text-sm font-medium">Assistant</span></HostyNavigationBoundary>}
             </div>
             <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
@@ -1402,6 +1408,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                   ) : item.event.type === "provider_history_gap" ? (
                     <MessageScrollerItem key={item.key} messageId={item.key}>
                       <HistoryGapMarker gap={item.event.gap as ProviderHistoryGap} />
+                    </MessageScrollerItem>
+                  ) : item.event.type === "session_subagent_group" && item.event.subagents?.length ? (
+                    <MessageScrollerItem key={`children-${item.event.subagents[0]!.id}`} messageId={`children-${item.event.subagents[0]!.id}`}>
+                      <SessionSubagents agents={item.event.subagents} connected={connection === "connected"} onOpen={id => pickSession({ id })} />
                     </MessageScrollerItem>
                   ) : item.event.type === "native_agent_group" ? (
                     <MessageScrollerItem key={`native-${nativeTranscript.groups.get(item.event.seq)!.key}`} messageId={`native-${nativeTranscript.groups.get(item.event.seq)!.key}`}>

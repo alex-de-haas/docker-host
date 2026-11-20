@@ -21,6 +21,9 @@ export class AgentSessionService {
   constructor(private readonly manager: SessionManager, readonly provider: ProviderRef) {
     this.cursors = new ExportCursors(path.join(manager.store.dataDir, "agent-cursors"));
   }
+  workflow(...args: Parameters<SessionManager["providerWorkflow"]>) {
+    return this.manager.providerWorkflow(...args);
+  }
   private actor(actor: Actor): void {
     if (!actor.userId || !actor.principalId || actor.hostRole !== "host.admin") fail("permission_denied", "Execution observations require the current administrator and resource owner.", 403);
   }

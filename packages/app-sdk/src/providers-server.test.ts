@@ -167,12 +167,13 @@ describe("admitted agent workflow mediation", () => {
   const body = JSON.stringify({ action: "task-result", input: { completed: true, result: { markdown: "Done", resources: [] } }, agent });
   const request = { operation: "session.workflow", method: "POST", path: "/sessions/consumer-session/workflow", body };
 
-  it("preserves the original actor and public run binding while introspecting exact workflow bytes", async () => {
-    const fetcher = vi.fn().mockResolvedValue(Response.json(invocation)); vi.stubGlobal("fetch", fetcher);
-    expect(await client().validateMediated("hosty_provider.2.signed", "task-executor", request, "workflow")).toEqual(invocation);
+  it.each(["task-executor", "agent-sessions"] as const)("preserves the original actor and exact workflow bytes for %s", async kind => {
+    const expected = { ...invocation, kind };
+    const fetcher = vi.fn().mockResolvedValue(Response.json(expected)); vi.stubGlobal("fetch", fetcher);
+    expect(await client().validateMediated("hosty_provider.2.signed", kind, request, "workflow")).toEqual(expected);
     const [url, init] = fetcher.mock.calls[0]!;
     expect(String(url)).toBe("http://core.test/api/internal/apps/ordinary/provider/introspect-v2");
-    expect(JSON.parse(init.body)).toEqual({ token: "hosty_provider.2.signed", kind: "task-executor", key: "workflow",
+    expect(JSON.parse(init.body)).toEqual({ token: "hosty_provider.2.signed", kind, key: "workflow",
       operation: request.operation, method: request.method, path: request.path,
       bodyHash: createHash("sha256").update(body).digest("hex") });
     expect(init.headers.authorization).toBe("Bearer private-service");

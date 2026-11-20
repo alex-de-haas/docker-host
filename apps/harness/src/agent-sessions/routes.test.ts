@@ -36,6 +36,25 @@ it("validates actual bytes twice and refuses legacy or mixed credentials", async
   }
   for (const headers of [{}, { authorization: "Bearer hosty_provider.1.legacy" }, { authorization: `Bearer ${token}`, cookie: "session=other" }] as Record<string, string>[]) expect((await get(headers)).status).toBe(401);
 });
+it("accepts only the admitted conversation workflow on the agent-sessions callback", async () => {
+  const agent = { provider, sessionId: "native-session", runId: "native-run" };
+  const validation = vi.spyOn(ProviderClient.prototype, "validateMediated").mockResolvedValue({ ...actor, operation: "session.workflow", agentExecution: agent });
+  const dispatch = vi.spyOn(manager, "providerWorkflow").mockResolvedValue({ profiles: [] });
+  const call = (body: unknown) => fetch(origin + "/api/agent-sessions/v1/sessions/chat-1/workflow", {
+    method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(body),
+  });
+  const command = { action: "subagent-profiles", input: {}, agent };
+  expect(await (await call(command)).json()).toEqual({ profiles: [] });
+  expect(dispatch.mock.calls[0]?.slice(0, 2)).toEqual(["chat-1", command]);
+  expect(validation.mock.calls[0]?.slice(1, 3)).toEqual(["agent-sessions", {
+    operation: "session.workflow", method: "POST", path: "/sessions/chat-1/workflow", body: Buffer.from(JSON.stringify(command)),
+  }]);
+  for (const invalid of [{ ...command, action: "task-create" }, { ...command, source: provider }])
+    expect((await call(invalid)).status).toBe(400);
+  expect((await call({ ...command, agent: { ...agent, runId: "another-run" } })).status).toBe(403);
+  expect(dispatch).toHaveBeenCalledOnce();
+});
+
 it("withholds execution metadata after revocation during the read", async () => {
   vi.spyOn(ProviderClient.prototype, "validateMediated").mockResolvedValueOnce(actor).mockRejectedValueOnce(new ProviderError("permission_denied", "Revoked", 403));
   const response = await get({ authorization: `Bearer ${token}` }); expect(response.status).toBe(403); expect(await response.text()).not.toContain('"run"');

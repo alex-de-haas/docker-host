@@ -154,7 +154,7 @@ export class ProviderClient {
     const execution = invocation.agentExecution;
     const identity = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 512
       && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
-    if (request.operation === "session.workflow" && (kind !== "task-executor" || !execution)
+    if (request.operation === "session.workflow" && ((kind !== "task-executor" && kind !== "agent-sessions") || !execution)
       || execution && (!identity(execution.sessionId) || !identity(execution.runId)
         || !execution.provider || !identity(execution.provider.appId) || !identity(execution.provider.installationId) || !identity(execution.provider.key)))
       throw new ProviderError("token_invalid", "Core returned an invalid admitted agent workflow binding.", 401);

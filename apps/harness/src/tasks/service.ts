@@ -11,7 +11,7 @@ import { delegationCredential } from "../session-delegation.js";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type ProviderInvocation } from "@hosty-sdk/app/providers";
 import { mediatedTaskRequest } from "./mediation.js";
-import { mediatedSessionWorkflow } from "./session-workflow-mediation.js";
+import { mediatedSessionWorkflow } from "../agent-providers/session-workflow-mediation.js";
 import { MediatedTaskExecutorClient, TaskExecutorClient } from "@hosty-sdk/app/tasks/server";
 import { taskReferenceKey, taskStatuses, type TaskAction, type TaskActor, type TaskAssignee, type TaskCreate, type TaskEdit,
   type TaskExecutionInput, type TaskProviderRef, type TaskRecord, type TaskStatus } from "@hosty-sdk/app/tasks";

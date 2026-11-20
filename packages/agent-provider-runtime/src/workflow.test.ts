@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { randomUUID, createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { AGENT_SESSION_WORKFLOW_TOOLS, type AgentSessionWorkflowBinding } from "@hosty-sdk/app/agent";
+import { AGENT_SESSION_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, type AgentSessionWorkflowBinding } from "@hosty-sdk/app/agent";
 import { ProviderMcp } from "./mcp.js";
 import type { ProviderAuthority } from "./core.js";
 import { workflowTools } from "./workflow-tools.js";
@@ -48,11 +48,66 @@ it("serves exactly the fixed business catalog to a genuine MCP client and requir
   expect(f.authority.workflow).toHaveBeenCalledWith("original-admission", "task-executor-options", {}, undefined);
   expect(f.authority.mcp).not.toHaveBeenCalled(); expect(f.settled).toHaveBeenCalledWith(f.runId, expect.any(String), expect.any(String), true, false);
 });
+it("negotiates child-chat tools separately and dispatches only validated input under the current run", async () => {
+  const f = await fixture({ ...binding(), tools: [...AGENT_SUBAGENT_WORKFLOW_TOOLS], policy: { default: "run" } });
+  const list = (await f.rpc("tools/list")).body.result as { tools: { name: string }[] };
+  expect(list.tools.map(tool => tool.name)).toEqual([...AGENT_SUBAGENT_WORKFLOW_TOOLS]);
+  const input = { requestId: randomUUID(), profileId: randomUUID(), profileRevision: 3, prompt: "Review the change." };
+  for (const args of [{ input: { ...input, parentSessionId: randomUUID() } }, { input, source: binding().executor }, { input: { ...input, profileRevision: 0 } }])
+    expect((await f.rpc("tools/call", { name: "subagent_spawn", arguments: args })).body.error).toBeDefined();
+  expect((await f.rpc("tools/call", { name: "task_create", arguments: { input: {} } })).body.error).toBeDefined();
+  expect(f.authority.workflow).not.toHaveBeenCalled();
+  expect((await f.rpc("tools/call", { name: "subagent_spawn", arguments: { input } })).body.error).toBeUndefined();
+  expect(f.authority.workflow).toHaveBeenCalledWith("original-admission", "subagent-spawn", input, undefined);
+  expect(f.authority.mcp).not.toHaveBeenCalled();
+});
 it("keeps Disabled and selected tools authoritative for discovery and calls", async () => {
   const f = await fixture({ ...binding(), tools: ["task_get"], policy: { default: "run", tools: { task_get: { mode: "disabled" } } } });
   expect((await f.rpc("tools/list")).body.result).toEqual({ tools: [] });
   for (const name of ["task_get", "task_executor_options", "workspace_list"]) expect((await f.rpc("tools/call", { name, arguments: { input: {} } })).body.error).toBeDefined();
   expect(f.authority.workflow).not.toHaveBeenCalled(); expect(f.notify).not.toHaveBeenCalled(); expect(f.authority.mcp).not.toHaveBeenCalled();
+});
+it("inherits autonomous mode for the four child-chat operations in a mixed task catalog", async () => {
+  const f = await fixture({ ...binding(), tools: ["task_executor_options", ...AGENT_SUBAGENT_WORKFLOW_TOOLS] }, true);
+  const inputs = {
+    subagent_profiles: {},
+    subagent_spawn: { requestId: randomUUID(), profileId: "developer", profileRevision: 1, prompt: "Implement." },
+    subagent_status: {},
+    subagent_wait: { requestId: randomUUID(), childSessionIds: [randomUUID()], mode: "all" },
+  };
+  for (const name of AGENT_SUBAGENT_WORKFLOW_TOOLS) {
+    const { body } = await f.rpc("tools/call", { name, arguments: { input: inputs[name] } });
+    expect(body.error).toBeUndefined();
+    expect(f.authority.workflow).toHaveBeenCalledWith("original-admission", name.replaceAll("_", "-"), inputs[name], undefined);
+  }
+  expect(f.notify).not.toHaveBeenCalled();
+  const pending = f.rpc("tools/call", { name: "task_executor_options", arguments: { input: {} } });
+  await vi.waitFor(() => expect(f.notify).toHaveBeenCalledOnce());
+  expect(f.mcp.resolve(f.runId, f.notify.mock.calls[0]![1].approvalId, false)).toBe(true);
+  expect((await pending).body.error).toBeDefined();
+  expect(f.authority.workflow).toHaveBeenCalledTimes(4);
+});
+
+it("preserves normal mode, explicit Ask, stale Run definitions and Disabled for child-chat tools", async () => {
+  const f = await fixture({ ...binding(), tools: ["subagent_profiles", "subagent_status", "subagent_wait"], policy: { default: "ask", tools: {
+    subagent_profiles: { mode: "ask" },
+    subagent_status: { mode: "run", definition: "f".repeat(64) },
+    subagent_wait: { mode: "disabled" },
+  } } }, true);
+  const normal = await fixture({ ...binding(), tools: ["subagent_profiles"] });
+  for (const [target, name] of [[f, "subagent_profiles"], [f, "subagent_status"], [normal, "subagent_profiles"]] as const) {
+    target.notify.mockClear();
+    const pending = target.rpc("tools/call", { name, arguments: { input: {} } });
+    await vi.waitFor(() => expect(target.notify).toHaveBeenCalledOnce());
+    target.mcp.resolve(target.runId, target.notify.mock.calls[0]![1].approvalId, false);
+    expect((await pending).body.error).toBeDefined();
+    expect(target.authority.workflow).not.toHaveBeenCalled();
+  }
+  const catalog = (await f.rpc("tools/list")).body.result as { tools: { name: string }[] };
+  expect(catalog.tools.map(tool => tool.name)).toEqual(["subagent_profiles", "subagent_status"]);
+  for (const name of ["subagent_wait", "subagent_spawn"])
+    expect((await f.rpc("tools/call", { name, arguments: { input: {} } })).body.error).toBeDefined();
+  expect(f.authority.workflow).not.toHaveBeenCalled();
 });
 it("separates native client request namespaces while retaining one admitted run", async () => {
   const f = await fixture({ ...binding(), policy: { default: "run" } });

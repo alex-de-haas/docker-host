@@ -35,8 +35,11 @@ it("persists and streams only bounded command metadata, then replays the same re
   adapter.emit({ type: "tool_use", toolUseId: "run-1:command-1", toolName: "Command", input: { command: "npm test" } });
   adapter.emit({ type: "command_result", toolUseId: "run-1:command-1", status: "completed", exitCode: 0,
     durationMs: 1200, summary: "14 passed", stdout: "credential=never-store", stderr: "never-store", content: "never-store" } as HarnessEvent);
-  await vi.waitFor(async () => expect(await results()).toHaveLength(1));
-  const saved = (await results())[0]!;
+  // Live delivery follows the event and session metadata commits.
+  await vi.waitFor(() => expect(seen.filter(event => event.type === "command_result")).toHaveLength(1));
+  const committed = await results();
+  expect(committed).toHaveLength(1);
+  const saved = committed[0]!;
   expect(Object.keys(saved).sort()).toEqual(["durationMs", "exitCode", "seq", "status", "summary", "toolUseId", "ts", "type"].sort());
   expect(saved).toMatchObject({ toolUseId: "run-1:command-1", status: "completed", exitCode: 0, durationMs: 1200, summary: "14 passed" });
   expect(seen.find(event => event.type === "command_result")).toEqual(saved);

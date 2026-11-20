@@ -26,6 +26,11 @@ internal sealed partial class CoreAgentExecution
         if (Workflow(input) is not { } binding) return;
         if (binding.Executor.AppId != consumer.Id || binding.Executor.InstallationId != PanelIdentity.Installation(consumer))
             throw new AppIdentityException("permission_denied", "A session workflow belongs to the consuming executor installation.");
+        var selectedSubagents = binding.Tools?.Any(CoreProviderMediation.IsSubagentTool) == true;
+        if (selectedSubagents && (input.Conversation?.SessionId != binding.SessionId
+            || !ProviderAccessService.Describe(consumer, "agent-sessions").Any(d => d.Key == binding.Executor.Key && d.Version == 1 && d.Capabilities.Contains("session.subagents"))))
+            throw new CoreProviderException("unsupported_capability", "Session subagents require the originating conversation and its reviewed session.subagents endpoint.", 422);
+        if (selectedSubagents && binding.Tools!.All(CoreProviderMediation.IsSubagentTool)) return;
         if (!AppManagementAuthorization.HasPermission(consumer, CoreAppPermissions.TaskExecutors))
             throw new AppIdentityException("app_permission_required", "Session workflows require providers.task-executor.");
         if (!ProviderAccessService.Describe(consumer, "task-executor").Any(d => d.Key == binding.Executor.Key && d.Version == 1 && d.Capabilities.Contains("session-workflow")))
@@ -54,8 +59,13 @@ internal sealed partial class CoreAgentExecution
 
 internal sealed partial class CoreProviderMediation
 {
+    internal static readonly string[] SubagentActions = ["subagent-profiles", "subagent-spawn", "subagent-status", "subagent-wait"];
+    internal static bool IsSubagentTool(string name) => SubagentActions.Contains(name.Replace('_', '-'), StringComparer.Ordinal);
     internal static readonly string[] SessionWorkflowActions = ["task-executor-options", "task-options", "task-list", "task-get", "task-create", "task-edit", "task-action",
         "task-result", "task-fail", "task-request-input", "task-adopt", "task-prepare-executor", "task-delegate", "task-wait", "task-plan", "task-bind-workspace", "task-execution-get"];
+
+    internal static readonly IReadOnlySet<string> AllWorkflowTools = SessionWorkflowActions.Concat(SubagentActions)
+        .Select(action => action.Replace('-', '_')).ToHashSet(StringComparer.Ordinal);
 
     internal async Task<JsonElement?> SessionWorkflowAsync(CoreCapabilityCaller caller, string action, JsonElement input, CancellationToken ct,
         HostyTaskProviderRef? source = null)
@@ -79,14 +89,16 @@ internal sealed partial class CoreProviderMediation
     private async Task<JsonElement> DispatchSessionWorkflow(CoreAgentAuthorization record, CoreCapabilityCaller origin,
         CoreTaskSessionWorkflowBinding binding, string action, JsonElement input, HostyTaskProviderRef? source, CancellationToken ct)
     {
-        if (!SessionWorkflowActions.Contains(action, StringComparer.Ordinal) || input.ValueKind != JsonValueKind.Object)
+        var isSubagent = SubagentActions.Contains(action, StringComparer.Ordinal);
+        if ((!isSubagent && !SessionWorkflowActions.Contains(action, StringComparer.Ordinal)) || input.ValueKind != JsonValueKind.Object)
             throw new CoreProviderException("invalid_input", "Use a documented session workflow action and object input.", 400);
         var name = action.Replace('-', '_');
-        if (binding.Tools is not null && !binding.Tools.Contains(name, StringComparer.Ordinal)
+        if (isSubagent && (binding.Tools is null || source is not null)
+            || binding.Tools is not null && !binding.Tools.Contains(name, StringComparer.Ordinal)
             || binding.Policy is { ValueKind: JsonValueKind.Object } policy && policy.TryGetProperty("tools", out var toolRules)
                 && toolRules.ValueKind == JsonValueKind.Object && toolRules.TryGetProperty(name, out var rule)
                 && rule.GetProperty("mode").GetString() == "disabled")
-            throw new AppIdentityException("permission_denied", "This task workflow tool is disabled by its admitted selection or policy.");
+            throw new AppIdentityException("permission_denied", "This workflow tool is disabled by its admitted selection or policy.");
         if (source is not null)
         {
             var selectedConsumer = (await apps.GetAppAsync(binding.Executor.AppId, ct))!;
@@ -104,12 +116,13 @@ internal sealed partial class CoreProviderMediation
         if (body.Length > MaxBytes) throw new CoreProviderException("budget_exceeded", "The workflow request exceeds 1 MiB.", 413);
         var path = "/sessions/" + Uri.EscapeDataString(binding.SessionId) + "/workflow";
         var consumer = (await apps.GetAppAsync(binding.Executor.AppId, ct))!;
-        var descriptor = ProviderAccessService.Describe(consumer, "task-executor").Single(d => d.Key == binding.Executor.Key && d.Version == 1);
+        var kind = isSubagent ? "agent-sessions" : "task-executor";
+        var descriptor = ProviderAccessService.Describe(consumer, kind).Single(d => d.Key == binding.Executor.Key && d.Version == 1);
         if (!descriptor.Available || descriptor.Url is null) throw new CoreProviderException("provider_unavailable", "The workflow executor is unavailable.", 503, true);
         var grant = new CoreAgentWorkflowGrant(record.Id, binding, agent);
         var expires = clock.UtcNow.AddSeconds(120); if (record.ExpiresAt < expires) expires = record.ExpiresAt;
         var claims = new CoreProviderClaims(2, record.UserId, record.PrincipalId, record.Origin, binding.Executor,
-            consumer.PermissionRevision, "task-executor", "session.workflow", "POST", path, Hash(body), [], expires.ToUnixTimeSeconds(), AgentWorkflow: grant);
+            consumer.PermissionRevision, kind, "session.workflow", "POST", path, Hash(body), [], expires.ToUnixTimeSeconds(), AgentWorkflow: grant);
         var data = Prefix + Encode(JsonSerializer.SerializeToUtf8Bytes(claims, CoreJson.TypeInfo<CoreProviderClaims>()));
         using var request = new HttpRequestMessage(HttpMethod.Post, descriptor.Url.TrimEnd('/') + path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", data + "." + Encode(signing.Sign(Encoding.UTF8.GetBytes(data))));
@@ -133,7 +146,7 @@ internal sealed partial class CoreProviderMediation
 
     private async Task<CoreProviderInvocation> IntrospectSessionWorkflow(AppRecord consumer, CoreProviderClaims claims, CoreProviderIntrospectionRequest input, CancellationToken ct)
     {
-        if (claims.Kind != "task-executor" || claims.Operation != "session.workflow" || claims.AgentWorkflow is not { } grant
+        if (claims.Kind is not ("task-executor" or "agent-sessions") || claims.Operation != "session.workflow" || claims.AgentWorkflow is not { } grant
             || claims.Method != "POST" || claims.Path != "/sessions/" + Uri.EscapeDataString(grant.Binding.SessionId) + "/workflow"
             || claims.Provider != grant.Binding.Executor)
             throw new AppIdentityException("token_invalid", "Use the exact admitted session workflow operation.");
@@ -143,11 +156,11 @@ internal sealed partial class CoreProviderMediation
             || CoreJson.Text(record.Origin) != CoreJson.Text(claims.Origin)
             || grant.Agent != new CoreAgentWorkflowInvocation(record.Request.Provider, record.Request.SessionId!, record.Request.RunId!))
             throw new AppIdentityException("permission_denied", "The workflow no longer belongs to this exact actor and native run.");
-        var descriptor = ProviderAccessService.Describe(consumer, "task-executor").SingleOrDefault(d => d.Key == binding.Executor.Key && d.Version == 1);
-        if (descriptor?.Available != true || !descriptor.Capabilities.Contains("session-workflow"))
+        var descriptor = ProviderAccessService.Describe(consumer, claims.Kind).SingleOrDefault(d => d.Key == binding.Executor.Key && d.Version == 1);
+        if (descriptor?.Available != true || !descriptor.Capabilities.Contains(claims.Kind == "agent-sessions" ? "session.subagents" : "session-workflow"))
             throw new AppIdentityException("provider_unavailable", "The reviewed session workflow is unavailable.");
         return new(2, record.UserId, origin.User.Role, record.PrincipalId, record.CallerAppId, PanelIdentity.Installation(consumer),
-            "task-executor", binding.Executor.Key, "session.workflow", [], AgentExecution: grant.Agent);
+            claims.Kind, binding.Executor.Key, "session.workflow", [], AgentExecution: grant.Agent);
     }
 }
 

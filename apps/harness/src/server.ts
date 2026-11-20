@@ -91,6 +91,7 @@ export function createGatewayServer(
     const stages: Array<[string, () => Promise<unknown>]> = [
       ["handoffs", () => handoffs.sweep()], ["runs", () => manager.recoverProviderRuns()],
       ["approvals", () => manager.recoverMcpApprovals()], ["queue", () => manager.recoverMessageQueues()],
+      ["subagents", () => manager.recoverSubagents()],
     ];
     for (const [stage, recover] of stages) {
       try { await recover(); }

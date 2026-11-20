@@ -269,3 +269,48 @@ it("keeps replayed child output and live deltas attributed, with actionable appr
   expect(panel.textContent).not.toContain("Final response (partial)");
   expect(api.streamEvents).toHaveBeenCalledOnce();
 });
+
+it("updates parallel child chats at their launch, opens the selected history and returns to the parent", async () => {
+  const developer = { id: "history-two", profileId: "dev", profileName: "Developer", prompt: "Implement search", status: "running" } as const;
+  const tester = { id: "history-three", profileId: "test", profileName: "Tester", prompt: "Check indexing", status: "running" } as const;
+  vi.mocked(api.getSession).mockImplementation(async id => id === developer.id ? { ...sessions[1]!, parentSessionId: "history-one" } : sessions[0]!);
+  const update = (seq: number, child: NonNullable<api.AssistantEvent["child"]>) => stream().event({ type: "session_subagent", seq, ts: "", child });
+  await mount();
+  await act(async () => {
+    stream().event(textEvent("Before delegation", 1));
+    update(2, developer);
+    update(3, tester);
+    stream().event(textEvent("Parent continues", 4));
+  });
+  await connect();
+  const panel = viewport()!.querySelector<HTMLElement>('section[aria-label="Harness subagents"]')!;
+  const summary = panel.querySelector("button")!;
+  expect(summary.getAttribute("aria-expanded")).toBe("false");
+  expect(summary.textContent).toContain("2 subagents");
+  expect(summary.textContent).toContain("2 running");
+  await act(async () => update(5, { ...developer, status: "completed", result: "Search is implemented." }));
+  expect(summary.textContent).toContain("1 running · 1 completed");
+  expect(viewport()!.textContent).toMatch(/Before delegation.*2 subagents.*Parent continues/);
+  await connect("reconnecting");
+  expect(summary.textContent).toContain("1 completed · 1 unknown");
+  await connect();
+  await act(async () => summary.click());
+  await act(async () => panel.querySelector<HTMLButtonElement>('button[aria-label^="Developer:"]')!.click());
+  expect(panel.textContent).toContain("Implement search");
+  expect(panel.textContent).toContain("Search is implemented.");
+  expect(panel.textContent).not.toContain("Check indexing");
+  const childLink = panel.querySelector<HTMLAnchorElement>('a[href="?session=history-two"]')!;
+  await act(async () => childLink.click());
+  expect(api.getSession).toHaveBeenCalledWith("history-two");
+  expect(window.location.search).toBe("?session=history-two");
+  await act(async () => stream(developer.id).event({ type: "subagent_assignment", seq: 1, ts: "", text: developer.prompt }));
+  await replay("Child's full transcript", 2, developer.id);
+  await connect("connected", developer.id);
+  expect(viewport()!.querySelector('[aria-label="Assignment from parent chat"]')?.textContent).toContain(developer.prompt);
+  expect(viewport()!.textContent).toContain("Child's full transcript");
+  const parentLink = container.querySelector<HTMLAnchorElement>('a[href="?session=history-one"]')!;
+  expect(parentLink.textContent).toBe("Parent chat");
+  await act(async () => parentLink.click());
+  expect(window.location.search).toBe("?session=history-one");
+  expect(controls.ui.reportSurfaceState).toHaveBeenCalledWith({ route: "/chats?session=history-one", state: "ready" });
+});

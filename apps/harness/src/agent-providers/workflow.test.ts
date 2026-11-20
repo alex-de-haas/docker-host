@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { AGENT_CAPABILITIES, AGENT_SESSION_WORKFLOW_TOOLS, type AgentSessionWorkflowRequest } from "@hosty-sdk/app/agent";
+import { AGENT_CAPABILITIES, AGENT_SUBAGENT_WORKFLOW_TOOLS, AGENT_SESSION_WORKFLOW_TOOLS, type AgentSessionWorkflowRequest } from "@hosty-sdk/app/agent";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type MediatedProviderInvocation } from "@hosty-sdk/app/providers";
 import { validateAgentMcpSelection } from "@hosty-sdk/app/agent/server";
@@ -17,12 +17,13 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0).reverse()) await fixture.close();
   vi.restoreAllMocks(); vi.unstubAllEnvs();
 });
-async function fixture(options: { enabled?: boolean; offered?: boolean; available?: boolean; permission?: boolean } = {}) {
+async function fixture(options: { enabled?: boolean; offered?: boolean; available?: boolean; permission?: boolean; subagents?: boolean; legacyWorkflowCore?: boolean } = {}) {
   vi.stubEnv("HOSTY_APP_ID", consumer.appId); vi.stubEnv("HOSTY_APP_INSTALLATION_ID", consumer.installationId);
   vi.stubEnv("HOSTY_CORE_ORIGIN", undefined); vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "fixture-service");
   vi.spyOn(ProviderClient.prototype, "permissions").mockResolvedValue({ required: [], optional: ["providers.task-executor"],
     granted: options.permission === false ? [] : ["providers.task-executor"] });
   const f = await publicProviderFixture(); fixtures.push(f);
+  f.behavior.legacyWorkflowCore = options.legacyWorkflowCore;
   const settings = new SettingsStore(path.join(f.root, "workflow-settings"));
   await settings.update({ mcpProviders: { [CORE_PROVIDER_ID]: options.enabled !== false } });
   const initialSettings = structuredClone(await settings.read());
@@ -31,7 +32,11 @@ async function fixture(options: { enabled?: boolean; offered?: boolean; availabl
     policyIdentity: "reviewed-core-policy", url: "http://core.test/api/mcp", interfaces: [{ key: "default", url: "http://core.test/api/mcp" }] };
   vi.spyOn(providers, "read").mockResolvedValue(options.available === false ? null : { providers: [], installedAppIds: [], revision: "reviewed-directory" });
   vi.spyOn(providers, "core").mockReturnValue(core); vi.spyOn(providers, "readApps").mockResolvedValue([]);
-  const { manager, store } = f.makeManager({ settings, providers });
+  const profiles = options.subagents ? new ProfileStore(path.join(f.root, "family-profiles"), async () => ({
+    name: "Reviewer", description: "", instructions: "", model: null, connectionId: f.connectionId, reasoningEffort: null, skillIds: [],
+  })) : undefined;
+  if (profiles) f.capabilities.capabilities.push(AGENT_CAPABILITIES.sessionSubagents);
+  const { manager, store } = f.makeManager({ settings, providers, profiles });
   const taskAction = vi.fn(async () => ({ recorded: true })); manager.taskAction = taskAction;
   return { f, manager, store, settings, initialSettings, providers, taskAction };
 }
@@ -60,6 +65,31 @@ it.each([
   expect(await settings.read()).toEqual(initialSettings);
   expect(f.sessions.get(state.sessionId)!.configuration!.instructions?.map(block => block.text).join("\n")).toContain(TASK_ORCHESTRATION_GUIDE);
   expect(f.starts).toHaveLength(1);
+});
+
+it.each([false, true])("negotiates ordinary child chats independently of the task grant (%s)", async permission => {
+  const { f, manager, state, record, input, invocation, taskAction } = await admitted({ subagents: true, permission });
+  const binding = state.lastRunInput!.workflow!;
+  expect(binding.tools).toEqual([...(permission ? AGENT_SESSION_WORKFLOW_TOOLS : []), ...AGENT_SUBAGENT_WORKFLOW_TOOLS]);
+  expect(state.lastRunInput!.input.requiredCapabilities).toEqual([...(permission ? [AGENT_CAPABILITIES.consumerWorkflow] : []), AGENT_CAPABILITIES.sessionSubagents]);
+  expect(f.sessions.get(state.sessionId)!.configuration!.instructions?.map(block => block.text).join(" ")).toContain("subagent_spawn");
+  const call = { ...input, action: "subagent-profiles" }, actor = { ...invocation, kind: "agent-sessions" as const };
+  expect(await manager.providerWorkflow(record.id, call, actor, async () => actor)).toMatchObject({ profiles: [{ name: "Reviewer" }] });
+  await expect(manager.providerWorkflow(record.id, call, invocation, async () => invocation)).rejects.toMatchObject({ code: "workflow_binding_mismatch" });
+  await expect(manager.providerWorkflow(record.id, call, actor, async () => ({ ...actor, userId: "another-user" }))).rejects.toMatchObject({ code: "workflow_binding_mismatch" });
+  expect(taskAction).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("keeps ordinary turns available on an older Core with task permission %s", async permission => {
+  const { f, state } = await admitted({ subagents: true, legacyWorkflowCore: true, permission });
+  const authorization = f.authorizations.find(request => request.operation === "runs.start")!;
+  const expectedTools = permission ? [...AGENT_SESSION_WORKFLOW_TOOLS] : undefined;
+  expect(authorization.ceiling?.workflow?.tools).toEqual(expectedTools);
+  expect(state.lastRunInput?.workflow?.tools).toEqual(expectedTools);
+  expect(f.starts).toHaveLength(1);
+  expect(f.starts[0]!.input.requiredCapabilities ?? []).toEqual(permission ? [AGENT_CAPABILITIES.consumerWorkflow] : []);
+  const instructions = f.sessions.get(state.sessionId)!.configuration!.instructions?.map(block => block.text).join(" ") ?? "";
+  expect(instructions).not.toContain("subagent_spawn");
 });
 
 it("keeps ordinary chat available without a workflow when its task-executor permission is absent", async () => {

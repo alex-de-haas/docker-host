@@ -35,7 +35,7 @@ export class McpToolPolicy {
     private readonly notify: (session: string, event: { type: "approval_request"; approvalId: string; toolName: string; input: unknown }) => Promise<void>,
     private readonly settled: (session: string, id: string, tool: string, allowed: boolean, automatic: boolean) => Promise<void>,
     private readonly timeout = 90_000,
-    private readonly autonomous: (session: string) => boolean = () => false) {}
+    private readonly autonomous: (session: string, tool: string) => boolean = () => false) {}
   localOwner?: { appId: string; displayName: string; installationId?: string };
   get localIdentity(): string {
     const owner = this.localOwner;
@@ -182,7 +182,7 @@ export class McpToolPolicy {
       const migrated = migratedTool(current, provider, identity, tool);
       const rule = current?.mcpToolRules?.[ruleKey(migrated?.provider ?? provider, migrated?.tool ?? tool)];
       const explicitAsk = rule?.identity === (migrated?.identity ?? identity) && rule.mode === "ask";
-      return effective === "run" || this.autonomous(session) && !explicitAsk;
+      return effective === "run" || this.autonomous(session, tool) && !explicitAsk;
     };
     const automatic = await canRunAutomatically(mode);
     const issued: IssuedGuard = { session, scope, generation, signal };

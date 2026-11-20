@@ -33,8 +33,10 @@ it("keeps conversation, native-session and attempt identities distinct and does 
   expect(native.ref.id).not.toBe(chat.id); expect(native.ref.id).not.toBe(run.id); expect(run.id).not.toBe(chat.id);
   expect(native.activeRuns).toEqual([run]); expect(JSON.stringify(page)).not.toContain("private-native-backend-id");
   options.onEvent({ type: "result", status: "success" });
-  await vi.waitFor(async () => expect((await manager.getSession(chat.id))!.status).toBe("idle"));
-  expect(await service.getRun(owner, run)).toMatchObject({ state: "waiting_for_input", freshness: "current", stopConfirmed: false });
+  await vi.waitFor(async () => {
+    expect((await manager.getSession(chat.id))!.status).toBe("idle");
+    expect(await service.getRun(owner, run)).toMatchObject({ state: "waiting_for_input", freshness: "current", stopConfirmed: false });
+  });
   await expect(service.getRun({ ...owner, userId: "other-admin" }, run)).rejects.toMatchObject({ code: "not_found" });
   await expect(service.getRun({ ...owner, hostRole: "host.user" }, run)).rejects.toMatchObject({ status: 403 });
 });

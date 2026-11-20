@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest } from "@hosty-sdk/app/agent";
+import { AGENT_SESSION_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, AgentApiError, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest } from "@hosty-sdk/app/agent";
 import type { ProviderAuthority } from "./core.js";
 import { McpToolPolicy } from "./internal/mcp/policy.js";
 import type { ProxyTarget } from "./internal/mcp/proxy.js";
@@ -9,6 +9,7 @@ import { workflowTools } from "./workflow-tools.js";
 
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const workflowNames = [...AGENT_SESSION_WORKFLOW_TOOLS, ...AGENT_SUBAGENT_WORKFLOW_TOOLS];
 const fields = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every(key => allowed.includes(key));
 type Registration = { admissionRef: string; binding: AgentSessionWorkflowBinding; identity: string; key: string; target: ProxyTarget; clients: Map<string, AbortController> };
 type LocalRequest = Parameters<NonNullable<ProxyTarget["local"]>>[0];
@@ -42,21 +43,24 @@ export class ProviderWorkflow {
   private registrations = new Map<string, Registration>();
   private preferences: AssistantSettings = { systemPrompt: "", mcpProviders: {}, mcpAutoAllow: {}, mcpSkillDigests: {} };
   constructor(private readonly authority: ProviderAuthority,
-    notify: ConstructorParameters<typeof McpToolPolicy>[1], settled: ConstructorParameters<typeof McpToolPolicy>[2]) {
-    // Autonomous native execution cannot waive an Ask decision for consumer business actions.
+    notify: ConstructorParameters<typeof McpToolPolicy>[1], settled: ConstructorParameters<typeof McpToolPolicy>[2],
+    autonomous: (runId: string) => boolean) {
+    // Only explicitly selected child-chat operations inherit the run's autonomous mode.
     this.policy = new McpToolPolicy({ read: async () => structuredClone(this.preferences), transform: async change => {
       this.preferences = { ...this.preferences, ...await change(structuredClone(this.preferences)) }; return structuredClone(this.preferences);
-    } }, notify, settled, 24 * 60 * 60 * 1000);
+    } }, notify, settled, 24 * 60 * 60 * 1000, (runId, tool) => autonomous(runId)
+      && AGENT_SUBAGENT_WORKFLOW_TOOLS.some(name => name === tool)
+      && this.registrations.get(runId)?.binding.tools?.some(name => name === tool) === true);
   }
   async configure(runId: string, admissionRef: string, binding: AgentSessionWorkflowBinding | undefined): Promise<void> {
     if (!binding) { this.close(runId); return; }
     if (!object(binding) || !object(binding.executor) || ![binding.executor.appId, binding.executor.installationId, binding.executor.key, binding.sessionId].every(value => typeof value === "string" && value.length > 0 && value.length <= 512)
-      || binding.tools && (!Array.isArray(binding.tools) || binding.tools.length > AGENT_SESSION_WORKFLOW_TOOLS.length || new Set(binding.tools).size !== binding.tools.length || binding.tools.some(name => !AGENT_SESSION_WORKFLOW_TOOLS.includes(name))))
+      || binding.tools && (!Array.isArray(binding.tools) || binding.tools.length > workflowNames.length || new Set(binding.tools).size !== binding.tools.length || binding.tools.some(name => !workflowNames.includes(name))))
       throw new AgentApiError("workflow_binding_invalid", "Core returned an invalid explicit workflow binding.", 502);
     const existing = this.registrations.get(runId);
     if (existing) { if (existing.admissionRef !== admissionRef || hash(existing.binding) !== hash(binding)) throw new AgentApiError("workflow_binding_changed", "The admitted consumer workflow is immutable.", 409); return; }
     const identity = hash(binding), key = "workflow_" + hash(runId).slice(0, 24);
-    const tools = workflowTools().filter(tool => !binding.tools || binding.tools.includes(tool.name));
+    const tools = workflowTools(binding.tools);
     (this.preferences.mcpDefaults ??= {})[key] = { identity, mode: binding.policy?.default ?? "ask" };
     this.preferences.mcpAutoAllow[key] = binding.policy?.autoAllowReadOnly === true;
     for (const [name, rule] of Object.entries(binding.policy?.tools ?? {})) {
@@ -98,7 +102,7 @@ export class ProviderWorkflow {
         return { ...result({ protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: { name: "hosty-workflow", version: "1" } }), headers: { "mcp-session-id": id } };
       }
       if (rpc.method === "ping") return result({});
-      const tools = workflowTools().filter(tool => !registration.binding.tools || registration.binding.tools.includes(tool.name));
+      const tools = workflowTools(registration.binding.tools);
       const available = await this.policy.catalog(registration.key, registration.identity, tools);
       if (rpc.method === "tools/list") return result({ tools: available });
       if (rpc.method !== "tools/call" || !object(rpc.params) || typeof rpc.params.name !== "string") throw new Error("Use a declared workflow tool.");

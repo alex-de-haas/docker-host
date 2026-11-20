@@ -3,7 +3,8 @@ import type {
   AgentCancelInput, AgentConfiguration, AgentConfigurationCreate, AgentControlReceipt, AgentPreparedRequest, AgentResponseInput,
   AgentRunControlInput, AgentRunInput, AgentRunRef, AgentRunSnapshot, AgentSession, AgentSessionCreate, AgentSessionWorkflowBinding, AgentWatchItem,
 } from "@hosty-sdk/app/agent";
-import { AGENT_CAPABILITIES, AgentApiError } from "@hosty-sdk/app/agent";
+import { workflowCapabilities } from "./subagent-workflow.js";
+import { AgentApiError } from "@hosty-sdk/app/agent";
 import {
   AgentClient, prepareAgentCancel, prepareAgentConfiguration, prepareAgentControl, prepareAgentResponse, prepareAgentRun,
   prepareAgentSessionCreate,
@@ -137,7 +138,7 @@ export class ProviderExecution {
     this.mutations.starting = true;
     try {
       const prepared = prepareAgentRun(this.state.sessionId, runId, workflow ? { ...input,
-        requiredCapabilities: [...new Set([...(input.requiredCapabilities ?? []), AGENT_CAPABILITIES.consumerWorkflow])],
+        requiredCapabilities: [...new Set([...(input.requiredCapabilities ?? []), ...workflowCapabilities(workflow)])],
       } : input);
       this.bindConfiguration(prepared, this.state.session);
       const deadline = originalDeadline ?? (input.limits?.maxDurationMs ? new Date(Date.now() + input.limits.maxDurationMs).toISOString() : undefined);

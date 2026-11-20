@@ -10,7 +10,7 @@ export type TranscriptItem =
   | { kind: "event"; key: string; event: AssistantEvent }
   | { kind: "activity"; key: string; events: AssistantEvent[]; commandResults: Record<number, CommandOutcome>; toolResults: Record<number, ToolOutput>; approvals: Record<number, ApprovalDecision> };
 const identity = commandResultId;
-const turnBoundary = (event: AssistantEvent) => ["user_message", "session_created", "result", "error"].includes(event.type)
+const turnBoundary = (event: AssistantEvent) => ["user_message", "subagent_assignment", "session_created", "result", "error"].includes(event.type)
   || event.type === "session_status" && ["idle", "cancelled", "failed", "abandoned"].includes(String(event.status));
 type FailedObservation = { runId: string; generation: string; seq: number };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -208,7 +208,7 @@ export function transcriptItems(events: AssistantEvent[], claimed: ReadonlySet<s
     }
     activity = undefined;
     const visible = event.type === "attachment_added" ? !claimed.has(String(event.name ?? ""))
-      : ["provider_history_gap", "native_agent_group", "user_message", "assistant_text", "prompt_suggestion_created", "app_context_changed", "approval_request", "question_request", "notice", "error", "command_result", "tool_result"].includes(event.type);
+      : ["provider_history_gap", "native_agent_group", "session_subagent_group", "subagent_assignment", "user_message", "assistant_text", "prompt_suggestion_created", "app_context_changed", "approval_request", "question_request", "notice", "error", "command_result", "tool_result"].includes(event.type);
     if (visible) items.push({ kind: "event", key: `event-${event.seq}`, event });
   }
   return items;

@@ -15,7 +15,7 @@ internal sealed record CoreAgentReference(string AdmissionRef, string? Generatio
 internal sealed record CoreAgentIntrospection(string Token, string Operation, string Method, string Path, string BodyHash);
 internal sealed record CoreAgentToken(string Id, long Expires);
 internal sealed record CoreAgentBinding(HostyProviderRef Provider, string BaseUrl, string Token,
-    DateTimeOffset ExpiresAt, string AdmissionRef, DateTimeOffset AuthorityExpiresAt);
+    DateTimeOffset ExpiresAt, string AdmissionRef, DateTimeOffset AuthorityExpiresAt, string[] SupportedWorkflowCapabilities);
 internal sealed record CoreAgentInvocation(int Version, string UserId, string HostRole, string PrincipalId,
     string CallerAppId, string CallerInstallation, HostyProviderRef Provider, string Operation,
     JsonElement? ResourceIds, string AdmissionRef, string? SessionId, string? RunId,
@@ -259,7 +259,7 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
         await ValidateRecord(provider, record, ct, admitted: false);
         var tokenExpires = clock.UtcNow.AddMinutes(2); if (record.ExpiresAt < tokenExpires) tokenExpires = record.ExpiresAt;
         var token = SignToken(Prefix, new CoreAgentToken(id, tokenExpires.ToUnixTimeSeconds()));
-        return new(input.Provider, descriptor.Url!, token, tokenExpires, id, record.ExpiresAt);
+        return new(input.Provider, descriptor.Url!, token, tokenExpires, id, record.ExpiresAt, ["workflow.subagents"]);
     }
     private static ProviderDescriptor Descriptor(AppRecord provider, HostyProviderRef reference)
     {
