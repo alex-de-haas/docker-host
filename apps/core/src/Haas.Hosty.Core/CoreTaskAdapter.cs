@@ -14,14 +14,14 @@ internal sealed record CoreTaskUserChoice(string Id, string DisplayName);
 
 internal sealed class CoreTaskAdapter(CoreProviderMediation providers, CoreProviderOperationStore operations, UserDirectoryStore users, AppIdentityService identity)
 {
-    internal Task<ProviderDirectory> ProvidersAsync(CoreCapabilityCaller caller, CancellationToken ct) => providers.ListAsync(caller, "tasks", ct);
-    internal async Task<JsonElement> OptionsAsync(CoreCapabilityCaller caller, CoreTaskOptions input, CancellationToken ct)
+    internal Task<ProviderDirectory> ProvidersAsync(CoreCapabilityCaller caller, CancellationToken ct, bool named = false) => providers.ListAsync(caller, "tasks", ct, named);
+    internal async Task<JsonElement> OptionsAsync(CoreCapabilityCaller caller, CoreTaskOptions input, CancellationToken ct, bool named = false)
     {
         var provider = Ref(input.Provider);
         if (input.Executor is { } executor)
             return await providers.SendAsync<JsonElement?>(caller, Ref(executor), CoreProviderPolicy.For("task-executor", "options"), "GET", "/options", null, [], null, ct);
         var capabilities = await providers.SendAsync<JsonElement?>(caller, provider, CoreProviderPolicy.For("tasks", "options"), "GET", "/capabilities", null, [], null, ct);
-        var executors = await providers.ListAsync(caller, "task-executor", ct);
+        var executors = await providers.ListAsync(caller, "task-executor", ct, named);
         var choices = new List<CoreTaskUserChoice>();
         foreach (var user in (await users.ReadAsync(ct)).Users.Where(u => !u.Disabled))
         {
@@ -155,23 +155,27 @@ internal sealed class CoreTaskAdapter(CoreProviderMediation providers, CoreProvi
         if (task.RootTaskRef != binding.RootTaskRef || task.Ref != binding.ParentTaskRef && task.ParentTaskRef != binding.ParentTaskRef)
             throw new CoreProviderException("permission_denied", "An execution may change only its own task or direct children.", 403);
     }
-    private static string ReferenceKey(HostyTaskRef reference) => CoreJson.Text(new[] { reference.AppId, reference.InstallationId, reference.Key, reference.Id });
+    private static string ReferenceKey(HostyTaskRef reference)
+    {
+        string[] key = [reference.AppId, reference.InstallationId, reference.Key, reference.Id];
+        return CoreJson.Text(reference.ImplementationId is { } implementationId ? [.. key, implementationId] : key);
+    }
     private static HostyTaskRecord Task(JsonElement result) => result.Deserialize(CoreJson.TypeInfo<HostyTaskRecord>()) ?? throw Invalid();
     private static void CheckTask(HostyTaskRecord task, HostyTaskProviderRef provider, string? id = null)
     {
-        if (task.Ref is null || task.Ref.AppId != provider.AppId || task.Ref.InstallationId != provider.InstallationId || task.Ref.Key != provider.Key
+        if (task.Ref is null || task.Ref.AppId != provider.AppId || task.Ref.InstallationId != provider.InstallationId || task.Ref.Key != provider.Key || task.Ref.ImplementationId != provider.ImplementationId
             || id is not null && task.Ref.Id != id || task.Revision < 1 || !Guid.TryParse(task.Ref.Id, out _)) throw Invalid();
     }
     private static CoreProviderException Invalid() => new("provider_response_invalid", "The provider returned an invalid or differently qualified task.", 502);
     private static HostyProviderRef Ref(HostyTaskProviderRef? provider)
     {
-        var result = provider is null ? null : new HostyProviderRef(provider.AppId, provider.InstallationId, provider.Key);
+        var result = provider is null ? null : new HostyProviderRef(provider.AppId, provider.InstallationId, provider.Key) { ImplementationId = provider.ImplementationId };
         CoreProviderMediation.ValidateReference(result); return result!;
     }
     private static HostyTaskProviderRef Ref(HostyTaskRef? task)
     {
         if (task is null || !Guid.TryParse(task.Id, out _)) throw new CoreProviderException("invalid_reference", "Select a qualified task UUID.", 400);
-        return new(task.AppId, task.InstallationId, task.Key);
+        return new(task.AppId, task.InstallationId, task.Key) { ImplementationId = task.ImplementationId };
     }
     private static string Route(HostyTaskRef task) { _ = Ref(task); return "/tasks/" + Uri.EscapeDataString(task.Id); }
 }

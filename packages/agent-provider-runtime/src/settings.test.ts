@@ -60,6 +60,17 @@ describe("independent provider settings", () => {
     const f = await fixture({ fetch: vi.fn(async () => Response.json({ active: true, appId, userId: "user-1", hostRole: "host.user" })) as typeof fetch });
     expect((await f.request("/api/settings/connections")).status).toBe(403); expect(f.registry.list).not.toHaveBeenCalled();
   });
+  it("permits changing only publication while the connection has an active execution", async () => {
+    const f = await fixture({
+      definition: { ...definition, authentication: [{ ...definition.authentication[0]!, interfaceChoices: [{ kind: "read", label: "Provide reading" }] }] },
+      isConnectionInUse: async () => true,
+    });
+    const input = { name: "Personal", auth: "browser", expectedRevision: "1", publishedInterfaces: [] };
+    expect((await f.request("/api/settings/connections/account-1", "PUT", input)).status).toBe(200);
+    expect((await f.request("/api/settings/connections/account-1", "PUT", { ...input, secret: "fixture" })).status).toBe(409);
+    expect((await f.request("/api/settings/connections/account-1", "PUT", { ...input, name: "Renamed" })).status).toBe(409);
+    expect(f.registry.update).toHaveBeenCalledTimes(1);
+  });
   it.each(["PUT", "DELETE", "LOGIN"])("blocks %s against durable active/unconfirmed connection ownership", async method => {
     const inUse = vi.fn(async () => true), f = await fixture({ isConnectionInUse: inUse });
     const result = await f.request("/api/settings/connections/account-1" + (method === "LOGIN" ? "/login" : ""), method === "LOGIN" ? "POST" : method, { expectedRevision: "1", ...(method === "PUT" ? { name: "Rename" } : {}) });

@@ -51,7 +51,7 @@ internal sealed class CoreAgentRunSubscriptions(CoreAgentSessionAdapter sessions
             var policy = CoreProviderPolicy.For("agent-sessions", "runs.notifications");
             await using var watch = new CoreProviderStreamWatch(events, context.Request, caller, stopping, async token =>
                 policy.Require(await auth.RevalidateAsync(caller.Authority!, caller.User.Id, caller.PrincipalId,
-                    policy.Kind, source.AppId, source.Key, policy.ToolName, token)));
+                    policy.Kind, source, policy.ToolName, token)));
             var cursor = context.Request.Headers["Last-Event-ID"].ToString();
             if (string.IsNullOrEmpty(cursor)) cursor = handle.Value.Initial.Cursor;
             var notification = await sessions.NotificationsAsync(caller, handle.Value.Initial.Run.Ref, cursor, 0, ct);

@@ -1,3 +1,4 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AgentCapabilities, AgentConfiguration, AgentAttachment } from "@hosty-sdk/app/agent";
 import type { ProviderConnections } from "./internal/connections/registry.js";
 import type { ConnectionSecrets } from "./internal/connections/secrets.js";
@@ -17,9 +18,15 @@ export const prepareNativeInput: NativeInputPreparer = async ({ text, attachment
 });
 
 /** Engine identity, capabilities, accounts and native policy enter through the owning application. */
-export type ProviderEngine = {
+export type EngineConnections = ProviderConnections & ProviderSettingsOptions["connections"];
+export type ProviderEngine<C extends EngineConnections = EngineConnections> = {
   capabilities: AgentCapabilities;
-  createConnections: (context: { data: string; cache: string | null; secrets: ConnectionSecrets }) => ProviderConnections & ProviderSettingsOptions["connections"];
+  createConnections: (context: { data: string; cache: string | null; secrets: ConnectionSecrets }) => C;
+  /** Optional app-owned interfaces run beside agent routes under their own verified authority. */
+  openInterfaces?: (connections: C, data: string) => {
+    route(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean>;
+    close(): void;
+  };
   settings: ProviderSettingsDefinition;
   prepareInput?: NativeInputPreparer;
 };

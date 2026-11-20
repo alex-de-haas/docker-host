@@ -2,8 +2,8 @@
   "schemaVersion": "app.0.1",
   "id": "hosty.codex-provider",
   "name": "Codex Provider",
-  "description": "Independent local Codex agent execution with app-owned connections, native sessions and Hosty-authorized HTTP/SSE.",
-  "version": "0.5.0",
+  "description": "Local Codex agent execution with app-owned connections and native sessions. OpenAI API connections can also provide dictation and read-aloud.",
+  "version": "0.6.0",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",
@@ -130,7 +130,9 @@
     }
   },
   "provides": [
-    "agent"
+    "agent",
+    "speech-to-text",
+    "text-to-speech"
   ],
   "interfaces": {
     "agent": [
@@ -163,6 +165,30 @@
           "mcp.policy-update",
           "runs.reconcile",
           "runs.retire"
+        ]
+      }
+    ],
+    "speech-to-text": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/api/speech-to-text/v1",
+        "version": 1,
+        "capabilities": [
+          "recording",
+          "implementations.named"
+        ]
+      }
+    ],
+    "text-to-speech": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/api/text-to-speech/v1",
+        "version": 1,
+        "capabilities": [
+          "streaming",
+          "implementations.named"
         ]
       }
     ]

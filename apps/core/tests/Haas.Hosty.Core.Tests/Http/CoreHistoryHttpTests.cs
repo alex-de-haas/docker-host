@@ -162,6 +162,46 @@ public sealed class CoreHistoryHttpTests
     }
 
     [Fact]
+    public async Task HistoryExportCanApproveTwoNamedSourcesOnOneKeyWithoutAuthorizingOtherImplementations()
+    {
+        using var source = new Source();
+        await using var host = await Start(source);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var declared = source.App.Interfaces!["conversation-history"].Single();
+        source.App = source.App with { Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
+            ["conversation-history"] = [declared with { Capabilities = [.. declared.Capabilities!, NamedProviderImplementations.Capability] }] } };
+        await apps.UpsertAppAsync(source.App);
+        await apps.PublishImplementationsAsync(source.App, "conversation-history", new("archive", 1,
+            [new("team", "Team", true), new("personal", "Personal", true), new("excluded", "Excluded", true)]), default);
+        source.App = (await apps.GetAppAsync(source.App.Id))!;
+        var consumer = source.App with { Id = "independent.indexer", DisplayName = "Test indexer", ConfirmedRoles = [], Interfaces = null,
+            GrantedCorePermissions = [CoreAppPermissions.HistoryProviders, CoreAppPermissions.HistoryRead, CoreAppPermissions.HistoryExport] };
+        await apps.UpsertAppAsync(consumer);
+        var team = source.Reference with { ImplementationId = "team" };
+        var personal = source.Reference with { ImplementationId = "personal" };
+        using var owner = host.CreateClient();
+        owner.DefaultRequestHeaders.Authorization = new("Bearer", await Token(host, AccessTokenScopes.McpRead, AccessTokenScopes.McpHistoryRead, AccessTokenScopes.McpHistoryExport));
+        var grant = await Post<HostyHistoryExportGrant>(owner, "/api/history/v1/exports/create", new CoreHistoryExportCreate(Guid.NewGuid().ToString(),
+            new("app", consumer.Id, PanelIdentity.Installation(consumer)), new("all-owned", Providers: [team, personal], IncludeFutureConversations: true), "Named sources"));
+        await Approve(host, grant);
+        using var indexer = host.CreateClient();
+        indexer.DefaultRequestHeaders.Authorization = new("Bearer", host.Services.GetRequiredService<AppServiceTokenService>().CreateToken(consumer.Id));
+        var route = $"/api/internal/apps/{consumer.Id}/history-exports/snapshot";
+        foreach (var selected in new[] { team, personal })
+        {
+            var conversation = source.Conversation.Ref with { Provider = selected };
+            source.Entry = source.Entry with { Ref = source.Entry.Ref with { Conversation = conversation } };
+            var snapshot = await Post<HostyHistoryExportSnapshot>(indexer, route, new CoreHistoryExportQuery(grant.Id, selected));
+            Assert.Equal(selected, Assert.Single(snapshot.Entries).Ref.Conversation.Provider);
+            Assert.Equal(selected.ImplementationId, source.Invocation!.ImplementationId);
+        }
+        var calls = source.Calls;
+        Assert.Equal(HttpStatusCode.Forbidden, (await indexer.PostAsJsonAsync(route,
+            new CoreHistoryExportQuery(grant.Id, team with { ImplementationId = "excluded" }))).StatusCode);
+        Assert.Equal(calls, source.Calls);
+    }
+
+    [Fact]
     public async Task IndependentInstalledIndexerUsesOnlyItsApprovedCorpusAndRetainsContentFreePurgeAccess()
     {
         using var source = new Source(); await using var host = await Start(source);

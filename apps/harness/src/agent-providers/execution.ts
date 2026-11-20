@@ -1,3 +1,4 @@
+import { sameProviderRef } from "../../shared/provider-reference.js";
 import { createHash } from "node:crypto";
 import type {
   AgentCancelInput, AgentConfiguration, AgentConfigurationCreate, AgentControlReceipt, AgentPreparedRequest, AgentResponseInput,
@@ -121,7 +122,7 @@ export class ProviderExecution {
   }
   private sessionIdentity(session: AgentSession): void {
     const actual = session.ref.provider, selected = this.state.selection.provider;
-    if (session.ref.id !== this.state.sessionId || actual.appId !== selected.appId || actual.installationId !== selected.installationId || actual.key !== selected.key)
+    if (session.ref.id !== this.state.sessionId || !sameProviderRef(actual, selected))
       throw new Error("Provider configuration belongs to another session or installation.");
   }
   async session(): Promise<AgentSession> {
@@ -221,7 +222,7 @@ export class ProviderExecution {
   private runIdentity(snapshot: AgentRunSnapshot): void {
     const actual = snapshot.ref.provider, selected = this.state.selection.provider;
     if (snapshot.ref.id !== this.state.runId || snapshot.sessionId !== this.state.sessionId
-      || actual.appId !== selected.appId || actual.installationId !== selected.installationId || actual.key !== selected.key)
+      || !sameProviderRef(actual, selected))
       throw new AgentApiError("provider_identity_changed", "Provider execution belongs to another session or installation.", 409);
     if (this.state.run?.ref.id === snapshot.ref.id && this.state.run.generation !== snapshot.generation)
       throw new AgentApiError("provider_identity_changed", "The provider execution generation changed; reconcile the original attempt before controlling it.", 409);
@@ -342,7 +343,7 @@ export class ProviderExecution {
     if (!receipt.continuation) return;
     validateAgentControlReceipt(receipt);
     const actual = receipt.continuation.run.provider, sourceProvider = receipt.run.provider, selected = next.selection.provider;
-    if ([actual, sourceProvider].some(value => value.appId !== selected.appId || value.installationId !== selected.installationId || value.key !== selected.key))
+    if ([actual, sourceProvider].some(value => !sameProviderRef(value, selected)))
       throw new AgentApiError("provider_identity_changed", "The continuation belongs to another provider installation.", 409);
     if (prepared && (prepared.runId !== receipt.run.id || (JSON.parse(prepared.body) as AgentResponseInput).requestId !== receipt.requestId))
       throw new AgentApiError("provider_identity_changed", "The continuation belongs to another response request.", 409);
@@ -364,7 +365,7 @@ export class ProviderExecution {
   async retainControl(receipt: AgentControlReceipt): Promise<void> {
     validateAgentControlReceipt(receipt);
     const selected = this.state.selection.provider, actual = receipt.run.provider;
-    if (actual.appId !== selected.appId || actual.installationId !== selected.installationId || actual.key !== selected.key)
+    if (!sameProviderRef(actual, selected))
       throw new AgentApiError("provider_identity_changed", "The control belongs to another provider installation.", 409);
     await this.change(async () => {
       const next = structuredClone(this.state);
@@ -453,8 +454,7 @@ export class ProviderExecution {
     if (receipt) {
       validateAgentControlReceipt(receipt);
       const actual = receipt.run.provider, selected = next.selection.provider;
-      if (receipt.requestId !== input.requestId || receipt.run.id !== runId || actual.appId !== selected.appId
-        || actual.installationId !== selected.installationId || actual.key !== selected.key
+      if (receipt.requestId !== input.requestId || receipt.run.id !== runId || !sameProviderRef(actual, selected)
         || input.expectedGeneration !== undefined && receipt.generation !== undefined && input.expectedGeneration !== receipt.generation
         || next.run?.ref.id === runId && receipt.generation !== undefined && next.run.generation !== receipt.generation)
         throw new AgentApiError("provider_identity_changed", "The cancellation receipt belongs to another execution.", 409);

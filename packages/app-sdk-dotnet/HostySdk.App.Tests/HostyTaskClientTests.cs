@@ -86,6 +86,22 @@ public sealed class HostyTaskClientTests
         Assert.Equal(JsonValueKind.Null, assignee.ValueKind);
         Assert.False(sent.TryGetProperty("workspaceId", out _));
     }
+    [Fact]
+    public async Task NamedTaskReferencesPreserveFiltersAndRejectSiblingRoutes()
+    {
+        var handler = new Handler { Kind = "tasks", ProviderBody = """{"tasks":[],"nextCursor":null}""" };
+        using var http = new HttpClient(handler);
+        var providers = new HostyProviderClient(http, new() { AppId = "producer", CoreOrigin = "http://core.test", ServiceToken = "service" });
+        var tasks = new HostyTaskClient(providers, new("independent.executor", "one", "default"));
+        var named = new HostyTaskRef("independent.executor", "one", "default", "parent") { ImplementationId = "work" };
+        await Assert.ThrowsAsync<ArgumentException>(() => tasks.GetAsync(named));
+        Assert.Empty(handler.Calls);
+        await tasks.ListAsync(parentTaskRef: named, rootTaskRef: named with { ImplementationId = null });
+        var uri = Uri.UnescapeDataString(handler.Calls[1].Url);
+        Assert.Contains("""parentTaskRef=["independent.executor","one","default","parent","work"]""", uri);
+        Assert.Contains("""rootTaskRef=["independent.executor","one","default","parent"]""", uri);
+    }
+
     [Theory]
     [InlineData(503, 503)]
     [InlineData(200, 502)]

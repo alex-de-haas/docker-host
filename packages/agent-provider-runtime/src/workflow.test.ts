@@ -120,10 +120,10 @@ it("separates native client request namespaces while retaining one admitted run"
   for (const client of clients) expect(await client.callTool({ name: "task_plan", arguments: { input: { requestId: randomUUID(), expectedRevision: 0, markdown: "Independent native call" } } })).toMatchObject({ content: [{ type: "text" }] });
   expect(f.authority.workflow).toHaveBeenCalledTimes(2);
 });
-it("runs only a definition-pinned explicit tool rule and preserves a distinct qualified Tasks source", async () => {
+it.each([undefined, null, "named-source"])("preserves the selected Tasks implementation %s for a definition-pinned explicit rule", async implementationId => {
   const definition = createHash("sha256").update(JSON.stringify(workflowTools().find(tool => tool.name === "task_plan"))).digest("hex");
   const f = await fixture({ ...binding(), policy: { default: "ask", tools: { task_plan: { mode: "run", definition } } } });
-  const source = { appId: "different.tasks-source", installationId: "tasks-installation", key: "tasks-key" }, input = { requestId: randomUUID(), expectedRevision: 0, markdown: "The plan" };
+  const source = { appId: "different.tasks-source", installationId: "tasks-installation", key: "tasks-key", ...(implementationId !== undefined ? { implementationId } : {}) }, input = { requestId: randomUUID(), expectedRevision: 0, markdown: "The plan" };
   expect((await f.rpc("tools/call", { name: "task_plan", arguments: { input, source } })).body.error).toBeUndefined();
   expect(f.authority.workflow).toHaveBeenCalledWith("original-admission", "task-plan", input, source); expect(f.notify).not.toHaveBeenCalled();
 });

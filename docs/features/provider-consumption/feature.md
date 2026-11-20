@@ -1,17 +1,17 @@
 ---
 created: 2026-09-29
-updated: 2026-11-19
-summary: Apps discover confirmed providers and use category or exact-operation Core credentials without relaying inference through Core.
-components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/harness]
+updated: 2026-11-20
+summary: Apps publish named interface implementations under scoped Core authority so Harness users can choose where to send dictation and text for read-aloud.
+components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/codex-provider, apps/harness]
 ---
 
-# Provider Consumption And Speech Recognition
+# Provider Consumption And Speech
 
 ## Permissions And Review
 
-Core 0.132.0 accepts `providers.speech-to-text`, `providers.translation` and `providers.assistant`. Each grants discovery and
+Core accepts `providers.speech-to-text`, `providers.text-to-speech`, `providers.translation` and `providers.assistant`. Each grants discovery and
 use of every confirmed provider in its category, including later installations. There is no separate
-use permission or per-provider ACL. Supply roles are `speech-to-text`, `translation` and `assistant` in `provides`;
+use permission or per-provider ACL. Supply roles are `speech-to-text`, `text-to-speech`, `translation` and `assistant` in `provides`. These
 roles require installation/update confirmation. Ordinary runtime apps can supply and consume these
 interfaces. Reviewed `agent` providers and `providers.agent` use the exact-operation execution
 contract described below; their accounts and native sessions belong to independently installed apps.
@@ -46,7 +46,9 @@ Server-side SDK clients use the calling app's `HOSTY_APP_ID`, `HOSTY_CORE_ORIGIN
 | Method and route (below `/api/internal/apps/{appId}`) | Behavior |
 | --- | --- |
 | `GET /permissions` | Own required, optional and granted permission names |
-| `GET /providers/{kind}` | Confirmed providers in an authorized category |
+| `GET /providers/{kind}` | Confirmed static entries in an authorized category |
+| `GET /providers/{kind}?named=true` | Static entries and the currently published named implementations |
+| `POST /providers/{kind}/implementations` | Publish a full ordered snapshot for the caller’s reviewed interface key |
 | `POST /providers/{kind}/token` | Non-agent category credential; `{ providerAppId, key }` selects one interface |
 | `POST /provider/introspect` | Provider validates `{ token, kind, key }` on every request |
 
@@ -79,6 +81,21 @@ settings, MCP, agent connections or general Core APIs. Finalization always uses 
 draft-only policy for provider-originated handoffs, regardless of the immediate-handoff setting.
 Only Harness's own operator clients can dispatch immediately. Provider credentials never become
 general delegation.
+
+### Named implementations
+
+Core 0.184.0 supports the `implementations.named` capability on a reviewed interface entry. One
+entry can publish several choices under the same key. Its backend authenticates as the current installation and publishes an increasing revision
+with a complete list of up to 256 opaque IDs, display names and availability flags. An empty list withdraws every
+choice. A retry of the same snapshot is safe. Core persists the catalog and rejects conflicting
+replays and older revisions. Publication requires the installation-bound service token issued to
+that runtime. A change to the reviewed interface declaration requires a new publication. Removal or reinstallation invalidates the old installation’s choices.
+
+Consumers persist the app ID, installation ID, interface kind, key and optional implementation ID.
+Discovery supplies a label such as **Codex Provider · Work** and distinguishes duplicate names.
+Renaming preserves a choice. A named invocation presents a credential bound to the exact
+installation, key and implementation. The provider checks the identity returned by introspection.
+Legacy discovery exposes static entries only. Selecting a named entry requires its implementation ID.
 
 ## Agent Execution Providers
 
@@ -129,15 +146,14 @@ the corresponding task/executor routes.
 
 ## SDKs
 
-TypeScript `@hosty-sdk/app` 0.17.0 exports browser-safe types from `/providers` and server-side
-`ProviderClient` from `/providers/server`:
+TypeScript SDK 0.53.0 and .NET SDK 0.19.0 support named discovery, snapshot publication, speech
+capabilities and streamed synthesis. A TypeScript consumer can resolve a saved dictation choice as follows.
 
 ```ts
 const speech = new ProviderClient();
-const permissions = await speech.permissions();
-const providers = await speech.list("speech-to-text");
-// Persist/select the appId + key explicitly in the consuming app.
-const selected = providers.find(p => p.appId === chosenAppId && p.key === chosenKey);
+const providers = await speech.listImplementations("speech-to-text");
+const selected = providers.find(p => p.appId === choice.appId && p.installationId === choice.installationId
+  && p.key === choice.key && (p.implementationId ?? null) === (choice.implementationId ?? null));
 if (!selected) throw new Error("Selected provider is not installed.");
 const result = await speech.transcribe(selected, wavBlob, { signal, language: "ru" });
 ```
@@ -169,15 +185,27 @@ Speech recognition is supplied by an independently installed application with a 
 above; neither requires a particular app ID, engine or model. Provider readiness and advertised
 media, byte and duration limits remain authoritative for consumers.
 
+Codex Provider exposes a named dictation or read-aloud option for each API connection whose
+administrator enables that role. Local Speech can supply dictation alongside it. See
+[Codex speech connection settings](../ai-gateway-providers/feature.md#speech-on-codex-api-connections).
+
 The repository's former Whisper runtime app is retired in favor of the separately maintained Speech
 application. Its native implementation, model settings and hardware acceptance plan are removed;
 this does not change the generic provider contract or Harness dictation. Provider-specific builds,
 models, inference tests and deployment requirements belong to the provider's own repository.
 
+Text-to-speech v1 uses `GET /capabilities` and `POST /speech`. A ready provider advertises
+`audio/pcm` and a maximum of up to 4,000 UTF-16 code units per request. The consumer sends
+`{"text":"…"}` and receives streaming little-endian signed 16-bit mono PCM at 24 kHz.
+Cancelling playback closes the upstream request.
+
 ## Harness Dictation
 
-Harness 0.38.0 requests optional `providers.speech-to-text`. Its composer offers explicit provider
-selection when multiple providers exist, record/stop/cancel controls, and recognition errors. The
+Harness 0.105.0 requests separate optional speech grants. **Settings → Speech** stores
+**Dictation** and **Read aloud** separately for each signed-in user. Both choices survive chat
+changes and reloads. A single static dictation provider preserves existing microphone behavior.
+Selecting a named connection is explicit. A withdrawn selection remains visible as unavailable
+until the user changes it. The
 browser converts completed recordings to the WAV baseline. Chat recording stops before the smaller
 of ten minutes and the selected provider's advertised duration/byte limit, with an elapsed/limit
 display. Ready WAV capabilities are required before recording; an older two-minute provider keeps
@@ -191,8 +219,7 @@ changing that grant remounts the frame to release the prior document's microphon
 Recognized text is appended to the current editable draft, preserving text and attachments and never
 sending a message automatically. Cancellation, sending, unmount and switching conversations invalidate
 late results and stop microphone tracks. Permission/provider errors retain the draft. An absent grant
-leaves dictation disabled. The composer opens provider selection, capture controls and status from one
-[Dictation settings button](../harness-composer-controls/feature.md#dictation). When Core advertises permission review, the tooltip
+leaves dictation disabled. One [microphone button](../harness-composer-controls/feature.md#dictation) starts capture using the saved choice. When Core advertises permission review, the tooltip
 points to Dashboard → Harness → Settings → Permissions → Review changes, including legacy declarations.
 Older Core versions retain guidance based on their stored optional declarations. Source observation
 alone never grants access.
@@ -200,6 +227,12 @@ The microphone's tooltip remains available on hover and keyboard focus when the 
 It distinguishes loading, discovery errors, missing consent, no providers, an unselected provider,
 an unavailable provider and a message being sent. Discovery failures do not imply missing consent.
 
+### Read aloud
+
+A user can read an assistant response or a rendered Markdown section, including its subsections
+up to the next sibling or higher heading. Harness sends the chosen plain text in its displayed
+language and plays the stream with an AI-voice disclosure and a Stop control. Long selections
+use successive bounded requests. Stopping or switching chats cancels playback and synthesis.
 
 ## Assistant Activity Authority
 
@@ -217,6 +250,24 @@ in the admission, and Disabled tools are refused at Core dispatch. This optional
 channel has its own provider-side tool presentation and Decisions and leaves general Core MCP
 access unchanged. See the [agent execution boundary](../agent-provider-interface/feature.md).
 
+## Managed Verification
+
+On 2026-11-20 two synthetic Codex API connections appeared under both speech interfaces in
+a child Core. Renaming preserved the selected identity. Withdrawing and restoring one role
+disabled and restored that choice. Two separately authenticated administrators retained different
+local and named selections, and a binding copied between users was rejected.
+
+In Chrome, a single microphone in Shell-embedded Harness appended a Russian transcript to the
+existing chat draft. Reading a nested Russian Markdown section sent exactly the expected text
+to the fixture provider, including names and numbers. Its stream closed when playback stopped.
+Dictation in a feedback annotation preserved the overall comment and the chat draft. The provider
+adapters use synthetic OpenAI responses in tests. The browser check uses controlled microphone
+input and a deterministic speech provider.
+
+The managed agent-provider suite also exercised independent providers, restart and native
+session recovery. The separate feedback suite passed browser capture, draft and submission
+checks. Its agent-processing scenario still expects the legacy `hosty-workspaces` MCP server.
+
 ## Testing Expectations
 
 - Core: optional defaults and updates, review-only mutation, stale consent, stored declarations,
@@ -229,6 +280,16 @@ access unchanged. See the [agent execution boundary](../agent-provider-interface
 - Agent execution: unrelated provider/consumer IDs, exact bytes and installations, original task/user
   authority, revocation, provider-owned renewal, tool ceilings, pinned skill removal, precise lease
   cleanup and expired Decision metadata that cannot admit native work.
+- Publish two named implementations of an unrelated interface and verify ordered replay, duplicate
+  display names, withdrawal, revocation and installation replacement. Resolve static entries through
+  both legacy and named-aware clients. Exercise category and exact-operation authorization.
+- Verify independent speech settings across users and sessions, single-microphone draft insertion,
+  feedback destinations, selected-section text, streaming and upstream cancellation. Use synthetic
+  credentials and provider receipts to distinguish billing destinations without spending API credit.
+- Run `HOSTY_NAMED_SPEECH_ACCEPTANCE=1 npm run test:integration -- harness-local` with
+  Playwright and Chrome to exercise the feature in a child Core. Set `HOSTY_SPEECH_PLAYWRIGHT_MODULE`
+  if Playwright is installed outside the workspace. The fixture uses synthetic Codex connections
+  and a deterministic PCM provider. It does not measure OpenAI latency or pronunciation.
 - SDKs: credential separation, denied access, compatibility, cancellation and assistant handoff ownership.
 - Harness/Shell: optional permission UI, iframe policy, editable insertion, cancelled/late results,
   conversation switching, existing composer actions and attachments.

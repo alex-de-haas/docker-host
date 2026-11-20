@@ -41,6 +41,49 @@ describe("provider credentials", () => {
   });
 });
 
+describe("named implementations", () => {
+  const named = { ...provider, kind: "text-to-speech" as const, installationId: "install", implementationId: "work" };
+  it("publishes complete snapshots and opts into named discovery separately from static discovery", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({ revision: 3 }))
+      .mockResolvedValueOnce(Response.json({ providers: [named] }))
+      .mockResolvedValueOnce(Response.json({ providers: [] }));
+    vi.stubGlobal("fetch", fetch);
+    const snapshot = { revision: 3, implementations: [{ id: "work", displayName: "Work", available: true }] };
+    expect(await client().publishImplementations("text-to-speech", "default", snapshot)).toEqual({ revision: 3 });
+    expect(await client().listImplementations("text-to-speech")).toEqual([named]);
+    expect(await client().list("text-to-speech")).toEqual([]);
+    expect(fetch.mock.calls.map(([url]) => new URL(url).pathname + new URL(url).search)).toEqual([
+      "/api/internal/apps/ordinary/providers/text-to-speech/implementations",
+      "/api/internal/apps/ordinary/providers/text-to-speech?named=true",
+      "/api/internal/apps/ordinary/providers/text-to-speech",
+    ]);
+    expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({ key: "default", ...snapshot });
+  });
+
+  it("streams only the selected text with authority for the selected installation and implementation", async () => {
+    const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(Uint8Array.of(1, 2)); } });
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ token: "scoped", provider: named }))
+      .mockResolvedValueOnce(new Response(stream, { headers: { "content-type": "audio/pcm;rate=24000" } }));
+    vi.stubGlobal("fetch", fetch);
+    const speech = await client().synthesize(named, { text: "Привет" });
+    expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({ providerAppId: named.appId, key: named.key, installationId: "install", implementationId: "work" });
+    const call = fetch.mock.calls[1]![1];
+    expect(call.headers.authorization).toBe("Bearer scoped");
+    expect(JSON.parse(call.body)).toEqual({ text: "Привет" });
+    const reader = speech.body!.getReader();
+    expect((await reader.read()).value).toEqual(Uint8Array.of(1, 2));
+    await reader.cancel();
+  });
+
+  it.each([{ implementationId: "personal" }, { appId: "other" }, { key: "other" }, { kind: "other" }])("refuses a substituted binding before sending section text (%j)", async change => {
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ token: "scoped", provider: { ...named, ...change } }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(client().synthesize(named, { text: "Work section" })).rejects.toMatchObject({ code: "provider_changed" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("speech deadlines", () => {
   it.each([undefined, 930_000])("preserves the default and accepts the extended explicit deadline (%j)", async timeoutMs => {
     const timeout = vi.spyOn(AbortSignal, "timeout");

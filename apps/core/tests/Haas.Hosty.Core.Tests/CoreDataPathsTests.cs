@@ -20,6 +20,8 @@ public sealed class CoreDataPathsTests
     // "manifest.json/x.png" only against the directory names.
     [InlineData("manifest.json")]
     [InlineData("manifest.json/icon.png")]
+    [InlineData("provider-implementations.json")]
+    [InlineData("PROVIDER-IMPLEMENTATIONS.JSON/icon.png")]
     [InlineData("state.json")]
     [InlineData("state.json/icon.png")]
     [InlineData("")]

@@ -1,3 +1,4 @@
+import { sameProviderRef } from "../../shared/provider-reference.js";
 import type {
   AgentEvent, AgentHistoryObservation, AgentProviderRef, AgentMessageBlock, AgentPendingDecision, AgentResult, AgentRunSnapshot,
   AgentSource, AgentToolBlock, AgentWatchItem,
@@ -54,9 +55,7 @@ function validateSnapshot(snapshot: AgentRunSnapshot): void {
   if (new Set(agents.map(agent => agent.agentId)).size !== agents.length) invalid("duplicate snapshot agent identity");
 }
 function sameRun(left: AgentRunSnapshot, right: AgentRunSnapshot): void {
-  const a = left.ref.provider, b = right.ref.provider;
-  if (left.ref.id !== right.ref.id || left.sessionId !== right.sessionId || a.appId !== b.appId
-    || a.installationId !== b.installationId || a.key !== b.key) invalid("run or installation identity changed");
+  if (left.ref.id !== right.ref.id || left.sessionId !== right.sessionId || !sameProviderRef(left.ref.provider, right.ref.provider)) invalid("run or installation identity changed");
   if (left.generation !== right.generation) invalid("execution generation changed");
 }
 

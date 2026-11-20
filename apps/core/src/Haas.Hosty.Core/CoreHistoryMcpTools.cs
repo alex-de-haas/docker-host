@@ -13,8 +13,9 @@ internal sealed class CoreHistoryMcpTools(IHttpContextAccessor accessor, CoreCap
 
     [McpServerTool(Name = "history_providers", ReadOnly = true, Destructive = false)]
     [Description("Discover accessible reviewed conversation-history providers, installations, capabilities and availability. Core stores no transcript copy and requires no Harness or index database.")]
-    public Task<CallToolResult> Providers(CancellationToken cancellationToken)
-        => CoreProviderResults.Run(async () => await history.ProvidersAsync(await Caller("capabilities", cancellationToken), cancellationToken));
+    public Task<CallToolResult> Providers(CancellationToken cancellationToken,
+        [Description("Include named implementations in addition to static entries.")] bool named = false)
+        => CoreProviderResults.Run(async () => await history.ProvidersAsync(await Caller("capabilities", cancellationToken), cancellationToken, named));
     [McpServerTool(Name = "history_capabilities", ReadOnly = true, Destructive = false)]
     [Description("Read one selected history provider's entry kinds, declared inert extension schemas, page limits and change retention. Missing tool/usage capabilities are unavailable, never inferred as zero.")]
     public Task<CallToolResult> Capabilities([Description("Explicit provider installation and interface key.")] CoreHistoryProvider input, CancellationToken cancellationToken)

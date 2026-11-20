@@ -262,6 +262,13 @@ function handle(msg) {
     }
     if (process.env.HOSTY_TEST_EXTERNAL_SANDBOX && policy.networkAccess !== "enabled") fail("missing external network policy");
     currentTurnText = String(msg.params?.input?.[0]?.text ?? "");
+    if (currentTurnText.includes("SPEECH_SECTION_ACCEPTANCE")) {
+      send({ jsonrpc: "2.0", id: msg.id, result: {} });
+      send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "speech-section",
+        text: "## Алтай\n\nВремя — 12:30.\n\n### Имена\n\nАнна и Лев.\n\n## Байкал\n\nДругой раздел." } } });
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: "speech-turn", status: "completed" } } });
+      return;
+    }
     if (currentTurnText.includes("FEEDBACK_ACCEPTANCE:")) {
       send({ jsonrpc: "2.0", id: msg.id, result: {} });
       if (currentTurnText.includes("FEEDBACK_ACCEPTANCE:WAIT")) return;

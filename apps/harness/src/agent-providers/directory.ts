@@ -1,3 +1,4 @@
+import { providerIdentityParts } from "../../shared/provider-reference.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -10,15 +11,15 @@ const validText = (value: unknown): value is string => typeof value === "string"
 export function validAgentSelection(value: unknown): value is AgentConnectionSelection {
   const selection = value as AgentConnectionSelection | null;
   return Boolean(selection && [selection.provider?.appId, selection.provider?.installationId, selection.provider?.key,
-    selection.connection?.id].every(validText) && typeof selection.connection?.revision === "string"
+    selection.connection?.id].every(validText) && (selection.provider.implementationId == null || validText(selection.provider.implementationId) && selection.provider.implementationId.length <= 128)
+    && typeof selection.connection?.revision === "string"
     && /^(0|[1-9][0-9]{0,39})$/.test(selection.connection.revision));
 }
 
 /** A selection identifies the exact installation/account revision, never a vendor or a native path. */
 export function agentSelectionId(selection: AgentConnectionSelection): string {
   if (!validAgentSelection(selection)) throw new ConnectionError(400, "provider_invalid", "Choose a current provider connection.");
-  return createHash("sha256").update(JSON.stringify([selection.provider.appId, selection.provider.installationId,
-    selection.provider.key, selection.connection.id, selection.connection.revision])).digest("hex");
+  return createHash("sha256").update(JSON.stringify([...providerIdentityParts(selection.provider), selection.connection.id, selection.connection.revision])).digest("hex");
 }
 
 /** Harness owns only its preferred qualified selection; account CRUD and credentials belong elsewhere. */

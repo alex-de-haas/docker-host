@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+import { Volume2 } from "lucide-react";
 import ReactMarkdown, { type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { remarkSoftBreaks, transformChatUrl } from "@/lib/markdown";
@@ -31,12 +33,16 @@ const PROSE_CLASS = [
   "[&_td]:border-b [&_td]:border-muted-foreground/15 [&_td]:px-2 [&_td]:py-1",
 ].join(" ");
 
-export function Markdown({ text, className, streaming = false, rehypePlugins }: {
+export function Markdown({ text, className, streaming = false, rehypePlugins, onReadSection }: {
   text: string;
   className?: string;
   streaming?: boolean;
   rehypePlugins?: Options["rehypePlugins"];
+  onReadSection?: (heading: HTMLElement) => void;
 }) {
+  function heading(level: number, Heading: "h4" | "h5" | "h6", children: ReactNode) {
+    return <Heading data-speech-level={onReadSection ? level : undefined}>{children}{onReadSection && <button type="button" aria-label="Read section aloud" title="Read section aloud with AI-generated voice" className="ml-1 inline-flex align-middle text-muted-foreground hover:text-foreground" onClick={e => onReadSection(e.currentTarget.parentElement!)}><Volume2 className="size-3.5" /></button>}</Heading>;
+  }
   return (
     <div className={cn(PROSE_CLASS, className)}>
       <ReactMarkdown
@@ -49,9 +55,12 @@ export function Markdown({ text, className, streaming = false, rehypePlugins }: 
           pre: ({ children }) => <ChatCodeBlock {...markdownCodeProps({ children })} streaming={streaming} />,
           // A document heading inside a chat bubble is a size, not a rank: the panel's own headings
           // outrank anything the assistant writes, so h1-h3 land where they read as emphasis.
-          h1: ({ children }) => <h4>{children}</h4>,
-          h2: ({ children }) => <h4>{children}</h4>,
-          h3: ({ children }) => <h5>{children}</h5>,
+          h1: ({ children }) => heading(1, "h4", children),
+          h2: ({ children }) => heading(2, "h4", children),
+          h3: ({ children }) => heading(3, "h5", children),
+          h4: ({ children }) => heading(4, "h4", children),
+          h5: ({ children }) => heading(5, "h5", children),
+          h6: ({ children }) => heading(6, "h6", children),
           a: ({ href, children }) =>
             href ? (
               // The panel is embedded in Shell; a link that replaced it would take the operator's

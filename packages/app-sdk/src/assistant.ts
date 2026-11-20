@@ -57,12 +57,13 @@ export function resolveAssistantDestination(destination: AssistantDestination, s
 
 /** Pure mapping after finalization; the presentation host separately checks current access. */
 export function resolveAssistantPresentation(provider: ProviderDescriptor, result: AssistantHandoffResult,
-  options: { expectedProvider: { appId: string; installationId: string; key: string } }): {
+  options: { expectedProvider: { appId: string; installationId: string; key: string; implementationId?: string | null } }): {
     target: PanelTarget | null; destination: AppSurfaceRef; reason?: "no_panel" | "ambiguous_surface";
   } {
   const expected = options.expectedProvider;
   if (!provider.installationId) throw new AssistantError("unsupported_core", "Update Core to identify assistant installations.", 409);
-  if (provider.appId !== expected.appId || provider.key !== expected.key || provider.installationId !== expected.installationId)
+  if (provider.appId !== expected.appId || provider.key !== expected.key || provider.installationId !== expected.installationId
+      || (provider.implementationId ?? null) !== (expected.implementationId ?? null))
     throw new AssistantError("provider_changed", "The original assistant installation is no longer available.", 409);
   try { resolveAssistantDestination(result.open, provider.uiSurfaces ?? []); }
   catch { throw new AssistantError("destination_invalid", "The assistant returned an undeclared destination.", 409); }

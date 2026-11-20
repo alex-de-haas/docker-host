@@ -1,5 +1,5 @@
 /** Local-to-Core identities. Never infer an app, conversation, native session or run from another ID. */
-export type ProviderRef = { appId: string; installationId: string; key: string };
+export type ProviderRef = { appId: string; installationId: string; key: string; implementationId?: string | null };
 export type ConversationRef = { provider: ProviderRef; id: string };
 export type NativeSessionRef = { provider: ProviderRef; id: string };
 export type RunRef = { provider: ProviderRef; id: string };

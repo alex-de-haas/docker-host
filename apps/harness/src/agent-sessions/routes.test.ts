@@ -36,8 +36,8 @@ it("validates actual bytes twice and refuses legacy or mixed credentials", async
   }
   for (const headers of [{}, { authorization: "Bearer hosty_provider.1.legacy" }, { authorization: `Bearer ${token}`, cookie: "session=other" }] as Record<string, string>[]) expect((await get(headers)).status).toBe(401);
 });
-it("accepts only the admitted conversation workflow on the agent-sessions callback", async () => {
-  const agent = { provider, sessionId: "native-session", runId: "native-run" };
+it.each([null, "work"])("accepts only the admitted conversation workflow on the agent-sessions callback (%s)", async implementationId => {
+  const agent = { provider: { appId: "native.provider", installationId: "native-installation", key: "coding", implementationId }, sessionId: "native-session", runId: "native-run" };
   const validation = vi.spyOn(ProviderClient.prototype, "validateMediated").mockResolvedValue({ ...actor, operation: "session.workflow", agentExecution: agent });
   const dispatch = vi.spyOn(manager, "providerWorkflow").mockResolvedValue({ profiles: [] });
   const call = (body: unknown) => fetch(origin + "/api/agent-sessions/v1/sessions/chat-1/workflow", {
@@ -52,6 +52,7 @@ it("accepts only the admitted conversation workflow on the agent-sessions callba
   for (const invalid of [{ ...command, action: "task-create" }, { ...command, source: provider }])
     expect((await call(invalid)).status).toBe(400);
   expect((await call({ ...command, agent: { ...agent, runId: "another-run" } })).status).toBe(403);
+  expect((await call({ ...command, agent: { ...agent, provider: { ...agent.provider, implementationId: "personal" } } })).status).toBe(403);
   expect(dispatch).toHaveBeenCalledOnce();
 });
 

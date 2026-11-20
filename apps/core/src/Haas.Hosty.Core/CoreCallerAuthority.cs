@@ -1,3 +1,5 @@
+using HostySdk.App;
+
 namespace Haas.Hosty.Core;
 
 // Non-secret provenance signed into short-lived mediated provider credentials. Never accept it
@@ -9,7 +11,7 @@ internal sealed record CoreCallerAuthority(string Kind, string? CredentialHash =
 internal sealed partial class CoreCapabilityAuthorization
 {
     internal async Task<CoreCapabilityCaller> RevalidateAsync(CoreCallerAuthority origin, string expectedUser,
-        string expectedPrincipal, string kind, string providerAppId, string key, string toolName, CancellationToken ct, bool retainedTask = false)
+        string expectedPrincipal, string kind, HostyProviderRef provider, string toolName, CancellationToken ct, bool retainedTask = false)
     {
         var state = await users.ReadAsync(ct);
         var user = state.Users.SingleOrDefault(u => u.Id == expectedUser && !u.Disabled)
@@ -20,7 +22,7 @@ internal sealed partial class CoreCapabilityAuthorization
             if (origin.TaskDispatch is null || kind != "tasks" || toolName != "task_get")
                 throw new AppIdentityException("permission_denied", "A retained task source check only authorizes its read operation.");
             var (original, receipt) = await TaskDispatchCallerAsync(origin.TaskDispatch, ct);
-            if (receipt.Provider?.AppId != providerAppId || receipt.Provider.Key != key
+            if (receipt.Provider != provider
                 || original.User.Id != expectedUser || original.PrincipalId != expectedPrincipal)
                 throw new AppIdentityException("permission_denied", "This task source is outside the retained dispatch.");
             caller = original with { Authority = origin };
@@ -31,7 +33,8 @@ internal sealed partial class CoreCapabilityAuthorization
                 throw new AppIdentityException("permission_denied", "Task dispatch grants authorize only their executor operations.");
             var (original, receipt) = await TaskDispatchCallerAsync(origin.TaskDispatch, ct);
             var executor = receipt.TaskAuthorization!.Scope.Executor;
-            if (executor.AppId != providerAppId || executor.Key != key || original.User.Id != expectedUser || original.PrincipalId != expectedPrincipal)
+            if (executor.AppId != provider.AppId || executor.InstallationId != provider.InstallationId || executor.Key != provider.Key
+                || executor.ImplementationId != provider.ImplementationId || original.User.Id != expectedUser || original.PrincipalId != expectedPrincipal)
                 throw new AppIdentityException("permission_denied", "This executor is outside the authorized task attempt.");
             caller = original with { Authority = origin };
         }
@@ -46,9 +49,9 @@ internal sealed partial class CoreCapabilityAuthorization
                 || record.Grant.Consumer?.Kind != "app" || record.Grant.Consumer.AppId != app.Id
                 || record.Grant.Consumer.InstallationId != PanelIdentity.Installation(app))
                 throw new AppIdentityException("permission_denied", "This export consumer or its consent changed.");
-            var source = CoreHistoryExportStore.Providers(record).SingleOrDefault(p => p.AppId == providerAppId && p.Key == key)
-                ?? throw new AppIdentityException("permission_denied", "This source is outside the approved export corpus.");
-            historyExports.Scope(record, source);
+            if (!CoreHistoryExportStore.Providers(record).Contains(provider))
+                throw new AppIdentityException("permission_denied", "This source is outside the approved export corpus.");
+            historyExports.Scope(record, provider);
             await identity.RequireAccessibleUserAsync(app.Id, user.Id, ct);
             caller = new(user, AppPrincipal(app), app, null) { Authority = origin };
             caller.Require("", CoreAppPermissions.HistoryExport);
@@ -71,7 +74,7 @@ internal sealed partial class CoreCapabilityAuthorization
             {
                 if (origin.IdentityHash is null) throw new AppIdentityException("permission_denied", "Originating user authority is missing.");
                 var actor = await identity.RequireOperationHashAsync(origin.IdentityHash, app.Id,
-                    scope => scope.Kind == "provider" && scope.TargetAppId == providerAppId && scope.ProviderKind == kind && scope.Key == key, ct, requireActivity: !retainedTask && origin.TaskWorkflow is null);
+                    scope => scope.AllowsProvider(kind, provider.AppId, provider.Key, provider.ImplementationId), ct, requireActivity: !retainedTask && origin.TaskWorkflow is null);
                 if (actor.UserId != user.Id) throw new AppIdentityException("permission_denied", "The originating user changed.");
             }
             caller = new(user, AppPrincipal(app), app, null) { Authority = origin, EffectivePermissions = currentAssistant?.EffectivePermissions, PermissionSource = currentAssistant?.PermissionSource, AgentExecution = currentAssistant?.AgentExecution };
@@ -107,7 +110,7 @@ internal sealed partial class CoreCapabilityAuthorization
         }
         if (caller.PrincipalId != expectedPrincipal)
             throw new AppIdentityException("permission_denied", "The originating principal changed.");
-        await identity.RequireAccessibleUserAsync(providerAppId, user.Id, ct);
+        await identity.RequireAccessibleUserAsync(provider.AppId, user.Id, ct);
         return caller;
     }
 }

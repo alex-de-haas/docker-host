@@ -11,12 +11,12 @@ export function pcmWave(samples: Float32Array): Blob {
   return new Blob([bytes], { type: "audio/wav" });
 }
 
-export async function recordingWave(recording: Blob): Promise<Blob> {
+export async function recordingWave(recording: Blob, maximumSeconds = 120): Promise<Blob> {
   const context = new AudioContext();
   try {
     const decoded = await context.decodeAudioData(await recording.arrayBuffer());
-    if (decoded.duration > 120.1) throw new Error("Recordings may be up to 120 seconds.");
-    const offline = new OfflineAudioContext(1, Math.min(120 * 16000, Math.ceil(decoded.duration * 16000)), 16000);
+    if (decoded.duration > maximumSeconds + 1) throw new Error(`Recordings may be up to ${maximumSeconds} seconds.`);
+    const offline = new OfflineAudioContext(1, Math.min(maximumSeconds * 16000, Math.ceil(decoded.duration * 16000)), 16000);
     const source = offline.createBufferSource(); source.buffer = decoded; source.connect(offline.destination); source.start();
     return pcmWave((await offline.startRendering()).getChannelData(0));
   } finally { await context.close(); }

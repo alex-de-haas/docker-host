@@ -122,9 +122,9 @@ export function toolResults(events: readonly AssistantEvent[]) {
 function originalTurnOrder(events: AssistantEvent[]): AssistantEvent[] {
   if (!events.some(event => event.providerHistoryEarlier === true)) return events;
   const runKey = (event: AssistantEvent) => {
-    const source = event.providerSource as { runId?: string; generation?: string; provider?: { appId?: string; installationId?: string; key?: string } } | undefined;
+    const source = event.providerSource as { runId?: string; generation?: string; provider?: { appId?: string; installationId?: string; key?: string; implementationId?: string | null } } | undefined;
     return source?.runId && source.generation && source.provider?.installationId
-      ? JSON.stringify([source.provider.appId, source.provider.installationId, source.provider.key, source.runId, source.generation]) : undefined;
+      ? JSON.stringify([source.provider.appId, source.provider.installationId, source.provider.key, ...(source.provider.implementationId != null ? [source.provider.implementationId] : []), source.runId, source.generation]) : undefined;
   };
   const base = events.filter(event => event.providerHistoryEarlier !== true);
   const anchors = new Map<string, number>();

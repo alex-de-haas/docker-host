@@ -32,7 +32,8 @@ function strings(value: unknown, max = 128, width = 256): asserts value is strin
   array(value, max, "string selection"); if (value.some(v => !bounded(v, width)) || new Set(value).size !== value.length) fail("Selections require distinct bounded strings.");
 }
 function provider(value: unknown): asserts value is AgentProviderRef {
-  shape(value, ["appId", "installationId", "key"], "provider reference");
+  shape(value, ["appId", "installationId", "key", "implementationId"], "provider reference");
+  if (value.implementationId != null && !bounded(value.implementationId, 128)) fail("Invalid named implementation ID.");
   if (![value.appId, value.installationId, value.key].every(v => bounded(v))) fail("An installation-qualified provider reference is required.");
 }
 function qualified(value: unknown): void { shape(value, ["provider", "id"], "qualified reference"); provider(value.provider); if (!opaque(value.id)) fail("A bounded resource ID is required."); }

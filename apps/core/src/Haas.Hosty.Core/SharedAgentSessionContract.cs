@@ -1,8 +1,15 @@
 // Platform-owned references and minimal execution observations. Providers own native session state.
+using System.Text.Json.Serialization;
+
 namespace HostySdk.App;
 
 /// <summary>A provider installation and declared interface key on the connected Core.</summary>
-public record HostyProviderRef(string AppId, string InstallationId, string Key);
+public record HostyProviderRef(string AppId, string InstallationId, string Key)
+{
+    /// <summary>The stable provider-owned identity when the interface publishes named implementations.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ImplementationId { get; init; }
+}
 /// <summary>A provider-owned conversation, distinct from a native session and a run.</summary>
 public record HostyConversationRef(HostyProviderRef Provider, string Id);
 /// <summary>A provider-native session. Possession of this reference does not grant access.</summary>

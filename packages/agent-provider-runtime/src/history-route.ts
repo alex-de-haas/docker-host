@@ -1,3 +1,4 @@
+import { sameProvider } from "./provider-ref.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { once } from "node:events";
 import { setImmediate } from "node:timers/promises";
@@ -23,7 +24,7 @@ export async function serveHistory(controller: ProviderController, request: Inco
   const provider = controller.store.provider, history = controller.store.history;
   const authorize = async (expected?: HistoryAuthority) => {
     const actor = await controller.authority.history(bearer, provider.key), target = actor?.provider;
-    if (!actor?.callerAppId || !actor.callerInstallation || target?.appId !== provider.appId || target.installationId !== provider.installationId || target.key !== provider.key ||
+    if (!actor?.callerAppId || !actor.callerInstallation || !target || !sameProvider(target, provider) ||
         expected && (expected.callerAppId !== actor.callerAppId || expected.callerInstallation !== actor.callerInstallation))
       throw new AgentApiError("operation_mismatch", "This credential cannot observe this installation's provider history.", 403);
     if (!(Date.parse(actor.expiresAt) > Date.now())) throw new AgentApiError("token_expired", "Installation history authorization expired.", 401);

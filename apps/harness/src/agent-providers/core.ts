@@ -36,10 +36,10 @@ export class CoreAgentBackend implements AgentDirectoryBackend {
   }
 
   async providers(authority: AgentConsumerAuthority): Promise<AgentProviderEntry[]> {
-    const result = await this.core<{ providers: Array<{ appId: string; installationId?: string | null; key: string;
+    const result = await this.core<{ providers: Array<{ appId: string; installationId?: string | null; key: string; implementationId?: string | null;
       displayName: string; available: boolean; version: number | null }> }>("/providers/agent", authority);
     return result.providers.filter(provider => Boolean(provider.installationId)).map(provider => ({
-      ref: { appId: provider.appId, installationId: provider.installationId!, key: provider.key },
+      ref: { appId: provider.appId, installationId: provider.installationId!, key: provider.key, ...(provider.implementationId != null ? { implementationId: provider.implementationId } : {}) },
       displayName: provider.displayName, available: provider.available && provider.version === 1,
       ...(provider.version !== 1 ? { reason: "This provider does not support agent interface v1." } : {}),
     }));

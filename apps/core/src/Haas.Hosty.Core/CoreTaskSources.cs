@@ -34,7 +34,7 @@ internal sealed class CoreTaskSources(CoreDataPaths paths, CoreCapabilityAuthori
             await identity.RequireOperationHashAsync(origin.IdentityHash!, caller.App!.Id, scope => scope.Kind == "mcp" && scope.TargetAppId == AgentMcpDirectory.CoreId, ct, requireActivity: false);
         }
         await authorization.RevalidateAsync(origin with { InvokedTool = tool }, caller.User.Id, caller.PrincipalId,
-            "tasks", receipt.Provider!.AppId, receipt.Provider.Key, tool, ct, retainedTask: true);
+            "tasks", receipt.Provider!, tool, ct, retainedTask: true);
     }
     internal async Task<CoreTaskSourceReference?> Observe(AppRecord executor, CoreCapabilityCaller caller,
         CoreTaskWorkflowBinding binding, CancellationToken ct)
@@ -156,7 +156,7 @@ internal sealed class CoreTaskSources(CoreDataPaths paths, CoreCapabilityAuthori
         string? cursor = null; var seen = new HashSet<string>(StringComparer.Ordinal);
         do
         {
-            var page = (await tasks.ListAsync(caller, new(new(root.AppId, root.InstallationId, root.Key), cursor, 100, RootTaskRef: root), ct))
+            var page = (await tasks.ListAsync(caller, new(new(root.AppId, root.InstallationId, root.Key) { ImplementationId = root.ImplementationId }, cursor, 100, RootTaskRef: root), ct))
                 .Deserialize(CoreJson.TypeInfo<HostyTaskPage>())!;
             foreach (var task in page.Tasks)
             {

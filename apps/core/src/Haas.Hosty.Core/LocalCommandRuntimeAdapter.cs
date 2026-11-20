@@ -573,7 +573,7 @@ internal sealed partial class LocalCommandRuntimeAdapter(
         }
 
         if (service.Injection?.AppServiceToken != false)
-            startInfo.Environment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateToken(context.App.Id);
+            startInfo.Environment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateRuntimeToken(context.App);
         else startInfo.Environment.Remove("HOSTY_APP_SERVICE_TOKEN");
 
         if (delegatedTokenKey is not null)

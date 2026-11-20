@@ -1,3 +1,4 @@
+import { sameProviderRef } from "../../shared/provider-reference.js";
 import type { IncomingMessage } from "node:http";
 import { AGENT_SUBAGENT_WORKFLOW_TOOLS, type AgentExecutionReference, type AgentSessionWorkflowRequest } from "@hosty-sdk/app/agent";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
@@ -9,7 +10,12 @@ const fields = (value: Record<string, unknown>, names: string[]) => Object.keys(
 const identity = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512
   && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
 const sameAgent = (a: AgentExecutionReference, b: AgentExecutionReference) => a.sessionId === b.sessionId && a.runId === b.runId
-  && a.provider.appId === b.provider.appId && a.provider.installationId === b.provider.installationId && a.provider.key === b.provider.key;
+  && sameProviderRef(a.provider, b.provider);
+function providerRef(value: unknown): boolean {
+  return object(value) && fields(value, ["appId", "installationId", "key", ...(Object.hasOwn(value, "implementationId") ? ["implementationId"] : [])])
+    && [value.appId, value.installationId, value.key].every(identity)
+    && (value.implementationId == null || identity(value.implementationId) && value.implementationId.length <= 128);
+}
 
 const subagentActions = AGENT_SUBAGENT_WORKFLOW_TOOLS.map(name => name.replaceAll("_", "-"));
 
@@ -20,10 +26,7 @@ function readWorkflow(bytes: Buffer, kind: "task-executor" | "agent-sessions"): 
   if (!object(value) || !fields(value, ["action", "input", "agent", ...(Object.hasOwn(value, "source") ? ["source"] : [])]) || typeof value.action !== "string"
     || !(kind === "task-executor" ? taskActions : subagentActions).some(action => action === value.action) || !object(value.input) || !object(value.agent)
     || !fields(value.agent, ["provider", "sessionId", "runId"]) || !identity(value.agent.sessionId) || !identity(value.agent.runId)
-    || !object(value.agent.provider) || !fields(value.agent.provider, ["appId", "installationId", "key"])
-    || ![value.agent.provider.appId, value.agent.provider.installationId, value.agent.provider.key].every(identity)
-    || Object.hasOwn(value, "source") && (kind !== "task-executor" || !object(value.source) || !fields(value.source, ["appId", "installationId", "key"])
-      || ![value.source.appId, value.source.installationId, value.source.key].every(identity)))
+    || !providerRef(value.agent.provider) || Object.hasOwn(value, "source") && (kind !== "task-executor" || !providerRef(value.source)))
     throw new ProviderError("invalid_input", "Use a declared session action, object input and qualified public agent execution.", 400);
   return value as unknown as AgentSessionWorkflowRequest;
 }

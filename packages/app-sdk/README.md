@@ -303,6 +303,16 @@ their existing behavior. Validate the selected provider's duration/byte capabili
 credentials and the acting user's access. It does not expose general agent execution.
 See [Provider consumption](../../docs/features/provider-consumption/feature.md) for the full contract.
 
+### Named implementations and read-aloud
+
+Call `listImplementations("speech-to-text")` or `listImplementations("text-to-speech")` to list both
+static and named entries. Keep the installation, key and implementation ID with each choice. The
+`displayName` is the current human-readable label. Pass the selection to `speechCapabilities`
+and `transcribe`, or to `textToSpeechCapabilities` and `synthesize(selected, { text }, signal)`.
+Synthesis returns a streaming fetch Response. Abort or cancel its body to stop the request.
+The provider backend publishes with `publishImplementations` and resolves the exact implementation
+from `validate` on each request. See the [app manifest guide](../../skills/hosty-app-skill/references/app-manifest.md#named-provider-implementations).
+
 ## Tasks And Execution Providers
 
 Core 0.159.0 and SDK 0.36.0 support independent `tasks` and `task-executor` categories. Request

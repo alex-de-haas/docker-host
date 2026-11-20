@@ -3,6 +3,7 @@
 import { DecisionQuestion } from "./decision-question";
 import { transcriptDecisionId, type QuestionAnswers } from "../../../src/agent-providers/decision-identity";
 export { transcriptDecisionId };
+import { ReadableReply } from "./readable-reply";
 import { UserMessage } from "./user-message";
 import { MessageTimestamp } from "./message-timestamp";
 import { PromptSuggestionCard } from "./prompt-suggestion";
@@ -189,7 +190,7 @@ export function TranscriptEvent({
         <div className="group/message flex flex-col gap-1">
           <div className="rounded-lg bg-muted/60 px-3 py-2">
             {event.providerHistoryEarlier === true && <p className="mb-1 text-xs text-muted-foreground">Recovered from an earlier run</p>}
-            <Markdown text={String(event.text ?? "")} />
+            {reviewContext && event.text ? <ReadableReply key={reviewContext.sessionId + ":" + event.seq} sessionId={reviewContext.sessionId} text={String(event.text)} /> : <Markdown text={String(event.text ?? "")} />}
             {event.incomplete === true && <p className="mt-2 text-xs text-muted-foreground">Interrupted message</p>}
           </div>
           <MessageTimestamp ts={event.ts} compact className="sm:opacity-0 sm:group-hover/message:opacity-100 sm:focus-within:opacity-100" />

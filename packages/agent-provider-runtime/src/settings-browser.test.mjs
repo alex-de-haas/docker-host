@@ -41,8 +41,9 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-async function page({ kind = 'sample', connections = [connection()], defaultId = 'account-1', handle } = {}) {
+async function page({ kind = 'sample', connections = [connection()], defaultId = 'account-1', interfaceChoices, handle } = {}) {
   const definition={kind,name:'Example',authentication:kind==='other'?[{id:'credential',label:'Credential',credential:true}]:[{id:'browser',label:'Example Account sign-in',browserLogin:true},{id:'credential',label:'Credential',credential:true}],login:{name:'Example Account',description:'Open your account and enter this one-time code.'},usage:{grouping:'model',resetLabels:true}};
+  if (interfaceChoices) definition.authentication.find(method => method.id === 'credential').interfaceChoices = interfaceChoices;
   const parsed = new DOMParser().parseFromString(settingsHtml(definition),'text/html');
   document.head.replaceChildren(...[...parsed.head.children].filter(node => node.tagName !== 'SCRIPT'));
   document.body.replaceWith(document.importNode(parsed.body,true));
@@ -295,4 +296,23 @@ it('updates renamed account labels while retaining same-revision quota observati
   f.setInventory({defaultId:'account-1',connections:[connection({name:'Renamed account'})]});element('refresh').click();await settle();
   expect(limits().getAttribute('aria-label')).toContain('Renamed account');limits().click();await settle();
   expect(element('usage-title').textContent).toBe('Provider limits · Renamed account');expect(limits().textContent).toBe('35% left');
+});
+
+it('shows initially unchecked provider roles only for eligible authentication and preserves their independent selection', async () => {
+  const interfaceChoices = [{kind:'dictation', label:'Provide dictation'}, {kind:'narration', label:'Provide narration'}];
+  const f = await page({ interfaceChoices, connections: [connection({ publishedInterfaces:['dictation'], settingsRevision:'9' })],
+    handle: request => request.method === 'PUT' ? response({saved:{id:'account-1',revision:'7'}}) : undefined });
+  element('add-provider').click();
+  expect(element('interface-choices').hidden).toBe(true);
+  element('auth').value = 'credential';
+  element('auth').dispatchEvent(new Event('change'));
+  expect([...element('interface-choices').querySelectorAll('input')].map(input => input.checked)).toEqual([false, false]);
+  element('clear').click();
+  openAction('Edit');
+  const [first, second] = element('interface-choices').querySelectorAll('input');
+  expect([first.checked, second.checked]).toEqual([true, false]);
+  first.click(); second.click(); submit(); await settle();
+  expect(f.requests.find(request => request.method === 'PUT').body).toMatchObject({
+    publishedInterfaces:['narration'], expectedRevision:'7', expectedSettingsRevision:'9',
+  });
 });

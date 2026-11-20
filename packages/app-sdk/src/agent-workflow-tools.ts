@@ -3,7 +3,7 @@ import { AGENT_SESSION_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, type Agent
 const object = (properties: Record<string, unknown>, required: string[] = []) => ({ type: "object", properties, required, additionalProperties: false });
 const id = { type: "string", format: "uuid" }, revision = { type: "integer", minimum: 1 }, counter = { type: "integer", minimum: 0 };
 const text = (maxLength: number) => ({ type: "string", maxLength });
-const provider = object({ appId: text(200), installationId: text(200), key: text(100) }, ["appId", "installationId", "key"]);
+const provider = object({ appId: text(200), installationId: text(200), key: text(100), implementationId: { oneOf: [text(128), { type: "null" }] } }, ["appId", "installationId", "key"]);
 const ref = object({ ...provider.properties, id }, ["appId", "installationId", "key", "id"]);
 const refs = { type: "array", items: ref, maxItems: 100 };
 const selection = object({ kind: { enum: ["option", "configuration"] }, id: text(200), revision }, ["kind", "id", "revision"]);

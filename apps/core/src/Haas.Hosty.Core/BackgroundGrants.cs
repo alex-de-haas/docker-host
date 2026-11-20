@@ -4,7 +4,12 @@ using Microsoft.AspNetCore.Routing;
 namespace Haas.Hosty.Core;
 
 internal sealed record BackgroundScope(string Id, string Kind, string TargetAppId, IReadOnlyList<string> Actions,
-    string? ProviderKind = null, string? Key = null, DateTimeOffset? Installation = null, CoreEnvironmentPolicy? Environment = null);
+    string? ProviderKind = null, string? Key = null, DateTimeOffset? Installation = null, CoreEnvironmentPolicy? Environment = null)
+{
+    // Background grants authorize a static interface key. Publishing implementations never widens that scope.
+    public bool AllowsProvider(string kind, string appId, string key, string? implementationId)
+        => implementationId is null && Kind == "provider" && TargetAppId == appId && ProviderKind == kind && Key == key;
+}
 internal sealed record BackgroundGrant(string Id, string UserId, string? AuthRevision, string AppId,
     DateTimeOffset Installation, string Label, IReadOnlyList<BackgroundScope> Scopes,
     DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt = null);
@@ -136,7 +141,7 @@ internal sealed class BackgroundGrantService(CoreDataPaths paths, AppRegistrySto
             case "provider":
                 if (scope.ProviderKind is not ("assistant" or "speech-to-text" or "tasks" or "task-executor") || string.IsNullOrWhiteSpace(scope.Key)
                     || scope.Actions.Count != 0 || target?.ConfirmedRoles?.Contains(scope.ProviderKind) != true
-                    || target.Interfaces?.GetValueOrDefault(scope.ProviderKind)?.Any(i => i.Key == scope.Key) != true
+                    || target.Interfaces?.GetValueOrDefault(scope.ProviderKind)?.Any(i => i.Key == scope.Key && i.Capabilities?.Contains(NamedProviderImplementations.Capability) != true) != true
                     || !AppManagementAuthorization.HasPermission(caller, ProviderAccessService.Permission(scope.ProviderKind)))
                     Deny("The provider scope is unavailable or exceeds current grants.");
                 break;

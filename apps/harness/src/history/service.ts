@@ -1,3 +1,4 @@
+import { sameProviderRef } from "../../shared/provider-reference.js";
 import { readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -16,7 +17,6 @@ import { fail, missing, uuid, revision, id, HistoryStorage, type HistoryState, t
 export type HistoryActor = Pick<MediatedProviderInvocation, "userId" | "principalId" | "hostRole">;
 const features = ["history.read", "history.search.text", "history.sharing", "history.attachments", "history.changes", "history.tool-events", "history.usage"];
 const coverage = (changed = false, unavailable = false): HistoryCoverage => ({ state: "partial", reasons: ["Only public Harness transcript fields are represented; native state and tool inputs are omitted.", ...(changed ? ["Source content or current access changed during enumeration."] : []), ...(unavailable ? ["Some source history requires storage recovery and is omitted."] : [])] });
-const referenceKey = (ref: ProviderRef) => `${ref.appId}\0${ref.installationId}\0${ref.key}`;
 const byteSize = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 
 /** Provider-owned projection and ACLs. Core receives qualified results, never this storage path. */
@@ -41,7 +41,7 @@ export class HistoryService {
     if (!actor.userId || !actor.principalId || actor.hostRole !== "host.admin") fail("permission_denied", "Harness history requires a current administrator and source access.", 403);
   }
   private ref(ref: ConversationRef): string {
-    if (!ref || !ref.provider || referenceKey(ref.provider) !== referenceKey(this.provider)) return missing();
+    if (!ref || !ref.provider || !sameProviderRef(ref.provider, this.provider)) return missing();
     const value = id(ref.id); if (!/^[a-zA-Z0-9-]+$/.test(value)) return missing(); return value;
   }
   private async synchronized<T>(actor: HistoryActor, read: (state: HistoryState) => Promise<T> | T): Promise<T> {
@@ -239,7 +239,7 @@ export class HistoryService {
     this.deliveryGuards.set(result, this.deliveryGuards.get(entry)!); return result;
   }
   async list(actor: HistoryActor, input: SourceConversationQuery) {
-    if (!input.provider || referenceKey(input.provider) !== referenceKey(this.provider)) return missing();
+    if (!input.provider || !sameProviderRef(input.provider, this.provider)) return missing();
     if (input.title != null && (typeof input.title !== "string" || input.title.length > 512)) fail("invalid_input", "Title filters are bounded strings.");
     return this.synchronized(actor, async state => {
       const items: Snapshot["items"] = [];
@@ -263,7 +263,7 @@ export class HistoryService {
     });
   }
   async search(actor: HistoryActor, input: Omit<HistorySearch, "providers"> & { provider: ProviderRef }) {
-    if (!input.provider || referenceKey(input.provider) !== referenceKey(this.provider)) return missing();
+    if (!input.provider || !sameProviderRef(input.provider, this.provider)) return missing();
     if (typeof input.q !== "string" || input.q.length > 512 || (input.conversations?.length ?? 0) > 100) fail("invalid_input", "Use a bounded search query and corpus.");
     const terms = [...new Set(fold(input.q).split(/\s+/u).filter(Boolean))];
     if (!terms.length || terms.length > 16) fail("invalid_input", "Use 1–16 literal terms.");
@@ -355,7 +355,7 @@ export class HistoryService {
   }
   async export(actor: ExportInvocation, input: { scope: NonNullable<ExportInvocation["export"]>; cursor?: string; limit?: number }, changes: boolean): Promise<HistoryExportSnapshot | HistoryChangePage> {
     const scope = actor.export;
-    if (!scope || !input.scope || scope.ownerUserId !== actor.userId || referenceKey(scope.provider) !== referenceKey(this.provider)
+    if (!scope || !input.scope || scope.ownerUserId !== actor.userId || !sameProviderRef(scope.provider, this.provider)
       || fingerprint(scope) !== fingerprint(input.scope)) fail("permission_denied", "An exact current Core-approved export partition is required.", 403);
     const binding = { grant: scope!.grantId, owner: actor.userId, principal: actor.principalId, provider: this.provider, conversations: scope!.conversationIds };
     const stamp = fingerprint(binding), selected = scope!.conversationIds;

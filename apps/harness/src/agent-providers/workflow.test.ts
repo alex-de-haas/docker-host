@@ -18,12 +18,12 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0).reverse()) await fixture.close();
   vi.restoreAllMocks(); vi.unstubAllEnvs();
 });
-async function fixture(options: { enabled?: boolean; offered?: boolean; available?: boolean; permission?: boolean; subagents?: boolean; legacyWorkflowCore?: boolean; installationHistory?: boolean } = {}) {
+async function fixture(options: { enabled?: boolean; offered?: boolean; available?: boolean; permission?: boolean; subagents?: boolean; legacyWorkflowCore?: boolean; installationHistory?: boolean; implementationId?: string } = {}) {
   vi.stubEnv("HOSTY_APP_ID", consumer.appId); vi.stubEnv("HOSTY_APP_INSTALLATION_ID", consumer.installationId);
   vi.stubEnv("HOSTY_CORE_ORIGIN", undefined); vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "fixture-service");
   vi.spyOn(ProviderClient.prototype, "permissions").mockResolvedValue({ required: [], optional: ["providers.task-executor"],
     granted: options.permission === false ? [] : ["providers.task-executor"] });
-  const f = await publicProviderFixture(options.installationHistory); fixtures.push(f);
+  const f = await publicProviderFixture(options.installationHistory, options.implementationId); fixtures.push(f);
   f.behavior.legacyWorkflowCore = options.legacyWorkflowCore;
   const settings = new SettingsStore(path.join(f.root, "workflow-settings"));
   await settings.update({ mcpProviders: { [CORE_PROVIDER_ID]: options.enabled !== false } });
@@ -79,6 +79,22 @@ it.each([false, true])("negotiates ordinary child chats independently of the tas
   await expect(manager.providerWorkflow(record.id, call, invocation, async () => invocation)).rejects.toMatchObject({ code: "workflow_binding_mismatch" });
   await expect(manager.providerWorkflow(record.id, call, actor, async () => ({ ...actor, userId: "another-user" }))).rejects.toMatchObject({ code: "workflow_binding_mismatch" });
   expect(taskAction).not.toHaveBeenCalled();
+});
+
+it("binds a named native provider to the static Harness child-chat callback", async () => {
+  const { manager, record, state, input, invocation } = await admitted({ subagents: true, permission: false, implementationId: "work" });
+  expect(state.selection.provider.implementationId).toBe("work");
+  expect(state.lastRunInput!.workflow!.executor).toEqual(consumer);
+  const call = { ...input, action: "subagent-profiles" };
+  const actor = { ...invocation, kind: "agent-sessions" as const, implementationId: null };
+  expect(await manager.providerWorkflow(record.id, call, actor, async () => actor)).toMatchObject({ profiles: [{ name: "Reviewer" }] });
+
+  const sibling = { ...call.agent, provider: { ...call.agent.provider, implementationId: "personal" } };
+  const siblingActor = { ...actor, agentExecution: sibling };
+  await expect(manager.providerWorkflow(record.id, { ...call, agent: sibling }, siblingActor, async () => siblingActor))
+    .rejects.toMatchObject({ code: "workflow_binding_mismatch" });
+  await expect(manager.providerWorkflow(record.id, call, actor, async () => ({ ...actor, implementationId: "work" })))
+    .rejects.toMatchObject({ code: "workflow_binding_mismatch" });
 });
 
 it.each([false, true])("keeps ordinary turns available on an older Core with task permission %s", async permission => {

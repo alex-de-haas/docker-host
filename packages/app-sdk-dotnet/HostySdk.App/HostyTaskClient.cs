@@ -24,10 +24,12 @@ public sealed class HostyTaskClient(HostyProviderClient providers, HostyTaskProv
     public Task<HostyTaskRequestReceipt> RequestAsync(string requestId, CancellationToken ct = default)
         => Send<HostyTaskRequestReceipt>("/requests/" + Uri.EscapeDataString(requestId), HttpMethod.Get, null, ct);
     private static string Filter(string name, HostyTaskRef? reference) => reference is null ? "" : "&" + name + "="
-        + Uri.EscapeDataString(JsonSerializer.Serialize(new[] { reference.AppId, reference.InstallationId, reference.Key, reference.Id }, TaskJsonContext.Default.StringArray));
+        + Uri.EscapeDataString(JsonSerializer.Serialize(reference.ImplementationId is { } implementation
+            ? new[] { reference.AppId, reference.InstallationId, reference.Key, reference.Id, implementation }
+            : new[] { reference.AppId, reference.InstallationId, reference.Key, reference.Id }, TaskJsonContext.Default.StringArray));
     private string Route(HostyTaskRef task)
     {
-        if (task.AppId != provider.AppId || task.InstallationId != provider.InstallationId || task.Key != provider.Key)
+        if (task.AppId != provider.AppId || task.InstallationId != provider.InstallationId || task.Key != provider.Key || task.ImplementationId != provider.ImplementationId)
             throw new ArgumentException("Task belongs to another provider installation.", nameof(task));
         return "/tasks/" + Uri.EscapeDataString(task.Id);
     }

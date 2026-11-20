@@ -17,7 +17,8 @@ const segment = (id: string) => {
   if (!/^[A-Za-z0-9_-]{1,256}$/.test(id)) throw new AgentApiError("invalid_input", "A bounded opaque resource ID is required.", 400);
   return encodeURIComponent(id);
 };
-const sameProvider = (a: AgentProviderRef, b: AgentProviderRef) => a.appId === b.appId && a.installationId === b.installationId && a.key === b.key;
+const sameProvider = (a: AgentProviderRef, b: AgentProviderRef) => a.appId === b.appId && a.installationId === b.installationId && a.key === b.key
+  && (a.implementationId ?? null) === (b.implementationId ?? null);
 
 /** Preparing once lets an application persist exactly the bytes it must reuse after an uncertain delivery. */
 export function prepareAgentRequest<T>(operation: AgentOperation, method: "PUT" | "POST", path: string, input: unknown,

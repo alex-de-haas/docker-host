@@ -1569,7 +1569,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var declaration in declarations)
             {
-                if (name is "assistant" or "speech-to-text" or "translation" or "tasks" or "task-executor" or "conversation-history" or "agent-sessions" or "agent" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
+                if (name is "assistant" or "speech-to-text" or "text-to-speech" or "translation" or "tasks" or "task-executor" or "conversation-history" or "agent-sessions" or "agent" && (declaration.Version is null or < 1 || declaration.Capabilities is null))
                 {
                     var code = $"app_manifest_{name.Replace('-', '_')}_contract_required";
                     errors.Add(new(code, $"The {name} interface requires a positive integer version and a capabilities array.", path));
@@ -2087,7 +2087,7 @@ internal sealed partial class DockerRuntimeAdapter(
             {
                 runArgs.Add("-e");
                 runArgs.Add("HOSTY_APP_SERVICE_TOKEN");
-                containerEnvironment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateToken(context.App.Id);
+                containerEnvironment["HOSTY_APP_SERVICE_TOKEN"] = serviceTokens.CreateRuntimeToken(context.App);
             }
 
             if (delegatedTokenKey is not null)
@@ -2668,7 +2668,7 @@ internal sealed partial class DockerRuntimeAdapter(
             string.Equals(parts[1].Trim(), appId, StringComparison.Ordinal) &&
             string.Equals(parts[2].Trim(), config.InstanceId, StringComparison.Ordinal) &&
             string.Equals(parts[3].Trim(), pinnedReference, StringComparison.Ordinal) &&
-            (service.Injection?.AppServiceToken == false ? !parts[4].Split('\n').Any(line => line.StartsWith("HOSTY_APP_SERVICE_TOKEN=", StringComparison.Ordinal)) : HasValidServiceToken(appId, parts[4]))
+            (service.Injection?.AppServiceToken == false ? !parts[4].Split('\n').Any(line => line.StartsWith("HOSTY_APP_SERVICE_TOKEN=", StringComparison.Ordinal)) : HasValidServiceToken(context.App, parts[4]))
             && await MatchesServiceConfigurationAsync(context, service, containerName, cancellationToken);
     }
 
@@ -2711,14 +2711,15 @@ internal sealed partial class DockerRuntimeAdapter(
         catch (Exception error) when (error is JsonException or InvalidOperationException or KeyNotFoundException) { return false; }
     }
 
-    private bool HasValidServiceToken(string appId, string environmentBlock)
+    private bool HasValidServiceToken(AppRecord app, string environmentBlock)
     {
         var token = environmentBlock
             .Split('\n')
             .Select(line => line.Trim())
             .FirstOrDefault(line => line.StartsWith("HOSTY_APP_SERVICE_TOKEN=", StringComparison.Ordinal))?
             ["HOSTY_APP_SERVICE_TOKEN=".Length..];
-        return token is not null && serviceTokens.ValidateToken(appId, token);
+        return token is not null && (NamedProviderImplementations.Participates(app)
+            ? serviceTokens.IsInstallationToken(app, token) : serviceTokens.ValidateToken(app.Id, token));
     }
 
     // Deterministic host-port assignment for a service's published ports. Host networking binds the

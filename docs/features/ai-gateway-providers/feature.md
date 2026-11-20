@@ -59,8 +59,7 @@ Accounts are shared within their provider application under its administrator bo
 name is not a user boundary. Account type and authentication method are fixed after creation.
 Secrets are write-only. Replacing credentials, changing an endpoint or changing an existing-login
 directory advances the account revision; renaming alone does not. Editing or removing an existing
-account requires its current decimal-string revision. Active executions prevent account mutation;
-changing the provider's default only affects later selections.
+account requires its current decimal-string revision. Active executions protect account identity and credentials. Speech publication switches can change while a run is active. Changing the provider's default only affects later selections.
 
 ChatGPT sign-in uses the provider's Codex app-server `account/login/start` with
 `chatgptDeviceCode`. Success is reported after the native completion and Core secret publication.
@@ -76,6 +75,23 @@ unsupported and not-applicable data from an account's execution readiness.
 Each provider resolves its own pinned runtime dependencies. Codex and Claude native execution
 belongs to their respective applications. Ollama Provider connects to an operator-managed server;
 it does not install/start Ollama, download model weights or change the server's environment.
+
+### Speech on Codex API connections
+
+Codex Provider 0.5.0 gives each managed OpenAI API-key connection independent **Provide speech to text** and
+**Provide text to speech** switches, initially off. Enabling a switch publishes one named
+implementation under that speech interface. The connection name supplies the user-facing label.
+Renaming preserves the selection. Rotating its API key changes its published identity. Removing
+the connection or disabling a switch withdraws the corresponding choice. Users of ChatGPT
+sign-in and existing host login retain their agent connection.
+
+Codex Provider sends completed recordings to OpenAI file transcription with `gpt-transcribe` and streams
+read-aloud audio from OpenAI Realtime using `gpt-realtime-2.1-mini`. Each call uses the credential of the selected connection.
+The Harness user selects dictation and read-aloud independently of the chat's agent.
+The shared provider runtime also retains the implementation identity in history and native execution references.
+Claude Code Provider 0.4.1 and Ollama Provider 0.3.1 include that change.
+See [provider consumption and speech](../provider-consumption/feature.md), [file transcription](https://developers.openai.com/api/docs/guides/speech-to-text)
+and [speech generation](https://developers.openai.com/api/docs/guides/text-to-speech).
 
 ## Chats And Capabilities
 

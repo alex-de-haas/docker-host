@@ -1,3 +1,4 @@
+import { sameProviderRef } from "../../shared/provider-reference.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { taskReferenceKey } from "@hosty-sdk/app/tasks";
 import { TASK_ORCHESTRATION_GUIDE, taskActions } from "../tasks/tools.js";
@@ -651,7 +652,7 @@ export class SessionManager {
     const bindings = new Map<string, string>();
     const observe = (runId: string, generation: string, provider: AgentProviderRef) => {
       const target = retained.selection.provider;
-      if (target.appId !== provider.appId || target.installationId !== provider.installationId || target.key !== provider.key) return;
+      if (!sameProviderRef(target, provider)) return;
       if (bindings.has(runId) && bindings.get(runId) !== generation)
         throw new AppContextError(409, "origin_stale", "The conversation records conflicting generations for a provider run.");
       bindings.set(runId, generation);
@@ -698,18 +699,19 @@ export class SessionManager {
     const guard = async () => {
       const current = await revalidate(), record = await this.store.readRecord(id), state = await this.store.readProviderExecution(id);
       const agent = input.agent, signed = current.agentExecution, binding = state?.lastRunInput?.workflow;
-      if (current.operation !== "session.workflow" || current.kind !== (subagent ? "agent-sessions" : "task-executor") || current.key !== "default"
+      if (current.operation !== "session.workflow" || current.kind !== (subagent ? "agent-sessions" : "task-executor")
+        || current.key !== "default" || current.implementationId != null
         || current.userId !== invocation.userId || current.principalId !== invocation.principalId || current.hostRole !== "host.admin"
         || !record || record.createdBy !== current.userId || record.storageRecovery || record.providerRetirement || !state || !signed
         || signed.sessionId !== agent.sessionId || signed.runId !== agent.runId
-        || signed.provider.appId !== agent.provider.appId || signed.provider.installationId !== agent.provider.installationId || signed.provider.key !== agent.provider.key
+        || !sameProviderRef(signed.provider, agent.provider)
         || state.sessionId !== agent.sessionId || state.runId !== agent.runId || state.lastRunInput?.runId !== agent.runId
         || agentSelectionId({ provider: agent.provider, connection: state.selection.connection }) !== agentSelectionId(state.selection)
         || !binding || binding.sessionId !== id || binding.executor.appId !== process.env.HOSTY_APP_ID
-        || binding.executor.installationId !== process.env.HOSTY_APP_INSTALLATION_ID || binding.executor.key !== "default")
+        || binding.executor.installationId !== process.env.HOSTY_APP_INSTALLATION_ID || binding.executor.key !== "default" || binding.executor.implementationId != null)
         throw new AppContextError(403, "workflow_binding_mismatch", "The workflow does not belong to this consumer's current admitted execution.");
-      const source = record.taskContext?.taskRef ?? { appId: process.env.HOSTY_APP_ID, installationId: process.env.HOSTY_APP_INSTALLATION_ID, key: "default" };
-      if (input.source && (input.source.appId !== source.appId || input.source.installationId !== source.installationId || input.source.key !== source.key))
+      const source = record.taskContext?.taskRef ?? { appId: process.env.HOSTY_APP_ID, installationId: process.env.HOSTY_APP_INSTALLATION_ID, key: "default", implementationId: null };
+      if (input.source && (input.source.appId !== source.appId || input.source.installationId !== source.installationId || input.source.key !== source.key || (input.source.implementationId ?? null) !== (source.implementationId ?? null)))
         throw new AppContextError(403, "workflow_source_mismatch", "Use the exact task provider and interface bound to this session.");
       if (subagent) {
         const tool = AGENT_SUBAGENT_WORKFLOW_TOOLS.find(name => name.replaceAll("_", "-") === input.action)!;
@@ -873,8 +875,7 @@ export class SessionManager {
     this.store.assertWritable(id);
     if (!state) throw new Error("The local provider execution binding needs recovery.");
     if (session.record.createdBy !== fact.userId || state.sessionId !== fact.sessionId
-      || state.selection.provider.installationId !== provider.installationId || state.selection.provider.appId !== provider.appId
-      || state.selection.provider.key !== provider.key) return;
+      || !sameProviderRef(state.selection.provider, provider)) return;
     // Retiring seals execution and decisions. Its owner can still read transcript evidence until deletion commits.
     const fenced = !!record.providerRetirement;
     // A new turn owns the chat while the provider still knows the previous run UUID.
@@ -1150,9 +1151,7 @@ export class SessionManager {
         for (const [key, previous] of agentStatuses) {
           const source = previous.providerSource;
           if (source.runId !== projection.snapshot.ref.id || source.generation !== projection.snapshot.generation
-            || source.provider.appId !== projection.snapshot.ref.provider.appId
-            || source.provider.installationId !== projection.snapshot.ref.provider.installationId
-            || source.provider.key !== projection.snapshot.ref.provider.key || currentAgents.has(key)
+            || !sameProviderRef(source.provider, projection.snapshot.ref.provider) || currentAgents.has(key)
             || !["queued", "running", "waiting_for_input"].includes(previous.lastKnownState ?? previous.state)) continue;
           // Missing inventory is not evidence that a previously observed child is still running.
           statuses.push({ ...previous, state: "unknown", freshness: "last_known", observedAt: projection.snapshot.observedAt, sourceSequence: projection.snapshot.lastSequence,
@@ -2174,8 +2173,7 @@ export class SessionManager {
         for (const candidate of await this.store.listRecords()) {
           if (candidate.id === id || candidate.createdBy !== userId) continue;
           const other = await this.store.readProviderExecution(candidate.id) ?? candidate.providerExecution;
-          if (other && other.sessionId === retained.sessionId && other.selection.provider.appId === retained.selection.provider.appId &&
-              other.selection.provider.installationId === retained.selection.provider.installationId && other.selection.provider.key === retained.selection.provider.key)
+          if (other && other.sessionId === retained.sessionId && sameProviderRef(other.selection.provider, retained.selection.provider))
             throw new AppContextError(409, "origin_unresolved", "Several chats claim the same provider session.");
         }
         const result = await this.development.call(id, token, action, {

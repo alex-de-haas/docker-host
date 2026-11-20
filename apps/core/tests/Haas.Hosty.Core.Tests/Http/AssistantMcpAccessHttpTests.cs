@@ -126,13 +126,13 @@ public sealed class AssistantMcpAccessHttpTests
             PermissionRevision: caller.PermissionRevision, Mcp: claims, InvokedTool: "task_action");
         var authorization = host.Services.GetRequiredService<CoreCapabilityAuthorization>();
         var principal = CoreCapabilityAuthorization.AppPrincipal(caller);
-        await Assert.ThrowsAsync<AppIdentityException>(() => authorization.RevalidateAsync(origin, "admin", principal, "tasks", "source", "custom", "task_action", default));
-        Assert.Equal("admin", (await authorization.RevalidateAsync(origin, "admin", principal, "tasks", "source", "custom", "task_action", default, retainedTask: true)).User.Id);
+        await Assert.ThrowsAsync<AppIdentityException>(() => authorization.RevalidateAsync(origin, "admin", principal, "tasks", new("source", now.ToString("O"), "custom"), "task_action", default));
+        Assert.Equal("admin", (await authorization.RevalidateAsync(origin, "admin", principal, "tasks", new("source", now.ToString("O"), "custom"), "task_action", default, retainedTask: true)).User.Id);
         if (change == "revoke") await policy.ChangeAsync("hosty:core", link with { Assistants = null });
         else if (change == "logout") await host.Services.GetRequiredService<AppSessionGrantStore>().RevokeByAuthorizingSessionAsync("browser-session", now, default);
         else await policy.ChangeAsync("hosty:core", link with { Assistants = new Dictionary<string, AssistantTargetGrant> {
             [caller.Id] = new(now, "grant", DeniedTools: ["task_action"]) } });
-        await Assert.ThrowsAsync<AppIdentityException>(() => authorization.RevalidateAsync(origin, "admin", principal, "tasks", "source", "custom", "task_action", default, retainedTask: true));
+        await Assert.ThrowsAsync<AppIdentityException>(() => authorization.RevalidateAsync(origin, "admin", principal, "tasks", new("source", now.ToString("O"), "custom"), "task_action", default, retainedTask: true));
     }
 
     [Fact]

@@ -2,7 +2,7 @@ import type { HistoryExportGrant, HistoryExportAcknowledge, HistoryExportQuery, 
 import { createHash } from "node:crypto";
 import { Agent, fetch as speechFetch } from "undici";
 import { AssistantClient } from "@hosty-sdk/app/assistant";
-import { ProviderError, type AppPermissionState, type ProviderDescriptor, type ProviderInvocation, type ProviderKind, type MediatedProviderInvocation, type MediatedProviderRequest, type SpeechCapabilities, type SpeechResult, type TranslationRequest, type TranslationResult, type TranslationCapabilities } from "@hosty-sdk/app/providers";
+import { ProviderError, type AppPermissionState, type ProviderDescriptor, type ProviderInvocation, type ProviderKind, type MediatedProviderInvocation, type MediatedProviderRequest, type SpeechCapabilities, type SpeechResult, type TranslationRequest, type TranslationResult, type TranslationCapabilities, type ProviderSelection, type ProviderImplementationSnapshot, type TextToSpeechCapabilities, type SpeechSynthesisRequest } from "@hosty-sdk/app/providers";
 
 export type ProviderServerOptions = {
   appId?: string; coreOrigin?: string; serviceToken?: string;
@@ -55,23 +55,36 @@ export class ProviderClient {
   async list(kind: ProviderKind, signal?: AbortSignal): Promise<ProviderDescriptor[]> {
     return (await this.coreRequest<{ providers: ProviderDescriptor[] }>(`/providers/${kind}`, undefined, signal)).providers;
   }
-  private async connect(provider: Pick<ProviderDescriptor, "appId" | "kind" | "key"> & { installationId?: string | null }, signal?: AbortSignal, userToken?: string) {
+  /** Discover static and named implementations. Retain the complete selection across calls. */
+  async listImplementations(kind: ProviderKind, signal?: AbortSignal): Promise<ProviderDescriptor[]> {
+    return (await this.coreRequest<{ providers: ProviderDescriptor[] }>(`/providers/${kind}?named=true`, undefined, signal)).providers;
+  }
+  /** Replace this installation's complete snapshot for one reviewed interface entry. */
+  publishImplementations(kind: ProviderKind, key: string, snapshot: ProviderImplementationSnapshot, signal?: AbortSignal): Promise<{ revision: number }> {
+    return this.coreRequest(`/providers/${kind}/implementations`, { key, revision: snapshot.revision, implementations: snapshot.implementations }, signal);
+  }
+  private async connect(provider: ProviderSelection & { kind: ProviderKind }, signal?: AbortSignal, userToken?: string) {
+    if (provider.implementationId != null && !provider.installationId)
+      throw new ProviderError("provider_selection_invalid", "A named implementation requires an installation.", 400);
     const issued = await this.coreRequest<{ token: string; provider: ProviderDescriptor }>(`/providers/${provider.kind}/token`,
-      { providerAppId: provider.appId, key: provider.key }, signal, userToken);
+      { providerAppId: provider.appId, key: provider.key, installationId: provider.installationId, implementationId: provider.implementationId }, signal, userToken);
+    if (issued.provider.appId !== provider.appId || issued.provider.kind !== provider.kind || issued.provider.key !== provider.key
+      || (issued.provider.implementationId ?? null) !== (provider.implementationId ?? null))
+      throw new ProviderError("provider_changed", "The selected provider binding changed.", 409);
     if (issued.provider.version !== 1 || !issued.provider.url) throw new ProviderError("provider_incompatible", "This provider does not support interface version 1.", 409);
     if (provider.installationId && issued.provider.installationId !== provider.installationId)
-      throw new ProviderError("provider_changed", "The selected assistant installation changed. Start a new discussion explicitly.", 409);
+      throw new ProviderError("provider_changed", "The selected provider installation changed. Select it again.", 409);
     const url = new URL(issued.provider.url);
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new ProviderError("provider_url_invalid", "Invalid provider endpoint.", 409);
     // Core's internal origin already identifies the host from this consumer's vantage point.
     if ((this.container || this.core.hostname === "host.docker.internal") && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) url.hostname = "host.docker.internal";
     return { ...issued, url: url.href.replace(/\/$/, "") };
   }
-  async speechCapabilities(provider: Pick<ProviderDescriptor, "appId" | "key">, signal?: AbortSignal): Promise<SpeechCapabilities> {
+  async speechCapabilities(provider: ProviderSelection, signal?: AbortSignal): Promise<SpeechCapabilities> {
     const binding = await this.connect({ ...provider, kind: "speech-to-text" }, signal);
     return read(await fetch(`${binding.url}/capabilities`, { redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${binding.token}` } }));
   }
-  async transcribe(provider: Pick<ProviderDescriptor, "appId" | "key">, audio: Blob,
+  async transcribe(provider: ProviderSelection, audio: Blob,
     options: { language?: string; signal?: AbortSignal; /** Total deadline, 1–930000 ms; defaults to five minutes. */ timeoutMs?: number } = {}): Promise<SpeechResult> {
     const timeoutMs = options.timeoutMs ?? 300_000;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 930_000)
@@ -93,7 +106,32 @@ export class ProviderClient {
     try { return await read(await speechFetch(url, init)); }
     finally { await dispatcher.close(); }
   }
-  async translationCapabilities(provider: Pick<ProviderDescriptor, "appId" | "key">, signal?: AbortSignal,
+  async textToSpeechCapabilities(provider: ProviderSelection, signal?: AbortSignal): Promise<TextToSpeechCapabilities> {
+    const binding = await this.connect({ ...provider, kind: "text-to-speech" }, signal);
+    const deadline = AbortSignal.timeout(10_000);
+    return read(await fetch(`${binding.url}/capabilities`, { redirect: "error", signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+      headers: { authorization: `Bearer ${binding.token}` } }));
+  }
+
+  /** Stream 24 kHz mono signed 16-bit little-endian PCM. Cancel the signal or response body to stop. */
+  async synthesize(provider: ProviderSelection, input: SpeechSynthesisRequest, signal?: AbortSignal): Promise<Response> {
+    if (typeof input.text !== "string" || !input.text.trim() || input.text.length > 4000)
+      throw new ProviderError("speech_text_invalid", "Provide between 1 and 4000 UTF-16 code units of text.", 400);
+    const timeout = AbortSignal.timeout(300_000);
+    const deadline = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    const binding = await this.connect({ ...provider, kind: "text-to-speech" }, deadline);
+    const response = await fetch(`${binding.url}/speech`, { method: "POST", redirect: "error", signal: deadline,
+      headers: { authorization: `Bearer ${binding.token}`, "content-type": "application/json", accept: "audio/pcm" },
+      body: JSON.stringify({ text: input.text }) });
+    if (!response.ok) await read(response);
+    if (!response.body || !/^audio\/pcm\s*;\s*rate=24000\s*$/i.test(response.headers.get("content-type") ?? "")) {
+      await response.body?.cancel();
+      throw new ProviderError("provider_response_invalid", "Expected a 24 kHz PCM audio stream.", 502);
+    }
+    return response;
+  }
+
+  async translationCapabilities(provider: ProviderSelection, signal?: AbortSignal,
     options?: { connection: { id: string; revision: string } }): Promise<TranslationCapabilities> {
     const connection = options?.connection;
     if (options && (!connection || typeof connection.id !== "string" || !connection.id || connection.id.length > 200
@@ -105,7 +143,7 @@ export class ProviderClient {
     return read(await fetch(url.href, { redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { authorization: `Bearer ${binding.token}` } }));
   }
   /** Translate text or Markdown through the explicitly selected provider; never retries or falls back. */
-  async translate(provider: Pick<ProviderDescriptor, "appId" | "key">, input: TranslationRequest, signal?: AbortSignal): Promise<TranslationResult> {
+  async translate(provider: ProviderSelection, input: TranslationRequest, signal?: AbortSignal): Promise<TranslationResult> {
     const deadline = signal ? AbortSignal.any([signal, AbortSignal.timeout(610_000)]) : AbortSignal.timeout(610_000);
     const binding = await this.connect({ ...provider, kind: "translation" }, deadline);
     const result = await read<TranslationResult>(await fetch(`${binding.url}/translations`, { method: "POST", redirect: "error", signal: deadline,
@@ -115,7 +153,7 @@ export class ProviderClient {
     return result;
   }
   /** User-attributed requests preserve the assistant's existing handoff and dispatch policy. */
-  async assistant(provider: Pick<ProviderDescriptor, "appId" | "key"> & { installationId?: string | null }, userToken: () => Promise<string>): Promise<AssistantClient> {
+  async assistant(provider: ProviderSelection, userToken: () => Promise<string>): Promise<AssistantClient> {
     const target = { ...provider, kind: "assistant" as const };
     const binding = await this.connect(target, undefined, await userToken());
     return new AssistantClient(binding.url, { version: binding.provider.version, capabilities: binding.provider.capabilities }, async () => {

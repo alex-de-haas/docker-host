@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "app.0.1",
+  "id": "example.fixture-voice",
+  "name": "Fixture Voice",
+  "description": "Deterministic speech for an isolated Harness browser check.",
+  "version": "0.1.0",
+  "source": {
+    "type": "git",
+    "repository": "https://github.com/alex-de-haas/docker-host.git",
+    "branch": "main",
+    "paths": [
+      "scripts/fixtures/speech"
+    ]
+  },
+  "runtimeProfiles": [
+    {
+      "key": "local",
+      "type": "localCommand",
+      "default": true
+    }
+  ],
+  "defaultRuntime": "local",
+  "provides": [
+    "speech-to-text",
+    "text-to-speech"
+  ],
+  "interfaces": {
+    "speech-to-text": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/stt",
+        "version": 1,
+        "capabilities": [
+          "recording"
+        ]
+      }
+    ],
+    "text-to-speech": [
+      {
+        "key": "default",
+        "endpoint": "http",
+        "path": "/tts",
+        "version": 1,
+        "capabilities": []
+      }
+    ]
+  },
+  "services": [
+    {
+      "key": "api",
+      "runtimes": {
+        "local": {
+          "type": "localCommand",
+          "workingDirectory": ".",
+          "command": "node scripts/fixtures/speech/server.mjs",
+          "ports": [
+            {
+              "key": "http",
+              "containerPort": 3529,
+              "protocol": "http",
+              "public": true
+            }
+          ],
+          "healthcheck": {
+            "type": "http",
+            "port": 3529,
+            "path": "/healthz",
+            "timeoutSeconds": 5
+          }
+        }
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "key": "http",
+      "service": "api",
+      "port": "http",
+      "protocol": "http",
+      "public": true
+    }
+  ]
+}

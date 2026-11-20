@@ -17,9 +17,9 @@ import { CoreAgentBackend } from "./core.js";
 import { AgentConnectionDirectory, agentSelectionId } from "./directory.js";
 
 /** Test-only public HTTP/SSE peer. It contains no engine, worker transport or provider credentials. */
-export async function publicProviderFixture(installationHistory = false) {
+export async function publicProviderFixture(installationHistory = false, implementationId?: string) {
   const root = await mkdtemp(path.join(os.tmpdir(), "hosty-public-provider-"));
-  const provider = { appId: "independent.example", installationId: "installation-one", key: "coding" };
+  const provider = { appId: "independent.example", installationId: "installation-one", key: "coding", ...(implementationId ? { implementationId } : {}) };
   const selection = { provider, connection: { id: "account", revision: "1" } };
   const connectionId = agentSelectionId(selection), owner = "operator", credential = "test-owner-authority";
   const capabilities: AgentCapabilities = { version: 1, eventVersions: ["agent-event.1"],
