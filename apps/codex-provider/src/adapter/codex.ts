@@ -231,6 +231,7 @@ class CodexRun implements HarnessRun {
   private buffer = "";
   private threadId: string | null = null;
   private readonly childSources = new Map<string, HarnessEventSource>();
+  private readonly finishedChildren = new Set<string>();
   private readonly childCollabCalls = new Set<string>();
   private childCoverageWarning = false;
   private ready: Promise<void>;
@@ -244,7 +245,8 @@ class CodexRun implements HarnessRun {
   private commandTurn = 0;
   private readonly children = new CodexChildren(this.commandRun, this.childSources,
     threadId => this.request("thread/read", { threadId, includeTurns: true }, CODEX_CHILD_METADATA_TIMEOUT_MS),
-    event => this.emit(event), () => !this.stopped && !this.failed);
+    event => this.emit(event), () => !this.stopped && !this.failed,
+    threadId => this.request("thread/turns/list", { threadId, limit: 1, itemsView: "full" }, CODEX_CHILD_METADATA_TIMEOUT_MS));
   private readonly commandCalls = new Map<string, { id: string; turnId: string }>();
   private readonly completedCommandCalls = new Set<string>();
   private readonly completedToolCalls = new Set<string>();
@@ -1112,8 +1114,10 @@ class CodexRun implements HarnessRun {
     const receivers = Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 512) : [];
     for (const id of [...new Set([...receivers, ...Object.keys(states)])].slice(0, 256)) {
       if (id === this.threadId || !id || id.length > 512) continue;
+      const spawning = item.tool === "spawnAgent" && receivers.length === 1 && receivers[0] === id && Boolean(callId) && item.status !== "failed";
       let source = this.childSources.get(id);
       if (!source) {
+        if (!spawning) continue;
         if (this.childSources.size >= 256) {
           if (!this.childCoverageWarning) { this.childCoverageWarning = true; this.emit({ type: "notice", message: "Additional native child summaries were omitted at the bounded child inventory limit." }); }
           continue;
@@ -1122,9 +1126,15 @@ class CodexRun implements HarnessRun {
         this.childSources.set(id, source);
       }
       const value = states[id], status = value && typeof value === "object" ? (value as Record<string, unknown>).status : undefined;
-      const state = ({ pendingInit: "running", running: "running", completed: "succeeded", errored: "failed", interrupted: "unknown", shutdown: "unknown", notFound: "unknown" } as const)[String(status) as "running"] ?? "unknown";
+      // A wait/list/close operation may only name a receiver, even after it has
+      // already finished. That is not a new observation of the child's state.
+      if (status === undefined && !spawning || (status === "shutdown" || status === "notFound") && this.finishedChildren.has(id)) continue;
+      const state = ({ pendingInit: "running", running: "running", completed: "succeeded", errored: "failed", interrupted: "unknown", shutdown: "unknown", notFound: "unknown" } as const)[String(status) as "running"] ?? (spawning && status === undefined ? "running" : "unknown");
       // Collaboration status is a bounded observation, not process-tree exit confirmation.
-      this.emit({ type: "agent_status", ...source, state, stopConfirmed: false, source });
+      const reply = value && typeof value === "object" ? (value as Record<string, unknown>).message : undefined;
+      this.emit({ type: "agent_status", ...source, state, stopConfirmed: false, source,
+        ...(spawning && receivers.length === 1 && typeof item.prompt === "string" ? { prompt: item.prompt } : {}),
+        ...(status === "completed" && typeof reply === "string" ? { response: reply } : {}) });
     }
     if (completed && callId) this.emit({ ...toolResult(callId, item.status === "failed" ? "failed" : item.status === "completed" ? "completed" : "unknown", `Native collaboration ${String(item.tool ?? "tool")}: ${String(item.status ?? "unknown")}.`), ...(parentSource ? { source: parentSource } : {}) });
   }
@@ -1214,6 +1224,10 @@ class CodexRun implements HarnessRun {
 
   private emit(event: HarnessEvent): void {
     if (this.stopped) return;
+    if (event.type === "agent_status") {
+      if (event.state === "succeeded" || event.state === "failed" || event.state === "cancelled") this.finishedChildren.add(event.agentId);
+      else if (event.state === "running") this.finishedChildren.delete(event.agentId);
+    }
     this.options.onEvent(event);
   }
 }

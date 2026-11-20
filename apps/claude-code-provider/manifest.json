@@ -3,7 +3,7 @@
   "id": "hosty.claude-code-provider",
   "name": "Claude Code Provider",
   "description": "Independent local Claude Code agent execution with app-owned connections, native sessions and Hosty-authorized HTTP/SSE.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",

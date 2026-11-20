@@ -58,7 +58,7 @@ import { ProviderHarnessRun, type ProviderRunContext } from "../agent-providers/
 import { providerDecisionCard, providerDecisionCardId, type QuestionAnswers } from "../agent-providers/decision-identity.js";
 import { reconcileHistoryProjection, type HistoryProjectionClock } from "../agent-providers/history-projection.js";
 import { createAgentRunProjection, historyMessages, projectHistoryFact, reduceAgentRunProjection, type AgentRunProjection } from "../agent-providers/projection.js";
-import { nativeAgentStatus, nativeAgentStatusIdentity, providerAgentKey, providerTranscriptSource, transcriptToolId, type NativeAgentStatusEvent } from "../agent-providers/transcript-source.js";
+import { nativeAgentDetails, nativeAgentStatus, nativeAgentStatusIdentity, providerAgentKey, providerTranscriptSource, transcriptToolId, type NativeAgentStatusEvent } from "../agent-providers/transcript-source.js";
 import { ProviderExecution, type ProviderExecutionState } from "../agent-providers/execution.js";
 import { readFile } from "node:fs/promises";
 import type { McpProxy, MintedToken } from "../mcp/proxy.js";
@@ -893,6 +893,16 @@ export class SessionManager {
         providerEventId: identity, providerGeneration: snapshot.generation });
       seen.add(identity);
     };
+    for (const { source, key, event } of nativeAgentDetails(item)) await append(key, event, source);
+    if (item.kind === "snapshot" || item.event.type === "run.updated" || item.event.type === "agent.updated") {
+      for (const agent of snapshot.agents ?? []) if (agent.parentAgentId !== undefined
+        && (item.kind === "snapshot" || item.event.type !== "agent.updated" || item.event.source.agentId === agent.agentId)) {
+        const status = nativeAgentStatus(snapshot, agent);
+        const known = this.providerAgentStatuses.get(id)?.get(providerAgentKey(status.providerSource));
+        if (!earlier && known?.sourceSequence && BigInt(known.sourceSequence) >= BigInt(snapshot.lastSequence)) continue;
+        await append(`archived-agent:${agent.agentId}:${snapshot.lastSequence}`, status, agent);
+      }
+    }
     for (const msg of historyMessages(projection)) if (msg.role === "assistant" && (msg.state === "complete" || msg.state === "interrupted"))
       await append(`message:${msg.source?.agentId ?? "root"}:${msg.id}${msg.state === "interrupted" ? ":interrupted" : ""}`,
         { type: "assistant_text", text: msg.text, ...(msg.state === "interrupted" ? { incomplete: true } : {}) }, msg.source);
@@ -1026,6 +1036,9 @@ export class SessionManager {
         seen.add(identity);
       };
       try {
+        // Installation sync renders the original positioned fact separately. Its merged state
+        // may already be at a later watermark and cannot date an older child's reply.
+        if (!historyClock) for (const { source, key, event } of nativeAgentDetails(item)) await append(key, event, undefined, source);
         const statuses = (projection.snapshot.agents ?? []).filter(agent => agent.parentAgentId !== undefined)
           .map(agent => nativeAgentStatus(projection.snapshot, agent));
         const currentAgents = new Set(statuses.map(status => providerAgentKey(status.providerSource)));
@@ -1037,7 +1050,7 @@ export class SessionManager {
             || source.provider.key !== projection.snapshot.ref.provider.key || currentAgents.has(key)
             || !["queued", "running", "waiting_for_input"].includes(previous.lastKnownState ?? previous.state)) continue;
           // Missing inventory is not evidence that a previously observed child is still running.
-          statuses.push({ ...previous, state: "unknown", freshness: "last_known", observedAt: projection.snapshot.observedAt,
+          statuses.push({ ...previous, state: "unknown", freshness: "last_known", observedAt: projection.snapshot.observedAt, sourceSequence: projection.snapshot.lastSequence,
             lastKnownState: previous.lastKnownState ?? previous.state });
         }
         for (const status of statuses) {

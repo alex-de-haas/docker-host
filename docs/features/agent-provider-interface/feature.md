@@ -1,6 +1,6 @@
 ---
 created: 2026-11-12
-updated: 2026-11-19
+updated: 2026-11-20
 summary: Independent Local agent apps expose installation-qualified HTTP/SSE execution with provider-owned native state and Core-scoped authority.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -349,11 +349,20 @@ Ollama advertises no native subagents. Unsupported concurrency guarantees are re
 child output does not replace the root result, and inclusive usage is not counted again as separate
 child consumption.
 
+A child entry in `agent.updated` and the run inventory can include `prompt` and `response`.
+Installation history retains each observed change. The first-party providers publish up to 64 KiB
+of UTF-8 per field and set `promptTruncated` or `responseTruncated` when clipped. The compact
+inventory has a shared 128 KiB budget for these fields and can omit text still available in the
+event history. Providers with status-only observations can omit both fields.
+
 Harness retains the public provider, installation, run, generation and agent ancestry with
 messages, streamed text, tool calls/results, approvals and questions. Its replay reducer applies
-`agent.updated` as well as snapshot inventories. The chat groups native children by their qualified
-run and offers expandable output with the parent, latest action and observed status. Child text
-streams are independent of the main response. Approval and question controls stay visible in the
+`agent.updated` as well as snapshot inventories. The chat shows one collapsed row per parent in a
+qualified run, with a bot icon, child count and status counts. Expanding a child shows its delegated prompt, observed final response and separately
+attributed activity. A uniquely linked launch can provide the prompt in older conversations.
+Progress messages stay in activity until the provider identifies a final response. Missing details
+are labelled unavailable and truncated text is labelled partial. Child text streams are independent
+of the main response. Approval and question controls stay visible in the
 main conversation with their child attribution. These observations do not create business tasks.
 A lost connection, interrupted run or missing current child inventory shows an unknown/last-known
 status rather than continuing a stale running badge. Interrupted partial messages remain labelled;
@@ -363,6 +372,10 @@ confirms observed child stops; it does not invent a successful child result.
 User prompts show their stored message time as local HH:mm. Message timestamp controls expose the
 full local date, time and timezone on hover, keyboard focus or tap. Missing or invalid historical
 timestamps do not produce a fabricated date; individual tool events do not acquire time badges.
+
+Claude correlates an Agent or Task launch with its prompt and the child result, including text
+from a matched foreground tool result or background stop. A progress message or launch
+acknowledgement alone leaves the final response unavailable.
 
 Claude distinguishes a root model result from completion of the native execution. The pinned SDK's
 background inventory and task notifications retain child identities, active tool receipts and
@@ -385,8 +398,10 @@ execution and drains exact late tool terminals; an idle notification during inte
 publish a pre-cancellation result as success.
 
 Codex observes pinned SDK subagent activity and reads only a verified completed child turn through
-the read-only native `thread/read` operation. This supplies attributed tool summaries without
-starting/resuming another thread. Interrupted, missing or superseded child history marks tools
+the read-only native `thread/read` operation. This supplies attributed tool summaries, a uniquely
+identified text assignment when available, and a message marked as the final answer. Codex also
+reports the prompt of a single-recipient native spawn and the completed recipient's reply when
+its collaboration events carry them. Interrupted, missing or superseded child history marks tools
 coverage as truncated. Closing an already verified completed child preserves its recorded history.
 
 Claude keeps an observed background Bash invocation pending until the native task reports a terminal
@@ -673,7 +688,9 @@ working account. A synthetic protocol check does not establish real OpenAI accou
   independent text streams, unknown status, same-cursor recovery, bounded snapshot gaps and replay
   without duplicate groups. Timestamp checks cover local time, old history and keyboard/mobile access.
   Run the installed-app browser fixture with `HOSTY_NATIVE_SUBAGENTS_BROWSER=1` alongside the
-  `agent-providers` integration suite; its controlled browser events do not prove native inference.
+  `agent-providers` integration suite. A scripted Codex App Server exercises delegation through
+  the installed provider and Harness to the browser, including the prompt and reply after reload.
+  Additional browser fixtures exercise interleaved child activity, decisions and missing status.
 - Claude child-history fixtures cover the SDK's normalized live UUIDs, preserved API message IDs,
   exact native agent/session/parent/input binding, ordered error terminals, missing or ambiguous
   identities, bounded history, metadata changes, native-close barriers and helper deadlines.

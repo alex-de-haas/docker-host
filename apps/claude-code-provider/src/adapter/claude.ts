@@ -190,7 +190,17 @@ class ClaudeRun implements HarnessRun {
   private pendingRootResult: Record<string, unknown> | null = null;
   private nativeCompletion: ClaudeNativeCompletion | null = null;
   private pendingSuggestion: string | null | undefined;
-  private readonly background = new ClaudeBackgroundLifecycle(parent => this.childSource(parent, false), event => this.options.onEvent(event));
+  private readonly background = new ClaudeBackgroundLifecycle(parent => this.childSource(parent, false), (event, parent) => {
+    if (parent && event.type === "agent_status") {
+      const launch = this.toolSources.get(parent);
+      if (launch && launch.id === event.parentToolCallId) {
+        launch.state = event.state;
+        this.options.onEvent({ ...event, prompt: launch.prompt, ...(event.state === "succeeded" && launch.reply ? { response: launch.reply } : {}) });
+        return;
+      }
+    }
+    this.options.onEvent(event);
+  });
   private nativeSessionId: string | null = null;
   private readonly commandRun = randomUUID();
   private commandTurn = 0;
@@ -208,7 +218,8 @@ class ClaudeRun implements HarnessRun {
   private ambiguousCommandDenial = false;
   private ambiguousToolDenial = false;
   private readonly childSources = new Map<string, HarnessEventSource>();
-  private readonly toolSources = new Map<string, { agentId: string; id: string; turn: number }>();
+  private readonly toolSources = new Map<string, { agentId: string; id: string; turn: number; prompt?: string; nativeChildId?: string;
+    state?: Extract<HarnessEvent, { type: "agent_status" }>["state"]; reply?: string }>();
   private childCoverageWarning = false;
   private readonly proposedTools = new Map<string, ActiveTool>();
   private readonly completedTools = new Set<string>();
@@ -455,6 +466,10 @@ class ClaudeRun implements HarnessRun {
                 hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Session stopped.",
               } };
               this.captureChildToolHook(input);
+              return {};
+            }] }],
+            SubagentStop: [{ hooks: [async (input: Record<string, unknown>) => {
+              this.observeChildReply(input);
               return {};
             }] }],
             PostToolUse: [{ hooks: [async (input: Record<string, unknown>) => this.recordToolDuration(input)] }],
@@ -745,6 +760,21 @@ class ClaudeRun implements HarnessRun {
     this.notifyTerminalsDrained();
   }
 
+  private observeChildReply(input: Record<string, unknown>): void {
+    if (this.stopped || !this.turnActive || input.hook_event_name !== "SubagentStop" || input.session_id !== this.nativeSessionId
+      || typeof input.agent_id !== "string" || !input.agent_id || typeof input.last_assistant_message !== "string" || !input.last_assistant_message) return;
+    // The async Agent output binds its native agent ID to a specific launch.
+    // A stop hook alone cannot assign text to a sibling or prove success.
+    const matches = [...this.toolSources.entries()].filter(([, launch]) => launch.turn === this.commandTurn && launch.nativeChildId === input.agent_id);
+    if (matches.length !== 1) return;
+    const [parent, launch] = matches[0]!;
+    launch.reply = input.last_assistant_message;
+    const source = this.childSources.get(parent);
+    if (launch.state === "succeeded" && source?.parentToolCallId === launch.id) {
+      this.options.onEvent({ type: "agent_status", ...source, state: "succeeded", response: launch.reply, source });
+    }
+  }
+
   private childSource(parent: string, announce = true): HarnessEventSource | undefined {
     let source = this.childSources.get(parent);
     if (!source) {
@@ -756,7 +786,7 @@ class ClaudeRun implements HarnessRun {
       const owner = this.toolSources.get(parent);
       source = { agentId: `claude-child:${parent}`, ...(owner ? { parentAgentId: owner.agentId, parentToolCallId: owner.id } : {}) };
       this.childSources.set(parent, source);
-      if (announce) this.options.onEvent({ type: "agent_status", ...source, state: "running", stopConfirmed: false, source });
+      if (announce) this.options.onEvent({ type: "agent_status", ...source, state: "running", stopConfirmed: false, ...(owner?.prompt ? { prompt: owner.prompt } : {}), source });
     }
     return source;
   }
@@ -857,7 +887,15 @@ class ClaudeRun implements HarnessRun {
     }
     const emit = (event: HarnessEvent): void => this.options.onEvent(source ? { ...event, source } : event);
     // A native child's result is an observation of that child, never completion of the root query.
-    if (source && type === "result") { emit({ type: "result", status: message.is_error === true ? "failed" : String(message.subtype ?? "success") }); return; }
+    if (source && type === "result") {
+      const launch = parent ? this.toolSources.get(parent) : undefined;
+      if (!message.isReplay && launch?.turn === this.commandTurn && launch.id === source.parentToolCallId
+        && message.is_error !== true && message.subtype === "success" && typeof message.result === "string" && message.result) {
+        emit({ type: "agent_status", ...source, state: "succeeded", response: message.result });
+      }
+      emit({ type: "result", status: message.is_error === true ? "failed" : String(message.subtype ?? "success") });
+      return;
+    }
     if (source && type === "system" && message.subtype === "init") {
       if (typeof message.model === "string") emit({ type: "execution_model", requested: { model: null, reasoningEffort: null }, reported: { model: message.model, reasoningEffort: null } });
       return;
@@ -897,6 +935,25 @@ class ClaudeRun implements HarnessRun {
             ? [...this.backgroundCommands.values()].find(command => command.key === key) : undefined;
           const structuredResult = resultBlocks.length === 1 && message.tool_use_result && typeof message.tool_use_result === "object" && !Array.isArray(message.tool_use_result)
             ? message.tool_use_result as Record<string, unknown> : {};
+          if (observed && !message.isReplay && !this.stopped && !this.ambiguousToolDenial && tool && !this.deniedToolCalls.has(tool.rawId)
+            && (!tool.nativeSessionId || !message.session_id || message.session_id === tool.nativeSessionId)
+            && (tool.name === "Agent" || tool.name === "Task") && typeof structuredResult.agentId === "string" && structuredResult.agentId
+            && block.is_error !== true && (structuredResult.status === "completed" || structuredResult.status === "async_launched")) {
+            const launch = this.toolSources.get(tool.rawId);
+            if (launch && launch.id === tool.id && launch.turn === this.commandTurn && launch.agentId === (source?.agentId ?? "root")) {
+              const child = this.childSource(tool.rawId, false);
+              if (child?.parentToolCallId === launch.id) {
+                launch.nativeChildId = structuredResult.agentId;
+                const finished = structuredResult.status === "completed";
+                const content = finished && Array.isArray(structuredResult.content) ? structuredResult.content : [];
+                const response = content.filter(part => part?.type === "text" && typeof part.text === "string").map(part => part.text).join("\n\n");
+                launch.state = finished ? "succeeded" : launch.state ?? "running";
+                this.options.onEvent({ type: "agent_status", ...child, state: launch.state, source: child,
+                  ...(typeof structuredResult.prompt === "string" ? { prompt: structuredResult.prompt } : {}),
+                  ...(response ? { response } : {}) });
+              }
+            }
+          }
           const deferred = structuredResult.detachedToolCall === true || structuredResult.backgroundedByUser === true
             || typeof structuredResult.backgroundTaskId === "string";
           // An SDK-local MCP abort can return a tool-error block while the remote effect is
@@ -1007,7 +1064,11 @@ class ClaudeRun implements HarnessRun {
                 if (block.name === "Bash") this.commandCalls.set(key, { id: toolUseId, rawId: String(block.id) });
               } else toolUseId = undefined;
             }
-            if (typeof block.id === "string" && toolUseId && this.toolSources.size < 2048) this.toolSources.set(block.id, { agentId: source?.agentId ?? "root", id: toolUseId, turn: this.commandTurn });
+            if (typeof block.id === "string" && toolUseId && this.toolSources.size < 2048) this.toolSources.set(block.id, {
+              agentId: source?.agentId ?? "root", id: toolUseId, turn: this.commandTurn,
+              ...((block.name === "Agent" || block.name === "Task") && typeof (block.input as { prompt?: unknown } | undefined)?.prompt === "string"
+                ? { prompt: (block.input as { prompt: string }).prompt } : {}),
+            });
             if (!source && typeof block.id === "string" && ["Agent", "Task"].includes(String(block.name)) && !message.isReplay) {
               if (this.parentAgentCalls.has(block.id)) this.parentAgentCalls.set(block.id, null);
               else if (toolUseId && this.parentAgentCalls.size < 2048) this.parentAgentCalls.set(block.id, { id: toolUseId, turn: this.commandTurn });

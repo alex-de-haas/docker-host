@@ -23,6 +23,9 @@ it("keeps a live completion ahead of a delayed state page and reports only confi
     const message = f.emit(runId, "message.completed", { messageId: "earlier", text: "Complete earlier message" });
     const tool = f.emit(runId, "tool.completed", { toolCallId: "cmd", name: "Bash", state: "completed", output: fullOutput });
     const setup = f.emit(runId, "tool.completed", { toolCallId: "setup", name: "mcp__hosty-workspaces__environment_setup", state: "completed", output: "fixture-private-output" });
+    const child = { agentId: "child", parentAgentId: "root", parentToolCallId: "spawn" };
+    const assignment = f.emit(runId, "agent.updated", { agent: { ...child, state: "succeeded", stopConfirmed: true, prompt: "Recovered assignment" } }, child);
+    const reply = f.emit(runId, "result.available", { result: { status: "succeeded", text: "Recovered child reply" } }, child);
     const terminal = f.complete(runId, "Finished during catch-up");
     const epoch = "fixture-history";
     const frame = (position: number, item: AgentWatchItem): AgentHistoryObservation => ({
@@ -30,7 +33,7 @@ it("keeps a live completion ahead of a delayed state page and reports only confi
       sessionPosition: position, cursor: "installation-" + position, item,
     });
     const earlier = [frame(1, { kind: "snapshot", snapshot: initial }), frame(2, { kind: "event", event: warning, cursor: stale.cursor })];
-    for (const event of [message, tool, setup]) earlier.push(frame(earlier.length + 1, { kind: "event", event, cursor: "cursor-" + event.sequence }));
+    for (const event of [message, tool, setup, assignment, reply]) earlier.push(frame(earlier.length + 1, { kind: "event", event, cursor: "cursor-" + event.sequence }));
     const live = frame(earlier.length + 1, { kind: "snapshot", snapshot: { ...terminal,
       messages: [...terminal.messages ?? [], { id: "earlier", source: { agentId: "root" }, role: "assistant", state: "complete", text: "Excerpt" }],
       tools: [{ id: "cmd", source: { agentId: "root" }, name: "Bash", state: "completed", output: fullOutput.slice(0, 8192), truncated: true }],
@@ -71,6 +74,9 @@ it("keeps a live completion ahead of a delayed state page and reports only confi
     const reopened = await new SessionStore(f.store.dataDir).readEvents(chat.id);
     expect(reopened.filter(e => e.type === "tool_result").map(e => [e.output, e.truncated])).toEqual([[fullOutput, undefined]]);
     expect(reopened.filter(e => e.type === "assistant_text").map(e => e.text)).toContain("Complete earlier message");
+    expect(reopened.filter(e => e.type === "native_agent_details")).toMatchObject([
+      { providerSource: child, prompt: "Recovered assignment" }, { providerSource: child, result: "Recovered child reply" }]);
+    expect(reopened.filter(e => e.type === "native_agent_status")).toMatchObject([{ providerSource: child, state: "succeeded", stopConfirmed: true }]);
     expect(reopened.some(e => e.text === "Excerpt" || e.output === "fixture-private-output" || e.toolOutput === "fixture-private-output")).toBe(false);
     expect(f.controls).toHaveLength(0);
     expect(f.starts).toHaveLength(1);

@@ -60,6 +60,7 @@ export interface HarnessQuestion {
 
 export type HarnessEvent = (
   | import("../agent-providers/transcript-source.js").NativeAgentStatusEvent
+  | import("../agent-providers/transcript-source.js").NativeAgentDetailsEvent
   | import("./prompt-suggestion.js").PromptSuggestion
   | { type: "answer_complete" }
   /** Private execution evidence used only for task barriers, never transcript display. */
