@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { canonical, sha256, fullCommit, identity } from './context.mjs';
-import { appRelease, platformRelease, feedDocument, promotionDecision, validatePublisher } from './model.mjs';
+import { appRelease, platformRelease, feedDocument, promotionDecision, releaseProfileKeys, validatePublisher } from './model.mjs';
 import { imageReference, verifyImage, bytes } from './registry.mjs';
 import { verifyProvenance } from './evidence.mjs';
 import { MetadataStore } from './metadata.mjs';
@@ -112,8 +112,9 @@ export async function publishApps({ root, plan, artifacts, store, verify = verif
         actor: process.env.GITHUB_ACTOR ?? 'publisher', promotionId: randomUUID(), verify, prove, request });
       continue;
     }
+    const profiles = releaseProfileKeys(selected.manifest, app);
     for (const service of selected.manifest.services) for (const [profile, runtime] of Object.entries(service.runtimes)) {
-      if ((!app.profiles.includes(profile) && !selected.manifest.runtimeProfiles.find(p => p.key === profile)?.development) || runtime.type !== 'docker' || !runtime.image) continue;
+      if (!profiles.has(profile) || runtime.type !== 'docker' || !runtime.image) continue;
       const recipe = app.profiles.includes(profile) && runtime.artifact !== 'source'
         ? plan.config.images.find(i => i.appId === app.id && i.services.includes(service.key)) : undefined;
       if (recipe) artifactsForApp.push({ type: 'image', service: service.key, profile, ...receipts.get(recipe.id) });

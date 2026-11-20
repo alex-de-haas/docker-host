@@ -62,6 +62,9 @@
       "profiles": [
         "docker"
       ],
+      "excludedDevelopmentProfiles": [
+        "sandbox-dev"
+      ],
       "sourceInputs": [
         "apps/demo-app"
       ]

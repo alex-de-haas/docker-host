@@ -412,6 +412,42 @@ public sealed class LocalCommandRuntimeAdapterTests
     }
 
     [Fact]
+    public async Task StartAsync_RebuildsTheEditedWorkspaceAfterNativeSetupFailure()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var appRoot = CreateTempDirectory();
+        var worktree = CreateTempDirectory();
+        try
+        {
+            var (adapter, registry, context) = CreateSetupScenario(appRoot, "sh build.sh", "sleep 30");
+            context = context with
+            {
+                BoundWorktreeId = "workspace",
+                App = context.App with { SourceState = new("git", null, null, null, appRoot, worktree, null) },
+            };
+            var script = Path.Combine(worktree, "build.sh");
+            await File.WriteAllTextAsync(script, "echo 'workspace build failed' >&2; exit 7");
+            var failure = await Assert.ThrowsAsync<AppLifecycleException>(() => adapter.StartAsync(context));
+            Assert.Contains("workspace build failed", failure.Message);
+            Assert.Null(registry.Get(context.App.Id, "app"));
+
+            await File.WriteAllTextAsync(script, "printf repaired > build-output");
+            try
+            {
+                Assert.Equal("running", (await adapter.StartAsync(context)).RuntimeState);
+                Assert.Equal("repaired", await File.ReadAllTextAsync(Path.Combine(worktree, "build-output")));
+                Assert.False(File.Exists(Path.Combine(appRoot, "build-output")));
+            }
+            finally { await adapter.StopAsync(context); }
+        }
+        finally
+        {
+            TryDeleteDirectory(worktree);
+            TryDeleteDirectory(appRoot);
+        }
+    }
+
+    [Fact]
     public async Task StartAsync_MaterializesAndRunsPrebuiltArtifactFromContentStore()
     {
         if (OperatingSystem.IsWindows())

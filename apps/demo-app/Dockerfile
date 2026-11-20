@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Base pinned by digest for reproducible builds. To update: re-pin with
 #   docker buildx imagetools inspect node:24-bookworm-slim --format '{{.Manifest.Digest}}'
-FROM node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS base
+FROM node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS base
 WORKDIR /repo
 
 FROM base AS deps
@@ -26,7 +26,7 @@ ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV HOSTY_APP_ID=com.haas.demo-app
 # Keep in step with apps/demo-app/manifest.json + package.json (enforced by scripts/check-versions.mjs).
-ENV HOSTY_APP_VERSION=0.21.0
+ENV HOSTY_APP_VERSION=0.21.1
 # gosu lets the entrypoint drop from root to the unprivileged `node` user after fixing data-dir
 # ownership (see docker-entrypoint.sh).
 RUN apt-get update \

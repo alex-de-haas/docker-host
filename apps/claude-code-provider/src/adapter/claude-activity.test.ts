@@ -22,9 +22,9 @@ it("observes Claude thinking and executing tools without mistaking a proposal or
     { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "b", content: "secret" }] } },
     stream({ type: "content_block_delta", index: 2, delta: { type: "text_delta", text: "done" } }),
     stream({ type: "content_block_stop", index: 2 }),
-    { type: "result", subtype: "success" },
+    { type: "result", subtype: "success" }, { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" },
   ];
-  queryMock.mockImplementation(() => Object.assign((async function* () { yield* messages; })(), {
+  queryMock.mockImplementation(() => Object.assign((async function* () { yield { type: "system", subtype: "init", session_id: "native" }; yield* messages; })(), {
     interrupt: async () => {}, close: () => {},
   }));
   const run = new ClaudeHarnessAdapter().start({ sessionId: "test", cwd: "/tmp", onEvent: event => events.push(event) });

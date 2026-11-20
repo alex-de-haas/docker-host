@@ -1,5 +1,7 @@
 "use client";
 
+import type { AssistantSession } from "./assistant-api";
+
 // Which sessions are waiting for a person, and telling the embedder so its tab can say so.
 
 /** The statuses that mean a person is required. Mirrors the gateway's own list. */
@@ -9,7 +11,11 @@ export function isWaiting(status: string): boolean {
   return WAITING.has(status);
 }
 
-export type Listed = { id: string; status: string; createdAt: string; updatedAt?: string };
+export function observedSessionStatus(session: Pick<AssistantSession, "status" | "providerHistoryContact">): string {
+  return session.providerHistoryContact ? "unknown" : session.status;
+}
+
+export type Listed = Pick<AssistantSession, "id" | "status" | "providerHistoryContact" | "createdAt" | "updatedAt">;
 
 export function activityTime(value: { updatedAt?: string | null; createdAt?: string | null }): number {
   const updated = Date.parse(value.updatedAt ?? "");
@@ -23,7 +29,7 @@ export function orderSessions<T extends Listed>(sessions: readonly T[]): T[] {
 }
 
 export function waitingCount(sessions: readonly Listed[]): number {
-  return sessions.filter((session) => isWaiting(session.status)).length;
+  return sessions.filter((session) => isWaiting(observedSessionStatus(session))).length;
 }
 
 /** The message an embedder reads to badge its tab. */

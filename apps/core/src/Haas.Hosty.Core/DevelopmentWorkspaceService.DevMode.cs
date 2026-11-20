@@ -16,8 +16,19 @@ internal sealed partial class DevelopmentWorkspaceService
 
     internal async Task<T> WithDevAdmissionAsync<T>(string id, AppRecord app, WorkspaceOwner? actor, Func<Task<T>> action, CancellationToken ct, bool returning = false)
     {
+        await WithDevBindingAdmissionAsync(id, app, actor, () => Task.FromResult(true), ct, returning);
+        // The app's persisted operation pointer protects its source during lifecycle work.
+        // Never acquire the host-path gate or start/stop a runtime under repository admission.
+        return await action();
+    }
+
+    // Caller already holds the host-path gate when committing a new source binding. Verify the
+    // worktree and persist the consuming app record before repository deletion can be admitted.
+    internal async Task<T> WithDevBindingAdmissionAsync<T>(string id, AppRecord app, WorkspaceOwner? actor,
+        Func<Task<T>> commit, CancellationToken ct, bool returning = false)
+    {
         var tree = await Read(id, returning ? null : actor, ct);
-        await Locked(Hash(OwnerIdentity(tree.Owner)), () => Locked("repository-admission:" + tree.RepositoryId, async () =>
+        return await Locked(Hash(OwnerIdentity(tree.Owner)), () => Locked("repository-admission:" + tree.RepositoryId, async () =>
         {
             tree = await Read(id, returning ? null : actor, ct);
             if (actor is not null) await RequireSessionAccessAsync(tree, actor, ct);
@@ -29,12 +40,8 @@ internal sealed partial class DevelopmentWorkspaceService
                 // Return stops the consumer and keeps every source file; it grants no new source read.
             }
             else await CheckDevTreeAsync(tree, app, actor, ct);
-            return true;
+            return await commit();
         }, ct), ct);
-        // The app's persisted operation pointer is already present and blocks destructive Git and
-        // cleanup/new writers during transition. Release repository admission before taking the
-        // host-path gate (the normal source lock order), or stopping/starting Docker services.
-        return await action();
     }
 
     internal async Task<string[]> DevConsumerAppsAsync(DevelopmentWorkspace tree, CancellationToken ct)

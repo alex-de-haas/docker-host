@@ -16,6 +16,10 @@ export function validatePublisher(config) {
     apps.add(app.id); relativePath(app.manifest);
     if (app.sourceIgnoreOptionalPeers !== undefined && typeof app.sourceIgnoreOptionalPeers !== 'boolean') throw new Error('Source optional-peer projection must be boolean.');
     if (!app.profiles?.length) throw new Error('Every app needs production profiles.');
+    const excluded = app.excludedDevelopmentProfiles;
+    if (excluded !== undefined && (!Array.isArray(excluded) || new Set(excluded).size !== excluded.length
+      || excluded.some(key => typeof key !== 'string' || !key.trim() || app.profiles.includes(key))))
+      throw new Error(`Invalid excluded development profiles for ${app.id}.`);
   }
   const images = new Set();
   for (const image of config.images ?? []) {
@@ -26,14 +30,35 @@ export function validatePublisher(config) {
   return config;
 }
 
+export function releaseProfileKeys(manifest, app) {
+  const excluded = new Set(app.excludedDevelopmentProfiles);
+  for (const key of app.profiles)
+    if (!manifest.runtimeProfiles.some(profile => profile.key === key && !profile.development))
+      throw new Error(`Missing production profile ${key}.`);
+  for (const key of excluded)
+    if (!manifest.runtimeProfiles.some(profile => profile.key === key && profile.development))
+      throw new Error(`Excluded profile ${key} is not a development profile of ${app.id}.`);
+  const keep = new Set(manifest.runtimeProfiles
+    .filter(profile => app.profiles.includes(profile.key) || (profile.development && !excluded.has(profile.key)))
+    .map(profile => profile.key));
+  if (manifest.defaultRuntime && !keep.has(manifest.defaultRuntime))
+    throw new Error(`Default runtime ${manifest.defaultRuntime} is excluded from publication for ${app.id}.`);
+  return keep;
+}
+
 export function appRelease({ manifest, app, sourceCommit, sourceFingerprint, artifacts, previous, files = [] }) {
   if (!fullCommit(sourceCommit)) throw new Error('A qualified full source commit is required.');
   if (manifest.id !== app.id) throw new Error('Manifest identity differs from its publication target.');
   const emitted = structuredClone(manifest); emitted.schemaVersion = 'app.0.2';
   if (emitted.source) emitted.source.manifestPath = app.manifest;
-  const keep = new Set(emitted.runtimeProfiles.filter(p => p.development || app.profiles.includes(p.key)).map(p => p.key));
-  for (const profile of app.profiles) if (!emitted.runtimeProfiles.some(p => p.key === profile && !p.development)) throw new Error(`Missing production profile ${profile}.`);
-  emitted.runtimeProfiles = emitted.runtimeProfiles.filter(p => keep.has(p.key));
+  const keep = releaseProfileKeys(manifest, app);
+  const omitted = new Set(emitted.runtimeProfiles.filter(profile => !keep.has(profile.key)).map(profile => profile.key));
+  emitted.runtimeProfiles = emitted.runtimeProfiles.filter(profile => keep.has(profile.key));
+  const retainedTypes = new Set(emitted.runtimeProfiles.map(profile => profile.type));
+  // Storage runtime selectors can also match a runtime type on a retained profile.
+  for (const storage of [emitted.data, emitted.cache])
+    if (storage?.targets)
+      storage.targets = storage.targets.filter(target => !omitted.has(target.runtime) || retainedTypes.has(target.runtime));
   const identities = [];
   let hasSource = false;
   for (const service of emitted.services) {

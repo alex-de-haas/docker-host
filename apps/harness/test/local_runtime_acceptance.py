@@ -13,6 +13,94 @@ import urllib.request
 import uuid
 
 
+def install_manifest(context, manifest):
+    if context.get('scenario') == 'harness-local':
+        # This suite runs native Harness. Publish that same recipe as the source-only
+        # installed baseline so Return starts real Harness without pulling a Docker image.
+        native = next(profile for profile in manifest['runtimeProfiles'] if profile['key'] == 'dev')
+        manifest['runtimeProfiles'] = [{**native, 'default': True}]
+        manifest['defaultRuntime'] = native['key']
+        for service in manifest['services']:
+            service['runtimes'] = {native['key']: service['runtimes'][native['key']]}
+        for storage in ('cache', 'data'):
+            manifest[storage]['targets'] = [t for t in manifest[storage]['targets'] if t['runtime'] == native['key']]
+        path = 'apps/harness/manifest.json'
+        manifest['source']['manifestPath'] = path
+        remote = context['remote']
+        (remote/path).write_text(json.dumps(manifest), encoding='utf-8')
+        context['run'](['git', 'add', path], remote)
+        context['run'](['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test',
+                        'commit', '-m', 'Publish the disposable native Harness package'], remote)
+        context['run'](['git', 'update-server-info'], remote)
+        return context['repository'].removesuffix('/.git') + '/' + path
+    target = context['base']/'harness-manifest.json'
+    target.write_text(json.dumps(manifest))
+    shutil.copytree(context['workspace']/'apps/harness/assets', context['base']/'assets', dirs_exist_ok=True)
+    return target
+
+
+def check_self_switch(context, app, app_origin, call):
+    request, wait_for = context['request'], context['wait_for']
+    api = '/api/apps/'+app
+    select = api+'/execution-target'
+    before_runtime = context['harnessRuntimeIdentity']()
+    baseline = request(api+'/execution-targets')['current']
+    assert baseline['kind'] == 'package', baseline
+    session = call(app_origin, '/api/sessions', {'title': 'Verify Harness workspace recovery'})
+    tree = call(app_origin, '/api/sessions/'+session['id']+'/workspaces', {
+        'action': 'prepare', 'appId': app, 'requestId': str(uuid.uuid4()), 'name': 'Test Harness startup failure'})
+    tree_id, workspace_id = tree['id'], tree['workspaceId']
+    lease = str(uuid.uuid4())
+    lease_api = '/api/development/workspaces/'+tree_id+'/operations/'
+    request(lease_api+'lease', {'requestId': str(uuid.uuid4()), 'leaseId': lease})
+    sentinel = context['root']/'apps'/app/'data'/'workspace-switch-acceptance.txt'
+    error = 'Harness workspace setup failed on purpose'
+    try:
+        setup = pathlib.Path(tree['path'])/'apps/harness/scripts/local-runtime.mjs'
+        assert setup.is_file()
+        setup.write_text(
+            'import { writeFileSync } from "node:fs";\n'
+            'import { join } from "node:path";\n'
+            'if (process.argv[2] !== "prepare") throw new Error("Expected ordinary setup");\n'
+            'writeFileSync(join(process.env.HOSTY_APP_DATA_DIR, "workspace-switch-acceptance.txt"), "workspace");\n'
+            f'throw new Error("{error}");\n', encoding='utf-8')
+    finally:
+        request(lease_api+'release-lease', {'requestId': str(uuid.uuid4()), 'leaseId': lease})
+    sentinel.write_text('package', encoding='utf-8')
+
+    def select_and_wait(target):
+        request_id = str(uuid.uuid4())
+        request(select, {'requestId': request_id, **target})
+        def settled():
+            result = request(select+'/'+request_id)
+            return result if result['state'] != 'running' else None
+        return wait_for(settled, 180)
+
+    selected = select_and_wait({'kind': 'workspace', 'runtime': 'dev', 'worktreeId': tree_id, 'workspaceId': workspace_id})
+    assert (selected['state'], selected.get('code')) == ('failed', 'dev_workspace_start_failed'), selected
+    assert selected['app']['runtimeState'] == 'stopped' and error in selected['error'], selected
+    # All recovery reads and both mutations use Dashboard's authenticated Core API.
+    # Nothing below depends on a working Harness until its package is healthy again.
+    current = request(api+'/execution-targets')['current']
+    assert (current['kind'], current['workspaceId'], current['worktreeId']) == ('workspace', workspace_id, tree_id), current
+    health = request(api+'/health')
+    assert [(service['service'], service['status']) for service in health['services']] == [('api', 'stopped')], health
+    assert error in request(api+'/logs?tail=100')['text']
+    assert sentinel.read_text(encoding='utf-8') == 'workspace'
+    backups = request(api+'/backups')['backups']
+    backup_id, = [row['backupId'] for row in backups if row.get('isWorkspaceReturnBackup')]
+    returned = select_and_wait({'kind': 'package', 'runtime': baseline['runtime']})
+    assert returned['state'] == 'completed' and returned['app']['runtimeState'] == 'running', returned
+    current = request(api+'/execution-targets')['current']
+    assert (current['kind'], current['runtime']) == ('package', baseline['runtime']), current
+    wait_for(lambda: request(api+'/health')['status'] == 'healthy', 90)
+    assert context['harnessRuntimeIdentity']() != before_runtime
+    assert sentinel.read_text(encoding='utf-8') == 'workspace', 'Return unexpectedly restored package data'
+    assert any(row['backupId'] == backup_id and row.get('isWorkspaceReturnBackup') for row in request(api+'/backups')['backups'])
+    assert any(row['id'] == session['id'] for row in call(app_origin, '/api/sessions')['sessions'])
+    context['say']('PASS: Harness workspace setup failed after binding. Core served the logs and returned Harness to its healthy package with current data and the pre-switch backup.')
+
+
 def check(context):
     base, root, workspace = (context[key] for key in ('base', 'root', 'workspace'))
     run, request, say, wait_for = (context[key] for key in ('run', 'request', 'say', 'wait_for'))
@@ -43,9 +131,7 @@ def check(context):
     assert not any(profile['key'] == 'local' for profile in manifest['runtimeProfiles'])
     if docker_consumer:
         manifest['services'][0]['runtimes']['docker']['image'] = 'hosty-harness-api-acceptance:local'
-    target = base/'harness-manifest.json'
-    target.write_text(json.dumps(manifest))
-    shutil.copytree(workspace/'apps/harness/assets', base/'assets', dirs_exist_ok=True)
+    target = install_manifest(context, manifest)
     run([cli, '--data-root', root, 'apps', 'install', target, '--runtime', runtime, '--no-autostart'])
     def timed(action):
         began = time.monotonic()
@@ -84,6 +170,35 @@ def check(context):
     usage = call(app_origin, '/api/connections/'+connection['id']+'/usage?refresh=true')
     assert usage['state'] == 'unsupported' and usage['rows'] == [] and usage['connectionRevision'] == connection['revision']
     say('PASS: independent Claude provider settings and qualified usage report unsupported API-key telemetry without inference')
+    if docker_consumer:
+        # Exercise the same exact operations under one Harness grant across a reviewed provider update.
+        previous_runtime = runtime_identity()
+        grant = call(app_origin, '/api/auth/identity')['continuity']['grantId']
+        provider_id = connection['provider']['appId']
+        update_manifest = json.loads((base/'claude-code-provider-acceptance.json').read_text())
+        version = update_manifest['version']
+        prefix, patch = version.rsplit('.', 1)
+        update_manifest['version'] = f'{prefix}.{int(patch) + 1}'
+        candidate = base/'claude-code-provider-update.json'
+        candidate.write_text(json.dumps(update_manifest))
+        update_path = f'/control/v1/apps/{provider_id}/update'
+        selection = {'manifestPath': str(candidate), 'selectedRuntime': 'local'}
+        plan = request(update_path+'/plan', selection, control=True)
+        assert (plan['appId'], plan['currentVersion'], plan['targetVersion'], plan['targetRuntime']) == (
+            provider_id, version, update_manifest['version'], 'local')
+        applied = request(update_path, {**selection, 'planDigest': plan['planDigest']}, control=True)
+        assert applied['status'] == 'updated' and applied['app']['version'] == update_manifest['version']
+        assert request(f'/api/apps/{provider_id}/health')['status'] == 'healthy'
+        assert runtime_identity() == previous_runtime
+        assert call(app_origin, '/api/auth/identity')['continuity']['grantId'] == grant
+        roster = call(app_origin, '/api/connections')
+        provider = next(row for row in roster['providers'] if row['appId'] == provider_id)
+        assert provider['available'], provider.get('reason', 'Updated provider unavailable in Harness')
+        refreshed = next((row for row in roster['connections'] if row['id'] == connection['id']), None)
+        assert refreshed and refreshed['available'] and refreshed['provider'] == connection['provider']
+        usage = call(app_origin, '/api/connections/'+connection['id']+'/usage?refresh=true')
+        assert usage['state'] == 'unsupported' and usage['rows'] == [] and usage['connectionRevision'] == connection['revision']
+        say('PASS: reviewed Claude update preserves discovery and usage with the same Harness runtime, grant and provider connection')
     local_usage = providers.configure_for_harness(app_origin, call, 'ollama', 'Local quota fixture', auth='none')
     local_usage = call(app_origin, '/api/connections/'+local_usage['id']+'/usage?refresh=true')
     assert local_usage['state'] == 'not_applicable' and local_usage['rows'] == []
@@ -105,6 +220,17 @@ def check(context):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         module.check(context, app, app_origin, call, client)
+
+    if context.get('scenario') == 'agent-providers':
+        from installation_history_acceptance import check as check_installation_history
+        check_installation_history(context, app, app_origin, link, timed)
+        if os.environ.get('HOSTY_LIVE_HISTORY_ACCEPTANCE') == '1':
+            import subprocess
+            connection = providers.harness_connection(app_origin, call, 'codex')
+            subprocess.run(['node', str(workspace/'apps/harness/test/live-history-browser.mjs')], check=True, cwd=workspace,
+                input=json.dumps({'core': origin, 'harness': app_origin, 'app': app, 'link': link, 'password': password,
+                    'connection': connection['id'], 'root': str(root), 'cli': str(cli), 'policy': str(base/'range-policy.json'),
+                    'provider': providers.entries['codex']['appId']}), text=True)
 
     if context.get('scenario') == 'agent-providers' or os.environ.get('HOSTY_EXECUTION_RECOVERY'):
         import importlib.util
@@ -154,8 +280,10 @@ def check(context):
 
     if os.environ.get('HOSTY_NATIVE_SUBAGENTS_BROWSER'):
         import subprocess
+        connection = providers.configure_for_harness(app_origin, call, 'codex', 'Native child disclosure', secret='synthetic-native-child-fixture')
         result = subprocess.run(['node', str(workspace/'apps/harness/test/native-subagents-browser.mjs')],
-            input=json.dumps({'core':(context.get('child', {}).get('previewUrl') or origin).rstrip('/'), 'harness':app_origin, 'appId':app, 'email':'activation-fixture@example.test', 'password':password, 'link':link}),
+            input=json.dumps({'core':(context.get('child', {}).get('previewUrl') or origin).rstrip('/'), 'harness':app_origin, 'appId':app,
+                'email':'activation-fixture@example.test', 'password':password, 'link':link, 'connectionId':connection['id']}),
             text=True, cwd=workspace)
         assert result.returncode == 0, 'Native subagent browser acceptance failed'
 
@@ -308,5 +436,7 @@ def check(context):
     verify_retained_queues()
     if retained_queues: say('PASS: paused queue entries and immutable attachment bytes survive warm restart and missing-output recovery')
     say(f'PASS: missing-output recovery {recovery:.3f}s; same input identity, authenticated API restored')
+    if context.get('scenario') == 'harness-local':
+        check_self_switch(context, app, app_origin, call)
     run([cli, '--data-root', root, 'apps', 'stop', app])
     say('PASS: local services stopped; parent fixture will Finish the child and verify resource removal')

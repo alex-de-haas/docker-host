@@ -1,11 +1,57 @@
 ---
 created: 2026-11-12
-updated: 2026-11-12
+updated: 2026-11-20
 summary: Per-conversation storage commits accepted Harness input before dispatch and isolates damaged history without replaying uncertain execution.
 components: [apps/harness]
 ---
 
 # Harness History Durability
+
+## Importing Provider Results
+
+Harness resumes a background subscription for each selected provider installation that supports
+installation history. A server restart begins catch-up using its app identity, including while every
+owner is signed out. Each observation carries a qualified run, session and generation. Harness
+looks up the durable association, writes the result to the originating conversation and then saves
+the provider cursor. When a chat cannot accept a result, Harness saves the authorized
+observation in a durable inbox for that chat and continues serving other chats. Recovery retries
+the stored observations in order. If the chat record itself cannot identify the destination,
+Harness can reread retained provider history once the binding becomes available.
+
+The subscription expects a heartbeat at least once a minute, even during long
+model operations. On loss of contact the chat shows its last observed state and offers Refresh.
+Stable event identities allow redelivery after a crash between these writes.
+A browser reads the local transcript through the conversation owner's normal access checks.
+Providers with only per-run observation use the owner's existing authority. When a provider
+rollback explicitly removes installation history, attached runs switch to that same per-run
+read path with their original actor. A transient loss of
+contact triggers a read-only retry against the same native run. If authorization has expired,
+reopening or refreshing the chat can supply fresh credentials. While contact is lost, the chat
+shows when the run was last observed. Missing legacy evidence stays visible as a coverage gap. The
+[provider history contract](../agent-provider-interface/feature.md#installation-history-delivery)
+describes retention, paging and stream authorization.
+
+With a provider that advertises `installation-history.live`, Harness opens the live subscription
+first. At its ready boundary it reads each owned session's state and durable head. Incoming live
+messages are visible while independent HTTP requests fill older gaps. A late state response or an
+older run's record cannot move the current execution backwards. A retryable HTTP error while
+reading state or a range leaves live delivery active. If a run summary supplied shortened text or
+tool output, the original durable event fills in the existing transcript entry when it arrives.
+Harness tracks the lifecycle separately from later message and control events. Recovered usage
+and context update their own checkpoints, including when the terminal state arrived first.
+
+For each bound chat, Harness stores the inclusive intervals it has applied. It commits transcript
+entries under stable source identities before recording coverage. Retrying after a crash can repeat
+the request without duplicating the message. Each reconnect subtracts all stored intervals from
+the confirmed head. For example, a chat with 1–140 and 181–185 at head 210 requests 141–180 and
+186–210 separately. Record 211 can appear while both requests are outstanding. Each gap has its
+own marker and remaining count in source order. Explicitly unavailable ranges retain a marker.
+Legacy providers keep the ordered history path.
+
+An explicit Stop first reads the exact provider run. When that read finds a confirmed success or
+failure, Harness records the final answer, available tool results and the original outcome. Stop
+can still cancel an active run and fence a reserved continuation. A native turn may finish
+successfully while the operator's broader task still needs an external action or verification.
 
 ## Source And Acceptance
 
@@ -185,7 +231,28 @@ parent-directory sync is explicitly omitted. The optional heavyweight `tasks`
 integration suite is not selected. Core/CLI fixture builds retain the existing
 ILCompiler advisory/analyzer warnings and complete without errors.
 
+## Live Recovery Verification On 2026-11-19
+
+A managed child Core ran the production Harness build, a local provider with a scripted native
+peer, and three open browser chats across two password-authenticated users. Two Harness stops
+left two separate ranges outstanding in one chat. Both owners received new messages while repair
+was held. Releasing the later range cleared only its marker. After both repairs, each transcript
+contained its ten tagged messages in source order, including one copy of each deliberately
+redelivered event. Both owners' requests for the other owner's chats were denied.
+
 ## Testing Expectations
+
+- Run `HOSTY_LIVE_HISTORY_ACCEPTANCE=1 npm run test:integration -- agent-providers` with Chrome
+  and Playwright. Use two signed-in owners and three chats. Interrupt delivery twice, including a
+  Harness restart, keep both repair ranges pending, deliver a new message and close the later gap
+  first. Check each owner's visible messages, marker positions, order and unique fact identities.
+- Reopen the store after interruption between transcript and coverage writes. Retry overlapping
+  pages, test an older state arriving after a newer update, and preserve explicit unavailable ranges.
+
+- Damage the execution metadata or root record of one conversation and deliver a later result to
+  a different owner. The healthy chat receives its final answer immediately. Repair the damaged
+  record and restart Harness. Its owner receives the original final answer exactly once with no
+  new model invocation or user token.
 
 - Inject failed/delayed writes, sync, replacement and publication; check the
   acknowledgement/dispatch boundary and the affected mutation fence.

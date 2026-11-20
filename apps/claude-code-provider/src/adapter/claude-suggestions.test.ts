@@ -9,6 +9,7 @@ it.each([true, false])("Claude requests suggestions only when enabled (%s), with
     yield { type: "system", subtype: "init", session_id: "native" };
     yield { type: "prompt_suggestion", session_id: "native", suggestion: "too early" };
     yield { type: "result", subtype: "success", session_id: "native" };
+    yield { type: "system", subtype: "session_state_changed", session_id: "native", state: "idle" };
     yield { type: "prompt_suggestion", session_id: "other", suggestion: "wrong session" };
     yield { type: "prompt_suggestion", session_id: "native", suggestion: "Следующий шаг?" };
     yield { type: "prompt_suggestion", session_id: "native", suggestion: "duplicate" };

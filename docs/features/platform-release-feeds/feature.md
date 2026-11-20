@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-06
+updated: 2026-11-18
 summary: Shared Core and CLI release feeds, paired bootstrap, reviewed source selection and recoverable native updates.
 components: [apps/core, apps/cli, apps/shell]
 ---
@@ -99,7 +99,9 @@ RID. It uses the checked native Core, a freshly published native CLI and lower-v
 apphost fixtures in an isolated root. The fixture completes normal setup/password login, verifies
 corrupt-counterpart preservation, replaces both distinct executables through frozen recovery,
 checks native process readiness and listener continuity, and preserves stopped state after feed
-selection. Temporary users, executables and data are removed after verified process shutdown.
+selection. On Unix, it terminates the update command group before independently checking the
+replacement process and listener. Temporary users, executables and data are removed after verified
+process shutdown.
 
 ## Testing Expectations
 

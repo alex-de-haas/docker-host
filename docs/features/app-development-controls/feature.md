@@ -1,6 +1,6 @@
 ---
 created: 2026-10-18
-updated: 2026-11-13
+updated: 2026-11-20
 summary: Core-owned execution selection runs installed packages or registered workspace manifests on ordinary app data, with scoped access review and recoverable lifecycle operations.
 components: [apps/core, apps/cli, apps/harness, apps/shell]
 ---
@@ -17,9 +17,10 @@ a separate explicit development selection; an app workspace never implicitly res
 
 Workspace execution retains the app installation, Core identity domain, ordinary users and data,
 operator settings and authorized mount bindings. It creates no child Core and imports no sandbox
-users or data. A separate sandbox has its own users, data and lifecycle. Core prepares a candidate
-before stopping its current runtime where the adapter supports preparation, then replaces all
-services so only the selected target writes ordinary data.
+users or data. A separate sandbox has its own users, data and lifecycle. The ordinary app selector
+validates the candidate, stops the outgoing runtime, backs up managed data, binds the workspace
+and runs the profile's normal Start. The selected source remains available for editing after a
+setup, build or startup failure. The operator can start the repaired app in place.
 
 The working tree can contain uncommitted edits. Source mounts, watchers, setup/build commands and
 hot reload follow the workspace manifest. Ordinary code edits need no repeated runtime approval.
@@ -83,13 +84,11 @@ only an active workspace's scoped additions are removed when switching away.
 
 Start and Restart re-read the workspace manifest, current source authority and current consent.
 Harmless changes refresh the separate admitted execution snapshot and registry projection. An
-additional-access change is refused before replacement until its concrete review succeeds. Setup
-and preparation use the admitted recipe; manifest changes after preparation cannot silently replace
-the prepared candidate. Unchanged environment images retain their immutable artifact locks.
-Preparation runs setup with isolated scratch data/cache. A service with declared app data or cache
-bindings runs setup again against actual storage on Start, even when an older preparation receipt
-lists it as complete; scratch storage is never promoted into ordinary app data. Final setup must
-succeed before the service command starts.
+additional-access change requires a concrete review before replacement. On an ordinary workspace
+switch, setup and build use the newly selected profile and its live storage. The previous target's
+artifacts remain available for package Return. Supervised activations and previously prepared
+operations retain their preparation receipts. Setup that depends on live storage still runs on
+Start for those operations. The runtime launches the service command after setup succeeds.
 
 Core retains the last launched manifest separately from an admitted replacement. Stop, logs and
 health use that launched snapshot even if live JSON is invalid, a service was renamed/removed, or a
@@ -122,12 +121,13 @@ update retain all-profile validation.
 
 Each execution intent has a stable UUID `requestId`, a durable target journal and child development
 receipt. Journals record actor, installation, source/worktree, observed HEAD, manifest snapshots,
-current phase, preparation, backup and successful request receipts. The app points to its current
+current phase, preparation, backup and request outcomes. The app points to its current
 child journal. Exact replay observes or resumes that intent. Changed arguments, authority or a later
 binding cannot replay an obsolete target onto a newer choice.
 
-Terminal phase and successful receipt share an atomic journal write. A verified healthy start or
-package return can finish its receipt after a lost response without restarting the same runtime.
+Core records the settled workspace phase and its successful or failed receipt in one journal write.
+If ordinary Start already recorded success or failure when Core was interrupted, recovery finishes
+the selection with that result. A verified package return also finishes without a second restart.
 HTTP disconnect does not cancel admitted replacement; Core shutdown can interrupt it and the same
 UUID resumes it. Journals contain execution references rather than copies of credentials or data.
 A missing/corrupt required journal blocks mutation and is surfaced per app without hiding unrelated
@@ -156,6 +156,8 @@ mounts, remote databases, provider state and external side effects are outside t
 data links, unavailable backup storage or an unverifiable retained backup prevent execution before
 new code starts. A replay reuses a backup only while the saved data baseline remains valid.
 
+The backup recorded on leaving the installed package remains identifiable across later workspace
+selections and after Return. See [backup retention](../app-data-backup-retention/feature.md).
 Return keeps current data and never restores an archive. Backup restore remains a separate authorized
 action that requires the app to be stopped and can discard newer data. It does not reset source,
 accept a Git worktree or erase the development journal.
@@ -203,7 +205,8 @@ record substitutes for observed runtime readiness and browser verification.
 - Classify metadata, command/environment/topology changes and optional declarations without new
   authority; require exact review for rights, devices/capabilities, mounts, source writes and exposure.
 - Reject invalid identity/schema and conservatively retain unknown fields. Test stale/denied approval,
-  permission revocation, actor binding, preparation failure and replay before runtime replacement.
+  permission revocation, actor binding, backup failure before selection and build failure after
+  selection, including replay after an ordinary Start repairs the app.
 - After Return, approve a formerly workspace-only permission or provider role for the package, then
   select the same or another workspace without repeat review and retain the package grant on Return.
   Cover service recreation, current revocations and removal of active workspace-only authority.

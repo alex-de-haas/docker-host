@@ -85,9 +85,24 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
     case "agent_status": {
       const statusSource = publicSource({ agentId: event.agentId, parentAgentId: event.parentAgentId, parentToolCallId: event.parentToolCallId });
       const agents = snapshot.agents ??= [], existing = agents.find(item => item.agentId === statusSource.agentId);
-      const entry = { ...statusSource, state: event.state, stopConfirmed: event.stopConfirmed === true };
-      if (existing) Object.assign(existing, entry); else agents.push(entry);
-      store.emit(record, "agent.updated", { agent: entry }, statusSource); break;
+      const update: NonNullable<typeof snapshot.agents>[number] = { ...statusSource, state: event.state, stopConfirmed: event.stopConfirmed === true };
+      const entry = existing ?? { ...update };
+      Object.assign(entry, update);
+      if (!existing) agents.push(entry);
+      for (const field of ["prompt", "response"] as const) {
+        const raw = event[field];
+        if (typeof raw !== "string" || !raw.length) continue;
+        const flag = field === "prompt" ? "promptTruncated" : "responseTruncated";
+        update[field] = clipped(raw, 64 * 1024);
+        update[flag] = event[flag] === true || update[field] !== raw;
+        // The journal retains the full public observation even when many children
+        // would together overflow the one-MiB lifecycle snapshot.
+        entry[field] = update[field];
+        const size = agents.reduce((sum, item) => sum + Buffer.byteLength(JSON.stringify([item.prompt, item.response])), 0);
+        if (size > 128 * 1024) { delete entry[field]; entry[flag] = true; }
+        else entry[flag] = update[flag];
+      }
+      store.emit(record, "agent.updated", { agent: update }, statusSource); break;
     }
     case "harness_session":
       if (child) break;
@@ -105,8 +120,17 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
     }
     case "tool_result": { const block = tool(record, publicToolId(event.toolUseId, source.agentId)); if (block) { block.state = event.status; block.output = clipped(event.output, 8 * 1024); block.truncated = event.truncated || Buffer.byteLength(event.output) > 8 * 1024; if (block.truncated) truncated("tools"); }
       emit("tool.completed", { toolCallId: publicToolId(event.toolUseId, source.agentId), name: block?.name ?? "unknown", output: event.output, state: event.status, truncated: event.truncated }); break; }
-    case "command_result": { const block = tool(record, publicToolId(event.toolUseId, source.agentId)); if (block) { block.state = event.status; block.command = { status: event.status, exitCode: event.exitCode, durationMs: event.durationMs, summary: event.summary ? clipped(event.summary, 8192) : undefined }; }
-      emit("tool.completed", { toolCallId: publicToolId(event.toolUseId, source.agentId), name: block?.name ?? "unknown", state: event.status, exitCode: event.exitCode, durationMs: event.durationMs, summary: event.summary }); break; }
+    case "command_result": {
+      const toolCallId = publicToolId(event.toolUseId, source.agentId), block = tool(record, toolCallId);
+      const command = { status: event.status,
+        ...(event.exitCode !== undefined ? { exitCode: event.exitCode } : {}),
+        ...(event.durationMs !== undefined ? { durationMs: event.durationMs } : {}),
+        ...(event.summary ? { summary: clipped(event.summary, 8192) } : {}) };
+      if (block) { block.state = event.status; block.command = command; }
+      emit("tool.completed", { toolCallId, name: block?.name ?? "unknown", state: event.status,
+        command, exitCode: event.exitCode, durationMs: event.durationMs, summary: event.summary });
+      break;
+    }
     case "approval_request": case "question_request": { const decision = nativeDecision(frame)!;
       if (record.decisionsFenced) { emit("decision.resolved", { decisionId: decision.id, decision, state: "superseded" }); break; }
       if (!snapshot.pending.some(value => value.id === decision.id)) snapshot.pending.push(decision);

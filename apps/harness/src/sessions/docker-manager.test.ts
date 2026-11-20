@@ -78,12 +78,13 @@ it("retains command outcomes across snapshot replacement and consumer restart", 
   expect(f.starts).toHaveLength(1);
 });
 
-it("reports partial provider snapshots without discarding the consumer's received history", async () => {
+it("keeps received history when a bounded snapshot omits earlier items", async () => {
   const f = await fixture(); await f.send(); const runId = f.starts[0]!.runId;
   f.update(runId, { messages: [{ id: "first", role: "assistant", state: "complete", text: "Earlier received text" }] });
   await vi.waitFor(async () => expect((await f.store.readEvents(f.session.id)).some(event => event.text === "Earlier received text")).toBe(true));
   f.update(runId, { messages: [], tools: [], coverage: { messages: "truncated", tools: "truncated" } });
-  await vi.waitFor(async () => expect((await f.store.readEvents(f.session.id)).some(event => event.type === "notice" && String(event.message).includes("incomplete"))).toBe(true));
+  await vi.waitFor(async () => expect((await f.store.readProviderExecution(f.session.id))?.cursor).toBe(f.snapshot(runId).cursor));
+  expect((await f.store.readEvents(f.session.id)).filter(event => event.type === "notice" && String(event.message).includes("incomplete"))).toEqual([]);
   expect((await f.store.readEvents(f.session.id)).some(event => event.text === "Earlier received text")).toBe(true);
 });
 

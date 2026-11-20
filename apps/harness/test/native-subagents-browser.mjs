@@ -1,5 +1,5 @@
-// Normal child Core password login and a real installed Harness. Native observations below are
-// controlled browser fixtures: UI/replay evidence, not native inference or backend persistence.
+// Child Core login, installed Harness and a scripted Codex App Server. Additional controlled
+// browser observations cover interleaved streams, decisions and historical states.
 // Credentials arrive on stdin and are never printed or written to artifacts.
 import assert from 'node:assert/strict';
 import { randomUUID, createHash } from 'node:crypto';
@@ -23,6 +23,33 @@ try {
     data: { redirectUri: config.link, codeChallenge: createHash('sha256').update(verifier).digest('base64url'), codeChallengeMethod: 'S256' } });
   assert.equal(code.status(), 200);
   const exchange = await page.request.post(config.harness + '/api/auth/app-code', { headers: { Origin: config.harness }, data: { code: (await code.json()).code, codeVerifier: verifier } }); assert.equal(exchange.status(), 200);
+  const native = await page.request.post(config.harness + '/api/sessions', { headers: { Origin: config.harness },
+    data: { title: 'Codex native delegation', connectionId: config.connectionId } });
+  assert.equal(native.status(), 200);
+  const nativeSession = await native.json();
+  const nativeUrl = new URL(config.link);
+  nativeUrl.searchParams.set('session', nativeSession.id);
+  nativeUrl.searchParams.set('hosty_launch', 'standalone');
+  await page.goto(nativeUrl.href);
+  await page.getByRole('textbox', { name: 'Message', exact: true }).waitFor();
+  const admitted = await page.request.post(config.harness + '/api/sessions/' + nativeSession.id + '/messages', {
+    headers: { Origin: config.harness }, data: { text: 'NATIVE_SUBAGENT_DISCLOSURE', clientRequestId: randomUUID() } });
+  assert.ok(admitted.ok(), 'Harness admitted the scripted native turn');
+  const nativePanel = page.getByRole('region', { name: 'Provider subagents' });
+  for (const reload of [false, true]) {
+    if (reload) await page.reload();
+    await page.getByText('The archive review is finished.', { exact: true }).waitFor({ timeout: 60000 });
+    const disclosure = nativePanel.getByRole('button', { name: /^1 subagent\b/ });
+    assert.equal(await disclosure.getAttribute('aria-expanded'), 'false');
+    await disclosure.focus();
+    await disclosure.press('Enter');
+    await nativePanel.getByRole('button', { name: /: Completed\. Show output/ }).click();
+    await nativePanel.getByText('Inspect the archive index.', { exact: true }).waitFor();
+    await nativePanel.getByText('The archive index contains both records.', { exact: true }).waitFor();
+    assert.equal(await nativePanel.getByText('The archive review is finished.', { exact: true }).count(), 0);
+  }
+  console.log('PASS: scripted native Codex delegation through provider and Harness to the browser, child prompt, final response, completion and persisted replay.');
+
   const response = await page.request.post(config.harness + '/api/sessions', { headers: { Origin: config.harness }, data: { title: 'Native subagents browser acceptance' } });
   assert.equal(response.status(), 200); const session = await response.json(), owner = session.createdBy; assert.ok(owner);
 
@@ -59,16 +86,24 @@ try {
   await open(false);
   append({ type: 'user_message', text: 'Research memory, delegation and notifications.' });
   for (const [id, description] of [['memory', 'Memory research'], ['delegation', 'Delegation research'], ['notifications', 'Notification research']]) {
-    append({ type: 'tool_use', toolName: 'Agent', toolUseId: `spawn-${id}`, input: { description, run_in_background: true }, providerSource: root });
+    append({ type: 'tool_use', toolName: 'Agent', toolUseId: `spawn-${id}`, input: { description, prompt: `Research ${id} and cite the findings.`, run_in_background: true }, providerSource: root });
     status(id, 'running');
   }
   const panel = page.getByRole('region', { name: 'Provider subagents' });
+  const children = panel.getByRole('button', { name: /^3 subagents\b/ });
+  await children.waitFor();
+  assert.equal(await children.getAttribute('aria-expanded'), 'false');
+  await children.getByText('3 running', { exact: true }).waitFor();
+  assert.equal(await panel.getByRole('button', { name: /Show output/ }).count(), 0);
+  await children.click();
   await panel.getByRole('button', { name: 'Memory research: Running. Show output' }).waitFor();
   assert.equal(await panel.count(), 1);
   assert.equal(await panel.getByRole('button', { name: /Running. Show output/ }).count(), 3);
   append({ type: 'assistant_delta', text: 'Root stream remains separate.', providerSource: root });
   append({ type: 'assistant_delta', text: 'Child stream remains attributed.', providerSource: source('memory') });
   await panel.getByRole('button', { name: /Memory research:/ }).click();
+  await panel.getByText('Research memory and cite the findings.', { exact: true }).waitFor();
+  assert.equal(await panel.getByText('Research notifications and cite the findings.', { exact: true }).count(), 0);
   await panel.getByText('Child stream remains attributed.', { exact: true }).waitFor();
   assert.equal(await panel.getByText('Root stream remains separate.', { exact: true }).count(), 0);
   append({ type: 'assistant_text', text: 'Memory child final answer.', providerSource: source('memory') });
@@ -81,14 +116,25 @@ try {
   assert.equal(await panel.getByText('Child requests a test edit', { exact: true }).count(), 0);
   await page.getByText('From Delegation research', { exact: true }).waitFor();
   append({ type: 'approval_decision', approvalId: 'child-approval', decision: 'deny', providerSource: source('delegation') });
-  status('memory', 'succeeded'); status('delegation', 'failed');
+  await children.click();
+  status('memory', 'succeeded');
+  await panel.getByRole('button', { name: /(?=.*2 running)(?=.*1 completed)/ }).waitFor();
+  assert.equal(await children.getAttribute('aria-expanded'), 'false');
+  if (process.env.HOSTY_NATIVE_SUBAGENTS_SUMMARY_SCREENSHOT)
+    await panel.screenshot({ path: process.env.HOSTY_NATIVE_SUBAGENTS_SUMMARY_SCREENSHOT });
+  await children.click();
+  status('delegation', 'failed');
   status('notifications', 'unknown', { stopConfirmed: false, freshness: 'last_known', lastKnownState: 'running' });
   await panel.getByRole('button', { name: 'Memory research: Completed. Show output' }).waitFor();
   await panel.getByRole('button', { name: 'Delegation research: Failed. Show output' }).waitFor();
   await panel.getByRole('button', { name: 'Notification research: Unknown. Show output' }).waitFor();
   await panel.getByText('Last known: running', { exact: true }).waitFor();
+  await children.click();
+  assert.equal(await children.getAttribute('aria-expanded'), 'false');
+  for (const state of ['1 completed', '1 failed', '1 unknown']) assert.ok((await children.textContent()).includes(state));
   // Reconnect replays the same durable identities, without duplicate groups or false running badges.
   await open(false);
+  await children.click();
   await panel.getByRole('button', { name: 'Memory research: Completed. Show output' }).waitFor();
   assert.equal(await panel.count(), 1);
   assert.equal(await panel.getByRole('button', { name: /Show output/ }).count(), 3);
@@ -96,6 +142,7 @@ try {
   assert.equal(await panel.getByText('Memory child final answer.', { exact: true }).count(), 1);
   // A later run may reuse native ids. Its identity must not merge into the preceding run.
   append({ type: 'native_agent_status', providerSource: { ...source('memory'), runId: 'second-run' }, state: 'cancelled', stopConfirmed: true, freshness: 'current', observedAt: '2026-11-17T13:25:12.000Z' });
+  await panel.getByRole('button', { name: /^1 subagent\b/ }).click();
   await page.getByRole('button', { name: /Subagent 1: Cancelled. Show output/ }).waitFor();
   assert.equal(await panel.count(), 2);
   const promptTime = page.locator('button:has(time[datetime="2026-11-17T13:24:12.000Z"])').first();
@@ -104,6 +151,7 @@ try {
   await page.getByRole('dialog').locator('time').waitFor(); await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 390, height: 844 }); await page.emulateMedia({ colorScheme: 'dark' });
   await open(true);
+  await children.click();
   await page.getByRole('button', { name: 'Memory research: Completed. Show output' }).waitFor();
   await promptTime.click(); await page.getByRole('dialog').locator('time').waitFor(); await page.keyboard.press('Escape');
   assert.ok(await page.locator('html').evaluate(node => node.scrollWidth <= innerWidth), 'No mobile horizontal overflow');

@@ -40,6 +40,26 @@ async function start(f: Awaited<ReturnType<typeof fixture>>) {
   const id = randomUUID(), command: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start", input: { text: "Start" } };
   await f.controller.startRun(f.sessionId, id, command, JSON.stringify(command), f.actor); return id;
 }
+async function retainedNativeRun() {
+  const f = await fixture();
+  const session = await f.store.load(f.sessionId);
+  const id = randomUUID();
+  const run = f.store.makeRun(session, id, f.actor, "{}");
+  run.snapshot.state = "unknown";
+  run.snapshot.phase = "interrupted";
+  session.runs[id] = run;
+  session.session.activeRun = run.snapshot.ref;
+  await f.store.save(session);
+  await f.driver.engine.journal.accept(id, {
+    conversationId: f.sessionId,
+    binding: { connectionId: "account", connectionRevision: 1, harnessKind: "fixture-engine" },
+    selection: { model: null, reasoningEffort: null },
+    resource: { kind: "conversation", id: f.sessionId },
+    input: "Previously accepted turn", options: {}, autoAllowedPrefixes: [],
+  });
+  const processes = await TrackedNativeProcesses.create(f.directory, id, run.snapshot.generation);
+  return { f, id, processes };
+}
 async function reconcile(f: Awaited<ReturnType<typeof fixture>>, id: string) {
   const snapshot = await f.controller.snapshot(id), command: AgentRunControlInput = { requestId: randomUUID(), expectedGeneration: snapshot.generation, expectedRevision: snapshot.revision, command: "reconcile", stopped: true };
   await f.controller.control(id, command, JSON.stringify(command), f.actor);
@@ -213,17 +233,18 @@ describe("native authority renewal and stop reconciliation", () => {
     expect((await f.controller.snapshot(id)).stopConfirmed).toBe(false);
   });
   it("does not turn process exit evidence into settlement of unknown tool effects", async () => {
-    const f = await fixture(), id = await start(f); await vi.waitFor(() => expect(f.starts).toHaveBeenCalledTimes(1));
-    await f.driver.engine.journal.exclusive(async () => { await f.driver.engine.journal.append(id, { type: "native_effect", id: "external-call", state: "unknown" }); await f.driver.engine.journal.update(id, "interrupted"); });
+    const { f, id, processes } = await retainedNativeRun();
+    await f.driver.engine.journal.append(id, { type: "native_effect", id: "external-call", state: "unknown" });
+    await f.driver.engine.journal.update(id, "interrupted");
+    await processes.stop();
+    await processes.confirmSdkStop();
+    expect(await processes.evidence()).toMatchObject({ stopped: true, allClosed: true });
     expect(await reconcile(f, id)).toMatchObject({ state: "rejected", error: { code: "effects_unconfirmed" } });
     expect((await f.controller.snapshot(id)).stopConfirmed).toBe(false); expect((await f.driver.engine.journal.load(id)).receipt.effects).toEqual({ "external-call": "unknown" });
   });
   it("requires durable SDK completion as well as sealed process receipts before reconciliation", async () => {
-    const f = await fixture(), session = await f.store.load(f.sessionId), id = randomUUID(), run = f.store.makeRun(session, id, f.actor, "{}");
-    run.snapshot.state = "unknown"; run.snapshot.phase = "interrupted"; session.runs[id] = run; session.session.activeRun = run.snapshot.ref; await f.store.save(session);
-    await f.driver.engine.journal.accept(id, { conversationId: f.sessionId, binding: { connectionId: "account", connectionRevision: 1, harnessKind: "fixture-engine" }, selection: { model: null, reasoningEffort: null }, resource: { kind: "conversation", id: f.sessionId }, input: "Previously accepted turn", options: {}, autoAllowedPrefixes: [] });
+    const { f, id, processes } = await retainedNativeRun();
     await f.driver.engine.journal.update(id, "interrupted");
-    const processes = await TrackedNativeProcesses.create(f.directory, id, run.snapshot.generation);
     expect(await processes.stop()).toMatchObject({ stopped: false, allClosed: true, sealed: true });
     expect(await reconcile(f, id)).toMatchObject({ state: "rejected", error: { code: "exit_unconfirmed" } });
     expect((await f.controller.snapshot(id)).stopConfirmed).toBe(false);

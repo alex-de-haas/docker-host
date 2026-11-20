@@ -20,11 +20,11 @@ export function SessionActivityIndicator({ status }: { status: string }) {
 }
 
 export function SessionRowStatus({ session, now }: { session: AssistantSession; now: number }) {
-  const at = activityTime(session);
+  const at = session.providerHistoryContact ? Date.parse(session.providerHistoryContact.observedAt) : activityTime(session);
   const seconds = Math.max(0, Math.floor((now - at) / 1000));
   const relative = seconds < 60 ? "Just now" : seconds < 3600 ? `${Math.floor(seconds / 60)} min ago`
     : seconds < 86400 ? `${Math.floor(seconds / 3600)} h ago` : `${Math.floor(seconds / 86400)} d ago`;
-  const label = statusLabel(session.status);
+  const label = session.providerHistoryContact ? "Last observed " + statusLabel(session.status).toLowerCase() : statusLabel(session.status);
   return <span className="block truncate text-xs font-normal leading-5 text-muted-foreground">
     {label}<span aria-hidden> · </span>{at > 0
       ? <time dateTime={new Date(at).toISOString()} title={`Last activity: ${new Date(at).toLocaleString()}`}>{relative}</time>

@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { publishApps } from './publish.mjs';
 import { canonical } from './context.mjs';
 import { prepareRelease } from './prepare.mjs';
@@ -35,7 +36,8 @@ test('check scope does not order builds; core, app, shared and recovery select i
     for (const file of ['context.mjs','docker-inputs.mjs']) write(root, `scripts/releases/${file}`, readFileSync(new URL(file, import.meta.url)));
     write(root, 'scripts/npm-workspace.mjs', readFileSync(new URL('../npm-workspace.mjs', import.meta.url)));
     for (const app of config.apps) {
-      write(root, app.manifest, JSON.stringify({ id: app.id, version: '1.0.0' }));
+      write(root, app.manifest, JSON.stringify({ id: app.id, version: '1.0.0',
+        runtimeProfiles: [{ key: 'docker', type: 'docker' }, { key: 'dev', type: 'localCommand', development: true }] }));
       write(root, `apps/${app.id}/Dockerfile`, `FROM example/base@sha256:${hash}\nCOPY apps/${app.id} /app\nCOPY shared /shared\n`);
       write(root, `apps/${app.id}/code`, 'initial');
     }
@@ -54,6 +56,13 @@ test('check scope does not order builds; core, app, shared and recovery select i
     store.values.set('platform/candidate.json', { inputFingerprint: initial.platform.inputFingerprint, releaseId: hash });
     store.values.set('platform/feed-state.json', { feeds: { edge: { releaseId: hash } } });
     const noChange = await prepare(); assert.equal(noChange.platform.selected, false); assert.ok(noChange.apps.every(a => !a.selected));
+    config.apps[0].excludedDevelopmentProfiles = ['dev'];
+    write(root, 'distribution/release-publisher.json', JSON.stringify(config));
+    const exclusion = await prepare();
+    assert.deepEqual(exclusion.apps.map(app => app.selected), [true, false]);
+    assert.deepEqual(exclusion.images.map(image => image.decision), ['reuse', 'unchanged-app']);
+    delete config.apps[0].excludedDevelopmentProfiles;
+    write(root, 'distribution/release-publisher.json', JSON.stringify(config));
     write(root, 'core.cs', 'changed core');
     const core = await prepare(); assert.equal(core.platform.selected, true); assert.ok(core.images.every(i => i.decision === 'unchanged-app'));
     write(root, 'apps/a/code', 'changed app');
@@ -143,6 +152,62 @@ test('source Docker development profiles retain their own verified base instead 
 });
 
 
+
+test('Demo App publication omits local sandbox profiles and retains the public image and development runtime', async () => {
+  const root = fileURLToPath(new URL('../../', import.meta.url));
+  const config = JSON.parse(readFileSync(join(root, 'distribution/release-publisher.json'), 'utf8'));
+  const app = config.apps.find(app => app.id === 'com.haas.demo-app');
+  const recipe = config.images.find(image => image.appId === app.id);
+  const sourcePath = join(root, app.manifest);
+  const sourceBytes = readFileSync(sourcePath, 'utf8');
+  const manifest = JSON.parse(sourceBytes);
+  assert.ok(manifest.runtimeProfiles.some(profile => profile.key === 'sandbox-dev' && profile.development));
+
+  const store = memoryStore();
+  const prefix = `apps/${app.id}`;
+  store.values.set(`${prefix}/feed-state.json`, { feeds: { stable: {
+    releaseId: 'c'.repeat(64), sourceCommit: commit, pointer: { manifestRef: 'https://example.test/stable/manifest.json' }
+  } } });
+  const receipt = { repository: recipe.repository, digest: `sha256:${hash}`, inputFingerprint: hash,
+    buildSourceCommit: commit, platforms: recipe.platforms };
+  const plan = { sourceCommit: commit, validationRunId: '42', repository: 'example/repo', config,
+    images: [{ recipe, decision: 'reuse', previous: receipt, inputFingerprint: hash }],
+    apps: [{ app, manifest, selected: true, sourceFingerprint: hash, inputFingerprint: hash }] };
+
+  await publishApps({ root, plan, artifacts: root, store,
+    prove: async () => {}, aliases: async () => {}, validate: async () => {},
+    request: async url => {
+      const value = store.values.get(url.split(`/${commit}/`)[1]);
+      const body = value instanceof Uint8Array ? value : value ? canonical(value) + '\n' : '';
+      const response = new Response(body, { status: value ? 200 : 404 });
+      Object.defineProperty(response, 'url', { value: url });
+      return response;
+    },
+    verify: async (repository, reference, platforms) => {
+      assert.equal(repository, receipt.repository, `Unexpected registry lookup for ${repository}:${reference}`);
+      assert.equal(reference, receipt.digest);
+      assert.deepEqual(platforms, receipt.platforms);
+      return receipt;
+    }
+  });
+
+  const candidate = store.values.get(`${prefix}/candidate.json`);
+  const manifestPath = `${prefix}/releases/${candidate.releaseId}/manifest.json`;
+  const emitted = store.values.get(manifestPath);
+  const expectedProfiles = ['docker', 'dev'];
+  assert.deepEqual(emitted.runtimeProfiles.map(profile => profile.key), expectedProfiles);
+  assert.deepEqual(emitted.data.targets.map(target => target.runtime), expectedProfiles);
+  const daily = store.values.get(`${prefix}/feeds.json`).feeds.find(feed => feed.id === 'daily');
+  assert.equal(daily.manifestRef, `https://raw.githubusercontent.com/${plan.repository}/${commit}/${manifestPath}`);
+  for (const service of emitted.services) {
+    assert.deepEqual(Object.keys(service.runtimes), expectedProfiles);
+    assert.deepEqual(service.runtimes.docker.image, { repository: receipt.repository, digest: receipt.digest });
+    assert.equal(service.runtimes.dev.type, 'localCommand');
+  }
+  assert.deepEqual(manifest, JSON.parse(sourceBytes));
+  assert.equal(readFileSync(sourcePath, 'utf8'), sourceBytes);
+});
+
 test('an unrelated .NET build-target change does not select the Docker-only Harness release', async () => {
   const root = mkdtempSync(join(tmpdir(), 'hosty-harness-dotnet-input-')), store = memoryStore();
   try {
@@ -158,7 +223,8 @@ test('an unrelated .NET build-target change does not select the Docker-only Harn
     const config = { schemaVersion: 'hosty-publisher.0.1', metadataBranch: 'releases', feeds: [{ id: 'edge', policy: 'validated-source' }], apps: [configured], images: [],
       platform: { rids: ['fixture'], inputs: ['Directory.Build.props','Directory.Build.targets'] } };
     write(root, 'distribution/release-publisher.json', JSON.stringify(config));
-    write(root, configured.manifest, JSON.stringify({ id: configured.id, version: '0.99.0' }));
+    write(root, configured.manifest, JSON.stringify({ id: configured.id, version: '0.99.0',
+      runtimeProfiles: [{ key: 'docker', type: 'docker' }] }));
     write(root, 'package.json', JSON.stringify({ workspaces })); write(root, 'package-lock.json', JSON.stringify({ lockfileVersion: 3, packages }));
     write(root, 'Directory.Build.props', '<Project><Version>0.180.0</Version></Project>'); write(root, 'Directory.Build.targets', 'native build metadata');
     write(root, 'scripts/npm-workspace.mjs', 'locked projection');

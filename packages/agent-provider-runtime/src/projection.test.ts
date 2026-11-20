@@ -27,6 +27,28 @@ async function fixture() {
   return { store, session, record, append: (event: HarnessEvent) => projectEvent(store, session, record, { runId: record.snapshot.ref.id, generation: "native-generation", sequence: ++sequence, event }) };
 }
 describe("bounded public native projection", () => {
+  it("retains a child's assignment and response across status-only updates, bounding snapshot and journal independently", async () => {
+    const f = await fixture();
+    const status = { type: "agent_status", ...child, source: child } as const;
+    f.append({ ...status, state: "running", prompt: "Inspect fixtures" });
+    f.append({ ...status, state: "succeeded", response: "Fixtures passed" });
+    f.append({ ...status, state: "succeeded", stopConfirmed: true });
+    expect(f.record.snapshot.agents?.[0]).toMatchObject({ prompt: "Inspect fixtures", response: "Fixtures passed", state: "succeeded", stopConfirmed: true });
+    const response = "🌷".repeat(20_000);
+    for (let i = 0; i < 4; i++) {
+      const source = { agentId: "child-" + i, parentAgentId: "root" };
+      f.append({ type: "agent_status", ...source, source, state: "succeeded", response });
+      const agent = f.record.events.at(-1)?.data.agent as { response: string; responseTruncated: boolean };
+      expect(agent.responseTruncated).toBe(true);
+      expect(Buffer.byteLength(agent.response)).toBe(64 * 1024);
+      expect(agent.response).not.toContain("�");
+    }
+    expect(f.record.snapshot.agents?.at(-1)).toMatchObject({ responseTruncated: true });
+    expect(f.record.snapshot.agents?.at(-1)).not.toHaveProperty("response");
+    f.store.lifecycle(f.record);
+    validateAgentEvent(f.record.events.at(-1)!);
+  });
+
   it("retains only root context observations and explicit clears at their original public sequence", async () => {
     const f = await fixture(), usage = { usedTokens: 107, maxTokens: 32768, estimated: false, observedAt: new Date().toISOString() };
     f.append({ type: "context_usage", usage });
@@ -86,6 +108,18 @@ describe("bounded public native projection", () => {
     expect(f.record.snapshot.tools?.[0]).toMatchObject({ id: publicToolId(id, publicSource(child).agentId), source: publicSource(child), command: { status: "failed", exitCode: 2, durationMs: 50, summary: "Command failed" } });
     expect(f.record.snapshot.effects.unresolvedCallIds).toEqual([f.record.snapshot.tools?.[0]?.id]);
     expect(f.record.snapshot.tools?.[0]?.id).not.toBe(publicToolId(id)); validateAgentRunSnapshot(f.record.snapshot);
+  });
+  it("streams the command outcome even when there are no exit, duration or output details", async () => {
+    const f = await fixture(), id = "background-command";
+    f.append({ type: "tool_use", toolUseId: id, toolName: "Bash", input: {}, source: child });
+    f.append({ type: "command_result", toolUseId: id, status: "completed", source: child });
+
+    const terminal = f.record.events.at(-1)!;
+    expect(terminal).toMatchObject({ type: "tool.completed", source: publicSource(child),
+      data: { toolCallId: publicToolId(id, publicSource(child).agentId), state: "completed", command: { status: "completed" } } });
+    expect(terminal.data).not.toHaveProperty("output");
+    expect(f.record.snapshot.tools?.[0]?.command).toEqual(terminal.data.command);
+    validateAgentEvent(terminal);
   });
   it("warns before pruning bounded messages, keeps UTF-8 valid, and exposes incomplete coverage", async () => {
     const f = await fixture();

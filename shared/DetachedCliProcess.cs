@@ -51,27 +51,25 @@ internal static class DetachedCliProcess
             return logPath;
         }
 
-        var quotedArgs = string.Join(' ', args.Select(ShellQuote));
-        var shellCommand = $"nohup {ShellQuote(cliPath)} {quotedArgs} > {ShellQuote(logPath)} 2>&1 < /dev/null &";
-        var unixStartInfo = new ProcessStartInfo
+        var unixStartInfo = new ProcessStartInfo(cliPath, args)
         {
-            FileName = "/bin/sh",
             UseShellExecute = false,
-            CreateNoWindow = true,
             WorkingDirectory = workingDirectory,
         };
-        unixStartInfo.ArgumentList.Add("-c");
-        unixStartInfo.ArgumentList.Add(shellCommand);
-
-        using var unixProcess = Process.Start(unixStartInfo) ?? throw new InvalidOperationException("Unable to start the hosty helper process.");
-        // The `&` returns immediately from the shell wrapper; the nohup'd CLI is detached and survives.
-        unixProcess.WaitForExit();
-        if (unixProcess.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"Helper launch shell exited with code {unixProcess.ExitCode}.");
-        }
-
+        StartUnix(unixStartInfo, logPath);
         return logPath;
+    }
+
+    internal static void StartUnix(ProcessStartInfo startInfo, string logPath)
+    {
+        using var log = File.OpenHandle(logPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+        using var input = File.OpenNullHandle();
+        // Isolate the process from callers that terminate their entire process group on exit.
+        startInfo.StartDetached = true;
+        startInfo.StandardInputHandle = input;
+        startInfo.StandardOutputHandle = log;
+        startInfo.StandardErrorHandle = log;
+        Process.StartAndForget(startInfo);
     }
 
     // The stamp appended to each spawn's log name; also the exact shape CleanUpStaleLogs requires
@@ -140,9 +138,6 @@ internal static class DetachedCliProcess
                 System.Globalization.DateTimeStyles.None,
                 out _);
     }
-
-    private static string ShellQuote(string value)
-        => $"'{value.Replace("'", "'\"'\"'", StringComparison.Ordinal)}'";
 
     private static string CmdQuote(string value)
         => $"\"{value}\"";

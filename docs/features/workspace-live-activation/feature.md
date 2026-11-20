@@ -1,6 +1,6 @@
 ---
 created: 2026-10-19
-updated: 2026-11-13
+updated: 2026-11-20
 summary: Select named app workspaces or installed package runtimes with scoped access review, retained package choices and recoverable Core-owned transitions.
 components: [apps/core, apps/cli, apps/shell, apps/harness, shared]
 ---
@@ -72,10 +72,20 @@ that acquires that ownership retires an older request's authority to change the 
 whose captured owner changed fails with `dev_selection_changed` before lifecycle effects; its caller
 can make a fresh explicit selection. Completed requests do not repeat effects.
 
-Preparation validates settings, mounts, source authority and the candidate execution contract before
-replacing the current runtime. A failed build keeps the current app running. Package/workspace
-transitions reuse verified stop/start, managed-data backups and durable development journals.
-There is no routine compatibility acknowledgement or separate per-app Return dialog.
+For an ordinary app selection, Core validates the source, manifest, permissions, settings and
+mounts, verifies Stop, and backs up the app's primary data directory. It then binds the workspace
+and starts it using the runtime's usual setup, build and launch commands. After a Stop or backup
+failure, the outgoing selection remains current. After a startup failure, the new workspace
+remains current. The user can inspect the error, edit the same worktree and Start or Restart
+the app without taking another switch backup. The original request retains its outcome.
+If the package was running before a chain of failed workspace launches, an explicit Return
+starts it again. An intervening operator Stop clears that running intent. Return keeps the
+current data; the administrator can restore the labeled pre-switch backup from Dashboard.
+Core process handover uses the separately supervised preparation described below.
+An A-to-B switch captures A's last launched manifest for Stop. A development profile introduced
+in A can be replaced even when the package has no such profile or A's live manifest is now invalid.
+Return still uses the retained installed package runtime. Harness workspace details confirms a
+manual switch against ordinary data before submitting the selection.
 
 Workspace detail exposes **Use this workspace** and **Return to package** for its bound apps.
 Group requests use `POST /api/development/workspaces/{workspaceId}/execution-target` and retained
@@ -671,7 +681,7 @@ pre-projection configuration checkpoint when recovering an interrupted native sn
   reapplied. Older Core without that endpoint retains pending diagnostics without a generic fallback.
 
 - Keep compatibility acceptance on the explicit legacy captured-activation/Core-handover contracts.
-  Unified package/workspace selection and its CLI/MCP paths require no routine acknowledgement.
+  The execution API and its CLI/MCP clients accept a routine selection without a compatibility acknowledgement. Harness confirms fresh manual selections in workspace details.
 
 - Exercise Docker deferred apply, Return and resume with real policy generations, including Ask
   approval and policy disable/revocation while shutdown waits. Worker shutdown alone must not cancel
@@ -701,10 +711,15 @@ pre-projection configuration checkpoint when recovering an interrupted native sn
   participants complete, without creating stale child journals or changing admitted replay intent.
 - Verify workspace-wide package return after private-source revocation or source loss, retained
   request replay, and refusal of foreign users/credentials without app lifecycle effects.
+- Run `npm run test:integration -- harness-local` in a managed child. Its self-switch fixture edits
+  the real Harness workspace setup, verifies that Dashboard's Core routes expose the stopped app
+  and its error, and returns Harness to its package with its session, current data and backup.
+- Include a running A whose recipe exists only in its workspace and whose live manifest becomes unreadable, then select B and return to the installed package.
 - Verify package -> A -> B -> package, changed release defaults, current-data preservation, invalid
-  source Stop/return, old-request retirement and healthy lost-response recovery. A failed candidate
-  build preserves the running app; a live preparation lease protects its source until native
-  consumers exit and the app journal owns the binding.
+  source Stop/return, old-request retirement and healthy lost-response recovery. Fail Stop and backup
+  before binding and setup after binding. Verify current target, actual service state, editable source,
+  ordinary Start after repair and the original request outcome. Restore the identified release data
+  from Shell separately after Return.
 - Verify named workspace creation/rename, source-only recipe configuration without activation,
   exact replay, unchanged source stamps and UI rename refresh without page reload.
 

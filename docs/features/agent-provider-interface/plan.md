@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-10-10
-updated: 2026-11-17
+updated: 2026-11-20
 summary: Extract independent local agent-provider apps consumed by Docker-hosted Harness, with explicit discovery, authority, recovery and host-tool readiness.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -53,6 +53,22 @@ continuation, and run isolated Core-managed checks. Preserve the interrupted con
 its source; recovery follows verified reconciliation rather than clearing an uncertain state.
 This approval covers the scoped D23-D26 work below, not the unrelated remaining D5 acceptance,
 commits, publication or ordinary-data runtime activation.
+
+Owner approval, 2026-11-17: fix the premature Claude completion reproduced after the D23-D26
+live deployment, add a deterministic real-SDK regression for queued child notifications, publish
+a corrective PR through CI and review, merge it, update the installed provider and repeat the
+ordinary-host final-answer delivery check. This approval covers D27 and those publication and
+activation steps; it does not expand the unrelated D5 acceptance scope.
+
+D28 scopes an additional completion defect found during the same owner-authorized November 17
+acceptance: native idle can precede completion of background Bash tasks owned by already-completed
+subagents. The correction retains exact native ancestry and rejects that early completion evidence;
+it follows the existing instruction to fix completion, test it, publish through CI/review and verify
+the installed provider. Ordinary session history remains intact.
+
+Owner approval, 2026-11-17: repair provider access after ordinary updates first, then settle Claude
+background Bash cards from native command outcomes. Add regressions, publish both corrections
+through CI and review, merge, update the ordinary host and verify both behaviors live.
 
 ## Accepted Delivery Scope
 
@@ -703,6 +719,37 @@ Verification for the November 17 repair on macOS arm64:
   existing analyzer/NuGet warnings. Hosted inference and Windows-native execution are not claimed;
   the optional heavyweight tasks suite is unselected. D5/D6 retain their broader acceptance scope.
 
+Verification for the queued-notification correction (D27), November 17, macOS arm64:
+
+- The pinned SDK fixture reproduces the deployed failure with predictions enabled and disabled:
+  all children finish while a parent progress request is in flight; the actual final synthesis
+  is absent from the worker journal before the correction and retained exactly once afterwards.
+- Claude lint, production build and all 223 provider tests pass. The ordinary provider test command
+  includes four genuine SDK queued-completion/cancellation cases and rejects skipped native coverage.
+- The separate native fixture passes all six cases, including ordinary three-child completion,
+  whole-run cancellation and cancellation between the intermediate and final parent responses.
+  No personal account or hosted inference is used by these fixtures.
+- Shared runtime lint and 363 tests pass; four Windows-only cases are skipped on macOS.
+  Stream tests cover exact session/result matching, raw stdout preceding the SDK iterator,
+  bounded framing, unchanged bytes, backpressure, incomplete EOF and cancellation fencing.
+- Version outcome: Claude Code Provider 0.1.3 → 0.1.4. The shared runtime, Harness, other
+  providers and platform/SDK contracts are unchanged by this correction.
+
+Verification for the nested-command correction (D28), November 17, macOS arm64:
+
+- The real pinned SDK reproduces native idle while three completed agents still own active
+  nonambient Bash commands. Before the correction, both prediction modes lose final synthesis.
+- The regression holds actual command responses until that early idle, checks that the provider
+  remains running, then separately holds the final parent response after all command outputs and
+  verified child summaries arrive. Neither checkpoint permits completion or native process closure.
+- All ten standalone SDK cases pass, including four nested completion/cancellation variants.
+  Ordinary provider CI now requires eight queued/nested native cases with zero skips. Explicit
+  cancellation verifies all six native agent/command tasks stop and their command connections close.
+- Claude typecheck, production build and all 239 provider tests pass. Focused lifecycle coverage
+  verifies retained ended-parent ownership, omitted parent metadata, stale task runs, resumed flags,
+  malformed/cyclic ancestry, bounded retention and unrelated parentless/ambient work.
+- Version outcome: Claude Code Provider 0.1.4 → 0.1.5; no other runtime artifact or contract changes.
+
 ### Pending Responses And Cancellation
 
 ```json
@@ -948,6 +995,16 @@ neither caching nor a universal inference API is a prerequisite to this provider
 - [x] D24. Reduce native agent status events and retain run-qualified child attribution in Harness messages, tools and decisions; render compact child progress and expandable attributed output with reconnect/replay coverage.
 - [x] D25. Display local message times for operator prompts and accessible full timestamps for transcript messages without adding time labels to every tool event; verify transcript grouping and history compatibility.
 - [x] D26. Verify the combined lifecycle and UI path in an owned Core sandbox, record accurate stop-versus-outcome diagnostics and reconciliation limits, update current behavior documentation, and preserve the interrupted session's source and partial research for supported recovery.
+
+- [x] D27. Replace Claude's next-result completion heuristic with an authoritative native idle boundary correlated to the SDK-delivered root result; reproduce queued child-notification progress followed by final synthesis using the pinned SDK with predictions enabled and disabled, and cover cancellation and stream ordering.
+
+- [x] D28. Preserve nonambient background commands owned by native subagents after their parent agent yields; retain exact ancestry, reject idle/result evidence captured before descendant completion, and verify nested final synthesis and cancellation through the real pinned SDK and ordinary provider CI.
+
+- [x] D29. Authorize current agent requests after a provider permission revision changes, while retaining the original run admission and refusing stale credentials. Verify repeated operations with the same consumer authority and a separate provider installation.
+
+- [x] D30. Settle Claude background Bash cards with the outcome of the exact native command, including commands owned by children that have already yielded. Verify attribution, late completion and preservation of final answer delivery.
+
+- [x] D31. Show native subagents in a collapsed chat disclosure with individual status, parent, delegated prompt and final reply where observed. Preserve attribution through live updates and replay, including older conversations with partial evidence.
 
 ### Implementation Order
 

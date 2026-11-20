@@ -18,7 +18,8 @@ internal sealed partial class PublicationService
         if (finalBinding.Connection.Id != binding.Connection.Id || finalBinding.Record.Repository != binding.Record.Repository ||
             finalBinding.Record.Number != binding.Record.Number || finalBinding.Record.Provider != binding.Record.Provider ||
             finalBinding.Record.Branch != binding.Record.Branch || finalBinding.Record.TargetBranch != binding.Record.TargetBranch ||
-            finalBinding.Record.HeadRepository != binding.Record.HeadRepository || !finalBinding.Record.Owner.SameIdentity(binding.Record.Owner))
+            finalBinding.Record.HeadRepository != binding.Record.HeadRepository || !finalBinding.Record.Owner.SameIdentity(binding.Record.Owner) ||
+            finalBinding.Record.PermissionSource != binding.Record.PermissionSource)
             throw new PublicationException("review_stale", "The PR source connection changed. Refresh the review.");
         return snapshot;
     }

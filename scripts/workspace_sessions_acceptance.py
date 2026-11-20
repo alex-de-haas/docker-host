@@ -17,31 +17,9 @@ import urllib.request
 import uuid
 
 
-def check(context):
-    base, root, workspace = (context[key] for key in ('base', 'root', 'workspace'))
-    run, request, say, wait_for = (context[key] for key in ('run', 'request', 'say', 'wait_for'))
-    origin, password, cli = (context[key] for key in ('origin', 'password', 'cli'))
-    from core_mcp_acceptance import empty_core, harness_history
-    empty_core(context)
-    app = 'hosty.harness'
-    def app_summary(app_id):
-        return next(row for row in request('/api/apps')['apps'] if row['id'] == app_id)
-    manifest = json.loads((workspace/'apps/harness/manifest.json').read_text())
-    manifest['source']['repository'] = context['repository']
-    # Release tags are pulled and can replace a locally built image. Use local-only acceptance tags.
-    for service in manifest['services']:
-        service['runtimes']['docker']['image'] = 'hosty-harness-'+service['key']+'-acceptance:local'
-    manifest_path = base/'harness-manifest.json'
-    manifest_path.write_text(json.dumps(manifest))
-    run([cli, '--data-root', root, 'apps', 'install', manifest_path, '--runtime', 'docker', '--no-autostart'])
-    run([cli, '--data-root', root, 'apps', 'start', app])
-    def healthy():
-        return request('/api/apps/'+app+'/health')['status'] == 'healthy'
-    wait_for(healthy, 180)
-    link = json.loads(run([cli, '--data-root', root, 'apps', 'open', app, '--format', 'json']))['url']
-    parsed = urllib.parse.urlparse(link)
-    app_origin = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, '', '', '', ''))
-
+def session_browser(context, app, app_origin, link):
+    """A password-authenticated test browser with its own Core and Harness cookies."""
+    request, origin, password = (context[key] for key in ('request', 'origin', 'password'))
     class Browser:
         def __init__(self, email, name, invited=False, role="host.admin"):
             self.jar = http.cookiejar.CookieJar()
@@ -87,6 +65,36 @@ def check(context):
 
         def harness(self, path, body=None, method=None, expected=200):
             return self.call(app_origin, '/api'+path, body, method, expected)
+
+    return Browser
+
+
+def check(context):
+    base, root, workspace = (context[key] for key in ('base', 'root', 'workspace'))
+    run, request, say, wait_for = (context[key] for key in ('run', 'request', 'say', 'wait_for'))
+    origin, password, cli = (context[key] for key in ('origin', 'password', 'cli'))
+    from core_mcp_acceptance import empty_core, harness_history
+    empty_core(context)
+    app = 'hosty.harness'
+    def app_summary(app_id):
+        return next(row for row in request('/api/apps')['apps'] if row['id'] == app_id)
+    manifest = json.loads((workspace/'apps/harness/manifest.json').read_text())
+    manifest['source']['repository'] = context['repository']
+    # Release tags are pulled and can replace a locally built image. Use local-only acceptance tags.
+    for service in manifest['services']:
+        service['runtimes']['docker']['image'] = 'hosty-harness-'+service['key']+'-acceptance:local'
+    manifest_path = base/'harness-manifest.json'
+    manifest_path.write_text(json.dumps(manifest))
+    run([cli, '--data-root', root, 'apps', 'install', manifest_path, '--runtime', 'docker', '--no-autostart'])
+    run([cli, '--data-root', root, 'apps', 'start', app])
+    def healthy():
+        return request('/api/apps/'+app+'/health')['status'] == 'healthy'
+    wait_for(healthy, 180)
+    link = json.loads(run([cli, '--data-root', root, 'apps', 'open', app, '--format', 'json']))['url']
+    parsed = urllib.parse.urlparse(link)
+    app_origin = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, '', '', '', ''))
+
+    Browser = session_browser(context, app, app_origin, link)
 
     # Source preparation is independent of runtime state. These fixtures stay stopped and use
     # an already-built local image so source admission needs no registry/provider credentials.
@@ -144,6 +152,10 @@ def check(context):
     legacy_tree = action(owner, legacy_session, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')
     legacy_path = pathlib.Path(legacy_tree['path'])
     assert legacy_path.resolve().is_relative_to(root.resolve()), 'Legacy fixture must stay inside the isolated Core'
+    # Branch/ref changes wake Core's Git observer. Quiesce its owner while constructing the
+    # pre-upgrade record so an already-running observation cannot overwrite the fixture.
+    workflow = action(owner, legacy_session, 'workflow-status')
+    paused = action(owner, legacy_session, 'workflow-pause', requestId=str(uuid.uuid4()), expectedRevision=workflow['revision'])
     legacy_branch = 'hosty/session/'+legacy_tree['id']
     run(['git', '-C', legacy_path, 'branch', '-m', legacy_branch])
     run(['git', '-C', legacy_path, 'update-ref', '-d', 'refs/hosty/allocations/'+legacy_tree['id']])
@@ -151,9 +163,12 @@ def check(context):
     legacy_value = json.loads(legacy_record.read_text())
     legacy_value['branch'] = legacy_branch
     legacy_value.pop('branchNaming', None)
-    legacy_record.write_text(json.dumps(legacy_value))
+    temporary_record = legacy_record.with_suffix('.upgrade-fixture')
+    temporary_record.write_text(json.dumps(legacy_value))
+    temporary_record.replace(legacy_record)
+    action(owner, legacy_session, 'workflow-resume', requestId=str(uuid.uuid4()), expectedRevision=paused['revision'])
     observed_legacy = action(owner, legacy_session, 'status', workspaceId=legacy_tree['id'])
-    assert observed_legacy['branch'] == legacy_branch and observed_legacy['id'] == legacy_tree['id']
+    assert (observed_legacy['branch'], observed_legacy['id']) == (legacy_branch, legacy_tree['id']), (observed_legacy['branch'], legacy_branch)
     action(owner, legacy_session, 'rename', requestId=str(uuid.uuid4()), name='Legacy workspace retained')
     assert action(owner, legacy_session, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')['branch'] == legacy_branch
     say('PASS: new task-based branch, frozen-name replay, and pre-upgrade branch preserved through Harness/Core')

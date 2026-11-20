@@ -35,17 +35,84 @@ beforeEach(() => {
   vi.mocked(approveWorkspaceAccess).mockResolvedValue({ status: "succeeded" } as never);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); });
-const render = (canUse = true, single = false) => act(async () => root.render(<WorkspaceActivation workspaceId="workspace" apps={single ? apps.slice(0, 1) : apps} canUse={canUse} refresh={refresh} />));
+const render = (canUse = true, single = false) => act(async () => root.render(<WorkspaceActivation workspaceId="workspace" workspaceName="Fix notes" apps={single ? apps.slice(0, 1) : apps} canUse={canUse} refresh={refresh} />));
 const click = (label: string) => act(async () => button(label).click());
+const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
+const dialogButton = (label: string) => [...dialog()!.querySelectorAll("button")].find(item => item.textContent === label)!;
+const confirmSwitch = () => act(async () => dialogButton("Confirm switch").click());
+const switchTargets = async (label: string) => { await click(label); await confirmSwitch(); };
 const remount = async () => { await act(async () => root.unmount()); root = createRoot(container); await render(); };
 
+it.each([false, true])("requires confirmation before a group switch, including Return=%s", async returning => {
+  if (returning) applicationRows = [currentRow(), currentRow("shell")];
+  await render();
+  await click(returning ? "Return to packages" : "Use workspace");
+  expect(dialog()!.textContent).toContain("Fix notes");
+  expect(dialog()!.textContent).toMatch(/current.*data/);
+  expect(dialog()!.querySelector('[aria-label="Currently observed applications"]')?.textContent).toBe("NotesShell");
+  expect(developmentRequest).not.toHaveBeenCalled();
+  await act(async () => dialogButton("Cancel").click());
+  expect(dialog()).toBeNull();
+  expect(localStorage.getItem(storageKey)).toBeNull();
+  expect(developmentRequest).not.toHaveBeenCalled();
+});
+it.each([{ siblings: [] }, { siblings: [row("shell", { current: { kind: "workspace" } })] }])("allows an exact per-app switch when a sibling is unavailable %#", async ({ siblings }) => {
+  applicationRows = [row(), ...siblings];
+  await render(); expect(button("Refresh applications")).toBeDefined();
+  expect(appButton().disabled).toBe(false);
+  await act(async () => appButton().click());
+  expect(dialog()!.querySelector('[aria-label="Application to switch"]')?.textContent).toBe("Notes");
+  expect(developmentRequest).not.toHaveBeenCalled();
+  await confirmSwitch();
+  expect(developmentRequest).toHaveBeenCalledOnce();
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/applications/notes/execution-target",
+    { kind: "workspace", requestId: expect.any(String), workspaceId: "workspace", worktreeId: row().target!.worktreeId, runtime: "dev" }, expect.any(AbortSignal));
+});
+it("prevents switching a different worktree when the observed per-app target changes during confirmation", async () => {
+  await render(); await act(async () => appButton().click());
+  applicationRows = [row("notes", { target: { ...row().target!, worktreeId: "b".repeat(64) } }), row("shell")];
+  await render();
+  expect(dialogButton("Confirm switch").disabled).toBe(true);
+  await confirmSwitch(); expect(developmentRequest).not.toHaveBeenCalled();
+});
+it("confirms the alternative Return in a mixed group and lists its affected apps", async () => {
+  applicationRows = [currentRow(), row("shell")]; await render();
+  const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Other application actions"]')!;
+  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  const item = document.querySelector<HTMLElement>('[role="menuitem"]')!;
+  await act(async () => item.click());
+  expect(dialog()!.querySelector('[aria-label="Currently observed applications"]')?.textContent).toBe("Notes");
+  expect(developmentRequest).not.toHaveBeenCalled();
+  await confirmSwitch(); expect(vi.mocked(developmentRequest).mock.calls[0][1]?.kind).toBe("package");
+});
+it("requires a fresh group confirmation if a bound worktree changes", async () => {
+  await render(); await click("Use workspace");
+  applicationRows = [row(), row("shell", { target: { ...row("shell").target!, worktreeId: "b".repeat(64) } })];
+  await render(); expect(dialogButton("Confirm switch").disabled).toBe(true);
+  await confirmSwitch(); expect(developmentRequest).not.toHaveBeenCalled();
+  await act(async () => dialogButton("Cancel").click());
+  await switchTargets("Use workspace"); expect(developmentRequest).toHaveBeenCalledOnce();
+});
+it("keeps long and multi-app failures available behind the short, visible first cause", async () => {
+  const first = "Compiler failed " + "x".repeat(250);
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ state: "failed", apps: [
+    { appId: "other", state: "completed", error: "Old build failure" },
+    { appId: "pending", state: "running" },
+    { appId: "notes", state: "failed", error: first + "\nerror TS1234" },
+    { appId: "shell", state: "failed", error: "Startup failed" },
+  ] });
+  await render(); await switchTargets("Use workspace");
+  const summary = container.querySelector('[role="alert"]')?.textContent;
+  expect(summary).toMatch(/^Notes: Compiler failed/); expect(summary).toHaveLength(200);
+  expect(container.querySelector("details")?.textContent).toContain(first + "\nerror TS1234\nshell: Startup failed");
+});
 it("has one primary transition based on observed targets, never inferred from a successful request", async () => {
   await render(); expect(button("Return to packages")).toBeUndefined();
-  await click("Use workspace");
+  await switchTargets("Use workspace");
   expect(developmentRequest).toHaveBeenCalledWith("/workspace/execution-target", { kind: "workspace", requestId: expect.any(String) }, expect.any(AbortSignal));
   expect(button("Return to packages")).toBeUndefined();
   applicationRows = [currentRow(), currentRow("shell")]; await render();
-  expect(button("Use workspace")).toBeUndefined(); await click("Return to packages");
+  expect(button("Use workspace")).toBeUndefined(); await switchTargets("Return to packages");
   expect(vi.mocked(developmentRequest).mock.calls.at(-1)?.[1]).toMatchObject({ kind: "package" });
   expect(window.open).not.toHaveBeenCalled();
 });
@@ -53,12 +120,47 @@ it("avoids a duplicate per-app action in a single-app workspace", async () => {
   applicationRows = [row()]; await render(true, true);
   expect(appButton()).toBeNull(); expect(button("Use workspace")).toBeDefined();
 });
+it("recovers a settled launch failure, offers package Return, and reads logs only on demand", async () => {
+  vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Lost response"));
+  await render(); await switchTargets("Use workspace");
+  const [path, selection] = vi.mocked(developmentRequest).mock.calls[0];
+  applicationRows = [row("notes", { current: row().target, runtimeState: "stopped", startError: "Compile failed", canReadLogs: true }), currentRow("shell")];
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ state: "failed", apps: [
+    { appId: "notes", state: "failed", code: "dev_workspace_start_failed", error: "Compile failed" },
+    { appId: "shell", state: "completed" },
+  ] });
+  await remount();
+  expect(vi.mocked(developmentRequest).mock.calls.slice(1).map(([path, body]) => [path, body]))
+    .toEqual([[`${path}/${selection!.requestId}`, undefined]]);
+  expect(localStorage.getItem(storageKey)).toBeNull();
+  expect(button("Try again")).toBeUndefined(); expect(button("Return to packages").disabled).toBe(false);
+  expect(container.querySelector('[aria-label="Notes"]')?.textContent).toMatch(/Stopped.*This workspace.*Compile failed/);
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ text: "Build output line 21" });
+  await click("Logs"); expect(dialog()!.textContent).toContain("Build output line 21");
+  expect(developmentRequest).toHaveBeenLastCalledWith("/workspace/applications/notes/logs", undefined, expect.any(AbortSignal));
+  applicationRows = [row("notes", { current: row().target, runtimeState: "stopped", startError: "Compile failed", canReadLogs: false }), currentRow("shell")];
+  await render(); expect(dialog()).toBeNull(); expect(button("Logs")).toBeUndefined();
+  applicationRows = [currentRow(), currentRow("shell")];
+  await render(); expect(container.textContent).not.toContain("Compile failed");
+  expect(button("Return to packages").disabled).toBe(false);
+});
+
+it("retains group retry when a sibling failed before binding", async () => {
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ state: "failed", apps: [
+    { appId: "notes", state: "failed", code: "dev_workspace_start_failed", error: "Broken build" },
+    { appId: "shell", state: "failed", code: "backup_required", error: "Backup failed" },
+  ] });
+  await render(); await switchTargets("Use workspace");
+  expect(button("Try again").disabled).toBe(false); expect(localStorage.getItem(storageKey)).not.toBeNull();
+  expect(container.querySelector("details")?.textContent).toContain("shell: Backup failed");
+});
+
 it("replaces the primary action with one retry and preserves the original request after partial failure", async () => {
-  vi.mocked(developmentRequest).mockResolvedValueOnce(failed); await render(); await click("Use workspace");
+  vi.mocked(developmentRequest).mockResolvedValueOnce(failed); await render(); await switchTargets("Use workspace");
   const original = vi.mocked(developmentRequest).mock.calls[0][1];
   expect(button("Use workspace")).toBeUndefined(); expect(button("Return to packages")).toBeUndefined();
   expect(button("Retry runtime switch")).toBeUndefined(); expect(appButton()).toBeNull();
-  expect(container.querySelector('[role="alert"]')?.textContent).toBe("The switch could not be completed.");
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe("Shell: Build failed");
   expect(container.querySelector("details")?.textContent).toContain("Build failed");
   vi.mocked(developmentRequest).mockResolvedValueOnce(failed).mockResolvedValueOnce(finished);
   await click("Try again");
@@ -67,21 +169,21 @@ it("replaces the primary action with one retry and preserves the original reques
   expect(localStorage.getItem(storageKey)).toBeNull();
 });
 it("resolves response loss with GET and does not repeat an already completed mutation", async () => {
-  vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Connection lost")); await render(); await click("Use workspace");
+  vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Connection lost")); await render(); await switchTargets("Use workspace");
   const original = vi.mocked(developmentRequest).mock.calls[0][1]!;
   await click("Try again");
   expect(developmentRequest).toHaveBeenLastCalledWith(`/workspace/execution-target/${original.requestId}`, undefined, expect.any(AbortSignal));
   expect(developmentRequest).toHaveBeenCalledTimes(2);
 });
 it("replays the same UUID only when Core confirms that an uncertain submission never arrived", async () => {
-  vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Connection lost")); await render(); await click("Use workspace");
+  vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Connection lost")); await render(); await switchTargets("Use workspace");
   const original = vi.mocked(developmentRequest).mock.calls[0][1];
   vi.mocked(developmentRequest).mockRejectedValueOnce(new DevelopmentRequestError("Missing", "execution_not_found", 404)).mockResolvedValueOnce(finished);
   await click("Try again"); expect(vi.mocked(developmentRequest).mock.calls[2][1]).toEqual(original);
 });
 it("automatically follows a running request after reload without resubmitting", async () => {
   vi.useFakeTimers();
-  vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Connection lost")); await render(); await click("Use workspace");
+  vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Connection lost")); await render(); await switchTargets("Use workspace");
   const original = vi.mocked(developmentRequest).mock.calls[0][1]!;
   vi.mocked(developmentRequest).mockResolvedValueOnce({ state: "running", apps: [] }).mockResolvedValueOnce(finished);
   await remount(); expect(container.textContent).toContain("Switching applications");
@@ -91,13 +193,13 @@ it("automatically follows a running request after reload without resubmitting", 
 });
 it("clears a superseded request and creates a new intent only after a new user action", async () => {
   vi.mocked(developmentRequest).mockResolvedValueOnce({ state: "failed", apps: [{ state: "failed", code: "dev_selection_changed" }] });
-  await render(); await click("Use workspace"); const first = vi.mocked(developmentRequest).mock.calls[0][1]!;
-  expect(button("Try again")).toBeUndefined(); await click("Use workspace");
+  await render(); await switchTargets("Use workspace"); const first = vi.mocked(developmentRequest).mock.calls[0][1]!;
+  expect(button("Try again")).toBeUndefined(); await switchTargets("Use workspace");
   expect(vi.mocked(developmentRequest).mock.calls[1][1]!.requestId).not.toBe(first.requestId);
 });
 it("switches from a legacy runtime to an exact per-app worktree and retains it through recovery", async () => {
   applicationRows = [row("notes", { current: { kind: "legacy", runtime: "dev" } }), row("shell")];
-  vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Connection lost")); await render(); await act(async () => appButton().click());
+  vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Connection lost")); await render(); await act(async () => appButton().click()); await confirmSwitch();
   const [path, original] = vi.mocked(developmentRequest).mock.calls[0];
   expect(path).toBe("/workspace/applications/notes/execution-target");
   expect(original).toEqual({ requestId: expect.any(String), kind: "workspace", workspaceId: "workspace", worktreeId: "a".repeat(64), runtime: "dev" });
@@ -112,7 +214,7 @@ it("opens access confirmation immediately and automatically continues the same s
   const approval = deferred<never>();
   vi.mocked(approveWorkspaceAccess).mockImplementation(async (_review, submitted) => { submitted({ status: "pending", approvalUrl: "https://core.test/confirm" } as never); return approval.promise; });
   vi.mocked(developmentRequest).mockResolvedValueOnce(needsReview).mockResolvedValueOnce(finished);
-  await render(); await click("Use workspace");
+  await render(); await switchTargets("Use workspace");
   expect(window.open).toHaveBeenCalledOnce(); expect(window.open).toHaveBeenCalledWith("https://core.test/confirm", "_blank", expect.stringContaining("noopener"));
   expect(button("Review access")).toBeUndefined(); expect(button("Use workspace")).toBeUndefined();
   expect(container.textContent).toContain("Waiting for access confirmation");
@@ -123,7 +225,7 @@ it("opens access confirmation immediately and automatically continues the same s
 it("reviews each app in a partial group and resumes the original group once", async () => {
   const otherReview = { workspaceManifest: { appId: "shell", planDigest: "other" } };
   vi.mocked(developmentRequest).mockResolvedValueOnce({ ...needsReview, apps: [...needsReview.apps, { appId: "shell", state: "review-required", review: otherReview }] });
-  await render(); await click("Use workspace");
+  await render(); await switchTargets("Use workspace");
   expect(vi.mocked(approveWorkspaceAccess).mock.calls.map(call => call[0])).toEqual([review, otherReview]);
   expect(developmentRequest).toHaveBeenCalledTimes(2);
   expect(vi.mocked(developmentRequest).mock.calls[1][1]).toEqual(vi.mocked(developmentRequest).mock.calls[0][1]);
@@ -131,7 +233,7 @@ it("reviews each app in a partial group and resumes the original group once", as
 it("does not continue after denial and leaves only a retry without inventing package return", async () => {
   vi.mocked(developmentRequest).mockResolvedValueOnce(needsReview);
   vi.mocked(approveWorkspaceAccess).mockResolvedValueOnce({ status: "denied" } as never);
-  await render(); await click("Use workspace");
+  await render(); await switchTargets("Use workspace");
   expect(developmentRequest).toHaveBeenCalledOnce(); expect(button("Try again")).toBeDefined();
   expect(button("Return to packages")).toBeUndefined(); expect(container.querySelector('[aria-label="Other application actions"]')).toBeNull();
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("not approved");
@@ -140,7 +242,7 @@ it("keeps a confirmation link reachable when the window is isolated or blocked, 
   vi.mocked(window.open).mockReturnValue(null);
   const approval = deferred<never>();
   vi.mocked(approveWorkspaceAccess).mockImplementation(async (_review, submitted) => { submitted({ status: "pending", approvalUrl: "https://core.test/confirm" } as never); return approval.promise; });
-  vi.mocked(developmentRequest).mockResolvedValueOnce(needsReview); await render(); await click("Use workspace");
+  vi.mocked(developmentRequest).mockResolvedValueOnce(needsReview); await render(); await switchTargets("Use workspace");
   expect(container.querySelector("a")?.textContent).toBe("Open access confirmation");
   await click("Cancel"); await act(async () => approval.resolve({ status: "succeeded" } as never));
   expect(developmentRequest).toHaveBeenCalledOnce(); expect(button("Try again")).toBeDefined();
@@ -148,7 +250,7 @@ it("keeps a confirmation link reachable when the window is isolated or blocked, 
 it("retains the approval request identity across reload, without losing the original switch", async () => {
   const retained = { id: "approval", expiresAt: new Date(Date.now() + 60000).toISOString() };
   vi.mocked(approveWorkspaceAccess).mockImplementationOnce(async (_review, _submitted, options) => { options?.remember?.(retained); throw new DOMException("Closed", "AbortError"); });
-  vi.mocked(developmentRequest).mockResolvedValueOnce(needsReview); await render(); await click("Use workspace");
+  vi.mocked(developmentRequest).mockResolvedValueOnce(needsReview); await render(); await switchTargets("Use workspace");
   vi.mocked(developmentRequest).mockResolvedValueOnce(needsReview);
   await remount();
   expect(approveWorkspaceAccess).toHaveBeenCalledOnce(); expect(button("Try again")).toBeDefined();
@@ -158,12 +260,12 @@ it("retains the approval request identity across reload, without losing the orig
   expect(vi.mocked(developmentRequest).mock.calls.at(-1)?.[1]).toEqual(vi.mocked(developmentRequest).mock.calls[0][1]);
 });
 it("stops repeated identical access challenges after approval instead of looping popups", async () => {
-  vi.mocked(developmentRequest).mockResolvedValue(needsReview); await render(); await click("Use workspace");
+  vi.mocked(developmentRequest).mockResolvedValue(needsReview); await render(); await switchTargets("Use workspace");
   expect(approveWorkspaceAccess).toHaveBeenCalledOnce(); expect(developmentRequest).toHaveBeenCalledTimes(2);
   expect(button("Try again")).toBeDefined();
 });
 it("blocks a paused workspace retry while retaining observed package recovery in the alternative menu", async () => {
-  vi.mocked(developmentRequest).mockResolvedValueOnce(failed); await render(); await click("Use workspace");
+  vi.mocked(developmentRequest).mockResolvedValueOnce(failed); await render(); await switchTargets("Use workspace");
   applicationRows = [currentRow(), row("shell")]; await render(false);
   expect(button("Try again").disabled).toBe(true); expect(button("Try again").title).toContain("Resume");
   expect(container.querySelector('[aria-label="Other application actions"]')).not.toBeNull();
@@ -171,7 +273,8 @@ it("blocks a paused workspace retry while retaining observed package recovery in
 });
 it("hides all switch controls during submission and ignores duplicate clicks", async () => {
   const response = deferred<never>(); vi.mocked(developmentRequest).mockReturnValueOnce(response.promise);
-  await render(); const use = button("Use workspace"); await act(async () => { use.click(); use.click(); });
+  await render(); await click("Use workspace");
+  const confirm = dialogButton("Confirm switch"); await act(async () => { confirm.click(); confirm.click(); });
   expect(developmentRequest).toHaveBeenCalledOnce(); expect(container.querySelectorAll("button")).toHaveLength(0);
   await act(async () => response.resolve(finished as never));
 });
@@ -202,7 +305,7 @@ it("keeps lifecycle state separate from workspace selection and disables unavail
 it("keeps an explicit cancellation paused after reload and never applies a late approval", async () => {
   const approval = deferred<never>();
   vi.mocked(approveWorkspaceAccess).mockReturnValueOnce(approval.promise);
-  vi.mocked(developmentRequest).mockResolvedValueOnce(needsReview); await render(); await click("Use workspace");
+  vi.mocked(developmentRequest).mockResolvedValueOnce(needsReview); await render(); await switchTargets("Use workspace");
   await click("Cancel");
   vi.mocked(developmentRequest).mockResolvedValueOnce(needsReview); await remount();
   await act(async () => approval.resolve({ status: "succeeded" } as never));
@@ -218,6 +321,6 @@ it("uses Core receipt status even when COOP makes the popup handle appear closed
     return { status: "succeeded" } as never;
   });
   vi.mocked(developmentRequest).mockResolvedValueOnce(needsReview);
-  await render(); await click("Use workspace"); expect(developmentRequest).toHaveBeenCalledTimes(2);
+  await render(); await switchTargets("Use workspace"); expect(developmentRequest).toHaveBeenCalledTimes(2);
   expect(button("Try again")).toBeUndefined();
 });

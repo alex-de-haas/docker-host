@@ -274,6 +274,7 @@ internal sealed partial class CoreLifecycleService
         if (operation is { Active: true, ExecutionManifest: not null } &&
             app.SelectedRuntime == operation.TargetRuntime && !operation.Phase.StartsWith("return-", StringComparison.Ordinal))
             await AppDevStore.SaveAsync(paths, operation with { RunningManifest = operation.ExecutionManifest,
+                Error = operation.WorkspaceStartAfterBinding ? null : operation.Error,
                 PriorExecutionConfigurationHash = null, ExecutionProjectionPending = false }, ct);
     }
 }

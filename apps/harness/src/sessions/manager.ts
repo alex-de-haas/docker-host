@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { taskReferenceKey } from "@hosty-sdk/app/tasks";
 import { TASK_ORCHESTRATION_GUIDE, taskActions } from "../tasks/tools.js";
 import { decisionSnapshot, continuationInput, type DecisionWait } from "../decisions/waits.js";
@@ -48,13 +49,16 @@ import { readOnlyToolNames } from "../mcp/readonly.js";
 import { AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentAttachment, type AgentMcpSelection, type AgentPendingDecision, type AgentRunSnapshot, type AgentSource, type AgentRunControlInput, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest, type AgentWatchItem } from "@hosty-sdk/app/agent";
 import type { MediatedProviderInvocation } from "@hosty-sdk/app/providers";
 import { CoreAgentBackend } from "../agent-providers/core.js";
+import { ProviderHistoryFeeds, type HistoryContactIssue, type ProviderHistoryGap } from "../agent-providers/history.js";
+import type { AgentHistoryObservation, AgentHistorySessionState, AgentProviderRef } from "@hosty-sdk/app/agent";
 import { agentSelectionId } from "../agent-providers/directory.js";
 import type { AgentConnectionSelection } from "../agent-providers/types.js";
 import { withAgentAuthority } from "../agent-providers/context.js";
 import { ProviderHarnessRun, type ProviderRunContext } from "../agent-providers/run.js";
 import { providerDecisionCard, providerDecisionCardId, type QuestionAnswers } from "../agent-providers/decision-identity.js";
-import { createAgentRunProjection, reduceAgentRunProjection, type AgentRunProjection } from "../agent-providers/projection.js";
-import { nativeAgentStatus, nativeAgentStatusIdentity, providerAgentKey, providerTranscriptSource, transcriptToolId, type NativeAgentStatusEvent } from "../agent-providers/transcript-source.js";
+import { reconcileHistoryProjection, type HistoryProjectionClock } from "../agent-providers/history-projection.js";
+import { createAgentRunProjection, historyMessages, projectHistoryFact, reduceAgentRunProjection, type AgentRunProjection } from "../agent-providers/projection.js";
+import { nativeAgentDetails, nativeAgentStatus, nativeAgentStatusIdentity, providerAgentKey, providerTranscriptSource, transcriptToolId, type NativeAgentStatusEvent } from "../agent-providers/transcript-source.js";
 import { ProviderExecution, type ProviderExecutionState } from "../agent-providers/execution.js";
 import { readFile } from "node:fs/promises";
 import type { McpProxy, MintedToken } from "../mcp/proxy.js";
@@ -105,6 +109,21 @@ export interface SessionListener {
   (event: StoredEvent): void;
 }
 
+type HistoryPosition = { sessionId: string; epoch: string; archiveGeneration?: string; position: number };
+function positionKey(identity: string, value: HistoryPosition): string {
+  return JSON.stringify([identity, value.sessionId, value.epoch, value.archiveGeneration, value.position]);
+}
+function projectedIds(events: StoredEvent[]): Set<string> {
+  const seen = new Set<string>();
+  for (const event of events) {
+    if (typeof event.providerEventId === "string") {
+      seen.add(event.providerEventId);
+      if (event.providerHistoryPosition) seen.add(positionKey(event.providerEventId, event.providerHistoryPosition as HistoryPosition));
+    }
+  }
+  return seen;
+}
+
 interface LiveSession {
   suggestionAllowed?: boolean;
   suggestionContext?: string;
@@ -147,6 +166,11 @@ interface LiveSession {
    * which is the only safe default — an unknown tool asks.
    */
   autoAllowed: Set<string>;
+}
+
+function workspaceConversation(record: Pick<SessionRecord, "id" | "title">) {
+  const title = (record.title ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").trim().slice(0, 200);
+  return { sessionId: record.id, viewerPath: `/assistant?session=${encodeURIComponent(record.id)}`, title: title || "Untitled session" };
 }
 
 export class SessionManager {
@@ -249,7 +273,11 @@ export class SessionManager {
   private readonly suggestionPreferenceGenerations = new Map<string, number>();
   private readonly providerProjections = new Map<string, AgentRunProjection>();
   private readonly providerStates = new Map<string, ProviderExecutionState>();
+  private readonly historyFeeds?: ProviderHistoryFeeds;
+  private historyIndex?: Promise<void>;
+  private historyIndexIncomplete = false;
   private readonly providerFiles = new Map<string, Array<{ name: string; path: string }>>();
+  private readonly importingPosition = new AsyncLocalStorage<{ chatId: string; runId: string; position: HistoryPosition; replayed: boolean }>();
   private readonly providerProjectedIds = new Map<string, Set<string>>();
   private readonly providerAgentStatuses = new Map<string, Map<string, NativeAgentStatusEvent>>();
   private readonly operations = new Map<string, Promise<unknown>>();
@@ -346,6 +374,13 @@ export class SessionManager {
     readonly profiles: ProfileStore | null = null,
     private readonly agentBackend: CoreAgentBackend | null = null,
   ) {
+    if (agentBackend) this.historyFeeds = new ProviderHistoryFeeds(store, agentBackend,
+      (id, provider, fact) => this.serialize(id, () => this.importInstallationObservation(id, provider, fact)),
+      (id, issue) => this.updateProviderContact(id, issue), id => {
+        const handle = this.live.get(id)?.run;
+        if (handle instanceof ProviderHarnessRun) handle.onInstallationHistoryUnsupported();
+      }, (id, gaps) => this.updateProviderGaps(id, gaps),
+      (id, provider, summary) => this.serialize(id, () => this.applyHistoryState(id, provider, summary)));
     this.messageQueues = new MessageQueue(store);
     this.suggestionHistory = new SuggestionHistory(store, (id, payload) => this.append(id, payload));
     this.observations = new AgentObservations(store);
@@ -418,7 +453,7 @@ export class SessionManager {
       if (!credential) throw new AppContextError(401, "provider_credentials_required", "Refresh Hosty sign-in to observe or control this provider execution.");
       return credential;
     };
-    const client = backend.client(selection.provider, authority);
+    const client = backend.client(selection.provider, authority, workspaceConversation(session.record));
     const workflow = await this.providerWorkflowBinding(options.sessionId);
     if (session.record.taskExecutionId && !workflow)
       throw new AppContextError(409, "task_workflow_setup_required", "Approve Harness's optional task-executor provider permission in Core before running this task. General Core MCP access is separate.");
@@ -430,7 +465,21 @@ export class SessionManager {
       ? structuredClone(state.appliedConfiguration?.value) : undefined;
     if (acknowledged?.instructions) acknowledged.instructions = acknowledged.instructions.map(block => block.text.startsWith(PROVIDER_SYSTEM_PROMPT)
       ? { ...block, text: PROVIDER_SYSTEM_PROMPT + (workflow ? "\n\n" + TASK_ORCHESTRATION_GUIDE : "") } : block);
+    this.historyFeeds?.bind(selection.provider, state.sessionId, session.record.id, session.record.createdBy);
     return { client, state, ...(workflow ? { workflow } : {}),
+      installationHistory: async () => {
+        if (!this.historyFeeds) return false;
+        // Start independently of user-token/capability reads, including the first run admitted
+        // after startup. Only an explicit unsupported route selects the legacy observer.
+        await this.indexInstallationHistory();
+        return this.historyFeeds.start(selection.provider, true);
+      },
+      observationContact: async (runId, error) => {
+        if (error === null && !session.record.providerHistoryContact) return;
+        await this.updateProviderContact(options.sessionId, error === null ? null
+          : (error instanceof AgentApiError || error instanceof AppContextError) && [401, 403].includes(error.status) ? "denied"
+          : error instanceof AgentApiError && /invalid|identity_changed|budget/.test(error.code) ? "invalid" : "unavailable", runId);
+      },
       configuration: acknowledged ? { ...structuredClone(acknowledged), connection: selection.connection,
         approvalMode: session.record.autonomy ?? acknowledged.approvalMode ?? "normal" } : { connection: selection.connection,
         instructions: (options.instructionSources ?? []).map((block, index) => ({ id: `harness-${index + 1}`, text: block.text })),
@@ -444,7 +493,7 @@ export class SessionManager {
           session.record.providerExecution = structuredClone(value);
           session.record.harnessSessionId = value.sessionId;
         },
-        observe: (item, value) => this.receiveProviderItem(session, item, value),
+        observe: (item, value, replayed) => this.receiveProviderItem(session, item, value, replayed),
       },
       input: async text => {
         const attachments: AgentAttachment[] = [];
@@ -547,6 +596,24 @@ export class SessionManager {
     return { targets };
   }
 
+  private async workspaceOriginRuns(id: string, retained: ProviderExecutionState): Promise<Record<string, string>> {
+    const bindings = new Map<string, string>();
+    const observe = (runId: string, generation: string, provider: AgentProviderRef) => {
+      const target = retained.selection.provider;
+      if (target.appId !== provider.appId || target.installationId !== provider.installationId || target.key !== provider.key) return;
+      if (bindings.has(runId) && bindings.get(runId) !== generation)
+        throw new AppContextError(409, "origin_stale", "The conversation records conflicting generations for a provider run.");
+      bindings.set(runId, generation);
+    };
+    if (retained.run) observe(retained.run.ref.id, retained.run.generation, retained.run.ref.provider);
+    for (const event of await this.store.readEvents(id)) {
+      const source = event.providerSource as Partial<ReturnType<typeof providerTranscriptSource>> | undefined;
+      if (source?.provider && typeof source.runId === "string" && typeof source.generation === "string")
+        observe(source.runId, source.generation, source.provider);
+    }
+    return Object.fromEntries(bindings);
+  }
+
   private async providerWorkflowBinding(id: string): Promise<AgentSessionWorkflowBinding | undefined> {
     const appId = process.env.HOSTY_APP_ID, installationId = process.env.HOSTY_APP_INSTALLATION_ID;
     if (!this.taskAction || !appId || !installationId) return;
@@ -600,13 +667,18 @@ export class SessionManager {
     return { context, execution: new ProviderExecution(context.client, context.state, context.persistence) };
   }
 
-  private async ensureProviderRun(session: LiveSession): Promise<ProviderHarnessRun> {
+  private async ensureProviderRun(session: LiveSession, observationOnly = false): Promise<ProviderHarnessRun> {
     if (session.run instanceof ProviderHarnessRun) return session.run;
     if (!session.record.selection) throw new AppContextError(409, "provider_cutover_required", "Choose a current provider for a new conversation.");
     const options = { sessionId: session.record.id, cwd: this.workDir, onEvent: () => {} };
     const run = new ProviderHarnessRun(() => this.providerContext(session.record.selection!, options), options);
     session.run = run;
-    await run.attach();
+    try { await run.attach(observationOnly); }
+    catch (error) {
+      if (session.run === run) session.run = null;
+      await run.detach();
+      throw error;
+    }
     return run;
   }
 
@@ -628,15 +700,266 @@ export class SessionManager {
     return execution.read(false);
   }
 
-  private receiveProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState): Promise<void> {
-    const handled = this.serialize(session.record.id, () => this.projectProviderItem(session, item, value));
+  private async updateProviderContact(id: string, reason: HistoryContactIssue | null, expectedRunId?: string): Promise<void> {
+    await this.serialize(id, async () => {
+      if (this.stopping) return;
+      const record = this.live.get(id)?.record ?? await this.store.readRecord(id);
+      if (!record || record.storageRecovery) return;
+      const state = this.providerStates.get(id) ?? record.providerExecution;
+      const run = state?.run;
+      if (!state?.runId || expectedRunId && state.runId !== expectedRunId) return;
+      const contact = reason && !run?.stopConfirmed ? { runId: state.runId, observedAt: run?.observedAt ?? record.updatedAt, reason } : undefined;
+      if (record.providerHistoryContact?.reason === contact?.reason && record.providerHistoryContact?.runId === contact?.runId) return;
+      record.providerHistoryContact = contact;
+      await this.store.saveRecord(record);
+      const live = this.live.get(id);
+      if (live) this.fanOut(live, { seq: record.lastEventSeq, ts: record.updatedAt, type: "session_status",
+        status: record.status, providerHistoryContact: contact ?? null });
+    });
+  }
+
+  async refreshProviderHistory(id: string, user: string, credential?: string): Promise<void> {
+    const session = await this.requireLive(id);
+    if (session.record.createdBy !== user) throw new SessionNotFoundError(id);
+    const state = this.providerStates.get(id);
+    if (!state?.runId || !this.historyFeeds) throw new AppContextError(409, "run_not_found", "This chat has no retained provider run.");
+    await this.indexInstallationHistory(true);
+    if (await this.historyFeeds.refresh(state.selection.provider)) return;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Sign in to read this provider's retained run.");
+    session.workspaceCredential = session.credential = credential;
+    const { execution } = await this.publicExecution(session);
+    const snapshot = await execution.read("replay");
+    await this.updateProviderContact(id, null, snapshot.ref.id);
+    if (!snapshot.stopConfirmed) {
+      await this.serialize(id, async () => {
+        const handle = await this.ensureProviderRun(session, true);
+        handle.retryObservation();
+      });
+    }
+  }
+
+  private updateProviderGaps(id: string, gaps: ProviderHistoryGap[]): Promise<void> {
+    return this.serialize(id, async () => {
+      const record = this.live.get(id)?.record ?? await this.store.readRecord(id);
+      if (!record || JSON.stringify(record.providerHistoryGaps ?? []) === JSON.stringify(gaps)) return;
+      record.providerHistoryGaps = gaps.length ? gaps : undefined;
+      await this.store.saveRecord(record);
+      const live = this.live.get(id);
+      if (live) this.fanOut(live, { type: "provider_history_gaps", seq: record.lastEventSeq,
+        ts: new Date().toISOString(), gaps });
+    });
+  }
+
+  private async applyHistoryState(id: string, provider: AgentProviderRef, summary: AgentHistorySessionState): Promise<void> {
+    const { snapshot } = summary, state = this.providerStates.get(id);
+    if (!state || state.runId !== snapshot.ref.id || state.sessionId !== summary.sessionId) return;
+    if (state.run && state.run.generation !== snapshot.generation) return;
+    await this.importProviderFact(id, provider, { ...summary, runId: snapshot.ref.id, generation: snapshot.generation,
+      item: { kind: "snapshot", snapshot }, cursor: snapshot.cursor, replayed: true }, undefined, true);
+  }
+
+  /** Import is serialized with operator actions on the original chat; it never creates a chat. */
+  private async importInstallationObservation(id: string, provider: AgentProviderRef, fact: AgentHistoryObservation & { replayed?: boolean; recoveryGeneration?: string }): Promise<void> {
+    const position = fact.sessionPosition !== undefined && fact.epoch
+      ? { sessionId: fact.sessionId, epoch: fact.epoch, position: fact.sessionPosition, archiveGeneration: fact.recoveryGeneration } : undefined;
+    if (position) return this.importingPosition.run({ chatId: id, runId: fact.runId, position, replayed: fact.replayed === true },
+      () => this.importProviderFact(id, provider, fact, position));
+    return this.importProviderFact(id, provider, fact);
+  }
+
+  private async importProviderFact(id: string, provider: AgentProviderRef, fact: AgentHistoryObservation & { replayed?: boolean }, position?: HistoryPosition, stateOnly = false): Promise<void> {
+    if (this.stopping) throw new Error("Installation history is stopping.");
+    if (fact.item.kind === "event" && fact.item.event.type === "message.delta") {
+      const live = this.live.get(id), state = this.providerStates.get(id);
+      if (live?.record.createdBy === fact.userId && state?.sessionId === fact.sessionId && state.runId === fact.runId
+        && state.run && state.run.generation === fact.generation && !state.run.stopConfirmed) {
+        const event = fact.item.event;
+        this.fanOut(live, { seq: live.record.lastEventSeq, ts: event.occurredAt, type: "assistant_delta",
+          text: String(event.data.text ?? ""), providerSource: providerTranscriptSource(state.run, event.source) });
+      }
+      return;
+    }
+    if (!this.live.has(id) && !await this.store.readRecord(id)) return;
+    const session = await this.requireLive(id);
+    const state = this.providerStates.get(id);
+    this.store.assertWritable(id);
+    if (!state) throw new Error("The local provider execution binding needs recovery.");
+    if (session.record.createdBy !== fact.userId || state.sessionId !== fact.sessionId
+      || state.selection.provider.installationId !== provider.installationId || state.selection.provider.appId !== provider.appId
+      || state.selection.provider.key !== provider.key) return;
+    const retained = await this.store.readHistoryRun(id, fact.runId);
+    if (retained && (retained.principalId !== fact.principalId || retained.snapshot.generation !== fact.generation))
+      throw new Error("The provider changed the recorded history owner or execution generation.");
+    if (position && fact.item.kind === "event" && fact.item.event.type === "tool.completed"
+      && (!fact.item.event.data.name || fact.item.event.data.name === "unknown")) {
+      const event = fact.item.event, toolId = String(event.data.toolCallId);
+      const previous = retained?.snapshot.tools?.find(tool => tool.id === toolId && tool.source?.agentId === event.source.agentId);
+      const name = previous?.name ?? (await this.outputCalls(session)).get(transcriptToolId(fact.runId, event.source, toolId)) ?? "unknown";
+      fact = { ...fact, item: { ...fact.item, event: { ...event, data: { ...event.data, name } } } };
+    }
+    const { item } = fact;
+    if (fact.sourceHistoryIncomplete) {
+      const key = fact.runId + ":source-history-incomplete";
+      const seen = this.providerProjectedIds.get(id) ?? projectedIds(await this.store.readEvents(id));
+      this.providerProjectedIds.set(id, seen);
+      if (!seen.has(key)) {
+        await this.append(id, { type: "notice", message: "Some earlier events are unavailable in the provider's retained history.",
+          providerEventId: key, providerGeneration: fact.generation,
+          providerSource: { provider, runId: fact.runId, generation: fact.generation, agentId: "root" }, providerHistoryEarlier: state.runId !== fact.runId });
+        seen.add(key);
+      }
+    }
+    const snapshot = item.kind === "snapshot" ? item.snapshot
+      : item.event.type === "run.updated" ? item.event.data.snapshot as AgentRunSnapshot : undefined;
+    const sourceSequence = BigInt(item.kind === "event" ? item.event.sequence : item.snapshot.lastSequence);
+    // Latest state may already include this fact. Its original transcript slot still needs filling.
+    const renderFact = async () => {
+      if (position) await this.importHistoricalTranscript(session, projectHistoryFact(provider, fact), item, state.runId !== fact.runId, position);
+    };
+    if (position || stateOnly) {
+      const active = state.run?.ref.id === fact.runId && state.run.generation === fact.generation ? state.run : undefined;
+      const useActive = active && (!retained || BigInt(active.lastSequence) >= BigInt(retained.snapshot.lastSequence));
+      const held = useActive ? active : retained?.snapshot;
+      const previous = held ?? snapshot;
+      if (!previous) return renderFact();
+      const priorClock = held ? (useActive ? state.historyClock : retained?.clock) : {
+        runId: fact.runId, generation: fact.generation, lifecycle: "0", details: "0", changes: {},
+      };
+      const reconciled = reconcileHistoryProjection(previous, priorClock, item, stateOnly);
+      if (reconciled) {
+        const { projection, clock } = reconciled;
+        if (state.runId === fact.runId && (!state.run || state.run.generation === fact.generation)) {
+          const advances = !held || sourceSequence > BigInt(held.lastSequence);
+          const applied: AgentWatchItem = advances && item.kind === "event" ? item : { kind: "snapshot", snapshot: projection.snapshot };
+          const handle = session.run;
+          const partial = stateOnly || clock.details !== clock.lifecycle && !projection.snapshot.result;
+          await this.projectProviderItem(session, applied, state, true, projection, fact.replayed || !advances, partial, clock);
+          if (!fact.replayed && advances && handle instanceof ProviderHarnessRun) handle.onHistoryObserved(item);
+        }
+        await renderFact();
+        return this.store.saveHistoryRun(id, fact.principalId, projection.snapshot, clock);
+      }
+      return renderFact();
+    }
+    if (retained && (sourceSequence < BigInt(retained.snapshot.lastSequence)
+      || sourceSequence === BigInt(retained.snapshot.lastSequence) && item.kind === "event")) return renderFact();
+    const previous = retained?.snapshot;
+    const projection = previous ? reduceAgentRunProjection(createAgentRunProjection(previous), item, true)
+      : snapshot ? createAgentRunProjection(snapshot) : undefined;
+    if (!projection) {
+      throw new Error("The provider did not supply the first snapshot for this run's history.");
+    }
+    const current = state.runId === fact.runId && (!state.run || state.run.generation === fact.generation
+      && sourceSequence >= BigInt(state.run.lastSequence) && BigInt(projection.snapshot.revision) >= BigInt(state.run.revision));
+    if (current) {
+      const handle = session.run;
+      await this.projectProviderItem(session, item, state, true, projection, fact.replayed);
+      if (!fact.replayed && handle instanceof ProviderHarnessRun) handle.onHistoryObserved(item);
+    } else {
+      // Older turns may gain evidence after a newer turn starts. Preserve the origin in the
+      // journal and leave the current turn's controls, status, usage and pending questions alone.
+      await this.importHistoricalTranscript(session, projection, item, state.runId !== fact.runId);
+    }
+    await this.store.saveHistoryRun(id, fact.principalId, projection.snapshot);
+  }
+
+  private async importHistoricalTranscript(session: LiveSession, projection: AgentRunProjection, item: AgentWatchItem, earlier: boolean, position?: HistoryPosition): Promise<void> {
+    const id = session.record.id, snapshot = projection.snapshot, runId = snapshot.ref.id;
+    const seen = this.providerProjectedIds.get(id) ?? projectedIds(await this.store.readEvents(id));
+    const specific = position && item.kind === "event" && item.event.type !== "run.updated" ? item.event : undefined;
+    this.providerProjectedIds.set(id, seen);
+    const append = async (key: string, event: HarnessEvent | ({ type: "approval_decision" | "question_answered" } & Record<string, unknown>), source?: AgentSource) => {
+      const identity = runId + ":" + key;
+      if (seen.has(identity)) {
+        // A prior snapshot or a pre-upgrade chat may have shown this item without its original position.
+        const original = specific && (specific.type === "message.completed" && event.type === "assistant_text"
+          || specific.type === "tool.started" && event.type === "tool_use"
+          || specific.type === "tool.completed" && (event.type === "command_result" || event.type === "tool_result")
+          || specific.type === "decision.requested" && (event.type === "approval_request" || event.type === "question_request")
+          || specific.type === "decision.resolved" && (event.type === "approval_decision" || event.type === "question_answered"));
+        if (position && original && !seen.has(positionKey(identity, position))) {
+          const key = positionKey(identity, position);
+          // Recover display content clipped by the summary. Status-only completions carry no replacement.
+          const content = event.type === "assistant_text" && typeof specific.data.text === "string" ? { messageText: event.text }
+            : event.type === "tool_result" && typeof specific.data.output === "string"
+              ? { toolOutput: event.output, toolOutputTruncated: event.truncated === true } : {};
+          await this.append(id, { type: "provider_history_order", target: identity, providerEventId: key, providerHistoryPosition: position, ...content });
+          seen.add(key);
+        }
+        return;
+      }
+      await this.append(id, { ...event, ts: item.kind === "event" ? item.event.occurredAt : snapshot.observedAt,
+        providerSource: providerTranscriptSource(snapshot, source), providerHistoryEarlier: earlier,
+        providerEventId: identity, providerGeneration: snapshot.generation });
+      seen.add(identity);
+    };
+    for (const { source, key, event } of nativeAgentDetails(item)) await append(key, event, source);
+    if (item.kind === "snapshot" || item.event.type === "run.updated" || item.event.type === "agent.updated") {
+      for (const agent of snapshot.agents ?? []) if (agent.parentAgentId !== undefined
+        && (item.kind === "snapshot" || item.event.type !== "agent.updated" || item.event.source.agentId === agent.agentId)) {
+        const status = nativeAgentStatus(snapshot, agent);
+        const known = this.providerAgentStatuses.get(id)?.get(providerAgentKey(status.providerSource));
+        if (!earlier && known?.sourceSequence && BigInt(known.sourceSequence) >= BigInt(snapshot.lastSequence)) continue;
+        await append(`archived-agent:${agent.agentId}:${snapshot.lastSequence}`, status, agent);
+      }
+    }
+    for (const msg of historyMessages(projection)) if (msg.role === "assistant" && (msg.state === "complete" || msg.state === "interrupted"))
+      await append(`message:${msg.source?.agentId ?? "root"}:${msg.id}${msg.state === "interrupted" ? ":interrupted" : ""}`,
+        { type: "assistant_text", text: msg.text, ...(msg.state === "interrupted" ? { incomplete: true } : {}) }, msg.source);
+    for (const tool of projection.tools) {
+      const key = (tool.source?.agentId ?? "root") + ":" + tool.id, toolUseId = transcriptToolId(runId, tool.source, tool.id);
+      if (!specific || specific.type === "tool.started") await append("tool:" + key, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input }, tool.source);
+      const outcome = !specific && tool.state === "running" && (snapshot.stopConfirmed || snapshot.phase === "interrupted") ? "unknown" : tool.state;
+      if (outcome !== "running" && tool.name !== "unknown" && shouldRetainToolOutput(tool.name) && (outcome !== "unknown"
+        || !["completed", "failed", "cancelled"].some(status => seen.has(`${runId}:output:${key}:${status}`)))) {
+        const result = sanitizeToolResult({ type: "tool_result", toolUseId, status: outcome, output: tool.output ?? "", ...(tool.truncated ? { truncated: true as const } : {}) });
+        if (result) await append(`output:${key}:${outcome}`, result, tool.source);
+      }
+      if (tool.command) {
+        const result = sanitizeCommandResult({ type: "command_result", toolUseId, ...tool.command });
+        if (result) await append(`command:${key}:${tool.command.status}`, result, tool.source);
+      }
+    }
+    const decisions = new Map(snapshot.pending.map(decision => [decision.id, { decision, state: "pending" as string, response: undefined as import("@hosty-sdk/app/agent").AgentResponseInput["response"] | undefined }]));
+    for (const entry of snapshot.decisions ?? []) decisions.set(entry.decision.id, { ...entry, response: entry.response });
+    for (const { decision, response, state } of decisions.values()) {
+      const card = providerDecisionCardId(runId, decision.id);
+      if (decision.kind === "approval") {
+        await append(`decision:${decision.id}:${decision.revision}`, { type: "approval_request", approvalId: card,
+          toolName: decision.toolName ?? "Agent action", input: decision.input, ...(decision.title ? { title: decision.title } : {}) }, decision.source);
+        if (state === "resolved" && response?.kind === "approval") await append("resolved:" + decision.id,
+          { type: "approval_decision", approvalId: card, toolName: decision.toolName ?? "Agent action", decision: response.decision, message: response.message }, decision.source);
+      } else {
+        await append(`decision:${decision.id}:${decision.revision}`, { type: "question_request", questionId: card,
+          questions: this.providerQuestions(decision), blocking: false }, decision.source);
+        if (state === "resolved" && response?.kind === "question") await append("resolved:" + decision.id,
+          { type: "question_answered", questionId: card, answers: response.answers }, decision.source);
+      }
+    }
+    if (!specific && (snapshot.phase === "interrupted" || snapshot.state === "unknown")) await append("observation-unavailable",
+      { type: "notice", message: "Provider observation was interrupted. This run's native exit is unconfirmed." });
+    if (snapshot.stopConfirmed && snapshot.state === "cancelled") await append("cancelled-history",
+      { type: "notice", message: "The provider confirmed cancellation of this run." });
+    if (item.kind === "event" && item.event.type === "warning" && item.event.data.code !== "snapshot_truncated" && typeof item.event.data.message === "string")
+      await append("warning:" + item.event.sequence, { type: "notice", message: item.event.data.message }, item.event.source);
+    if (snapshot.stopConfirmed && snapshot.state === "succeeded") await append("terminal", { type: "result", status: "success" });
+    if (snapshot.stopConfirmed && snapshot.state === "failed")
+      await append("terminal", { type: "error", message: snapshot.result?.error?.message ?? "Provider execution failed." });
+  }
+
+  private receiveProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState, replayed = false): Promise<void> {
+    const handled = this.serialize(session.record.id, async () => {
+      // A slow read may finish behind admission of the next turn on this chat's lane.
+      if (this.providerStates.get(session.record.id)?.runId !== value.runId) return;
+      await this.projectProviderItem(session, item, value, true, undefined, replayed);
+    });
     this.inFlightEvents.add(handled);
     void handled.then(() => this.inFlightEvents.delete(handled), () => this.inFlightEvents.delete(handled));
     return handled;
   }
 
   /** The caller holds the session lane; Stop projects its final snapshot before its turn boundary. */
-  private async projectProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState, projectStatus = true): Promise<void> {
+  private async projectProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState, projectStatus = true, history?: AgentRunProjection, replayed = false, stateOnly = false, historyClock?: HistoryProjectionClock): Promise<void> {
       if (this.stopping) return;
       const id = session.record.id;
       let previous = this.providerProjections.get(id);
@@ -649,10 +972,11 @@ export class SessionManager {
           || BigInt(item.snapshot.revision) < BigInt(previous.snapshot.revision))) return;
       // Equal watermarks may carry a new observation of freshness or native stop. Project those
       // snapshots and let durable event identities suppress unchanged transcript content.
-      const projection = previous ? reduceAgentRunProjection(previous, item)
-        : item.kind === "snapshot" ? createAgentRunProjection(item.snapshot) : undefined;
+      const projection = history ?? (previous ? reduceAgentRunProjection(previous, item)
+        : item.kind === "snapshot" ? createAgentRunProjection(item.snapshot) : undefined);
       if (!projection) throw new AppContextError(409, "resync_required", "Read the provider run snapshot before following its events.");
-      const next = { ...value, run: projection.snapshot, cursor: projection.cursor };
+      const retainedRun = session.record.providerExecution?.run;
+      const next = { ...value, run: projection.snapshot, cursor: projection.cursor, historyClock };
       session.record.providerExecution = next;
       session.record.harnessSessionId = next.sessionId;
       if (session.record.providerObservedRunId !== projection.snapshot.ref.id) {
@@ -662,8 +986,7 @@ export class SessionManager {
       if (session.record.taskBarrier?.state === "resuming" && session.record.taskBarrier.runId !== next.runId && next.runId)
         (session.record.decisionRunIds ??= {})[session.record.taskBarrier.commandId] = next.runId;
       const retainedEvents = this.providerProjectedIds.has(id) && this.providerAgentStatuses.has(id) ? [] : await this.store.readEvents(id);
-      const seen = this.providerProjectedIds.get(id) ?? new Set(retainedEvents
-        .map(event => event.providerEventId).filter((key): key is string => typeof key === "string"));
+      const seen = this.providerProjectedIds.get(id) ?? projectedIds(retainedEvents);
       const agentStatuses = this.providerAgentStatuses.get(id) ?? new Map<string, NativeAgentStatusEvent>();
       if (!this.providerAgentStatuses.has(id)) for (const event of retainedEvents) {
         if (event.type !== "native_agent_status" || !event.providerSource) continue;
@@ -671,25 +994,51 @@ export class SessionManager {
         agentStatuses.set(providerAgentKey(status.providerSource), status);
       }
       this.providerProjectedIds.set(id, seen); this.providerAgentStatuses.set(id, agentStatuses);
-      const stoppedSnapshotOutputs = !projectStatus && item.kind === "snapshot" && projection.snapshot.stopConfirmed
-        && projection.snapshot.ref.id === value.runId && projection.snapshot.sessionId === value.sessionId
+      const suggesting = projectStatus && session.record.status === "suggesting";
+      const stoppedSnapshot = !projectStatus && item.kind === "snapshot" && projection.snapshot.stopConfirmed;
+      const sameSelectedRun = (suggesting || stoppedSnapshot) && projection.snapshot.ref.id === value.runId && projection.snapshot.sessionId === value.sessionId
         && agentSelectionId({ provider: projection.snapshot.ref.provider, connection: value.selection.connection }) === agentSelectionId(value.selection);
-      const append = async (key: string, event: HarnessEvent, snapshotToolName?: string, source?: AgentSource) => {
+      const stoppedSnapshotOutputs = stoppedSnapshot && sameSelectedRun || !!history && projection.snapshot.stopConfirmed;
+      const priorCommandTools = suggesting && sameSelectedRun && projection.snapshot.freshness === "current"
+        && retainedRun?.ref.id === projection.snapshot.ref.id && retainedRun.generation === projection.snapshot.generation
+        ? new Map((previous?.tools ?? retainedRun.tools ?? []).map(tool => [transcriptToolId(retainedRun.ref.id, tool.source, tool.id), tool]))
+        : undefined;
+      const setObservedStatus = async (status: SessionStatus) => {
+        if (!replayed) return this.setStatus(id, status, false, !!history && status === "cancelled");
+        // Restoring status is a local projection. Replaying a terminal/decision must never
+        // dispatch queued native input, activate a workspace, or execute a reviewed control.
+        if (session.record.status === status) return;
+        session.record.status = status;
+        if (["cancelled", "failed"].includes(status) && session.record.messageQueue?.entries.length) {
+          await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = "Execution stopped. Review the conversation and resume the queue."; });
+          this.publishMessageQueue(session);
+        }
+        session.record.updatedAt = new Date().toISOString();
+        await this.append(id, { type: "session_status", status, ts: session.record.updatedAt });
+      };
+      const append = async (key: string, event: HarnessEvent, snapshotToolName?: string, source?: AgentSource, lateCommand = false) => {
+        // The state endpoint can confirm exit before its detailed terminal evidence arrives by range.
+        if (stateOnly && key === "terminal") return;
         event = { ...event, providerSource: providerTranscriptSource(projection.snapshot, source) };
         const identity = `${projection.snapshot.ref.id}:${key}`;
         if (seen.has(identity)) return;
         const output = event.type === "tool_result" || event.type === "command_result";
-        if (output && !stoppedSnapshotOutputs && !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
-        if (output && stoppedSnapshotOutputs && snapshotToolName) {
-          // Only this validated same-run stopped snapshot may recover its known tool's
-          // facts after an observation failure. Ordinary callbacks keep their live guard.
+        if (output && !stoppedSnapshotOutputs && !lateCommand && !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
+        if (output && (stoppedSnapshotOutputs || lateCommand) && snapshotToolName) {
+          // A validated stopped snapshot or a known terminal for a retained call can
+          // add evidence. Ordinary callbacks and other late output keep their live guard.
           const result = event.type === "tool_result" ? sanitizeToolResult(event) : sanitizeCommandResult(event);
           if (result && (event.type !== "tool_result" || shouldRetainToolOutput(snapshotToolName)))
             await this.append(id, { ...result, providerSource: event.providerSource, providerEventId: identity, providerGeneration: projection.snapshot.generation });
-        } else await this.applyHarnessEvent(id, { ...event, providerEventId: identity, providerGeneration: projection.snapshot.generation });
+        } else if ((history || replayed) && key === "terminal" || replayed && (event.type === "approval_request" || event.type === "question_request"))
+          await this.append(id, { ...event, providerEventId: identity, providerGeneration: projection.snapshot.generation });
+        else await this.applyHarnessEvent(id, { ...event, providerEventId: identity, providerGeneration: projection.snapshot.generation });
         seen.add(identity);
       };
       try {
+        // Installation sync renders the original positioned fact separately. Its merged state
+        // may already be at a later watermark and cannot date an older child's reply.
+        if (!historyClock) for (const { source, key, event } of nativeAgentDetails(item)) await append(key, event, undefined, source);
         const statuses = (projection.snapshot.agents ?? []).filter(agent => agent.parentAgentId !== undefined)
           .map(agent => nativeAgentStatus(projection.snapshot, agent));
         const currentAgents = new Set(statuses.map(status => providerAgentKey(status.providerSource)));
@@ -701,7 +1050,7 @@ export class SessionManager {
             || source.provider.key !== projection.snapshot.ref.provider.key || currentAgents.has(key)
             || !["queued", "running", "waiting_for_input"].includes(previous.lastKnownState ?? previous.state)) continue;
           // Missing inventory is not evidence that a previously observed child is still running.
-          statuses.push({ ...previous, state: "unknown", freshness: "last_known", observedAt: projection.snapshot.observedAt,
+          statuses.push({ ...previous, state: "unknown", freshness: "last_known", observedAt: projection.snapshot.observedAt, sourceSequence: projection.snapshot.lastSequence,
             lastKnownState: previous.lastKnownState ?? previous.state });
         }
         for (const status of statuses) {
@@ -713,7 +1062,7 @@ export class SessionManager {
             status, undefined, status.providerSource);
           agentStatuses.set(key, status);
         }
-        for (const message of projection.messages) if (message.role === "assistant" && ["complete", "interrupted"].includes(message.state))
+        for (const message of (history ? historyMessages(projection) : projection.messages)) if (message.role === "assistant" && ["complete", "interrupted"].includes(message.state))
           await append(`message:${message.source?.agentId ?? "root"}:${message.id}${message.state === "interrupted" ? ":interrupted" : ""}`,
             { type: "assistant_text", text: message.text, ...(message.state === "interrupted" ? { incomplete: true } : {}) }, undefined, message.source);
         for (const tool of projection.tools) {
@@ -722,11 +1071,23 @@ export class SessionManager {
             && tool.output?.includes(`hosty_task_barrier:${barrier.id}:${barrier.generation}`))
             barrier.acknowledgedSequence ??= item.kind === "event" ? item.event.sequence : projection.snapshot.lastSequence;
           const toolUseId = transcriptToolId(projection.snapshot.ref.id, tool.source, tool.id);
-          await append(`tool:${tool.source?.agentId ?? "root"}:${tool.id}`, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input }, undefined, tool.source);
-          if (tool.state !== "running" && tool.output !== undefined) await append(`output:${tool.source?.agentId ?? "root"}:${tool.id}:${tool.state}`,
-            { type: "tool_result", toolUseId, status: tool.state, output: tool.output, ...(tool.truncated ? { truncated: true as const } : {}) }, tool.name, tool.source);
-          if (tool.command) await append(`command:${tool.source?.agentId ?? "root"}:${tool.id}:${tool.command.status}`,
-            { type: "command_result", toolUseId, ...tool.command }, tool.name, tool.source);
+          const toolKey = `${tool.source?.agentId ?? "root"}:${tool.id}`;
+          if (suggesting && !seen.has(`${projection.snapshot.ref.id}:tool:${toolKey}`)) continue;
+          if (tool.name !== "unknown" && !(this.importingPosition.getStore() && item.kind === "event" && item.event.type === "tool.completed"))
+            await append(`tool:${toolKey}`, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input }, undefined, tool.source);
+          const outcome = history && tool.state === "running" && (projection.snapshot.stopConfirmed || projection.snapshot.phase === "interrupted") ? "unknown" : tool.state;
+          if (outcome !== "running" && tool.name !== "unknown" && (history || tool.output !== undefined) && (outcome !== "unknown"
+            || !["completed", "failed", "cancelled"].some(status => seen.has(`${projection.snapshot.ref.id}:output:${toolKey}:${status}`)))) await append(`output:${toolKey}:${outcome}`,
+            { type: "tool_result", toolUseId, status: outcome, output: tool.output ?? "", ...(tool.truncated ? { truncated: true as const } : {}) }, tool.name, tool.source);
+          if (tool.command) {
+            const prior = priorCommandTools?.get(toolUseId);
+            const lateCommand = tool.command.status !== "unknown" && prior?.name === tool.name
+              && prior.source?.parentAgentId === tool.source?.parentAgentId && prior.source?.parentToolCallId === tool.source?.parentToolCallId
+              && (await this.outputCalls(session)).get(toolUseId) === tool.name
+              && !["unknown", "completed", "failed", "cancelled"].some(status => seen.has(`${projection.snapshot.ref.id}:command:${toolKey}:${status}`));
+            await append(`command:${toolKey}:${tool.command.status}`,
+              { type: "command_result", toolUseId, ...tool.command }, tool.name, tool.source, lateCommand);
+          }
         }
         session.pendingApprovals.clear(); session.pendingQuestions.clear();
         for (const decision of projection.pending) {
@@ -742,6 +1103,10 @@ export class SessionManager {
             await append(`decision:${decision.id}:${decision.revision}`, { type: "question_request", questionId: cardId, questions,
               ...(decision.delivery === "next_turn" ? { blocking: false, delivery: "message" as const } : {}) }, undefined, decision.source);
           }
+        }
+        if (replayed && !projection.snapshot.stopConfirmed) {
+          if (projection.pending.some(decision => decision.kind === "approval")) await setObservedStatus("awaiting_approval");
+          else if (projection.pending.some(decision => decision.kind === "question" && decision.delivery !== "next_turn")) await setObservedStatus("awaiting_question");
         }
         for (const entry of projection.snapshot.decisions ?? []) {
           const decision = entry.decision;
@@ -767,13 +1132,13 @@ export class SessionManager {
             providerSource: providerTranscriptSource(projection.snapshot, item.event.source) });
         if (item.kind === "event") {
           const event = item.event, data = event.data;
-          if (event.type === "warning" && typeof data.message === "string") await append(`warning:${event.sequence}`, { type: "notice", message: data.message }, undefined, event.source);
-          if (event.type === "extension" && event.source.parentAgentId === undefined && data.namespace === "hosty.agent.answer" && data.name === "answer.complete")
+          if (event.type === "warning" && data.code !== "snapshot_truncated" && typeof data.message === "string") await append(`warning:${event.sequence}`, { type: "notice", message: data.message }, undefined, event.source);
+          if (!replayed && event.type === "extension" && event.source.parentAgentId === undefined && data.namespace === "hosty.agent.answer" && data.name === "answer.complete")
             await append(`extension:${event.sequence}`, { type: "answer_complete" });
-          if (event.type === "extension" && event.source.parentAgentId === undefined && data.namespace === "hosty.agent.predictions" && data.name === "predictions")
+          if (!replayed && event.type === "extension" && event.source.parentAgentId === undefined && data.namespace === "hosty.agent.predictions" && data.name === "predictions")
             await append(`extension:${event.sequence}`, { type: "prompt_suggestion", ...(typeof data.text === "string" ? { text: data.text } : {}),
               ...(typeof data.reason === "string" ? { reason: data.reason } : {}), workerRunId: projection.snapshot.ref.id } as HarnessEvent);
-          if (event.type === "extension" && event.source.parentAgentId === undefined && data.namespace === "hosty.agent.activity" && data.name === "activity" && data.activity && typeof data.activity === "object") {
+          if (!replayed && event.type === "extension" && event.source.parentAgentId === undefined && data.namespace === "hosty.agent.activity" && data.name === "activity" && data.activity && typeof data.activity === "object") {
             const activity = data.activity as import("../harness/activity.js").HarnessActivity;
             if (["working", "thinking", "responding"].includes(activity.phase) && Number.isSafeInteger(activity.toolCount) && activity.toolCount >= 0)
               await this.applyHarnessEvent(id, { type: "activity", activity, providerSource: providerTranscriptSource(projection.snapshot, event.source) });
@@ -782,17 +1147,16 @@ export class SessionManager {
         const context = projection.snapshot.latestContext;
         if (context) await append(`context:${context.sequence}`, { type: "context_usage",
           usage: context.usage as import("../harness/context-usage.js").ContextUsage | null });
-        if (projection.snapshot.executionUsage) {
+        if (projection.snapshot.executionUsage && (!historyClock || value.run?.ref.id !== projection.snapshot.ref.id
+          || value.run.executionUsage?.sequence !== projection.snapshot.executionUsage.sequence)) {
           const usage = projection.snapshot.executionUsage, sequence = Number(usage.sequence);
           if (!Number.isSafeInteger(sequence)) throw new AppContextError(502, "provider_usage_invalid", "The provider execution usage exceeds the supported accounting range.");
           await this.taskUsage?.(session.record, projection.snapshot.ref.id, { ...usage, sequence });
         }
-        if (projection.snapshot.coverage && [projection.snapshot.coverage.messages, projection.snapshot.coverage.tools].includes("truncated"))
-          await append("coverage", { type: "notice", message: "The provider's retained snapshot is incomplete. Some native observations are unavailable; this conversation contains only the received history." });
         if (projection.snapshot.selection) await append(`selection:${createHash("sha256").update(JSON.stringify(projection.snapshot.selection)).digest("hex")}`,
           { type: "execution_model", requested: projection.snapshot.selection.requested, reported: projection.snapshot.selection.effective });
         if (projectStatus && !projection.snapshot.stopConfirmed && ["queued", "running"].includes(projection.snapshot.state)
-          && projection.snapshot.freshness === "current" && !projection.pending.length && session.record.status !== "suggesting") await this.setStatus(id, "running");
+          && projection.snapshot.freshness === "current" && !projection.pending.length && session.record.status !== "suggesting") await setObservedStatus("running");
         if (projectStatus && !projection.snapshot.stopConfirmed && (projection.snapshot.state === "unknown" || projection.snapshot.freshness !== "current")) {
           const key = `${projection.snapshot.ref.id}:observation-unavailable`;
           session.record.status = "failed";
@@ -810,24 +1174,32 @@ export class SessionManager {
         }
         if (projectStatus && projection.snapshot.stopConfirmed) {
           if (session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: true };
+          if (replayed) {
+            const snapshot = projection.snapshot;
+            session.record.providerStopProof = { runId: snapshot.ref.id, generation: snapshot.generation, revision: snapshot.revision, observedAt: snapshot.observedAt };
+            if (session.record.agentRunId) await this.observations.confirmStopped(session.record.agentRunId);
+            await session.run?.detach?.();
+            session.run = null; session.runEpoch = undefined;
+            this.clearRefresh(session); this.setActivity(session, null);
+          }
           if (projection.snapshot.phase === "parked" && session.record.taskBarrier?.runId === projection.snapshot.ref.id) {
             session.record.taskBarrier.state = "parked";
             session.record.taskBarrier.checkpointSessionId = projection.snapshot.sessionId;
             await session.run?.detach?.();
             session.run = null; session.runEpoch = undefined;
-            await this.setStatus(id, session.record.taskBarrier.kind === "human_input" ? "awaiting_question" : "idle");
+            await setObservedStatus(session.record.taskBarrier.kind === "human_input" ? "awaiting_question" : "idle");
           }
           if (["succeeded", "failed", "cancelled"].includes(projection.snapshot.state)) {
-            if (projection.snapshot.state === "succeeded") { await append("terminal", { type: "result", status: "success" }); await this.setStatus(id, "idle"); }
-            else if (projection.snapshot.state === "failed") { await append("terminal", { type: "error", message: projection.result?.error?.message ?? "Provider execution failed." }); await this.setStatus(id, "failed"); }
-            else await this.setStatus(id, "cancelled");
+            if (projection.snapshot.state === "succeeded") { await append("terminal", { type: "result", status: "success" }); await setObservedStatus("idle"); }
+            else if (projection.snapshot.state === "failed") { await append("terminal", { type: "error", message: projection.result?.error?.message ?? "Provider execution failed." }); await setObservedStatus("failed"); }
+            else await setObservedStatus("cancelled");
           }
         }
         await this.store.saveRecord(session.record);
         session.record.providerExecution = await this.store.commitProviderObservation(id, next);
         const current = this.providerStates.get(id);
         if (current && current.runId === next.runId) {
-          current.run = structuredClone(projection.snapshot); current.cursor = projection.cursor;
+          current.run = structuredClone(projection.snapshot); current.cursor = projection.cursor; current.historyClock = historyClock;
         }
         this.providerProjections.set(id, projection);
       } catch (error) { this.providerProjectedIds.delete(id); this.providerAgentStatuses.delete(id); throw error; }
@@ -1041,7 +1413,37 @@ export class SessionManager {
     return { items, warnings };
   }
 
+  private indexInstallationHistory(refresh = false): Promise<void> {
+    if (!this.historyFeeds) return Promise.resolve();
+    if (refresh && this.historyIndexIncomplete) { this.historyIndex = undefined; this.historyIndexIncomplete = false; }
+    if (!this.historyIndex) this.historyIndex = (async () => {
+      const providers = new Map<string, AgentProviderRef>();
+      const { records, unavailableIds } = await this.store.listRecordInventory();
+      for (const record of records) {
+        if (!record.selection) continue;
+        // The transcript, command sidecar and independently persisted record may fail separately.
+        let state = record.providerExecution;
+        try { state = await this.store.readProviderExecution(record.id) ?? state; }
+        catch { if (!state) unavailableIds.push(record.id); }
+        if (!state) continue;
+        try {
+          if (!state.sessionId || !record.createdBy || agentSelectionId(state.selection) !== agentSelectionId(record.selection)) {
+            unavailableIds.push(record.id); continue;
+          }
+          this.historyFeeds!.bind(state.selection.provider, state.sessionId, record.id, record.createdBy);
+          providers.set(JSON.stringify(state.selection.provider), state.selection.provider);
+        } catch { unavailableIds.push(record.id); }
+      }
+      this.historyIndexIncomplete = unavailableIds.length > 0;
+      this.historyFeeds!.incompleteBindings(unavailableIds);
+      // Register every old binding before reading the first page for this installation.
+      for (const provider of providers.values()) void this.historyFeeds!.start(provider);
+    })().catch(error => { this.historyIndex = undefined; throw error; });
+    return this.historyIndex;
+  }
+
   async recoverProviderRuns(): Promise<void> {
+    await this.indexInstallationHistory();
     for (const record of await this.store.listRecords()) if (record.selection && record.taskDispatch && record.taskExecutionId && !record.storageRecovery) {
       try {
         const session = await this.requireLive(record.id);
@@ -1277,13 +1679,11 @@ export class SessionManager {
       session.credential = credential;
       session.workspaceCredential = credential;
       session.credentialRefreshPending = true;
-      if (this.connections?.remote && !session.run && session.record.selection) {
-        const retained = await this.store.readProviderExecution(id);
-        if (retained?.runId) {
-          const run = new ProviderHarnessRun(() => this.providerContext(session.record.selection!, {
-            sessionId: id, cwd: this.workDir, onEvent: () => {} }), { sessionId: id, cwd: this.workDir, onEvent: () => {} });
-          session.run = run;
-          await run.attach();
+      if (this.connections?.remote && session.record.selection) {
+        if (session.run instanceof ProviderHarnessRun) session.run.retryObservation();
+        else if (!session.run) {
+          const retained = await this.store.readProviderExecution(id);
+          if (retained?.runId && !retained.run?.stopConfirmed) await this.ensureProviderRun(session, true);
         }
       } else if (session.run && !this.connections?.remote) {
         await this.refreshMcpServers(session);
@@ -1441,7 +1841,28 @@ export class SessionManager {
       if (!this.development?.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
       const token = credential ?? session.workspaceCredential ?? session.credential;
       if (!token) throw new AppContextError(401, "workspace_credentials_required", "Refresh the session's Hosty credentials before using workspaces.");
-      if (!["delete-workspace", "workspace-inventory", "association", "attach", "detach", "participants", "commit-review", "execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-logs", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status", "app-local-accept", "app-local-use", "app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
+      if (action === "recover-origin") {
+        if (!userId) throw new AppContextError(403, "actor_required", "The conversation owner must request workspace recovery.");
+        const retained = this.providerStates.get(id) ?? await this.store.readProviderExecution(id) ?? session.record.providerExecution;
+        if (!retained) throw new AppContextError(409, "origin_unresolved", "This chat has no retained provider session.");
+        for (const candidate of await this.store.listRecords()) {
+          if (candidate.id === id || candidate.createdBy !== userId) continue;
+          const other = await this.store.readProviderExecution(candidate.id) ?? candidate.providerExecution;
+          if (other && other.sessionId === retained.sessionId && other.selection.provider.appId === retained.selection.provider.appId &&
+              other.selection.provider.installationId === retained.selection.provider.installationId && other.selection.provider.key === retained.selection.provider.key)
+            throw new AppContextError(409, "origin_unresolved", "Several chats claim the same provider session.");
+        }
+        const result = await this.development.call(id, token, action, {
+          requestId: input.requestId, expectedRevision: input.expectedRevision, workspaceId: input.workspaceId,
+          provider: retained.selection.provider, providerSessionId: retained.sessionId,
+          ...workspaceConversation(session.record), runs: await this.workspaceOriginRuns(id, retained),
+        }) as { workspace: { id: string; revision: number } | null };
+        session.record.workspaceAssociation = result.workspace && { id: result.workspace.id, revision: result.workspace.revision };
+        session.record.developmentWorkspaces = result.workspace ? (await this.development.call(id, token, "list", {}) as { workspaces: DevelopmentWorkspace[] }).workspaces : [];
+        await this.store.saveRecord(session.record);
+        return result;
+      }
+      if (!["delete-workspace", "workspace-inventory", "association", "recover-origin", "attach", "detach", "participants", "commit-review", "execution-select", "execution-status", "rename", "activation-plan", "activation-apply", "activation-status", "activation-list", "activation-cancel", "activation-resume", "activation-return", "app-dev-logs", "app-dev-status", "app-dev-plan", "app-dev-apply", "merge-upstream", "remote-status", "remote-connect", "remote-fetch", "remote-push-base", "pr-push", "app-local-status", "app-local-accept", "app-local-use", "app-creation-guide", "app-create", "app-creation-status", "app-creation-capabilities", "workflow-status", "workflow-complete", "workflow-resume", "workflow-pause", "workflow-defer", "workflow-delete", "list", "prepare", "status", "diff", "viewer", "commit", "refresh", "merge", "abort-merge", "cleanup", "references", "pr-resolve-review", "pr-commit", "pr-list", "pr-connections", "pr-status", "pr-configure", "pr-publish", "pr-link", "pr-ready", "pr-merge", "pr-complete", "pr-corrective"].includes(action))
         throw new AppContextError(400, "workspace_action_invalid", "Unknown workspace action.");
       if (["prepare", "app-create"].includes(action) && (input.taskId !== undefined || input.leaseId !== undefined)) {
         if (input.taskId !== id || typeof input.leaseId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.leaseId))
@@ -2685,6 +3106,7 @@ export class SessionManager {
       if (record.skillExportId) await skillRequest(`/exports/${record.skillExportId}`, "DELETE");
       await this.decisions?.deleteSession(record.createdBy, id);
       await this.store.deleteSession(id);
+      this.historyFeeds?.unbind(id);
       this.notifyToolActivity();
       // Reported like every other lifecycle transition, and with the administrator who asked for it:
       // the transcript this removed is exactly what an audit trail cannot recover afterwards, so an
@@ -2815,11 +3237,12 @@ export class SessionManager {
     }
   }
 
-  private async finishExecution(session: LiveSession, retainActivationReview = false, preserveWorkerRun = false, outcome = session.record.status): Promise<void> {
+  private async finishExecution(session: LiveSession, retainActivationReview = false, preserveWorkerRun = false, outcome = session.record.status, observedStop = false): Promise<AgentRunSnapshot | void> {
     if (this.connections?.remote) {
       let snapshot = session.record.providerExecution?.run;
-      const cancelling = outcome === "cancelled" || outcome === "abandoned";
-      if ((!snapshot?.stopConfirmed || cancelling) && session.record.providerExecution?.runId && !session.run) await this.ensureProviderRun(session);
+      const cancelling = !observedStop && (outcome === "cancelled" || outcome === "abandoned");
+      if ((!snapshot?.stopConfirmed || cancelling) && session.record.providerExecution?.runId && !session.run)
+        await this.ensureProviderRun(session, cancelling);
       if ((!snapshot?.stopConfirmed || cancelling) && session.run) {
         if (!session.run.stopAndWait) throw new WorkerError("exit_unconfirmed", "The provider cannot confirm native exit.", 503);
         await session.run.stopAndWait();
@@ -2838,7 +3261,7 @@ export class SessionManager {
       if (!preserveWorkerRun) { session.run = null; session.runEpoch = undefined; }
       this.clearRefresh(session);
       await this.store.saveRecord(session.record);
-      return;
+      return snapshot;
     }
     if (!this.connections?.remote && !session.record.developmentLease && !session.record.taskExecutionId) return;
     if (!session.run && !this.connections?.remote && session.record.developmentLease && session.record.developmentLeaseState !== "stopped") {
@@ -3771,7 +4194,7 @@ export class SessionManager {
     });
   }
 
-  async cancelSession(id: string): Promise<void> {
+  async cancelSession(id: string): Promise<boolean> {
     try {
       await this.serialize(id, async () => {
         const session = await this.requireLive(id);
@@ -3783,13 +4206,13 @@ export class SessionManager {
       const session = this.live.get(id);
       if (session?.record.status === "suggesting") {
         if (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued") this.mcpPolicy.cancel(id);
-        this.clearSuggestion(session); await this.endSuggestions(id); return;
+        this.clearSuggestion(session); await this.endSuggestions(id); return true;
       }
     } catch (error) {
       if (error instanceof SessionStorageError) return this.stopAfterStorageFailure(id, error);
       throw error;
     }
-    await this.serialize(id, () => this.cancelSessionLocked(id));
+    return this.serialize(id, () => this.cancelSessionLocked(id));
   }
 
   /** Stop retained execution even when its source mutation lane cannot record cancellation. */
@@ -3817,7 +4240,7 @@ export class SessionManager {
       : "Source storage is unavailable and native exit is unconfirmed. Keep this execution fenced and retry Stop after inspection.", 503);
   }
 
-  private async cancelSessionLocked(id: string): Promise<void> {
+  private async cancelSessionLocked(id: string): Promise<boolean> {
     let session: LiveSession;
     try {
       session = await this.requireLive(id);
@@ -3829,7 +4252,7 @@ export class SessionManager {
     }
     this.decisions?.kick();
     this.clearSuggestion(session);
-    if (this.connections?.remote || session.record.developmentLease || session.record.taskExecutionId) await this.finishExecution(session, false, false, "cancelled");
+    const stopped = await this.finishExecution(session, false, false, "cancelled");
     this.setActivity(session, null);
     if (session.run) {
       if (session.run.stopAndWait) await session.run.stopAndWait();
@@ -3848,12 +4271,20 @@ export class SessionManager {
     // path that still mints app tokens.
     this.proxy?.unregister(id);
     this.developmentMcp.unregister(id);
-    await this.setStatus(id, "cancelled");
+    const execution = session.record.providerExecution;
+    const alreadyFinished = execution && stopped?.stopConfirmed && (stopped.state === "succeeded" || stopped.state === "failed");
+    if (alreadyFinished) {
+      // Stop can be the first observer to learn the original turn already has a final result.
+      await this.projectProviderItem(session, { kind: "snapshot", snapshot: stopped }, execution, true, undefined, true);
+    } else {
+      await this.setStatus(id, "cancelled", false, stopped?.stopConfirmed === true);
+    }
     if (this.connections?.remote && session.record.sourceAdmission) {
       delete session.record.sourceAdmission;
       await this.store.saveRecord(session.record);
     }
-    this.audit.report("ai_session_cancelled", { sessionId: id });
+    if (!alreadyFinished) this.audit.report("ai_session_cancelled", { sessionId: id });
+    return !alreadyFinished;
   }
 
   /** Replays persisted events after `afterSeq`, then attaches for live ones. */
@@ -3896,7 +4327,7 @@ export class SessionManager {
     // or when the caller already has every persisted event.
     const status: StoredEvent = {
       seq: session.record.lastEventSeq, ts: session.record.updatedAt,
-      type: "session_status", status: session.record.status,
+      type: "session_status", status: session.record.status, providerHistoryContact: session.record.providerHistoryContact ?? null, providerHistoryGaps: session.record.providerHistoryGaps ?? [],
     };
     // Historical statuses still close old approval cards, but only the final snapshot describes
     // current controls and signals replay readiness. Keep the flag out of the durable journal.
@@ -3910,6 +4341,7 @@ export class SessionManager {
     // Start the event deadline before native shutdown and final metadata writes. A slow store
     // must not defer the deadline until after its own pending writes have completed.
     const draining = this.drainHarnessEvents();
+    const historyClosed = this.historyFeeds?.close();
     for (const session of this.live.values()) {
       if (session.workspaceActivityTimer) clearTimeout(session.workspaceActivityTimer);
       session.workspaceActivityTimer = undefined;
@@ -3930,7 +4362,7 @@ export class SessionManager {
       this.developmentMcp.unregister(session.record.id);
     }
 
-    await draining;
+    await Promise.all([draining, historyClosed]);
     this.observations.close();
   }
 
@@ -4307,6 +4739,10 @@ export class SessionManager {
     }
 
     await this.flushAppContextEvent(session);
+    const importing = this.importingPosition.getStore();
+    if (importing?.chatId === id && typeof payload.providerEventId === "string"
+      && payload.providerEventId.startsWith(importing.runId + ":"))
+      payload = { ...payload, providerHistoryPosition: importing.position, ...(importing.replayed ? { providerHistoryRecovered: true } : {}) };
 
     if (payload.type === "prompt_suggestion_created" && !session.record.suggestionHistoryVersion) {
       session.record.suggestionHistoryVersion = 1; await this.store.saveRecord(session.record);
@@ -4332,6 +4768,8 @@ export class SessionManager {
       session.record.lastEventSeq = Math.max(session.record.lastEventSeq, event.seq);
       await this.store.saveRecord(session.record);
       this.fanOut(session, event);
+      if (typeof event.providerEventId === "string" && event.providerHistoryPosition)
+        this.providerProjectedIds.get(id)?.add(positionKey(event.providerEventId, event.providerHistoryPosition as HistoryPosition));
       return event.seq;
     });
     this.sourceAppends.set(id, committed);
@@ -4423,14 +4861,14 @@ export class SessionManager {
     return abandoned;
   }
 
-  private async setStatus(id: string, status: SessionStatus, preserveWorkerRun = false): Promise<void> {
+  private async setStatus(id: string, status: SessionStatus, preserveWorkerRun = false, observedStop = false): Promise<void> {
     const session = this.live.get(id);
     if (!session || session.record.status === status && !preserveWorkerRun) {
       return;
     }
 
     if ((this.connections?.remote || session.record.taskExecutionId) && !["running", "suggesting", "awaiting_approval", "awaiting_question"].includes(status)) {
-      try { await this.finishExecution(session, status === "idle" && (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued"), preserveWorkerRun, status); }
+      try { await this.finishExecution(session, status === "idle" && (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued"), preserveWorkerRun, status, observedStop); }
       catch (error) {
         if (session.record.taskExecutionId) {
           // Cleanup can fail after native exit has already been durably confirmed.

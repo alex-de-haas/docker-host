@@ -6,6 +6,646 @@
     "description": "Independent provider execution. Paths are relative to the current Core-declared interface base. Exact UTF-8 command bytes and stable mutation UUIDs are retained across retries. No Harness dependency or raw native session IDs."
   },
   "paths": {
+    "/history/live": {
+      "get": {
+        "operationId": "history.live",
+        "security": [
+          {
+            "installationHistory": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "required": false
+          }
+        ],
+        "description": "Open a fresh live subscription. The optional previous cursor checks archive ancestry. The ready event returns the subscribed boundary. Subsequent observation events carry an SSE id and every durable record carries its session position.",
+        "responses": {
+          "200": {
+            "description": "Ready boundary followed by live observations.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "x-event-schemas": {
+                  "ready": {
+                    "$ref": "#/components/schemas/LiveHistoryReady"
+                  },
+                  "observation": {
+                    "$ref": "#/components/schemas/LiveHistoryObservation"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/history/states": {
+      "get": {
+        "operationId": "history.states",
+        "security": [
+          {
+            "installationHistory": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "through",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "required": false
+          },
+          {
+            "name": "afterSession",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,256}$"
+            },
+            "required": false
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "required": false
+          }
+        ],
+        "description": "List sessions with retained runs and their state and durable session head at the supplied or current installation boundary. Pass the returned boundary on later pages.",
+        "responses": {
+          "200": {
+            "description": "States for the calling installation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryStates"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/history/range": {
+      "get": {
+        "operationId": "history.range",
+        "security": [
+          {
+            "installationHistory": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "through",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "required": true
+          },
+          {
+            "name": "sessionId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,256}$"
+            },
+            "required": true
+          },
+          {
+            "name": "epoch",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "required": true
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "required": true
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "required": false
+          }
+        ],
+        "description": "Read an inclusive interval of durable positions for one session and history epoch. nextPosition is the first unread position in the requested interval.",
+        "responses": {
+          "200": {
+            "description": "Ordered durable session records.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryRange"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/history/events": {
+      "get": {
+        "operationId": "history.events",
+        "security": [
+          {
+            "installationHistory": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          },
+          {
+            "name": "through",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "description": "Resumable, read-only installation history. Frames use event: observation with an opaque installation feed position in id. Commit each observation before saving this position.",
+        "responses": {
+          "200": {
+            "description": "History for the authenticated consumer installation.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "x-event-schema": {
+                  "$ref": "#/components/schemas/HistoryObservation"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/capabilities": {
       "get": {
         "operationId": "capabilities",
@@ -2460,6 +3100,11 @@
   },
   "components": {
     "securitySchemes": {
+      "installationHistory": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Core-issued installation history credential."
+      },
       "coreOperation": {
         "type": "http",
         "scheme": "bearer",
@@ -3588,6 +4233,56 @@
         ],
         "additionalProperties": false
       },
+      "ChildAgent": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "parentAgentId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "parentToolCallId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_for_input",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "unknown"
+            ]
+          },
+          "stopConfirmed": {
+            "type": "boolean"
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "response": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "promptTruncated": {
+            "type": "boolean"
+          },
+          "responseTruncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "agentId",
+          "state"
+        ],
+        "additionalProperties": true
+      },
       "PendingDecision": {
         "type": "object",
         "properties": {
@@ -3966,40 +4661,7 @@
             "type": "array",
             "maxItems": 1024,
             "items": {
-              "type": "object",
-              "properties": {
-                "agentId": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
-                },
-                "parentAgentId": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
-                },
-                "parentToolCallId": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
-                },
-                "state": {
-                  "enum": [
-                    "queued",
-                    "running",
-                    "waiting_for_input",
-                    "succeeded",
-                    "failed",
-                    "cancelled",
-                    "unknown"
-                  ]
-                },
-                "stopConfirmed": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "agentId",
-                "state"
-              ],
-              "additionalProperties": true
+              "$ref": "#/components/schemas/ChildAgent"
             }
           },
           "selection": {
@@ -4172,6 +4834,489 @@
           "effects"
         ],
         "additionalProperties": true
+      },
+      "HistoryObservation": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "runId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "generation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "principalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "userId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "item": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "snapshot"
+                  },
+                  "snapshot": {
+                    "$ref": "#/components/schemas/RunSnapshot"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "snapshot"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "event"
+                  },
+                  "event": {
+                    "$ref": "#/components/schemas/Event"
+                  },
+                  "cursor": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  }
+                },
+                "required": [
+                  "kind",
+                  "event",
+                  "cursor"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "sessionId",
+          "runId",
+          "generation",
+          "principalId",
+          "userId",
+          "item"
+        ],
+        "additionalProperties": false
+      },
+      "LiveHistoryReady": {
+        "type": "object",
+        "properties": {
+          "through": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          }
+        },
+        "required": [
+          "through"
+        ],
+        "additionalProperties": false
+      },
+      "LiveHistoryObservation": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "runId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "generation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "principalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "userId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "item": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "snapshot"
+                  },
+                  "snapshot": {
+                    "$ref": "#/components/schemas/RunSnapshot"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "snapshot"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "event"
+                  },
+                  "event": {
+                    "$ref": "#/components/schemas/Event"
+                  },
+                  "cursor": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  }
+                },
+                "required": [
+                  "kind",
+                  "event",
+                  "cursor"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "epoch": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sessionPosition": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "sourceHistoryIncomplete": {
+            "const": true
+          }
+        },
+        "required": [
+          "sessionId",
+          "runId",
+          "generation",
+          "principalId",
+          "userId",
+          "item",
+          "epoch"
+        ],
+        "additionalProperties": false
+      },
+      "HistoryStates": {
+        "type": "object",
+        "properties": {
+          "through": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "nextSession": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 256
+          },
+          "sessions": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
+                },
+                "userId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "principalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "epoch": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "head": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "snapshot": {
+                  "$ref": "#/components/schemas/RunSnapshot"
+                },
+                "sourceHistoryIncomplete": {
+                  "const": true
+                }
+              },
+              "required": [
+                "sessionId",
+                "userId",
+                "principalId",
+                "epoch",
+                "head",
+                "snapshot"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "through",
+          "nextSession",
+          "sessions"
+        ],
+        "additionalProperties": false
+      },
+      "HistoryRange": {
+        "type": "object",
+        "properties": {
+          "nextPosition": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "observations": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
+                },
+                "runId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
+                },
+                "generation": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "principalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "userId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "item": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "snapshot"
+                        },
+                        "snapshot": {
+                          "$ref": "#/components/schemas/RunSnapshot"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "snapshot"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "event"
+                        },
+                        "event": {
+                          "$ref": "#/components/schemas/Event"
+                        },
+                        "cursor": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8192
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "event",
+                        "cursor"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                },
+                "epoch": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "sessionPosition": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "sourceHistoryIncomplete": {
+                  "const": true
+                }
+              },
+              "required": [
+                "sessionId",
+                "runId",
+                "generation",
+                "principalId",
+                "userId",
+                "item",
+                "cursor",
+                "epoch",
+                "sessionPosition"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "nextPosition",
+          "observations"
+        ],
+        "additionalProperties": false
+      },
+      "HistoryPage": {
+        "type": "object",
+        "properties": {
+          "observations": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
+                },
+                "runId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,256}$"
+                },
+                "generation": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "principalId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "userId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "item": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "snapshot"
+                        },
+                        "snapshot": {
+                          "$ref": "#/components/schemas/RunSnapshot"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "snapshot"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "event"
+                        },
+                        "event": {
+                          "$ref": "#/components/schemas/Event"
+                        },
+                        "cursor": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8192
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "event",
+                        "cursor"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                }
+              },
+              "required": [
+                "sessionId",
+                "runId",
+                "generation",
+                "principalId",
+                "userId",
+                "item",
+                "cursor"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "through": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "observations",
+          "through",
+          "nextCursor"
+        ],
+        "additionalProperties": false
       },
       "Session": {
         "type": "object",
@@ -5136,6 +6281,12 @@
               "properties": {
                 "data": {
                   "type": "object",
+                  "properties": {
+                    "agent": {
+                      "$ref": "#/components/schemas/ChildAgent"
+                    }
+                  },
+                  "required": [],
                   "additionalProperties": true
                 }
               }

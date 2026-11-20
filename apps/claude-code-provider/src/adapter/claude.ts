@@ -1,5 +1,7 @@
 import { activeTool } from "./activity.js";
-import { ClaudeBackgroundLifecycle } from "./claude-background.js";
+import { ClaudeBackgroundLifecycle, type BashCall } from "./claude-background.js";
+import { ClaudeNativeCompletion } from "./claude-native-completion.js";
+import { spawn } from "node:child_process";
 import { shouldRetainToolOutput } from "./tool-output-policy.js";
 import { readNativeQuestions, questionAnswers } from "./questions.js";
 import { UsageReader, absentUsage, claudeUsage, claudeLimitEvent } from "./provider-usage.js";
@@ -152,6 +154,26 @@ interface ChildToolHook {
   input: string;
 }
 
+type ChildReply = { response: string; responseTruncated?: boolean };
+
+function childReply(text: string): ChildReply {
+  const limit = 64 * 1024;
+  if (Buffer.byteLength(text) <= limit) return { response: text };
+  const prefix = Buffer.from(text.slice(0, limit)).subarray(0, limit);
+  return { response: new TextDecoder().decode(prefix, { stream: true }), responseTruncated: true };
+}
+
+type BackgroundCommandStatus = "completed" | "failed" | "cancelled";
+interface BackgroundCommand {
+  key: string;
+  id: string;
+  toolId: string;
+  source?: HarnessEventSource;
+  runId: string;
+  status?: BackgroundCommandStatus;
+  published?: boolean;
+}
+
 class ClaudeRun implements HarnessRun {
   private readonly input = new PushableStream<unknown>();
   private readonly pending = new Map<string, PendingApproval>();
@@ -172,13 +194,27 @@ class ClaudeRun implements HarnessRun {
   private readonly nativeProcessClosures: Promise<void>[] = [];
   private turnActive = false;
   private suggestionPending = false;
+  private completionCancelled = false;
+  private needsContinuationResult = false;
   private pendingRootResult: Record<string, unknown> | null = null;
+  private nativeCompletion: ClaudeNativeCompletion | null = null;
   private pendingSuggestion: string | null | undefined;
-  private readonly background = new ClaudeBackgroundLifecycle(parent => this.childSource(parent, false), event => this.options.onEvent(event));
+  private readonly background = new ClaudeBackgroundLifecycle(parent => this.childSource(parent, false), (event, parent) => {
+    if (parent && event.type === "agent_status") {
+      const launch = this.toolSources.get(parent);
+      if (launch && launch.id === event.parentToolCallId) {
+        launch.state = event.state;
+        this.options.onEvent({ ...event, prompt: launch.prompt, ...(event.state === "succeeded" && launch.reply ? launch.reply : {}) });
+        return;
+      }
+    }
+    this.options.onEvent(event);
+  });
   private nativeSessionId: string | null = null;
   private readonly commandRun = randomUUID();
   private commandTurn = 0;
   private readonly commandCalls = new Map<string, { id: string; rawId: string }>();
+  private readonly backgroundCommands = new Map<string, BackgroundCommand>();
   private readonly pendingNativeEffects = new Map<string, string>();
   private readonly terminalWaiters = new Set<() => void>();
   private readonly childToolHooks = new Map<string, ChildToolHook | null>();
@@ -191,7 +227,9 @@ class ClaudeRun implements HarnessRun {
   private ambiguousCommandDenial = false;
   private ambiguousToolDenial = false;
   private readonly childSources = new Map<string, HarnessEventSource>();
-  private readonly toolSources = new Map<string, { agentId: string; id: string; turn: number }>();
+  private readonly pendingChildReplies = new Map<string, ChildReply>();
+  private readonly toolSources = new Map<string, { agentId: string; id: string; turn: number; prompt?: string; nativeChildKey?: string;
+    state?: Extract<HarnessEvent, { type: "agent_status" }>["state"]; reply?: ChildReply }>();
   private childCoverageWarning = false;
   private readonly proposedTools = new Map<string, ActiveTool>();
   private readonly completedTools = new Set<string>();
@@ -208,11 +246,14 @@ class ClaudeRun implements HarnessRun {
   }
 
   send(text: string): void {
+    this.completionCancelled = false; this.needsContinuationResult = false;
     this.suggestionPending = false;
-    this.pendingRootResult = null; this.pendingSuggestion = undefined; this.background.beginTurn();
+    this.pendingRootResult = null; this.pendingSuggestion = undefined; this.background.beginTurn(); this.nativeCompletion?.beginTurn();
     this.turnActive = true;
     this.commandTurn++;
+    this.pendingChildReplies.clear();
     this.commandCalls.clear();
+    this.backgroundCommands.clear();
     this.pendingNativeEffects.clear();
     this.childToolHooks.clear();
     this.childHistoryHooks.clear();
@@ -312,6 +353,8 @@ class ClaudeRun implements HarnessRun {
   }
 
   interrupt(): Promise<void> {
+    // Fence before awaiting native acknowledgement: already-buffered SDK results can still arrive.
+    this.completionCancelled = true;
     // A native idle emitted while cancelling cannot turn an earlier yield into success.
     this.pendingRootResult = null; this.pendingSuggestion = undefined; this.suggestionPending = false;
     if (this.interrupting) return this.interrupting;
@@ -362,6 +405,7 @@ class ClaudeRun implements HarnessRun {
       if (this.nativeProcessClosures.length) await Promise.all(this.nativeProcessClosures);
       if (Date.now() + 2000 <= this.stopDeadline) await this.readPendingChildTerminals();
       else if (this.pendingNativeEffects.size) console.warn("[claude-child-history] " + JSON.stringify({ outcome: "stop_budget", remainingMs: Math.max(0, this.stopDeadline - Date.now()) }));
+      for (const command of this.backgroundCommands.values()) this.publishBackgroundCommand(command);
     })().finally(() => {
       this.acceptingStopTerminals = false;
       if (!closed) this.query?.close();
@@ -369,8 +413,16 @@ class ClaudeRun implements HarnessRun {
     return this.stopping;
   }
 
+  private hasPendingTerminals(): boolean {
+    return this.pendingNativeEffects.size > 0 || [...this.backgroundCommands.values()].some(command => command.status === undefined);
+  }
+
+  private notifyTerminalsDrained(): void {
+    if (!this.hasPendingTerminals()) for (const done of [...this.terminalWaiters]) done();
+  }
+
   private drainPendingTerminals(): Promise<void> {
-    if (!this.pendingNativeEffects.size) return Promise.resolve();
+    if (!this.hasPendingTerminals()) return Promise.resolve();
     return new Promise(resolve => {
       const done = () => { clearTimeout(timer); this.terminalWaiters.delete(done); resolve(); };
       const timer = setTimeout(done, 2000);
@@ -392,14 +444,26 @@ class ClaudeRun implements HarnessRun {
           cwd: this.options.cwd,
           ...(this.options.model ? { model: this.options.model } : {}),
           ...(this.options.reasoningEffort ? { effort: this.options.reasoningEffort } : {}),
-          ...(this.options.processTransport ? {
-            spawnClaudeCodeProcess: (input: { command: string; args: string[]; cwd?: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }) => {
-              if (this.stopped || this.nativeProcessClosures.length >= 8) throw new Error("Claude native process admission is closed.");
-              const child = this.options.processTransport!.spawn(input.command, input.args, { cwd: input.cwd ?? this.options.cwd, env: input.env, signal: input.signal });
-              this.nativeProcessClosures.push(new Promise<void>(resolve => child.once("close", () => resolve())));
-              return child;
-            },
-          } : {}),
+          spawnClaudeCodeProcess: (input: { command: string; args: string[]; cwd?: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }) => {
+            if (this.stopped || this.nativeProcessClosures.length >= 8) throw new Error("Claude native process admission is closed.");
+            const options = { cwd: input.cwd ?? this.options.cwd, env: input.env, signal: input.signal };
+            const child = this.options.processTransport
+              ? this.options.processTransport.spawn(input.command, input.args, options)
+              : spawn(input.command, input.args, { ...options, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+            this.nativeProcessClosures.push(new Promise<void>(resolve => child.once("close", () => resolve())));
+            const completion = new ClaudeNativeCompletion(child.stdout, () => {
+              if (!this.stopped && this.nativeCompletion === completion) this.finishNativeResult();
+            }, () => {
+              if (!this.stopped && this.nativeCompletion === completion)
+                this.options.onEvent({ type: "error", message: "Claude native completion evidence could not be verified. Native completion is unconfirmed." });
+            }, this.options.resumeHarnessSessionId);
+            this.nativeCompletion = completion;
+            // The SDK owns stdin and controls. Observe only the supported stdout transport;
+            // do not inspect private SDK state or change any native frame delivered to it.
+            return { stdin: child.stdin, stdout: completion.stdout, stderr: child.stderr,
+              get killed() { return child.killed; }, get exitCode() { return child.exitCode; }, get signalCode() { return child.signalCode; },
+              kill: child.kill.bind(child), on: child.on.bind(child), once: child.once.bind(child), off: child.off.bind(child) };
+          },
           resume: this.options.resumeHarnessSessionId,
           permissionMode: this.options.autonomy === "autonomous" ? "bypassPermissions" : "default",
           allowDangerouslySkipPermissions: this.options.autonomy === "autonomous",
@@ -413,6 +477,10 @@ class ClaudeRun implements HarnessRun {
                 hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Session stopped.",
               } };
               this.captureChildToolHook(input);
+              return {};
+            }] }],
+            SubagentStop: [{ hooks: [async (input: Record<string, unknown>) => {
+              this.observeChildReply(input);
               return {};
             }] }],
             PostToolUse: [{ hooks: [async (input: Record<string, unknown>) => this.recordToolDuration(input)] }],
@@ -700,7 +768,29 @@ class ClaudeRun implements HarnessRun {
     this.options.onEvent({ ...toolResult(tool.id, "cancelled", input.error), source });
     this.commandCalls.delete(key); this.toolCalls.delete(key); this.pendingNativeEffects.delete(key);
     this.childToolHooks.delete(JSON.stringify([call.agentId, call.toolId]));
-    if (!this.pendingNativeEffects.size) for (const done of [...this.terminalWaiters]) done();
+    this.notifyTerminalsDrained();
+  }
+
+  private observeChildReply(input: Record<string, unknown>): void {
+    if (this.stopped || !this.turnActive || input.hook_event_name !== "SubagentStop" || !this.nativeSessionId || input.session_id !== this.nativeSessionId
+      || typeof input.agent_id !== "string" || !input.agent_id || input.agent_id.length > 512 || typeof input.last_assistant_message !== "string" || !input.last_assistant_message) return;
+    // The async Agent output binds its native agent ID to a specific launch.
+    // A stop hook alone cannot assign text to a sibling or prove success.
+    const key = JSON.stringify([this.nativeSessionId, input.agent_id]);
+    const matches = [...this.toolSources.entries()].filter(([, launch]) => launch.turn === this.commandTurn && launch.nativeChildKey === key);
+    if (matches.length === 0) {
+      if (this.pendingChildReplies.size < 256) {
+        this.pendingChildReplies.set(key, childReply(input.last_assistant_message));
+      }
+      return;
+    }
+    if (matches.length !== 1) return;
+    const [parent, launch] = matches[0]!;
+    launch.reply = childReply(input.last_assistant_message);
+    const source = this.childSources.get(parent);
+    if (launch.state === "succeeded" && source?.parentToolCallId === launch.id) {
+      this.options.onEvent({ type: "agent_status", ...source, state: "succeeded", ...launch.reply, source });
+    }
   }
 
   private childSource(parent: string, announce = true): HarnessEventSource | undefined {
@@ -714,13 +804,14 @@ class ClaudeRun implements HarnessRun {
       const owner = this.toolSources.get(parent);
       source = { agentId: `claude-child:${parent}`, ...(owner ? { parentAgentId: owner.agentId, parentToolCallId: owner.id } : {}) };
       this.childSources.set(parent, source);
-      if (announce) this.options.onEvent({ type: "agent_status", ...source, state: "running", stopConfirmed: false, source });
+      if (announce) this.options.onEvent({ type: "agent_status", ...source, state: "running", stopConfirmed: false, ...(owner?.prompt ? { prompt: owner.prompt } : {}), source });
     }
     return source;
   }
 
   private finishNativeResult(): void {
-    if (!this.pendingRootResult || !this.background.idle || this.background.busy) return;
+    if (this.completionCancelled || !this.pendingRootResult || this.background.busy
+      || !(this.nativeCompletion ? this.nativeCompletion.confirms(this.pendingRootResult) : this.background.idle)) return;
     const message = this.pendingRootResult, suggestion = this.pendingSuggestion;
     this.pendingRootResult = null; this.pendingSuggestion = undefined;
     this.emitRootResult(message);
@@ -733,6 +824,7 @@ class ClaudeRun implements HarnessRun {
     this.pendingRootResult = null;
     this.suggestionPending = this.options.promptSuggestions === true && message.subtype === "success" && message.is_error !== true;
     this.activity.reset(); this.turnActive = false;
+    this.pendingChildReplies.clear();
     // Keep exact tool identities until their terminal callbacks, including during SDK stop.
     this.proposedTools.clear();
     const usage = message.usage as Record<string, unknown> | undefined;
@@ -743,25 +835,86 @@ class ClaudeRun implements HarnessRun {
         outputTokens: typeof usage.output_tokens === "number" ? usage.output_tokens : undefined } : undefined });
   }
 
+  private registerBackgroundCommand(taskId: string, call: BashCall | undefined): void {
+    if (!call || !(this.stopped ? this.acceptingStopTerminals : this.turnActive)
+      || this.backgroundCommands.has(taskId) || this.backgroundCommands.size >= 256
+      || this.ambiguousCommandDenial || this.deniedToolCalls.has(call.toolId)) return;
+    const key = JSON.stringify([call.parent ?? "main", call.toolId]), tool = this.toolCalls.get(key);
+    const source = call.parent === undefined ? undefined : this.childSources.get(call.parent);
+    if (tool?.name !== "Bash" || tool.nativeSessionId !== this.nativeSessionId || this.pendingNativeEffects.get(key) !== tool.id
+      || call.parent !== undefined && !source) return;
+    this.backgroundCommands.set(taskId, { key, id: tool.id, toolId: call.toolId, runId: call.runId, source });
+    // Ownership moved to the native background task. A launch acknowledgement or
+    // interruption of the original foreground tool cannot settle that command.
+    this.pendingNativeEffects.delete(key);
+  }
+
+  private observeBackgroundCommand(message: Record<string, unknown>): void {
+    if (typeof message.task_id !== "string") return;
+    const taskId = message.task_id;
+    if (message.subtype === "task_notification") {
+      const command = this.backgroundCommands.get(taskId);
+      if (!command || command.status || message.run_id !== command.runId || message.reason !== undefined
+        || message.task_type !== undefined && message.task_type !== "local_bash"
+        || message.tool_use_id !== undefined && message.tool_use_id !== command.toolId) return;
+      const status = message.status;
+      if (status !== "completed" && status !== "failed" && status !== "stopped") return;
+      command.status = status === "stopped" ? "cancelled" : status;
+      // The worker only accepts root tool outcomes during prediction cleanup's stop drain.
+      if (this.turnActive || this.stopped || command.source) this.publishBackgroundCommand(command);
+      this.notifyTerminalsDrained();
+    } else if (message.subtype === "task_started" || message.subtype === "task_updated"
+      && (message.patch as { is_backgrounded?: unknown } | undefined)?.is_backgrounded === true) {
+      const call = this.background.bashCall(taskId);
+      if (call && call.runId === message.run_id) this.registerBackgroundCommand(taskId, call);
+    }
+  }
+
+  private publishBackgroundCommand(command: BackgroundCommand): void {
+    if (command.published) return;
+    command.published = true;
+    const source = command.source ? { source: command.source } : {};
+    if (command.status) this.options.onEvent({ type: "native_effect", id: command.id, state: "settled", ...source });
+    // A task notification is terminal status evidence. Its summary/path is not stdout.
+    this.options.onEvent({ type: "command_result", toolUseId: command.id, status: command.status ?? "unknown", ...source });
+  }
+
   private dispatch(message: Record<string, unknown>): void {
     const type = message.type;
     // Cancellation can deliver the authoritative tool terminal during interrupt/close. Drain
     // only calls this exact turn already registered; no new child/tool/message is admitted.
     const stopLifecycle = type === "system" && ["task_notification", "task_updated", "background_tasks_changed"].includes(String(message.subtype));
-    if (this.stopped && (type !== "user" && !stopLifecycle || message.isReplay)) return;
+    if (this.stopped && (type !== "user" && !stopLifecycle || message.isReplay)) {
+      if (type === "system" && message.subtype === "task_started" && this.acceptingStopTerminals && !message.isReplay
+        && !message.parent_tool_use_id && message.session_id === this.nativeSessionId && typeof message.task_id === "string")
+        this.registerBackgroundCommand(message.task_id, this.background.bashStartedDuringStop(message));
+      return;
+    }
     const parent = typeof message.parent_tool_use_id === "string" && message.parent_tool_use_id.length <= 512 ? message.parent_tool_use_id : undefined;
     const source = parent ? this.childSource(parent) : undefined;
     if (parent && !source) return;
     if (!parent && message.session_id === this.nativeSessionId && !message.isReplay && this.background.observe(message, !this.stopped)) {
+      this.observeBackgroundCommand(message);
       if (this.stopped) return;
       if (message.subtype === "session_state_changed" && message.state === "running") {
         this.pendingRootResult = null; this.pendingSuggestion = undefined; this.suggestionPending = false;
+      }
+      if (message.subtype === "session_state_changed" && message.state === "idle" && this.background.busy) {
+        this.pendingRootResult = null; this.pendingSuggestion = undefined; this.needsContinuationResult = true;
       }
       this.finishNativeResult(); return;
     }
     const emit = (event: HarnessEvent): void => this.options.onEvent(source ? { ...event, source } : event);
     // A native child's result is an observation of that child, never completion of the root query.
-    if (source && type === "result") { emit({ type: "result", status: message.is_error === true ? "failed" : String(message.subtype ?? "success") }); return; }
+    if (source && type === "result") {
+      const launch = parent ? this.toolSources.get(parent) : undefined;
+      if (!message.isReplay && launch?.turn === this.commandTurn && launch.id === source.parentToolCallId
+        && message.is_error !== true && message.subtype === "success" && typeof message.result === "string" && message.result) {
+        emit({ type: "agent_status", ...source, state: "succeeded", response: message.result });
+      }
+      emit({ type: "result", status: message.is_error === true ? "failed" : String(message.subtype ?? "success") });
+      return;
+    }
     if (source && type === "system" && message.subtype === "init") {
       if (typeof message.model === "string") emit({ type: "execution_model", requested: { model: null, reasoningEffort: null }, reported: { model: message.model, reasoningEffort: null } });
       return;
@@ -797,32 +950,58 @@ class ClaudeRun implements HarnessRun {
             || block.content !== undefined && typeof block.content !== "string" && !Array.isArray(block.content))) continue;
           const tool = this.toolCalls.get(key);
           const observed = this.turnActive || this.pendingNativeEffects.has(key);
+          const background = !message.isReplay && message.session_id === this.nativeSessionId
+            ? [...this.backgroundCommands.values()].find(command => command.key === key) : undefined;
           const structuredResult = resultBlocks.length === 1 && message.tool_use_result && typeof message.tool_use_result === "object" && !Array.isArray(message.tool_use_result)
             ? message.tool_use_result as Record<string, unknown> : {};
+          if (observed && !message.isReplay && !this.stopped && !this.ambiguousToolDenial && tool && !this.deniedToolCalls.has(tool.rawId)
+            && (!tool.nativeSessionId || !message.session_id || message.session_id === tool.nativeSessionId)
+            && (tool.name === "Agent" || tool.name === "Task") && typeof structuredResult.agentId === "string" && structuredResult.agentId
+            && block.is_error !== true && (structuredResult.status === "completed" || structuredResult.status === "async_launched")) {
+            const launch = this.toolSources.get(tool.rawId);
+            if (launch && launch.id === tool.id && launch.turn === this.commandTurn && launch.agentId === (source?.agentId ?? "root")) {
+              const child = this.childSource(tool.rawId, false);
+              if (child?.parentToolCallId === launch.id) {
+                if (this.nativeSessionId && message.session_id === this.nativeSessionId && structuredResult.agentId.length <= 512) {
+                  const key = JSON.stringify([this.nativeSessionId, structuredResult.agentId]);
+                  launch.nativeChildKey = key;
+                  const earlyReply = this.pendingChildReplies.get(key);
+                  if (earlyReply) {
+                    launch.reply = earlyReply;
+                    this.pendingChildReplies.delete(key);
+                  }
+                }
+                const finished = structuredResult.status === "completed";
+                const content = finished && Array.isArray(structuredResult.content) ? structuredResult.content : [];
+                const response = content.filter(part => part?.type === "text" && typeof part.text === "string").map(part => part.text).join("\n\n");
+                launch.state = finished ? "succeeded" : launch.state ?? "running";
+                this.options.onEvent({ type: "agent_status", ...child, state: launch.state, source: child,
+                  ...(typeof structuredResult.prompt === "string" ? { prompt: structuredResult.prompt } : {}),
+                  ...(response ? { response } : launch.state === "succeeded" ? launch.reply : {}) });
+              }
+            }
+          }
+          const deferred = structuredResult.detachedToolCall === true || structuredResult.backgroundedByUser === true
+            || typeof structuredResult.backgroundTaskId === "string";
           // An SDK-local MCP abort can return a tool-error block while the remote effect is
           // still unknown. A local cancellation string is not a remote CallToolResult.
           const unknownRemoteAbort = this.stopped && tool?.name.startsWith("mcp__") && block.is_error === true
             && !Array.isArray(structuredResult.content) && structuredResult.structuredContent == null;
           const effectId = commandToolUseId(this.commandRun, this.commandTurn, block.tool_use_id, typeof message.parent_tool_use_id === "string" ? message.parent_tool_use_id : "main");
-          if (observed && !message.isReplay && effectId) {
-            const structured = resultBlocks.length === 1 && message.tool_use_result && typeof message.tool_use_result === "object" ? message.tool_use_result as Record<string, unknown> : {};
+          if (observed && !message.isReplay && effectId && !background?.status) {
             emit({ type: "native_effect", id: effectId,
-              state: unknownRemoteAbort || structured.detachedToolCall === true || structured.backgroundedByUser === true || typeof structured.backgroundTaskId === "string" ? "unknown" : "settled" });
+              state: background || unknownRemoteAbort || deferred ? "unknown" : "settled" });
           }
           const command = this.commandCalls.get(key);
-          if (observed && !message.isReplay && command && !this.deniedToolCalls.has(command.rawId)) {
+          if (observed && !message.isReplay && command && !background && !this.deniedToolCalls.has(command.rawId)) {
             const result = claudeCommandResult(command.id, block,
               !this.ambiguousCommandDenial && resultBlocks.length === 1 ? message.tool_use_result : undefined);
             if (result) emit(result);
           }
-          if (observed && !message.isReplay && tool && !this.ambiguousToolDenial
+          if (observed && !message.isReplay && tool && !background && !this.ambiguousToolDenial
               && !this.deniedToolCalls.has(tool.rawId) && shouldRetainToolOutput(tool.name)) {
             // Only the matched block is display content; the SDK's structured envelope can carry
             // private provider metadata and is ambiguous when several results share a message.
-            const structured = resultBlocks.length === 1 && message.tool_use_result && typeof message.tool_use_result === "object"
-              ? message.tool_use_result as Record<string, unknown> : {};
-            const deferred = structured.detachedToolCall === true || structured.backgroundedByUser === true
-              || typeof structured.backgroundTaskId === "string";
             const status = unknownRemoteAbort ? "unknown" : command
               ? claudeCommandResult(command.id, block, resultBlocks.length === 1 ? message.tool_use_result : undefined)?.status ?? "unknown"
               : block.is_error === true ? "failed" : deferred ? "unknown"
@@ -832,7 +1011,7 @@ class ClaudeRun implements HarnessRun {
           this.commandCalls.delete(key);
           this.toolCalls.delete(key);
           this.pendingNativeEffects.delete(key);
-          if (!this.pendingNativeEffects.size) for (const done of [...this.terminalWaiters]) done();
+          this.notifyTerminalsDrained();
           if (!source) this.activity.finish(block.tool_use_id);
           if (!source) this.proposedTools.delete(block.tool_use_id);
           if (!source) this.completedTools.add(block.tool_use_id);
@@ -843,6 +1022,7 @@ class ClaudeRun implements HarnessRun {
       return;
     }
     if (type === "system" && message.subtype === "init" && typeof message.session_id === "string") {
+      if (this.nativeSessionId !== message.session_id) this.pendingChildReplies.clear();
       this.nativeSessionId = message.session_id;
       if (this.options.resumeHarnessSessionId && message.session_id !== this.options.resumeHarnessSessionId) {
         emit({ type: "error", message: "Claude did not resume the requested native session; existing history is preserved." });
@@ -912,7 +1092,11 @@ class ClaudeRun implements HarnessRun {
                 if (block.name === "Bash") this.commandCalls.set(key, { id: toolUseId, rawId: String(block.id) });
               } else toolUseId = undefined;
             }
-            if (typeof block.id === "string" && toolUseId && this.toolSources.size < 2048) this.toolSources.set(block.id, { agentId: source?.agentId ?? "root", id: toolUseId, turn: this.commandTurn });
+            if (typeof block.id === "string" && toolUseId && this.toolSources.size < 2048) this.toolSources.set(block.id, {
+              agentId: source?.agentId ?? "root", id: toolUseId, turn: this.commandTurn,
+              ...((block.name === "Agent" || block.name === "Task") && typeof (block.input as { prompt?: unknown } | undefined)?.prompt === "string"
+                ? { prompt: (block.input as { prompt: string }).prompt } : {}),
+            });
             if (!source && typeof block.id === "string" && ["Agent", "Task"].includes(String(block.name)) && !message.isReplay) {
               if (this.parentAgentCalls.has(block.id)) this.parentAgentCalls.set(block.id, null);
               else if (toolUseId && this.parentAgentCalls.size < 2048) this.parentAgentCalls.set(block.id, { id: toolUseId, turn: this.commandTurn });
@@ -934,15 +1118,17 @@ class ClaudeRun implements HarnessRun {
       if (message.isReplay || this.nativeSessionId && typeof message.session_id === "string" && message.session_id !== this.nativeSessionId) return;
       this.pendingSuggestion = undefined;
       if (message.subtype === "success" && message.is_error !== true) {
+        if (this.completionCancelled) return;
         // Native notification acknowledgements can have no model turn or answer. They
         // cannot replace the root yield while its background children are continuing.
-        if (this.pendingRootResult && message.num_turns === 0 && message.result === "") return;
-        if (this.background.busy || this.background.requiresIdle && !this.background.idle) {
-          this.pendingRootResult = message; return;
-        }
-        // The SDK public iterator hides host-only session_state_changed. Its next substantive
-        // root result after the agent inventory drains closes the native continuation.
-        // An empty inventory alone never publishes the earlier yielded root result.
+        if ((this.pendingRootResult || this.needsContinuationResult) && message.num_turns === 0 && message.result === "") return;
+        this.needsContinuationResult = false;
+        // A child can finish while its notification is still queued for the parent. Neither
+        // empty task inventory nor another root model result proves the continuation is over.
+        // Native idle is bound to the exact result before it can become a public completion.
+        this.pendingRootResult = message;
+        this.finishNativeResult();
+        return;
       }
       this.emitRootResult(message);
     }

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import type { HarnessEvent, HarnessRun } from "@hosty/agent-provider-runtime/harness/adapter";
 import { ClaudeHarnessAdapter } from "./claude.js";
 import { WorkerJournal } from "@hosty/agent-provider-runtime/worker/journal";
@@ -33,7 +34,7 @@ async function fixture(options: FixtureOptions = {}) {
   const events: HarnessEvent[] = [];
   let interrupt!: () => void, finish!: () => void, preHook!: Hook, postHook!: Hook;
   let hookReady = false, iteratorFinished = false, nativeClosed = false;
-  const nativeDelays = options.nativeCloseDelays ?? [options.nativeCloseDelay ?? 0], nativeChildren = nativeDelays.map(() => new EventEmitter());
+  const nativeDelays = options.nativeCloseDelays ?? [options.nativeCloseDelay ?? 0], nativeChildren = nativeDelays.map(() => Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => true), killed: false, exitCode: null, signalCode: null }));
   let nativeClosedCount = 0, nextNative = 0, spawnNative!: () => unknown;
   const interrupted = new Promise<void>(resolve => { interrupt = resolve; }), finished = new Promise<void>(resolve => { finish = resolve; });
   finishers.push(finish);

@@ -7,6 +7,7 @@ import base64
 import hashlib
 import http.cookiejar
 import json
+import os
 import pathlib
 import urllib.error
 import urllib.parse
@@ -57,6 +58,9 @@ class ProviderAcceptance:
                 failure = {}
             details = failure.get('error') if isinstance(failure, dict) else None
             code = (failure.get('code') if isinstance(failure, dict) else None) or (details.get('code') if isinstance(details, dict) else None) or 'request_failed'
+            if route == '/probe' and code == 'acceptance_failed' and isinstance(details, dict):
+                # The test consumer uses fixed assertion messages for this code.
+                raise AssertionError(f'Independent consumer probe: {details.get("message", code)}') from None
             raise AssertionError(f'Provider acceptance request {route} failed: HTTP {error.code}, {code}') from None
 
     def authenticate(self, app_id):
@@ -85,6 +89,10 @@ class ProviderAcceptance:
                 fixture = self.workspace/'apps/codex-provider/test/fake-codex-server.mjs'
                 assert fixture.is_file()
                 manifest['services'][0]['runtimes']['local'].setdefault('environment', {})['HOSTY_HARNESS_CODEX_COMMAND'] = str(fixture)
+                if os.environ.get('HOSTY_LIVE_HISTORY_ACCEPTANCE') == '1':
+                    runtime = manifest['services'][0]['runtimes']['local']
+                    runtime['environment']['HOSTY_RANGE_TEST_POLICY'] = str(self.base / 'range-policy.json')
+                    runtime['command'] = runtime['command'].replace('node ', 'node --import ./apps/codex-provider/test/history-network.mjs ', 1)
             target = self.base/(slug+'-acceptance.json')
             target.write_text(json.dumps(manifest))
             self.context['run']([self.context['cli'], '--data-root', self.root, 'apps', 'install', target, '--runtime', 'local', '--no-autostart'])
