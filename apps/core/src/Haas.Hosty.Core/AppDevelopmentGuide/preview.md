@@ -29,9 +29,8 @@ ordinary child API requests after setup:
    and reuse it instead of reinstalling blindly.
 2. `POST /api/installations` with `{ "manifestPath": "<worktree>/manifest.json", "selectedRuntime": "dev" }`
    prepares a reviewed installation. Use the actual manifest-relative path from the workspace.
-3. `POST /api/installations/<id>/submit` with `{ "autostart": false }` submits it. Show the returned
-   `approvalUrl` to the operator and wait for its decision. `GET /api/installations/<id>` reports the
-   outcome. A permission refusal must not be retried through a different authority.
+3. `POST /api/installations/<id>/submit` with `{ "autostart": false }` returns an `approvalUrl` for review
+   under the child account that submitted the request. `GET /api/installations/<id>` reports the outcome. A permission refusal must not be retried through a different authority.
 4. After approval, `POST /api/apps/<app-id>/start` with `{}` starts the Docker runtime.
    `GET /api/apps` supplies the resulting UI URL and runtime observations.
 5. `POST /api/apps/<app-id>/restart` with `{}` applies an explicit restart when required.

@@ -182,6 +182,7 @@ export function TranscriptEvent({
       return (
         <div className="group/message flex flex-col gap-1">
           <div className="rounded-lg bg-muted/60 px-3 py-2">
+            {event.providerHistoryEarlier === true && <p className="mb-1 text-xs text-muted-foreground">Recovered from an earlier run</p>}
             <Markdown text={String(event.text ?? "")} />
             {event.incomplete === true && <p className="mt-2 text-xs text-muted-foreground">Interrupted message</p>}
           </div>
@@ -197,6 +198,7 @@ export function TranscriptEvent({
     case "command_result":
       return <div className="space-y-1 rounded-md border border-muted-foreground/25 p-2 text-xs"><p className="text-muted-foreground">Command result has no unique matching call in this turn.</p><InvocationResult outcome={commandOutcome(event)} /></div>;
     case "approval_request":
+      if (event.providerHistoryEarlier === true && !decision) return <p className="p-2 text-xs text-muted-foreground">Earlier run requested approval for {String(event.toolName ?? "an action")}. The decision outcome is unconfirmed.</p>;
       return (
         <ApprovalCard
           approvalId={transcriptDecisionId(event)}
@@ -211,6 +213,7 @@ export function TranscriptEvent({
         />
       );
     case "question_request":
+      if (event.providerHistoryEarlier === true && !answers) return <p className="p-2 text-xs text-muted-foreground">An earlier run requested an answer. The response is unconfirmed.</p>;
       if (typeof event.decisionWaitId === "string") return <DecisionQuestion waitId={event.decisionWaitId} />;
       return (
         <QuestionCard
@@ -235,7 +238,11 @@ export function TranscriptEvent({
 function TranscriptNotice({ message }: { message: string }) {
   const [open, setOpen] = useState(false);
   const summary = message.trim().replace(/\s+/g, " ");
-  const preview = summary.length > 160 ? `${summary.slice(0, 160)}…` : summary || "Assistant notice";
+  if (summary.length <= 160 && !message.trim().includes("\n"))
+    return <p className="flex items-start gap-1.5 px-1 py-1 text-xs text-muted-foreground" data-slot="transcript-notice">
+      <Info className="mt-0.5 size-3 shrink-0" aria-hidden /><span className="min-w-0 wrap-anywhere">{summary || "Assistant notice"}</span>
+    </p>;
+  const preview = open ? "Assistant notice" : summary.length > 160 ? `${summary.slice(0, 160)}…` : summary;
   const Chevron = open ? ChevronDown : ChevronRight;
   return <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 text-xs text-muted-foreground" data-slot="transcript-notice">
     <CollapsibleTrigger asChild><Button type="button" variant="ghost" size="sm"
@@ -376,7 +383,7 @@ function TranscriptEditFiles({ edits, reviewContext }: { edits: RecordedFileEdit
 // thirty rows, so the row carries the model's own description (or the path, the pattern, the query)
 // and the raw input waits behind a click — a transcript that showed every input would be a wall of
 // JSON with the conversation somewhere inside it.
-function ToolRow({ toolName, input, appNames, mcp, output, command, approval }: {
+export function ToolRow({ toolName, input, appNames, mcp, output, command, approval }: {
   toolName: string; input: unknown; appNames?: Record<string, string>; mcp?: unknown; output?: ToolOutput; command?: { outcome?: CommandOutcome; legacy: boolean }; approval?: ApprovalDecision;
 }) {
   const [open, setOpen] = useState(false);

@@ -50,6 +50,16 @@ describe("public provider run projection", () => {
     expectResync(() => createAgentRunProjection(snapshot({ agents: [{ ...child, state: "running" }, { ...child, state: "succeeded" }] })), "duplicate snapshot agent identity");
   });
 
+  it("keeps the lifecycle snapshot replayable when the child journal exceeds its byte allowance", () => {
+    let projection = createAgentRunProjection(snapshot());
+    const response = "x".repeat(65536);
+    for (let index = 0; index < 17; index++) {
+      const source = { ...child, agentId: `child-${index}` };
+      projection = apply(projection, "agent.updated", { agent: { ...source, state: "succeeded", response } }, source);
+    }
+    expect(createAgentRunProjection(projection.snapshot).snapshot.agents).toHaveLength(17);
+  });
+
   it("retains the latest root context with its original event identity across replacement and explicit clearing", () => {
     const usage = { usedTokens: 42, maxTokens: 1000, estimated: false };
     const initial = snapshot({ revision: "1", lastSequence: "1", latestContext: { sequence: "1", usage } });

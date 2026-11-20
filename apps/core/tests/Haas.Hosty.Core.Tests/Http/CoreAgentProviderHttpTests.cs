@@ -306,6 +306,84 @@ public sealed class CoreAgentProviderHttpTests
         await Assert.ThrowsAsync<AppIdentityException>(() => agent.McpToken(provider, new(binding.AdmissionRef, new("core")), default));
     }
 
+    [Fact]
+    public async Task HistoryDeliveryAuthenticatesBothInstallationsIndependentlyOfBrowserSessions()
+    {
+        var clock = new TestClock(DateTimeOffset.UtcNow);
+        await using var host = await CoreHttpHarness.StartAsync(clock);
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var tokens = host.Services.GetRequiredService<AppServiceTokenService>();
+        var consumer = Record("consumer.one", clock.UtcNow) with { GrantedCorePermissions = [CoreAppPermissions.AgentProviders] };
+        var otherConsumer = consumer with { Id = "consumer.two" };
+        var provider = Record("independent.runtime", clock.UtcNow) with
+        {
+            RuntimeState = "running", ConfirmedRoles = ["agent"],
+            Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v1", 1, [])] },
+        };
+        var otherProvider = provider with { Id = "other.runtime" };
+        foreach (var app in new[] { consumer, otherConsumer, provider, otherProvider }) await apps.UpsertAppAsync(app);
+        using var http = host.CreateClient();
+        var reference = new HostyProviderRef(provider.Id, PanelIdentity.Installation(provider), "native");
+        async Task<HttpResponseMessage> Post(string targetApp, string serviceApp, string operation, object body)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/internal/apps/{targetApp}/agent/{operation}")
+                { Content = JsonContent.Create(body) };
+            request.Headers.Authorization = new("Bearer", tokens.CreateToken(serviceApp));
+            return await http.SendAsync(request);
+        }
+        async Task<CoreAgentHistoryBinding> Issue(AppRecord caller)
+        {
+            using var response = await Post(caller.Id, caller.Id, "history/token", new CoreAgentHistoryRequest(reference));
+            response.EnsureSuccessStatusCode();
+            return (await response.Content.ReadFromJsonAsync<CoreAgentHistoryBinding>())!;
+        }
+        Task<HttpResponseMessage> Inspect(CoreAgentHistoryBinding binding, string key = "native") =>
+            Post(provider.Id, provider.Id, "history/introspect", new CoreAgentHistoryIntrospection(binding.Token, key));
+
+        var first = await Issue(consumer);
+        var second = await Issue(otherConsumer);
+        foreach (var (caller, binding) in new[] { (consumer, first), (otherConsumer, second) })
+        {
+            using var response = await Inspect(binding);
+            response.EnsureSuccessStatusCode();
+            var identity = (await response.Content.ReadFromJsonAsync<CoreAgentHistoryInvocation>())!;
+            Assert.Equal(caller.Id, identity.CallerAppId);
+            Assert.Equal(caller.InstalledAt.ToString("O"), identity.CallerInstallation);
+            Assert.Equal(reference, identity.Provider);
+            Assert.Equal(clock.UtcNow.AddHours(4), identity.ExpiresAt);
+            Assert.Equal(binding.ExpiresAt, identity.ExpiresAt);
+            Assert.Equal("http://127.0.0.1:3999/api/agent/v1", binding.Endpoint);
+        }
+        using var impersonation = await Post(consumer.Id, otherConsumer.Id, "history/token", new CoreAgentHistoryRequest(reference));
+        Assert.Equal(HttpStatusCode.Unauthorized, impersonation.StatusCode);
+        using var wrongAudience = await Post(otherProvider.Id, otherProvider.Id, "history/introspect", new CoreAgentHistoryIntrospection(first.Token, "native"));
+        Assert.Equal(HttpStatusCode.Unauthorized, wrongAudience.StatusCode);
+        using var wrongKey = await Inspect(first, "another");
+        Assert.Equal(HttpStatusCode.Unauthorized, wrongKey.StatusCode);
+        using var execution = await Post(provider.Id, provider.Id, "introspect",
+            new CoreAgentIntrospection(first.Token, "runs.cancel", "POST", $"/runs/{Guid.NewGuid()}/cancel", new string('0', 64)));
+        Assert.Equal(HttpStatusCode.Unauthorized, execution.StatusCode);
+
+        await apps.UpsertAppAsync(consumer with { GrantedCorePermissions = [] });
+        using var revoked = await Inspect(first);
+        Assert.Equal(HttpStatusCode.Forbidden, revoked.StatusCode);
+        using var cannotRenew = await Post(consumer.Id, consumer.Id, "history/token", new CoreAgentHistoryRequest(reference));
+        Assert.Equal(HttpStatusCode.Forbidden, cannotRenew.StatusCode);
+        using var unrelated = await Inspect(second);
+        Assert.Equal(HttpStatusCode.OK, unrelated.StatusCode);
+        await apps.UpsertAppAsync(consumer with { InstalledAt = clock.UtcNow.AddMinutes(1) });
+        using var reinstalled = await Inspect(first);
+        Assert.Equal(HttpStatusCode.Forbidden, reinstalled.StatusCode);
+        await apps.UpsertAppAsync(provider with { PermissionRevision = "changed" });
+        using var staleProvider = await Inspect(second);
+        Assert.Equal(HttpStatusCode.Unauthorized, staleProvider.StatusCode);
+        var current = await Issue(otherConsumer);
+        clock.UtcNow = current.ExpiresAt;
+        using var expired = await Inspect(current);
+        Assert.Equal(HttpStatusCode.Unauthorized, expired.StatusCode);
+    }
+
     private sealed class TestClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; set; } = now;

@@ -115,11 +115,7 @@ internal sealed partial class CoreLifecycleService
     private async Task<AppExecutionOperation> ExecuteTargetCoreAsync(AppExecutionOperation journal, CancellationToken ct,
         Func<CancellationToken, Task>? validateAuthority)
     {
-        DevelopmentWorkspace? preparationTree = null;
-        string? heldLease = null;
-        try
-        {
-        if (journal.State == "completed") return journal;
+        if (journal.State == "completed" || journal is { State: "failed", Code: "dev_workspace_start_failed" }) return journal;
         var app = await RequireAppAsync(journal.AppId, ct);
         var ownerFile = Path.Combine(AppExecutionStore.DirectoryFor(paths, app.Id), "owner.json");
         var owner = await JsonStorage.ReadAsync<AppExecutionOwner>(ownerFile, ct);
@@ -139,13 +135,28 @@ internal sealed partial class CoreLifecycleService
         var ownId = WorkspaceRuntimeFiles.ChildId(request.RequestId, "execution:" + app.Id);
         var retained = File.Exists(AppDevStore.Record(paths, app.Id, ownId))
             ? await AppDevStore.ReadAsync(paths, app.Id, ownId, ct) : null;
+        if (retained?.Receipts?.FirstOrDefault(r => r.RequestId == request.RequestId && r.State == "failed") is { } failure)
+            return FailedWorkspaceStart(journal, failure.Error ?? retained.Error);
         if (retained is { Phase: "active" } && retained.Receipts?.Any(r => r.RequestId == request.RequestId && r.State == "succeeded") == true)
             return journal with { State = "completed", Phase = "completed", Code = null, Error = null, Review = null };
+        if (retained is { WorkspaceStartAfterBinding: true, Phase: "backed-up" or "bound" or "starting" } &&
+            app.DevModeId == retained.Id)
+        {
+            // Only the exact committed intent may reconcile its receipt after its initiating
+            // credential expired. Running any code still requires current authority.
+            if (request.Kind != "workspace" || retained.Installation != app.InstalledAt ||
+                owner?.Installation != app.InstalledAt || owner.RequestId != request.RequestId ||
+                app.SelectedRuntime != retained.TargetRuntime || app.SourceState?.LocalOverridePath != retained.SourcePath ||
+                retained.Receipts?.Any(r => r.RequestId == request.RequestId && r.Fingerprint == journal.Fingerprint &&
+                    r.Action == "enter" && r.State == "pending") != true)
+                throw DevError("selection_changed", "The application binding no longer matches this workspace selection.");
+            return await SwitchWorkspaceAndStartAsync(retained, journal, validateAuthority, ct);
+        }
+        if (validateAuthority is not null) await validateAuthority(ct);
         if (retained is { Phase: "starting", PackageReturn: true } && app.DevModeId == retained.Id &&
             app.SelectedRuntime == retained.TargetRuntime && app.SourceState?.LocalOverridePath == retained.SourcePath &&
             app.RuntimeState == "running" && (await GetHealthAsync(app.Id, ct)).Status == "healthy")
         {
-            if (validateAuthority is not null) await validateAuthority(ct);
             await DevPhaseAsync(retained, "active", ct, completedRequestId: request.RequestId);
             return journal with { State = "completed", Phase = "completed", Code = null, Error = null, Review = null };
         }
@@ -159,7 +170,6 @@ internal sealed partial class CoreLifecycleService
             if (tree?.WorkspaceId != expectedWorkspace)
                 return journal with { State = "completed", Phase = "completed", Code = "execution_target_unchanged" };
         }
-        if (validateAuthority is not null) await validateAuthority(ct);
         var packageRuntime = await PackageRuntimeAsync(app, ct);
         if (request.Kind == "package")
         {
@@ -252,7 +262,7 @@ internal sealed partial class CoreLifecycleService
         if (retained is null)
         {
             SecureFileSystem.EnsurePrivateDirectory(AppDevStore.Root(paths, app.Id));
-            var previous = await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
+            var previous = await LoadDevStopSelectionAsync(app, active, ct);
             var saved = Path.Combine(AppDevStore.Root(paths, app.Id), ownId + ".manifest.json");
             await File.WriteAllTextAsync(saved, previous.ManifestJson, ct);
             var git = await AppSourceService.ReadScopeStatusAsync(app.Id, () => candidateTree.Path, null, clock.UtcNow, ct);
@@ -260,44 +270,24 @@ internal sealed partial class CoreLifecycleService
                 throw DevError("source_unavailable", "The selected workspace must be a readable Git worktree.");
             retained = new(ownId, app.Id, app.InstalledAt, actor, runtime, candidateTree.Path, candidateTree.Id,
                 previous.ManifestDigest, saved, packageRuntime, active is { Active: true } ? active.PreviousSource : app.SourceState,
-                active is { Active: true } ? active.PreviousArtifacts : app.ArtifactLocks, AppRuntimeStates.IsUp(app.RuntimeState),
+                active is { Active: true } ? active.PreviousArtifacts : app.ArtifactLocks,
+                AppRuntimeStates.IsUp(app.RuntimeState) || active is { Active: true, WasRunning: true },
                 await DevConfigurationHashAsync(app, ct), "prepared",
                 Receipts: [new(request.RequestId, journal.Fingerprint, "enter", "pending")], SourceHead: git.Head,
-                PreparedRuntime: journal.Prepared, PackageReturn: true, PackageRuntime: packageRuntime);
+                PreparedRuntime: journal.Prepared, PackageReturn: true, PackageRuntime: packageRuntime,
+                WorkspaceStartAfterBinding: journal.Prepared is null,
+                PackageDataBaseline: active is not { Active: true } && packageRuntime is not null && app.SelectedRuntime == packageRuntime &&
+                    (!previous.RuntimeProfile.Development || !HasManualPackageSourceOverride(app, active)),
+                SupersededDevModeId: active is { Active: true } ? active.Id : null);
             retained = await SaveExecutionCandidateAsync(retained, candidate, ct);
-            if (journal.Phase != "switching" && journal.CandidateDigest is not null && journal.CandidateDigest != candidate.Selection.ManifestDigest)
-                journal = journal with { Prepared = null, CandidateDigest = null };
-            if (journal.Prepared is null)
-            {
-                var prospective = BuildDevelopmentRecord(app, candidate.Selection, retained) with
-                    { SourceState = app.SourceState! with { LocalOverridePath = candidateTree.Path }, ArtifactLocks = null, DevModeId = app.DevModeId };
-                await EnsureRequiredSettingsConfiguredAsync(prospective, ct);
-                var context = EnsureMountsReadyForStart(await CreateRuntimeContextAsync(prospective, candidate.Selection, ct));
-                var scratch = Path.Combine(AppExecutionStore.DirectoryFor(paths, app.Id), "preparation", request.RequestId);
-                context = context with { SourceRoot = candidateTree.Path, AppDataPath = Path.Combine(scratch, "data"),
-                    AppCachePath = Path.Combine(scratch, "cache"), PreparationOnly = true, WorkspaceActivationId = request.RequestId };
-                if (ResolveAdapter(candidate.Selection.RuntimeProfile.Type) is not IRuntimePreparation adapter)
-                    throw DevError("preparation_unsupported", "This development runtime cannot prepare before replacement.");
-                if (journal.PreparationLeaseId is { } abandoned && candidateTree.Leases.Contains(abandoned))
-                    throw DevError("preparation_recovery_required", "A retained preparation may still use this workspace. Inspect its processes and recover that lease before retrying.");
-                var lease = Guid.NewGuid().ToString("D");
-                journal = journal with { PreparationLeaseId = lease };
-                await AppExecutionStore.SaveAsync(paths, journal, ct);
-                preparationTree = candidateTree;
-                heldLease = lease;
-                await DevWorkspaces.CommandAsync(candidateTree.Id, candidateTree.Owner, "lease",
-                    new(WorkspaceRuntimeFiles.ChildId(lease, "acquire"), LeaseId: lease), ct);
-                var prepared = await adapter.PrepareAsync(context, ct);
-                journal = journal with { Prepared = prepared, CandidateDigest = candidate.Selection.ManifestDigest, Phase = "prepared" };
-                await AppExecutionStore.SaveAsync(paths, journal, ct);
-            }
-            if (candidate.Selection.ManifestDigest != journal.CandidateDigest)
+            if (journal.PreparationLeaseId is { } abandoned && candidateTree.Leases.Contains(abandoned))
+                throw DevError("preparation_recovery_required", "A retained preparation may still use this workspace. Inspect its processes and recover that lease before retrying.");
+            if (journal.Prepared is not null && journal.CandidateDigest != candidate.Selection.ManifestDigest)
                 throw DevError("source_changed", "The manifest changed after preparation. Select the workspace again.");
             if (validateAuthority is not null) await validateAuthority(ct);
             await EnsureExecutionCandidateApprovedAsync(candidate, await RequireAppAsync(app.Id, ct), ct);
             if (packageRuntime is not null) await SavePackageRuntimeAsync(app, packageRuntime, ct);
             SecureFileSystem.EnsurePrivateDirectory(AppDevStore.Root(paths, app.Id));
-            retained = retained with { PreparedRuntime = journal.Prepared };
             await AppDevStore.SaveAsync(paths, retained, ct);
         }
         if (app.DevModeId != retained.Id && AppExecutionStore.Binding(app) != journal.ExpectedBinding)
@@ -305,6 +295,10 @@ internal sealed partial class CoreLifecycleService
 
         journal = journal with { Phase = "switching" };
         await AppExecutionStore.SaveAsync(paths, journal, ct);
+        if (retained.WorkspaceStartAfterBinding)
+            return await SwitchWorkspaceAndStartAsync(retained, journal, validateAuthority, ct);
+
+        // Resume switches whose preparation/ownership was persisted by an older Core.
         if (app.DevModeId != retained.Id)
         {
             if (active is { Active: true })
@@ -318,24 +312,21 @@ internal sealed partial class CoreLifecycleService
         }
         await DevWorkspaces.WithDevAdmissionAsync(candidateTree.Id, await RequireAppAsync(app.Id, ct), sourceActor,
             async () => { await EnterDevAsync(retained, request.RequestId, ct); return true; }, ct);
-        var configuredRecipe = await JsonStorage.ReadAsync<WorkspaceExecutionRecipe>(WorkspaceRecipePath(app.Id, candidateTree.Id), ct);
-        await JsonStorage.WriteAsync(WorkspaceRecipePath(app.Id, candidateTree.Id), new WorkspaceExecutionRecipe(app.Id, app.InstalledAt, runtime,
-            configuredRecipe?.Installation == app.InstalledAt ? configuredRecipe.Requests : null), true, ct);
+        await SaveSelectedWorkspaceRecipeAsync(retained, ct);
         return journal with { State = "completed", Phase = "completed", Code = null, Error = null, Review = null, PreparationLeaseId = null };
-        }
-        finally
-        {
-            if (heldLease is not null && preparationTree is not null)
-            {
-                // Keep source reserved until native preparation has exited and the execution
-                // pointer protects its consumer. A hard crash retains this lease for inspection.
-                await DevWorkspaces.CommandAsync(preparationTree.Id, preparationTree.Owner, "release-lease",
-                    new(WorkspaceRuntimeFiles.ChildId(heldLease, "release"), LeaseId: heldLease), CancellationToken.None);
-                journal = journal with { PreparationLeaseId = null };
-                await AppExecutionStore.SaveAsync(paths, journal, CancellationToken.None);
-            }
-        }
     }
+
+    private async Task SaveSelectedWorkspaceRecipeAsync(AppDevOperation op, CancellationToken ct)
+    {
+        var recipePath = WorkspaceRecipePath(op.AppId, op.WorktreeId!);
+        var configured = await JsonStorage.ReadAsync<WorkspaceExecutionRecipe>(recipePath, ct);
+        await JsonStorage.WriteAsync(recipePath, new WorkspaceExecutionRecipe(op.AppId, op.Installation, op.TargetRuntime,
+            configured?.Installation == op.Installation ? configured.Requests : null), true, ct);
+    }
+
+    private static AppExecutionOperation FailedWorkspaceStart(AppExecutionOperation journal, string? error) =>
+        journal with { State = "failed", Phase = "start-failed", Code = "dev_workspace_start_failed",
+            Error = error ?? "The workspace was selected but its application did not start.", Review = null };
 
     private Task ClaimExecutionTargetAsync(AppRecord app, string requestId, CancellationToken ct) =>
         JsonStorage.WriteAsync(Path.Combine(AppExecutionStore.DirectoryFor(paths, app.Id), "owner.json"),

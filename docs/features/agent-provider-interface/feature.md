@@ -1,6 +1,6 @@
 ---
 created: 2026-11-12
-updated: 2026-11-17
+updated: 2026-11-20
 summary: Independent Local agent apps expose installation-qualified HTTP/SSE execution with provider-owned native state and Core-scoped authority.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -103,7 +103,7 @@ identity selects a provider or grants authority.
 ## Public HTTP And SSE Contract
 
 The first-party interface base is `/api/agent/v1`. Declarations supply the actual endpoint and path;
-consumers do not derive them from an app ID. Every operation requires a fresh, exact Core credential.
+consumers do not derive them from an app ID. Execution operations require an exact Core credential. Installation history uses a separate read-only credential.
 The unauthenticated `/healthz` endpoint reports service liveness only.
 
 | Method and relative route | Operation |
@@ -118,6 +118,7 @@ The unauthenticated `/healthz` endpoint reports service liveness only.
 | `PUT /sessions/{uuid}/runs/{uuid}` | Durable native start or explicit resume admission |
 | `GET /runs/{uuid}` | Authoritative snapshot and replay cursor |
 | `GET /runs/{uuid}/events?after={cursor}` | Sequenced `agent-event.1` SSE replay and live events |
+| `GET /history/events` | Installation-owned history across runs, returned as SSE or bounded JSON pages |
 | `POST /runs/{uuid}/responses` | Revision-bound approval/question response |
 | `POST /runs/{uuid}/cancel` | Cancellation or a lost-start admission fence |
 | `POST /runs/{uuid}/controls` | Capability-gated park, barrier, reconciliation or configuration control |
@@ -131,13 +132,88 @@ helpers from `/agent/client`, validators/SSE helpers from `/agent/server`, and s
 `/agent/schemas`. Checked-in OpenAPI, event JSON Schema and conformance fixtures live in
 `packages/app-sdk/schemas`. The caller supplies the metadata-only `AgentAuthorizer` callback;
 its Core credential stays in that consumer backend. `watchRun` reconnects with fresh authority,
-deduplicates events and reloads the authoritative snapshot when replay expires.
+deduplicates events and reloads the authoritative snapshot when replay expires or the stream closes
+unexpectedly. A provider sends an SSE `renew` frame with an empty JSON object on scheduled per-run
+credential renewal. This allows the client to continue from the same cursor without rereading
+the snapshot or spending a retry.
 
 The .NET SDK exposes `HostyAgentExecutionClient`, persisted `HostyAgentPreparedRequest` commands and
 `HostyAgentAuthorizer`, plus `HostyProviderClient` authorization/admission/renewal helpers.
 `EventsAsync` reads a bounded stream with an explicit replay cursor; `RunAsync` retrieves the
 snapshot for caller-managed reconnect/recovery. Both SDKs keep provider credentials separate from
 Core service/user credentials and require the explicitly selected installation.
+
+### Installation history delivery
+
+An agent provider advertising `installation-history` exposes one subscription for a consuming
+installation across all of its users, conversations and owned runs. A service authenticates to Core
+with its app service credential and selects the qualified provider. Core issues a four-hour history
+credential bound to the reviewed grants and both installations. The provider introspects it on
+connection and every 30 seconds per open stream. Expiry ends the stream. Reconnecting with a new
+credential resumes at the committed cursor. Run admission, approvals and cancellation keep their
+original user or task authority.
+
+```mermaid
+sequenceDiagram
+    participant U as Chat owner
+    participant H as Harness
+    participant C as Core
+    participant P as Agent provider
+    U->>H: Start a run in this chat
+    H->>C: Authorize the user or task and calling installation
+    C-->>H: Run operation credential
+    H->>P: Start the authorized run
+    H->>H: Retain the chat and qualified run association
+    H->>C: Authenticate the installation for history delivery
+    C-->>H: Read-only credential for the selected provider
+    H->>P: Open live subscription
+    P-->>H: Ready with installation boundary
+    par Live updates
+        P-->>H: New observations across owned chats
+        H->>H: Commit each fact to its chat
+    and Recover missed records
+        H->>P: Read session states and heads at the boundary
+        P-->>H: Current state and last durable position per session
+        H->>P: Page each missing session range at the same boundary
+        P-->>H: Durable facts with original positions
+        H->>H: Commit facts and extend stored ranges
+    end
+    U->>H: Open an authorized chat
+    H-->>U: Return its local conversation history
+```
+
+The TypeScript SDK exposes `watchAgentHistory` and `readAgentHistoryPage` from
+`@hosty-sdk/app/agent/client`. The .NET SDK exposes `HistoryAsync` and `HistoryPageAsync`
+on `HostyAgentExecutionClient`. Both verify the run and generation inside each observation
+against its envelope. Consumers persist the outer installation cursor only after applying its
+observations. Each run also has its own sequence and cursor.
+
+Providers advertising `installation-history.live` also expose three independent reads under the
+provider's `history/` endpoint. They share the installation credential and ownership rules.
+
+| Route | Result |
+| --- | --- |
+| `live` (SSE) | A ready frame with the registered subscription boundary, then observations committed after it. An optional prior cursor verifies archive ancestry. |
+| `states` (HTTP) | The latest run state and durable head per owned session. The caller can pin pages to the ready boundary or request current state without opening SSE. |
+| `range` (HTTP) | Consecutive durable records in the requested session and epoch between inclusive positions, paged at a fixed boundary. |
+
+The TypeScript methods are `watchLiveAgentHistory`, `readAgentHistoryStates` and
+`readAgentHistoryRange`. The .NET methods are `LiveHistoryAsync`, `HistoryStatesAsync` and
+`HistoryRangeAsync`. Durable positions start at one and span runs within a session. Streaming
+fragments have no durable position. A prior SQLite journal receives positions in its original
+commit order. Source history reconstructed from partial evidence carries `sourceHistoryIncomplete`.
+Rolling message and tool limits constrain the run summary independently of this journal.
+
+The provider commits completed messages, tool observations, decisions and execution state to a
+SQLite history journal. SSE resumes from an opaque installation-bound cursor. A client can also
+request `Accept: application/json` and page with `after`, `limit` and the returned `through`
+boundary, then resume the stream from that boundary. Streaming text fragments can disappear
+during an outage. Completed facts remain available throughout retention of the source history.
+Each run retains a receipt for the journal write. If a restored copy of the journal lacks
+that receipt, the provider invalidates the old installation cursor and rebuilds the available
+facts from its session records. An older run reconstructed from bounded evidence carries an
+explicit coverage gap. The per-run
+snapshot remains a summary of currently observable state.
 
 A session UUID, a run UUID, a native SDK session reference and a Harness conversation ID are separate
 identities. Protocol identity fields use opaque references rather than private native SDK session
@@ -162,7 +238,8 @@ bytes before sending and retains those identities after a lost acknowledgement.
 
 ## Original Authority And Core Bridges
 
-A reviewed consumer `providers.agent` grant permits discovery, including an app-only directory read.
+A reviewed consumer `providers.agent` grant permits app-only provider discovery and installation-bound
+read access to that installation's admitted history as described above.
 Invocation additionally requires current user access to both apps and the existing administrator
 boundary for native execution. The consumer requests `POST /api/internal/apps/{consumer}/agent/authorize`
 with provider reference, operation, method, relative path, body digest and bounded resource/configuration
@@ -272,11 +349,20 @@ Ollama advertises no native subagents. Unsupported concurrency guarantees are re
 child output does not replace the root result, and inclusive usage is not counted again as separate
 child consumption.
 
+A child entry in `agent.updated` and the run inventory can include `prompt` and `response`.
+Installation history retains each observed change. The first-party providers publish up to 64 KiB
+of UTF-8 per field and set `promptTruncated` or `responseTruncated` when clipped. The compact
+inventory has a shared 128 KiB budget for these fields and can omit text still available in the
+event history. Providers with status-only observations can omit both fields.
+
 Harness retains the public provider, installation, run, generation and agent ancestry with
 messages, streamed text, tool calls/results, approvals and questions. Its replay reducer applies
-`agent.updated` as well as snapshot inventories. The chat groups native children by their qualified
-run and offers expandable output with the parent, latest action and observed status. Child text
-streams are independent of the main response. Approval and question controls stay visible in the
+`agent.updated` as well as snapshot inventories. The chat shows one collapsed row per parent in a
+qualified run, with a bot icon, child count and status counts. Expanding a child shows its delegated prompt, observed final response and separately
+attributed activity. A uniquely linked launch can provide the prompt in older conversations.
+Progress messages stay in activity until the provider identifies a final response. Missing details
+are labelled unavailable and truncated text is labelled partial. Child text streams are independent
+of the main response. Approval and question controls stay visible in the
 main conversation with their child attribution. These observations do not create business tasks.
 A lost connection, interrupted run or missing current child inventory shows an unknown/last-known
 status rather than continuing a stale running badge. Interrupted partial messages remain labelled;
@@ -286,6 +372,10 @@ confirms observed child stops; it does not invent a successful child result.
 User prompts show their stored message time as local HH:mm. Message timestamp controls expose the
 full local date, time and timezone on hover, keyboard focus or tap. Missing or invalid historical
 timestamps do not produce a fabricated date; individual tool events do not acquire time badges.
+
+Claude correlates an Agent or Task launch with its prompt and the child result, including text
+from a matched foreground tool result or background stop. A progress message or launch
+acknowledgement alone leaves the final response unavailable.
 
 Claude distinguishes a root model result from completion of the native execution. The pinned SDK's
 background inventory and task notifications retain child identities, active tool receipts and
@@ -308,8 +398,10 @@ execution and drains exact late tool terminals; an idle notification during inte
 publish a pre-cancellation result as success.
 
 Codex observes pinned SDK subagent activity and reads only a verified completed child turn through
-the read-only native `thread/read` operation. This supplies attributed tool summaries without
-starting/resuming another thread. Interrupted, missing or superseded child history marks tools
+the read-only native `thread/read` operation. This supplies attributed tool summaries, a uniquely
+identified text assignment when available, and a message marked as the final answer. Codex also
+reports the prompt of a single-recipient native spawn and the completed recipient's reply when
+its collaboration events carry them. Interrupted, missing or superseded child history marks tools
 coverage as truncated. Closing an already verified completed child preserves its recorded history.
 
 Claude keeps an observed background Bash invocation pending until the native task reports a terminal
@@ -529,6 +621,16 @@ releases and selected lock closures are described in the
 
 ## Testing Expectations
 
+- Capture a live boundary while two users generate events. Read state at the boundary, read an
+  owned range, and verify that the stream starts after the cut. Check a foreign installation,
+  a deleted range, archive replacement and migration of an existing SQLite journal.
+
+- Stop the consuming Harness while three runs complete at the provider. Use two password-authenticated
+  users with two chats for one owner and one for the other. Check all three durable transcripts
+  before the next login, confirm each owner sees exactly one result in the correct chat, and reject
+  cross-owner reads. Exercise expiry, grant revocation, unrelated consumer and provider
+  installations, read credentials on mutation routes, and recovery after the detailed replay window.
+
 - Run the common runtime suite and each affected provider application's type checking, tests and
   production build. An unrelated injected engine exercises startup, settings, capabilities and
   generic connection bookkeeping. Architecture checks reject native engine references and
@@ -586,7 +688,9 @@ working account. A synthetic protocol check does not establish real OpenAI accou
   independent text streams, unknown status, same-cursor recovery, bounded snapshot gaps and replay
   without duplicate groups. Timestamp checks cover local time, old history and keyboard/mobile access.
   Run the installed-app browser fixture with `HOSTY_NATIVE_SUBAGENTS_BROWSER=1` alongside the
-  `agent-providers` integration suite; its controlled browser events do not prove native inference.
+  `agent-providers` integration suite. A scripted Codex App Server exercises delegation through
+  the installed provider and Harness to the browser, including the prompt and reply after reload.
+  Additional browser fixtures exercise interleaved child activity, decisions and missing status.
 - Claude child-history fixtures cover the SDK's normalized live UUIDs, preserved API message IDs,
   exact native agent/session/parent/input binding, ordered error terminals, missing or ambiguous
   identities, bounded history, metadata changes, native-close barriers and helper deadlines.

@@ -7,6 +7,8 @@ export type AgentRunRef = RunRef;
 export const AGENT_API_VERSION = 1 as const;
 export const AGENT_EVENT_VERSION = "agent-event.1" as const;
 export const AGENT_CAPABILITIES = {
+  installationHistory: "installation-history",
+  liveInstallationHistory: "installation-history.live",
   resume: "session.resume", configuration: "configuration.resume-compatible", images: "input.images",
   noNativeTools: "native-tools.none", skills: "skills.catalog", exclusiveSkills: "skills.exclusive-selection",
   coreMcp: "mcp.core", externalMcp: "mcp.external", modelChange: "model.change-on-resume",
@@ -91,7 +93,15 @@ export type AgentRunSnapshot = {
   configurationRevision: Revision; lastSequence: Revision; cursor: string; pending: AgentPendingDecision[];
   effects: { certainty: "known" | "unknown"; unresolvedCallIds: string[] };
   result?: AgentResult; messages?: AgentMessageBlock[]; tools?: AgentToolBlock[];
-  agents?: Array<AgentSource & { state: AgentRunState; stopConfirmed?: boolean }>;
+  agents?: Array<AgentSource & {
+    state: AgentRunState;
+    stopConfirmed?: boolean;
+    /** Native assignment and final answer, when the provider can attribute them to this child. */
+    prompt?: string;
+    response?: string;
+    promptTruncated?: boolean;
+    responseTruncated?: boolean;
+  }>;
   selection?: { requested: { model: string | null; reasoningEffort: string | null }; effective: { model: string | null; reasoningEffort: string | null } };
   admissionRef?: string;
   coverage?: { messages: "complete" | "truncated"; tools: "complete" | "truncated"; decisions?: "complete" | "truncated" };
@@ -130,6 +140,14 @@ export type AgentEvent = {
   occurredAt: string; type: AgentEventType; source: AgentSource; data: Record<string, unknown>;
 };
 export type AgentWatchItem = { kind: "snapshot"; snapshot: AgentRunSnapshot } | { kind: "event"; event: AgentEvent; cursor: string };
+/** One installation feed receipt. Its cursor is independent of the per-run replay position. */
+export type AgentHistoryObservation = {
+  sessionId: string; runId: string; generation: string; userId: string; principalId: string;
+  item: AgentWatchItem; cursor: string; epoch?: string; sessionPosition?: number; sourceHistoryIncomplete?: true;
+};
+export type AgentHistorySessionState = {
+  sessionId: string; userId: string; principalId: string; epoch: string; head: number; snapshot: AgentRunSnapshot; sourceHistoryIncomplete?: true;
+};
 export type AgentErrorDetail = { code: string; message: string; retryable: boolean; requestId?: string; details?: Record<string, unknown> };
 export class AgentApiError extends Error {
   constructor(public readonly code: string, message: string, public readonly status: number,
@@ -157,6 +175,8 @@ export type AgentSessionWorkflowRequest = { action: string; input: Record<string
 export type AgentAuthorizationRequest = {
   operation: AgentOperation; method: "GET" | "PUT" | "POST"; path: string; bodyHash: string;
   resources?: AgentResource[]; sessionId?: string; runId?: string; configurationDigest?: string;
+  /** Originating chat on runs.start. The consumer supplies its own app-relative viewer route. */
+  conversation?: { sessionId: string; viewerPath: string; title: string };
   ceiling?: { mcp?: AgentMcpSelection; resources?: AgentResource[]; deadline?: string; configurationRevision?: Revision; workflow?: AgentSessionWorkflowBinding };
 };
 export type AgentOperationAuthorization = { provider: AgentProviderRef; baseUrl: string; token: string; expiresAt: string; admissionRef?: string };

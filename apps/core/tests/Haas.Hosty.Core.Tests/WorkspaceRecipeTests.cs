@@ -93,7 +93,7 @@ public sealed partial class CoreLifecycleServiceTests
         await AddAlternateWorkspaceRecipe(f, tree);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        f.Adapter.PreparationProbe = async _ => { entered.SetResult(); await release.Task; };
+        f.Adapter.StartProbe = async () => { entered.SetResult(); await release.Task; };
         var selection = f.Service.ExecuteTargetAsync(await ExecutionRequest(f, owner, "workspace", tree, "dev"), default);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
         var request = new WorkspaceRecipeRequest(Guid.NewGuid().ToString(), "test.created", tree.Id, "dev-alt");
@@ -112,26 +112,32 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(starts, f.Adapter.StartCount);
     }
 
-    [Fact]
-    public async Task ExecutionTargets_OrphanPreparedCandidateIsPreparedAgainBeforeReplacingActiveWorkspace()
+    [Theory]
+    [InlineData(true, "running")]
+    [InlineData(false, "unknown")]
+    public async Task ExecutionTargets_RetryRechecksEditedCandidateAfterUnverifiedStop(bool canObserveServices, string expectedState)
     {
         var (f, owner, workspaces, first, _, _) = await LocalHandoffFixture();
         await AddManifestPackageRuntime(f, first);
         var second = await AnotherExecutionTree(f, owner, workspaces, first);
         await f.Service.ExecuteTargetAsync(await ExecutionRequest(f, owner, "workspace", first), default);
         var request = await ExecutionRequest(f, owner, "workspace", second);
-        var preparations = new List<string>();
-        f.Adapter.PreparationProbe = context => { preparations.Add(context.Manifest.Services[0].Runtime.Command!); return Task.CompletedTask; };
+        var starts = f.Adapter.StartCount;
+        f.Adapter.PreparationProbe = _ => throw new InvalidOperationException("Normal startup is the only build path.");
+        // A transport error says nothing about what the outgoing services actually did.
+        // The adapter can confirm they are alive, or have no reading until the next request.
+        if (canObserveServices)
+            f.Adapter.Health = context => new("healthy", context.Manifest.Services.Select(s => ServiceHealth(s.Key)).ToArray());
         f.Adapter.StopProbe = () => throw new IOException("Simulated interruption before verified Stop");
         await Assert.ThrowsAsync<IOException>(() => f.Service.ExecuteTargetAsync(request, default));
         Assert.Equal(first.Id, (await f.Service.GetDevModeAsync("test.created")).WorktreeId);
-        Assert.Equal("running", (await f.Apps.GetAppAsync("test.created"))!.RuntimeState);
+        Assert.Equal(expectedState, (await f.Apps.GetAppAsync("test.created"))!.RuntimeState);
+        Assert.Equal(starts, f.Adapter.StartCount);
         await EditDevManifest(second.Path, manifest => manifest["services"]![0]!["runtimes"]!["dev"]!["command"] = "node revised-after-interruption.ts");
         f.Adapter.StopProbe = null;
         var retained = (await AppExecutionStore.ReadAsync(f.Paths, request.AppId, request.Request.RequestId, default))!;
         Assert.Equal("completed", (await f.Service.ExecuteTargetAsync(retained, default)).State);
-        Assert.Equal(2, preparations.Count);
-        Assert.Equal("node revised-after-interruption.ts", preparations[1]);
+        Assert.Equal(starts + 1, f.Adapter.StartCount);
         Assert.Equal("node revised-after-interruption.ts", f.Adapter.LastContext!.Manifest.Services[0].Runtime.Command);
         Assert.Equal(second.Id, (await f.Service.GetDevModeAsync("test.created")).WorktreeId);
     }

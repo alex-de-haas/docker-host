@@ -22,27 +22,46 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         try { return await inspectionRecords.ReadAsync<PublicationRecord>(FilePath(id), ct); }
         catch (Exception ex) when (ex is JsonException or IOException) { return null; }
     }
+    internal async Task<bool> CanInspectRecordAsync(PublicationRecord record, DevelopmentWorkspace tree, string userId, CancellationToken ct)
+    {
+        if (!record.MatchesWorktree(tree, userId)) return false;
+        if (record.PermissionSource is null) return true;
+        try { await RequireOwner(record.Owner, ct, record.PermissionSource); }
+        catch (PublicationException) { return false; }
+        return true;
+    }
     private Task<PublicationRecord?> Read(string id, CancellationToken ct) => JsonStorage.ReadAsync<PublicationRecord>(FilePath(id), ct);
     private async Task<T> Locked<T>(Func<Task<T>> action, CancellationToken ct)
     {
         await gate.WaitAsync(ct);
         try { return await action(); } finally { gate.Release(); }
     }
-    internal async Task RequireOwner(WorkspaceOwner owner, CancellationToken ct)
+    internal async Task RequireOwner(WorkspaceOwner owner, CancellationToken ct, CoreAppPermissionSource? permissionSource = null)
     {
-        var app = await apps.GetAppAsync(owner.AppId, ct);
         var user = (await users.ReadAsync(ct)).Users.FirstOrDefault(u => u.Id == owner.UserId && !u.Disabled);
-        if ((!owner.IsExternal && (app?.InstalledAt != owner.Installation || app.GrantedCorePermissions?.Contains(CoreAppPermissions.Sources) != true)) || user is null || !AppAccessPolicy.IsAdmin(user))
-            throw new PublicationException("forbidden", "The assistant installation or administrator publication grant is no longer valid.");
+        if (user is null || !AppAccessPolicy.IsAdmin(user))
+            throw new PublicationException("forbidden", "Publication requires a current administrator.");
+        if (owner.IsExternal) return;
+        var app = await apps.GetAppAsync(owner.AppId, ct);
+        if (app is null || app.InstalledAt != owner.Installation)
+            throw new PublicationException("forbidden", "The session's application installation changed.");
+        if (permissionSource is not null)
+        {
+            app = await apps.GetAppAsync(permissionSource.AppId, ct);
+            if (app is null || app.InstalledAt != permissionSource.Installation || !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.AgentProviders))
+                throw new PublicationException("forbidden", "The originating consumer installation or its reviewed agent access changed.");
+        }
+        if (!AppManagementAuthorization.HasPermission(app, CoreAppPermissions.Sources))
+            throw new PublicationException("forbidden", "The application providing publication authority requires reviewed apps.sources.full access.");
     }
-    public async Task<PublicationConnections> ConnectionsAsync(WorkspaceOwner owner, CancellationToken ct)
+    public async Task<PublicationConnections> ConnectionsAsync(WorkspaceOwner owner, CancellationToken ct, CoreAppPermissionSource? permissionSource = null)
     {
-        await RequireOwner(owner, ct);
+        await RequireOwner(owner, ct, permissionSource);
         return new((await connections.ProfileAsync(owner.UserId, ct)).Connections.Where(c => connections.Providers.Contains(c.Provider) && connections.Providers.Resolve(c.Provider).Publication is not null).ToArray());
     }
-    public Task<PublicationList> ListAsync(WorkspaceOwner? owner, CancellationToken ct, bool canonical = false) => Locked(async () =>
+    public Task<PublicationList> ListAsync(WorkspaceOwner? owner, CancellationToken ct, bool canonical = false, CoreAppPermissionSource? permissionSource = null) => Locked(async () =>
     {
-        if (owner is not null) await RequireOwner(owner, ct);
+        if (owner is not null) await RequireOwner(owner, ct, permissionSource);
         var list = new List<PublicationRecord>();
         if (Directory.Exists(Root)) foreach (var file in Directory.EnumerateFiles(Root, "*.json"))
         {
@@ -75,7 +94,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         // A pause may have been admitted during the provider request.
         await CleanupAsync(id, ct, background: true);
     }
-    public Task<PublicationRecord> ObserveAsync(string id, WorkspaceOwner? owner, CancellationToken ct, bool canonical = false) => Locked(async () =>
+    public Task<PublicationRecord> ObserveAsync(string id, WorkspaceOwner? owner, CancellationToken ct, bool canonical = false, CoreAppPermissionSource? permissionSource = null) => Locked(async () =>
     {
         var r = await Read(id, ct) ?? throw new PublicationException("not_found", "Publication not found.");
         if (owner is not null)
@@ -84,18 +103,18 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
             if (r.Owner.UserId != owner.UserId || !canonical && (r.Owner.AppId != owner.AppId || r.Owner.Installation != owner.Installation))
                 throw new PublicationException("connection_required", "This publication uses another user's private connection.");
         }
-        var result = await Observe(r, ct, canonical ? owner : null);
+        var result = await Observe(r, ct, canonical ? owner : null, permissionSource);
         return owner is null ? result : ProjectSession(result, owner);
     }, ct);
     private static PublicationRecord ProjectSession(PublicationRecord record, WorkspaceOwner actor)
         => record with { Operations = record.Operations.Where(o => o.Actor?.SameIdentity(actor) == true || o.Actor is null && record.Owner.SameIdentity(actor)).ToArray() };
 
-    private async Task<PublicationRecord> Observe(PublicationRecord r, CancellationToken ct, WorkspaceOwner? actor = null)
+    private async Task<PublicationRecord> Observe(PublicationRecord r, CancellationToken ct, WorkspaceOwner? actor = null, CoreAppPermissionSource? permissionSource = null)
     {
         if (!await workspaces.CanObservePublicationAsync(r.WorkspaceId, ct)) return r;
         try
         {
-            await RequireOwner(actor ?? r.Owner, ct);
+            await RequireOwner(actor ?? r.Owner, ct, actor is null ? r.PermissionSource : permissionSource);
             await workspaces.RequireParticipationSourceAsync(await workspaces.Read(r.WorkspaceId, null, ct), r.Owner.UserId, ct);
             r = await connections.UseForSourceAsync(r.Owner.UserId, r.ConnectionId, async c =>
             {
@@ -174,14 +193,14 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         }
         await Dependencies(current, ct, input.Outcome == "merged");
     }
-    public Task<PublicationRecord> CommandAsync(string id, WorkspaceOwner owner, string kind, PublicationCommand input, CancellationToken ct, bool canonical = false, Func<CancellationToken, Task>? validateCaller = null)
+    public Task<PublicationRecord> CommandAsync(string id, WorkspaceOwner owner, string kind, PublicationCommand input, CancellationToken ct, bool canonical = false, Func<CancellationToken, Task>? validateCaller = null, CoreAppPermissionSource? permissionSource = null)
         => Locked(async () =>
     {
         if (!Guid.TryParse(input.RequestId, out _) || kind is not ("resolve-review" or "commit" or "configure" or "push" or "publish" or "link" or "ready" or "merge" or "complete" or "corrective"))
             throw new PublicationException("request_invalid", "Supply a UUID requestId and a supported publication operation.");
         if (input.PolicyAmendment is not null && kind != "configure")
             throw new PublicationException("policy_amendment_invalid", "Policy amendments belong to configure only.");
-        await RequireOwner(owner, ct);
+        await RequireOwner(owner, ct, permissionSource);
         var w = await workspaces.ObserveAsync(id, owner, ct);
         var remote = await workspaces.PublicationRemoteAsync(w, ct, validateGrant: owner.UserId == w.Owner.UserId);
         var r = await Read(id, ct);
@@ -206,7 +225,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
             if (kind != "configure" || string.IsNullOrWhiteSpace(input.ConnectionId)) throw new PublicationException("connection_required", "Configure a concrete user source connection before publication.");
             var sourceProvider = connections.Providers.ForUrl(remote?.Repository ?? w.Repository);
             var repository = Publication(sourceProvider.Descriptor.Id).NormalizeRepository(remote?.Repository ?? w.Repository);
-            r = new PublicationRecord { Provider = sourceProvider.Descriptor.Id, WorkspaceId = id, Owner = owner, Repository = repository, HeadRepository = repository,
+            r = new PublicationRecord { Provider = sourceProvider.Descriptor.Id, WorkspaceId = id, Owner = owner, PermissionSource = permissionSource, Repository = repository, HeadRepository = repository,
                 ConnectionId = input.ConnectionId, Branch = w.Branch, TargetBranch = remote?.TargetBranch ?? w.TargetBranch };
         }
         if (remote is not null && remote.Grant.ConnectionId != r.ConnectionId)
@@ -401,7 +420,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
                         !await workspaces.CanObservePublicationAsync(id, ct))
                         throw new PublicationException("workspace_closed", "Resume retained workspace source before amending publication policy.");
                     if (validateCaller is not null) await validateCaller(ct);
-                    await RequireOwner(owner, ct);
+                    await RequireOwner(owner, ct, permissionSource);
                     await Save(record);
                 }, ct);
             else await Save(record);
@@ -425,7 +444,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         if (record.Url is not null) await workspaces.AddPublicationReferenceAsync(id, owner, record.Url, ct);
         await audit.AppendAsync(new("audit_" + Guid.NewGuid().ToString("N"), "development.publication." + kind, "workspace", id, "succeeded", owner.UserId, clock.UtcNow,
             new Dictionary<string, string> { ["requestId"] = input.RequestId }), ct);
-        var observed = await Observe(record, ct, canonical ? owner : null);
+        var observed = await Observe(record, ct, canonical ? owner : null, permissionSource);
         if (validateCaller is not null) await validateCaller(ct);
         return ProjectSession(observed, owner);
     }, ct);
@@ -441,7 +460,7 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
             if (background && !await workspaces.CanObserveInBackgroundAsync(id, ct)) return false;
             var r = await Read(id, ct);
             if (r is null || !r.CleanupRequested || r.Outcome is null || !await workspaces.CanObservePublicationAsync(id, ct)) return false;
-            await RequireOwner(r.Owner, ct);
+            await RequireOwner(r.Owner, ct, r.PermissionSource);
             r = await Observe(r, ct);
             if (r.Observation is { State: "unavailable" }) return false;
             if (r.Observation?.Head != r.PublishedHead) return false;

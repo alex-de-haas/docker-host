@@ -8,7 +8,7 @@ import * as api from "@/lib/assistant-api";
 const controls = vi.hoisted(() => ({ ui: { reportSurfaceState: vi.fn(), getNavigation: () => ({ entries: [] }), navigate: vi.fn() } }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => controls.ui }));
 vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(),
-  getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), listAppNames: vi.fn(),
+  getHealth: vi.fn(), refreshProviderHistory: vi.fn(), stopSession: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), listAppNames: vi.fn(),
   listAgentConnections: vi.fn(), getSuggestionPreference: vi.fn(), streamEvents: vi.fn(), postMessage: vi.fn(), resolveApproval: vi.fn(), resolveQuestion: vi.fn(),
 }));
 vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), useDevelopmentInventory: () => ({ workspaces: [], loading: false, error: "", refresh: vi.fn() }) }));
@@ -145,6 +145,53 @@ it("shows terminal replay failures instead of leaving the conversation in an ind
 });
 
 
+it("shows the last observed run on provider loss and recovers without stopping the agent", async () => {
+  const ts = "2026-11-19T11:00:00Z";
+  const providerSource = { provider: { appId: "third.party", installationId: "i", key: "agent" }, runId: "slow", generation: "g", agentId: "child", parentAgentId: "root" };
+  const contact = { runId: "slow", observedAt: ts, reason: "unavailable" };
+  const emit = (seq: number, type: string, fields: Record<string, unknown>) => stream().event({ seq, ts, type, ...fields });
+  const activity = () => container.querySelector('[data-slot="assistant-activity"]');
+  const filters = () => container.querySelector('[aria-label="Activity filters"]')?.textContent;
+  const panel = () => container.querySelector('[aria-label="Provider subagents"]');
+  vi.mocked(api.refreshProviderHistory).mockResolvedValue(undefined);
+  await mount();
+  await act(async () => {
+    emit(1, "session_status", { status: "running" });
+    emit(2, "assistant_text", { text: "Saved result" });
+    emit(3, "native_agent_status", { providerSource, state: "running", freshness: "current" });
+    emit(4, "native_agent_status", { providerSource: { ...providerSource, agentId: "finished" }, state: "succeeded", freshness: "current", stopConfirmed: true });
+    emit(5, "notice", { message: "The operation was aborted due to timeout" });
+    emit(6, "assistant_delta", { text: "Unfinished draft" });
+  });
+  await connect(); await settle();
+  expect(activity()).not.toBeNull();
+  expect(filters()).toContain("Working1");
+  expect(viewport()?.textContent).toContain("Unfinished draft");
+
+  await act(async () => emit(7, "session_status", { status: "running", providerHistoryContact: contact }));
+  expect(container.textContent).toContain("Reconnecting to the provider.");
+  expect(activity()).toBeNull();
+  expect(filters()).toContain("Working0");
+  expect(panel()?.textContent).toContain("1 completed · 1 unknown");
+  await act(async () => panel()!.querySelector("button")!.click());
+  expect(panel()?.textContent).toContain("Last known: running");
+  expect(panel()?.textContent).toContain("Completed");
+  expect(viewport()?.textContent).toContain("Saved result");
+  expect(viewport()?.textContent).not.toContain("Unfinished draft");
+
+  await act(async () => [...viewport()!.querySelectorAll("button")].find(b => b.textContent === "Refresh")!.click());
+  expect(api.refreshProviderHistory).toHaveBeenCalledExactlyOnceWith("history-one");
+  expect(api.stopSession).not.toHaveBeenCalled();
+  await act(async () => {
+    emit(8, "assistant_text", { text: "Caught up" });
+    emit(9, "session_status", { status: "idle", providerHistoryContact: null });
+  });
+  expect(viewport()?.textContent).toContain("Caught up");
+  expect(container.textContent).not.toContain("Reconnecting to the provider.");
+  expect(activity()).toBeNull();
+  expect(filters()).toContain("Working0");
+});
+
 it("keeps replayed child output and live deltas attributed, with actionable approvals outside collapsed details", async () => {
   const source = { provider: { appId: "third.party", installationId: "installation", key: "agent" }, runId: "run", generation: "generation", agentId: "child", parentAgentId: "root", parentToolCallId: "spawn", parentTranscriptToolUseId: "spawn-transcript" };
   const emit = (seq: number, type: string, extra = {}) => stream().event({ seq, ts: "2026-11-17T11:25:01Z", type, ...extra });
@@ -158,9 +205,21 @@ it("keeps replayed child output and live deltas attributed, with actionable appr
   });
   await connect(); await settle();
   const panel = container.querySelector<HTMLElement>('section[aria-label="Provider subagents"]')!;
-  expect(panel.textContent).toContain("Storage research"); expect(panel.textContent).toContain("Running");
+  const groupButton = panel.querySelector("button")!;
+  expect(groupButton.getAttribute("aria-expanded")).toBe("false");
+  expect(groupButton.textContent).toContain("1 subagent");
+  expect(groupButton.textContent).toContain("1 running");
+  expect(panel.textContent).not.toContain("Storage research");
+  await act(async () => groupButton.click());
+  const childButton = panel.querySelector<HTMLButtonElement>('button[aria-label^="Storage research:"]')!;
+  expect(childButton.getAttribute("aria-expanded")).toBe("false");
+  expect(childButton.textContent).toContain("Running");
   expect(container.textContent).not.toContain("Private child findings"); expect(container.textContent).toContain("Root summary");
-  await act(async () => panel.querySelector("button")!.click());
+  await act(async () => childButton.click());
+  expect(panel.textContent).toContain("Prompt unavailable.");
+  expect(panel.textContent).toContain("No final response recorded.");
+  expect(panel.textContent).toContain("Launch by Main agent");
+  expect(panel.querySelector('[data-slot="tool-activity"]')).toBeNull();
   expect(panel.textContent).toContain("Private child findings"); expect(panel.textContent).toContain("Interrupted message");
   await act(async () => {
     emit(6, "assistant_delta", { text: "Root streaming" });
@@ -170,7 +229,7 @@ it("keeps replayed child output and live deltas attributed, with actionable appr
   expect(container.querySelector('[data-slot="message-scroller-item"][data-message-id="streaming"]')?.textContent ?? container.textContent).toContain("Root streaming");
   await act(async () => emit(8, "assistant_text", { providerSource: source, text: "Child completed message" }));
   expect(panel.textContent).not.toContain("Child streaming"); expect(container.textContent).toContain("Root streaming");
-  await act(async () => panel.querySelector("button")!.click());
+  await act(async () => groupButton.click());
   await act(async () => {
     emit(9, "approval_request", { providerSource: source, approvalId: "child-approval", toolName: "Bash", input: { command: "echo approved" } });
     emit(10, "session_status", { status: "awaiting_approval" });
@@ -189,7 +248,24 @@ it("keeps replayed child output and live deltas attributed, with actionable appr
   await act(async () => question.querySelector<HTMLElement>('[role="radio"]')!.click());
   await act(async () => [...question.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Send answer")!.click());
   expect(api.resolveQuestion).toHaveBeenCalledWith("history-one", "child-question", { choice: "local" });
-  await connect("reconnecting"); expect(panel.textContent).toContain("Last known: running");
+  await connect("reconnecting");
+  expect(groupButton.textContent).toContain("1 unknown");
+  await act(async () => groupButton.click());
+  expect(panel.textContent).toContain("Last known: running");
   await act(async () => emit(14, "native_agent_status", { providerSource: source, state: "succeeded", freshness: "current", stopConfirmed: true }));
-  await connect(); expect(panel.textContent).toContain("Completed"); expect(api.streamEvents).toHaveBeenCalledOnce();
+  await connect(); expect(panel.textContent).toContain("Completed");
+  await act(async () => emit(15, "native_agent_details", { providerSource: source, prompt: "Compare storage engines.", result: "Use SQLite.", resultTruncated: true }));
+  await act(async () => panel.querySelector<HTMLButtonElement>('button[aria-label^="Storage research:"]')!.click());
+  expect(panel.querySelectorAll("dd")[0]?.textContent).toBe("Compare storage engines.");
+  expect(panel.querySelectorAll("dd")[1]?.textContent).toBe("Use SQLite.");
+  expect(panel.textContent).toContain("Final response (partial)");
+  expect(panel.textContent).toContain("Private child findings");
+  await act(async () => {
+    emit(16, "assistant_text", { providerSource: source, providerEventId: "run:message:child:answer", text: "Use SQLite for this project." });
+    emit(17, "native_agent_details", { providerSource: source, resultMessageId: "answer" });
+  });
+  expect(panel.querySelectorAll("dd")[1]?.textContent).toBe("Use SQLite for this project.");
+  expect(panel.textContent?.match(/Use SQLite for this project\./g)).toHaveLength(1);
+  expect(panel.textContent).not.toContain("Final response (partial)");
+  expect(api.streamEvents).toHaveBeenCalledOnce();
 });

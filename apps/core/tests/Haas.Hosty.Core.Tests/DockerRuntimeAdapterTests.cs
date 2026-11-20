@@ -1553,6 +1553,24 @@ public sealed partial class DockerRuntimeAdapterTests
         Assert.Equal("running", health.Services.Single(service => service.Service == "worker").Status);
     }
 
+    [Theory]
+    [InlineData("No such object: hosty-com-example-app-app", "stopped")]
+    [InlineData("Cannot connect to Docker daemon", "unknown")]
+    public async Task GetHealthAsync_BoundWorkspaceRequiresEvidenceOfContainerAbsence(string diagnostic, string expected)
+    {
+        var runner = new FakeDockerCommandRunner(args => args switch
+        {
+            ["inspect", "--format", var format, ..] when format.Contains("State.Status", StringComparison.Ordinal) =>
+                new DockerCommandResult(1, ContainerInspectLine("hosty-com-example-app-worker", "running"), diagnostic),
+            _ => new DockerCommandResult(0, "", ""),
+        });
+        var context = CreateMultiServiceDockerContext("app", "worker") with { BoundWorktreeId = "workspace" };
+        var result = await CreateAdapter(runner).GetHealthAsync(context);
+        Assert.Equal("unhealthy", result.Status);
+        Assert.Equal(expected, result.Services.Single(service => service.Service == "app").Status);
+        Assert.Equal("running", result.Services.Single(service => service.Service == "worker").Status);
+    }
+
     [Fact]
     public async Task GetHealthAsync_ResolvesImageRepoDigestOncePerImageAcrossCalls()
     {

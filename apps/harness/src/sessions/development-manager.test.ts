@@ -741,6 +741,31 @@ it("does not dispatch queued activation after policy revocation", async () => {
 describe("shared workspace session boundaries", () => {
   const workspaceId = "b".repeat(64);
   const requestId = "12345678-1234-4234-8234-123456789abc";
+  it("recovers an originating chat using retained run evidence and preserves its native context", async () => {
+    const record = await manager.createSession({ createdBy: "member" });
+    await manager.shutdown();
+    const native = randomUUID(), run = randomUUID(), provider = { appId: "generic.agent", installationId: "original", key: "native" };
+    record.harnessSessionId = native;
+    await store.saveRecord(record);
+    await store.saveProviderExecution(record.id, { version: 1, sessionId: native, selection: { provider, connection: { id: "account", revision: "1" } } });
+    const last = (await store.readEvents(record.id)).at(-1)?.seq ?? 0;
+    await store.appendEvent(record.id, { seq: last + 1, ts: new Date().toISOString(), type: "assistant_text", text: "Earlier result",
+      providerSource: { provider, runId: run, generation: "verified-generation", agentId: "root" } });
+    manager = build();
+    vi.mocked(client.call).mockImplementation(async (_id, _credential, action) =>
+      action === "recover-origin" ? { workspace: { id: workspaceId, revision: 5 } } : { workspaces: [tree] });
+    const input = { workspaceId, requestId, expectedRevision: 4, providerSessionId: "foreign", viewerPath: "/invented", runs: { bogus: "generation" } };
+    await expect(manager.workspaceAction(record.id, "recover-origin", input, "other-token", "other")).rejects.toMatchObject({ status: 403 });
+    await manager.workspaceAction(record.id, "recover-origin", input, "member-token", "member");
+    expect(client.call).toHaveBeenCalledWith(record.id, "member-token", "recover-origin", expect.objectContaining({
+      requestId, workspaceId, expectedRevision: 4, provider, providerSessionId: native, viewerPath: `/assistant?session=${record.id}`,
+      runs: { [run]: "verified-generation" },
+    }));
+    expect((await store.readRecord(record.id))!).toMatchObject({ harnessSessionId: native, workspaceAssociation: { id: workspaceId, revision: 5 } });
+    expect((await store.readEvents(record.id)).some(event => event.text === "Earlier result")).toBe(true);
+    expect(starts).toEqual([]);
+  });
+
   it("recovers new-session attachment after response loss without dispatch or changed initial selection", async () => {
     const inspection = vi.spyOn(client, "inspection").mockResolvedValue({ workspaces: [{ id: workspaceId, worktrees: [{ apps: [{ appId: "notes" }] }] }] });
     let lost = true;

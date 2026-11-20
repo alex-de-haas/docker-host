@@ -82,6 +82,29 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task LocalRemote_RepositoryBackedWorkspaceDistinguishesToolMismatchFromChangedSource()
+    {
+        var f = await ExternalPublicationFixture();
+        var tree = f.W;
+        await f.F.Apps.UpdateAppAsync(SourceTestApp, app => app with
+        {
+            SourceState = app.SourceState! with { Type = "git", Repository = tree.Repository }
+        });
+        Task<LocalRemoteStatus> ReadStatus() => f.Workspaces.RemoteStatusAsync(tree.Id, tree.Owner, SourceTestApp, default);
+
+        var mismatch = await Assert.ThrowsAsync<AppLifecycleException>(ReadStatus);
+        Assert.Equal("workspace_local_remote_not_applicable", mismatch.Code);
+        Assert.Contains("pr_connections", mismatch.Message);
+
+        await f.F.Apps.UpdateAppAsync(SourceTestApp, app => app with
+        {
+            SourceState = app.SourceState! with { Repository = "https://github.com/owner/other.git" }
+        });
+        var stale = await Assert.ThrowsAsync<AppLifecycleException>(ReadStatus);
+        Assert.Equal("workspace_source_changed", stale.Code);
+    }
+
+    [Fact]
     public async Task LocalRemote_ConnectFetchAndNewSessionPreserveLocalIdentityAndDirtyFiles()
     {
         var f = await LocalRemoteFixture(); var w = f.W;

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { prepareAgentCancel } from "@hosty-sdk/app/agent/client";
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { prepareAgentCancel, prepareAgentRun } from "@hosty-sdk/app/agent/client";
 import { publicProviderFixture, type PublicProviderFixture } from "./test-fixture.js";
 
 const fixtures: PublicProviderFixture[] = [];
@@ -17,6 +19,305 @@ async function waitForStream(f: PublicProviderFixture, runId: string) {
 }
 
 describe("SessionManager public provider integration", () => {
+  it("starts installation history without a user capability request after the first admission on an empty startup", async () => {
+    const f = await publicProviderFixture(true); fixtures.push(f);
+    await f.manager.recoverProviderRuns();
+    f.behavior.capabilitiesTimeoutAfterStart = true;
+    const record = await chat(f), runId = f.starts[0]!.runId;
+    f.complete(runId, "First durable result");
+    await vi.waitFor(async () => {
+      expect((await f.store.readRecord(record.id))?.status).toBe("idle");
+      expect((await f.store.readEvents(record.id)).filter(event => event.text === "First durable result")).toHaveLength(1);
+    }, { timeout: 5000 });
+    expect(f.requests.some(request => request.path.includes("/history/events"))).toBe(true);
+    expect(f.requests.some(request => request.path.includes("/runs/" + runId + "/events"))).toBe(false);
+    expect(f.controls).toHaveLength(0);
+  });
+
+  it.each(["denied", "timeout"] as const)("recovers a disconnected legacy observer after %s and imports the native outcome once", async issue => {
+    const f = await fixture(); f.behavior.legacyHistoryRoute = true;
+    const record = await chat(f), runId = f.starts[0]!.runId;
+    await waitForStream(f, runId);
+    f.behavior.snapshotIssue = issue; f.reconnect(runId);
+    await vi.waitFor(async () => expect((await f.store.readRecord(record.id))?.providerHistoryContact).toMatchObject({
+      reason: issue === "denied" ? "denied" : "unavailable", runId,
+    }), { timeout: 5000 });
+    f.complete(runId, "Native completion during outage");
+    delete f.behavior.snapshotIssue;
+    if (issue === "denied") {
+      await expect(f.manager.refreshSessionCredentials(record.id, "another-owner", "other")).rejects.toThrow();
+      await f.manager.refreshSessionCredentials(record.id, f.owner, "renewed-owner");
+    }
+    await vi.waitFor(async () => {
+      const current = await f.store.readRecord(record.id);
+      expect(current?.status).toBe("idle"); expect(current?.providerHistoryContact).toBeUndefined();
+      expect((await f.store.readEvents(record.id)).filter(event => event.text === "Native completion during outage")).toHaveLength(1);
+    }, { timeout: 6000 });
+    expect(f.authorizations.filter(request => request.operation === "runs.start")).toHaveLength(1);
+    expect(f.controls).toHaveLength(0);
+  });
+
+  it("lets the owner continue a legacy chat after read-only Refresh imports its offline completion", async () => {
+    const f = await fixture(), chatRecord = await chat(f), runId = f.starts[0]!.runId;
+    await waitForStream(f, runId);
+    f.behavior.snapshotIssue = "denied"; f.reconnect(runId);
+    await vi.waitFor(async () => expect((await f.store.readRecord(chatRecord.id))?.providerHistoryContact?.reason).toBe("denied"));
+    f.complete(runId, "Finished while disconnected"); delete f.behavior.snapshotIssue;
+    await f.manager.refreshProviderHistory(chatRecord.id, f.owner, f.credential);
+    expect((await f.store.readRecord(chatRecord.id))?.status).toBe("idle");
+    expect(f.starts).toHaveLength(1); expect(f.controls).toHaveLength(0);
+    await f.manager.postMessage(chatRecord.id, "Explicit next turn", f.credential, [], { clientRequestId: randomUUID(), actorUserId: f.owner });
+    expect(f.starts.map(start => start.sessionId)).toEqual([f.starts[0]!.sessionId, f.starts[0]!.sessionId]);
+  });
+
+  it("falls back to the legacy observer after an unavailable first probe and an explicit unsupported route", async () => {
+    const f = await fixture(); f.behavior.failHistoryTokenOnce = true; f.behavior.legacyHistoryRoute = true;
+    const record = await chat(f), runId = f.starts[0]!.runId;
+    await vi.waitFor(() => expect(f.requests.some(r => r.path.includes("/runs/" + runId + "/events"))).toBe(true), { timeout: 5000 });
+    f.complete(runId, "Legacy result");
+    await vi.waitFor(async () => expect((await f.store.readRecord(record.id))?.status).toBe("idle"));
+    expect((await f.store.readRecord(record.id))?.providerHistoryContact).toBeUndefined();
+    expect(f.controls).toHaveLength(0); expect(f.starts).toHaveLength(1);
+  });
+
+  it("keeps the installation contact warning until the live stream opens after a successful catch-up page", async () => {
+    const f = await publicProviderFixture(true); fixtures.push(f);
+    const record = await chat(f), runId = f.starts[0]!.runId;
+    const subscriptions = () => f.requests.filter(r => r.path.includes("/history/events") && r.accept === "text/event-stream").length;
+    await vi.waitFor(() => expect(subscriptions()).toBe(1));
+    f.behavior.rejectHistoryStream = true; f.disconnectHistory();
+    await vi.waitFor(async () => expect((await f.store.readRecord(record.id))?.providerHistoryContact?.reason).toBe("unavailable"), { timeout: 5000 });
+    const signals: unknown[] = [];
+    const { unsubscribe } = await f.manager.subscribe(record.id, 0, event => {
+      if (event.type === "session_status" && "providerHistoryContact" in event) signals.push(event.providerHistoryContact);
+    });
+    try {
+      const before = subscriptions();
+      await f.manager.refreshProviderHistory(record.id, f.owner);
+      await vi.waitFor(() => expect(subscriptions()).toBeGreaterThan(before), { timeout: 5000 });
+      expect(signals).not.toContain(null);
+      f.behavior.rejectHistoryStream = false;
+      await f.manager.refreshProviderHistory(record.id, f.owner);
+      await vi.waitFor(async () => expect((await f.store.readRecord(record.id))?.providerHistoryContact).toBeUndefined());
+      f.complete(runId, "Recovered live result");
+      await vi.waitFor(async () => expect((await f.store.readRecord(record.id))?.status).toBe("idle"));
+      expect(f.requests.some(r => r.path.includes("/runs/" + runId + "/events"))).toBe(false);
+    } finally { unsubscribe(); }
+  });
+
+  it("refreshes a retained uncertain admission using only observed facts", async () => {
+    const f = await fixture(), record = await chat(f), start = f.starts[0]!;
+    await waitForStream(f, start.runId);
+    await f.manager.shutdown();
+    const retained = (await f.store.readProviderExecution(record.id))!;
+    const request = prepareAgentRun(start.sessionId, start.runId, start.input);
+    retained.mutations = { ...retained.mutations, [request.path]: request };
+    await f.store.saveProviderExecution(record.id, retained);
+    f.complete(start.runId, "Already finished");
+    const restored = f.makeManager(), before = f.authorizations.length;
+    await restored.manager.refreshSessionCredentials(record.id, f.owner, f.credential);
+    await vi.waitFor(async () => expect((await restored.store.readRecord(record.id))?.status).toBe("idle"));
+    expect(f.authorizations.slice(before).filter(value => value.method !== "GET")).toHaveLength(0);
+    expect((await restored.store.readEvents(record.id)).filter(event => event.text === "Already finished")).toHaveLength(1);
+  });
+
+  it.each(["valid", "damaged"])("imports three chats of two owners after restart with a %s installation checkpoint", async checkpoint => {
+    const f = await publicProviderFixture(true); fixtures.push(f);
+    const open = async (owner: string) => {
+      const chat = await f.manager.createSession({ createdBy: owner });
+      const credential = owner === f.owner ? f.credential : "user:" + owner;
+      await f.manager.postMessage(chat.id, "Start " + owner, credential, [], { clientRequestId: randomUUID(), actorUserId: owner });
+      return { chat, run: f.starts.at(-1)!.runId };
+    };
+    const a = await open(f.owner), b = await open("second-operator"), c = await open(f.owner);
+    const streamRequests = () => f.requests.filter(request => request.path.includes("/history/events") && request.accept === "text/event-stream");
+    await vi.waitFor(() => expect(streamRequests()).toHaveLength(1));
+    f.complete(a.run, "Result A");
+    await vi.waitFor(async () => expect((await f.store.readRecord(a.chat.id))?.status).toBe("idle"));
+    await f.manager.shutdown();
+    const folder = path.join(f.store.dataDir, "provider-history");
+    const checkpointPath = path.join(folder, (await readdir(folder)).find(name => name.endsWith(".json"))!);
+    if (checkpoint === "damaged") await writeFile(checkpointPath, "{");
+    const oldSnapshot = f.snapshot(a.run);
+    oldSnapshot.messages = [{ id: "forged", state: "complete", role: "assistant", text: "Wrong recipient" }];
+    f.publishHistory(oldSnapshot.sessionId, a.run, "second-operator", { kind: "snapshot", snapshot: oldSnapshot });
+    f.emit(b.run, "extension", { namespace: "hosty.agent.answer", name: "answer.complete" });
+    f.complete(b.run, "Result B while offline");
+    f.complete(c.run, "Result C while offline");
+    const restored = f.makeManager();
+    const before = f.authorizations.length;
+    await restored.manager.recoverProviderRuns();
+    for (const [chat, value] of [[a, "Result A"], [b, "Result B while offline"], [c, "Result C while offline"]] as const) {
+      await vi.waitFor(async () => {
+        expect((await restored.store.readRecord(chat.chat.id))?.status).toBe("idle");
+        const texts = (await restored.store.readEvents(chat.chat.id)).filter(event => event.type === "assistant_text").map(event => event.text);
+        expect(texts).toEqual([value]);
+      }, { timeout: 5000 });
+    }
+    await vi.waitFor(() => expect(streamRequests()).toHaveLength(2), { timeout: 5000 });
+    if (checkpoint === "damaged") expect(await readFile(checkpointPath + ".invalid", "utf8")).toBe("{");
+    expect(streamRequests()[1]!.path).toContain("after=feed-");
+    expect(f.requests.filter(request => request.path.endsWith("/agent/history/token")).every(request =>
+      request.authorization === "Bearer fixture-service" && request.userToken === null)).toBe(true);
+    expect(f.requests.filter(request => /\/runs\/[^/]+\/events/.test(request.path))).toHaveLength(0);
+    expect((await restored.store.readEvents(b.chat.id)).some(event => event.type === "session_status" && event.status === "suggesting")).toBe(false);
+    expect(f.authorizations).toHaveLength(before);
+    expect(f.starts).toHaveLength(3);
+    expect(f.controls).toHaveLength(0);
+    await expect(restored.manager.refreshSessionCredentials(b.chat.id, f.owner, f.credential)).rejects.toThrow("belongs to another user");
+  });
+
+  it("stops observing a provider after its last chat is deleted and resumes from the checkpoint on a new binding", async () => {
+    const f = await publicProviderFixture(true); fixtures.push(f);
+    const first = await chat(f), second = await chat(f);
+    await vi.waitFor(() => expect(f.activeHistoryStreams()).toBe(1));
+    f.complete(f.starts[0]!.runId, "First"); f.complete(f.starts[1]!.runId, "Second");
+    await vi.waitFor(async () => {
+      expect((await f.store.readRecord(first.id))?.status).toBe("idle");
+      expect((await f.store.readRecord(second.id))?.status).toBe("idle");
+    });
+    await f.manager.deleteSession(first.id, f.owner, f.credential);
+    expect(f.activeHistoryStreams()).toBe(1);
+    await f.manager.deleteSession(second.id, f.owner, f.credential);
+    await vi.waitFor(() => expect(f.activeHistoryStreams()).toBe(0));
+    const before = f.requests.length;
+    const third = await chat(f);
+    await vi.waitFor(() => expect(f.activeHistoryStreams()).toBe(1));
+    const catchup = f.requests.slice(before).find(request => request.path.includes("/history/events") && request.accept === "application/json");
+    expect(catchup?.path).toContain("after=feed-");
+    f.complete(f.starts[2]!.runId, "New binding");
+    await vi.waitFor(async () => expect((await f.store.readEvents(third.id)).filter(event => event.text === "New binding")).toHaveLength(1));
+  });
+
+  it("switches a connected run and a later chat to actor-authorized observation after a provider downgrade", async () => {
+    const f = await publicProviderFixture(true); fixtures.push(f);
+    const first = await chat(f), firstRun = f.starts[0]!.runId;
+    await vi.waitFor(() => expect(f.activeHistoryStreams()).toBe(1));
+    const checkpoint = path.join(f.store.dataDir, "provider-history");
+    expect((await readdir(checkpoint)).filter(file => file.endsWith(".json"))).toHaveLength(1);
+    expect(f.requests.filter(request => request.path.includes("/runs/" + firstRun + "/events"))).toHaveLength(0);
+    const before = f.requests.length;
+    f.behavior.legacyHistoryRoute = true; f.disconnectHistory();
+    await waitForStream(f, firstRun);
+    f.complete(firstRun, "Delivered after downgrade");
+    await vi.waitFor(async () => expect((await f.store.readRecord(first.id))?.status).toBe("idle"));
+    const second = await chat(f), secondRun = f.starts[1]!.runId;
+    await waitForStream(f, secondRun);
+    for (const runId of [firstRun, secondRun]) {
+      const requests = f.requests.slice(before).filter(r => r.path.endsWith("/agent/authorize") && JSON.parse(r.body).runId === runId
+        && JSON.parse(r.body).operation === "runs.events");
+      expect(requests.length).toBeGreaterThan(0);
+      expect(requests.every(r => r.userToken === f.credential)).toBe(true);
+    }
+    f.complete(secondRun, "Legacy result");
+    await vi.waitFor(async () => expect((await f.store.readRecord(second.id))?.status).toBe("idle"));
+    expect((await f.store.readEvents(first.id)).filter(event => event.text === "Delivered after downgrade")).toHaveLength(1);
+    expect(f.controls).toHaveLength(0);
+    expect(f.starts).toHaveLength(2);
+  });
+
+  it("retains the last observed run on history denial, refreshes read-only, and routes repaired facts to an old turn", async () => {
+    const f = await publicProviderFixture(true); fixtures.push(f);
+    const record = await chat(f), priorId = f.starts[0]!.runId;
+    f.complete(priorId, "First answer");
+    await vi.waitFor(async () => expect((await f.store.readRecord(record.id))!.status).toBe("idle"), { timeout: 5000 });
+    await f.manager.postMessage(record.id, "Second turn", f.credential, [], { clientRequestId: randomUUID(), actorUserId: f.owner });
+    const currentId = f.starts[1]!.runId;
+    await vi.waitFor(async () => expect((await f.store.readHistoryRun(record.id, currentId))?.snapshot.ref.id).toBe(currentId), { timeout: 5000 });
+    f.setHistoryDenied(true); f.disconnectHistory();
+    await vi.waitFor(async () => expect((await f.store.readRecord(record.id))?.providerHistoryContact).toMatchObject({
+      runId: currentId, reason: "denied", observedAt: expect.any(String),
+    }), { timeout: 5000 });
+    const historical = f.snapshot(priorId);
+    historical.lastSequence = String(BigInt(historical.lastSequence) + 1n); historical.cursor = "cursor-" + historical.lastSequence;
+    historical.revision = String(BigInt(historical.revision) + 1n); historical.result = { status: "succeeded", messageId: "late", text: "Recovered first turn" };
+    historical.tools = [{ id: "prior-tool", name: "Read", state: "completed" }];
+    f.publishHistory(historical.sessionId, priorId, f.owner, { kind: "snapshot", snapshot: historical });
+    f.setHistoryDenied(false);
+    await expect(f.manager.refreshProviderHistory(record.id, "other-user")).rejects.toThrow();
+    await f.manager.refreshProviderHistory(record.id, f.owner);
+    await vi.waitFor(async () => {
+      const events = await f.store.readEvents(record.id);
+      expect(events.filter(event => event.text === "Recovered first turn")).toHaveLength(1);
+      expect(events.find(event => event.text === "Recovered first turn")).toMatchObject({ providerHistoryEarlier: true, providerSource: { runId: priorId } });
+      expect(events.find(event => event.type === "tool_result" && event.providerHistoryEarlier === true)).toMatchObject({ status: "completed", output: "" });
+      expect((await f.store.readRecord(record.id))?.providerHistoryContact).toBeUndefined();
+    }, { timeout: 5000 });
+    expect(await f.store.readProviderExecution(record.id)).toMatchObject({ runId: currentId, run: { state: "running" } });
+    expect((await f.store.readRecord(record.id))?.status).toBe("running");
+    expect(f.requests.some(request => /\/runs\/[^/]+\/events/.test(request.path))).toBe(false);
+    expect(f.starts).toHaveLength(2); expect(f.controls).toHaveLength(0);
+  });
+
+  it.each(["provider-execution.json", "record.json"])("keeps another user's live history flowing and recovers a damaged %s without user credentials", async damagedFile => {
+    const f = await publicProviderFixture(true); fixtures.push(f);
+    const alice = await chat(f), aliceRun = f.starts[0]!.runId;
+    const bob = await f.manager.createSession({ createdBy: "another-user" });
+    await f.manager.postMessage(bob.id, "Other work", "user:another-user", [], { clientRequestId: randomUUID(), actorUserId: "another-user" });
+    const bobRun = f.starts[1]!.runId;
+    await vi.waitFor(async () => expect((await f.store.readHistoryRun(bob.id, bobRun))?.snapshot.state).toBe("running"), { timeout: 5000 });
+    await f.manager.shutdown();
+
+    // Damage one real stored destination across startup; retain the original bytes for recovery.
+    const source = path.join(f.store.dataDir, "sessions", alice.id, damagedFile);
+    const original = await readFile(source);
+    await writeFile(source, "{");
+    const broken = f.makeManager(), startCount = f.authorizations.length;
+    const liveStreams = () => f.requests.filter(r => r.path.includes("/history/events") && r.accept === "text/event-stream").length;
+    await broken.manager.recoverProviderRuns();
+    await vi.waitFor(() => expect(liveStreams()).toBe(2), { timeout: 5000 });
+    f.complete(aliceRun, "Held for Alice");
+    f.complete(bobRun, "Delivered to Bob");
+    const inbox = path.join(f.store.dataDir, "provider-history-inbox", alice.id);
+    const positionDir = path.join(f.store.dataDir, "provider-history");
+    await vi.waitFor(async () => {
+      expect((await broken.store.readEvents(bob.id)).filter(e => e.type === "assistant_text").map(e => e.text)).toEqual(["Delivered to Bob"]);
+      const checkpoint = JSON.parse(await readFile(path.join(positionDir, (await readdir(positionDir))[0]!), "utf8"));
+      expect(checkpoint.cursor).toBe("feed-4");
+      if (damagedFile === "provider-execution.json") expect((await readdir(inbox)).filter(f => f.endsWith(".json"))).toHaveLength(1);
+      else expect(checkpoint.incomplete).toContain(alice.id);
+    }, { timeout: 5000 });
+    expect(liveStreams()).toBe(2);
+    expect((await broken.store.readEvents(alice.id)).some(e => e.text === "Held for Alice")).toBe(false);
+    await broken.manager.shutdown();
+    await writeFile(source, original);
+
+    const repaired = f.makeManager();
+    await repaired.manager.recoverProviderRuns();
+    await vi.waitFor(async () => {
+      const texts = (await repaired.store.readEvents(alice.id)).filter(e => e.type === "assistant_text").map(e => e.text);
+      expect(texts).toEqual(["Held for Alice"]);
+      if (damagedFile === "provider-execution.json") expect(await readdir(inbox)).toEqual([]);
+    }, { timeout: 5000 });
+    expect((await repaired.store.readEvents(bob.id)).filter(e => e.type === "assistant_text").map(e => e.text)).toEqual(["Delivered to Bob"]);
+    expect(f.authorizations).toHaveLength(startCount);
+    expect(f.starts).toHaveLength(2); expect(f.controls).toHaveLength(0);
+    expect(f.requests.some(r => /\/runs\/[^/]+\/events/.test(r.path))).toBe(false);
+  });
+
+  it("redelivers after a transcript commit failure boundary and an expired installation cursor without duplicate facts", async () => {
+    const f = await publicProviderFixture(true); fixtures.push(f);
+    const record = await chat(f), runId = f.starts[0]!.runId;
+    await vi.waitFor(async () => expect((await f.store.readHistoryRun(record.id, runId))?.snapshot.state).toBe("running"), { timeout: 5000 });
+    const save = f.store.saveHistoryRun.bind(f.store);
+    let fail!: () => void;
+    const failed = new Promise<void>(resolve => { fail = resolve; });
+    vi.spyOn(f.store, "saveHistoryRun").mockImplementation(async (id, principal, snapshot) => {
+      if (snapshot.stopConfirmed) { fail(); throw new Error("Interrupted after transcript commit"); }
+      await save(id, principal, snapshot);
+    });
+    f.complete(runId, "Exactly once");
+    await failed;
+    await f.manager.shutdown();
+    f.expireNextHistoryCursor();
+    const restored = f.makeManager();
+    await restored.manager.recoverProviderRuns();
+    await vi.waitFor(async () => expect((await restored.store.readHistoryRun(record.id, runId))?.snapshot.stopConfirmed).toBe(true), { timeout: 5000 });
+    const messages = (await restored.store.readEvents(record.id)).filter(event => event.type === "assistant_text");
+    expect(messages.map(event => event.text)).toEqual(["Exactly once"]);
+    expect(f.starts).toHaveLength(1); expect(f.controls).toHaveLength(0);
+  });
+
   it.each([300, null])("restores the latest offline root context (%s) without inventing an intermediate usage ledger or replaying input", async latestCount => {
     const f = await fixture(), record = await chat(f), runId = f.starts[0]!.runId;
     await waitForStream(f, runId);
@@ -230,6 +531,25 @@ describe("SessionManager public provider integration", () => {
     }]);
     expect(events.filter(event => event.type === "tool_result").map(event => event.output)).toEqual(["Background command started"]);
     expect(events.filter(event => event.type === "assistant_text").map(event => event.text)).toEqual(["Final answer during suggestions"]);
+  });
+
+  it.each(["succeeded", "failed"] as const)("keeps an unseen %s outcome when Stop first discovers native exit", async state => {
+    const f = await fixture(), record = await chat(f), runId = f.starts[0]!.runId;
+    await waitForStream(f, runId);
+    // The user has not received the final frame. The provider's GET still sees the completed run.
+    const snapshot = f.runs.get(runId)!;
+    Object.assign(snapshot, { state, phase: "terminal", stopConfirmed: true, observedAt: new Date().toISOString(),
+      messages: [{ id: "last", role: "assistant", text: "Last native answer", state: "complete" }],
+      result: state === "succeeded" ? { status: state, text: "Last native answer", messageId: "last" }
+        : { status: state, error: { code: "native_failure", message: "Native check failed", retryable: false } } });
+    expect(await f.manager.cancelSession(record.id)).toBe(false);
+    const events = await f.store.readEvents(record.id);
+    expect(events.filter(event => event.type === "assistant_text").map(event => event.text)).toEqual(["Last native answer"]);
+    expect(events.filter(event => event.providerEventId === runId + ":terminal")).toHaveLength(1);
+    expect(events.some(event => event.type === "session_status" && event.status === "cancelled")).toBe(false);
+    expect((await f.store.readRecord(record.id))!.status).toBe(state === "succeeded" ? "idle" : "failed");
+    expect(f.controls).toHaveLength(0);
+    expect(f.starts).toHaveLength(1);
   });
 
   it.each(["running", "failed-and-reattached"])("projects a stopped snapshot's tool output before cancellation without reopening %s", async mode => {

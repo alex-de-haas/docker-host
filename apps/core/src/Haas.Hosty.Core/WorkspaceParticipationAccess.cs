@@ -104,9 +104,9 @@ internal sealed partial class DevelopmentWorkspaceService
         await RequireSessionAccessAsync(tree, actor, ct);
     }
 
-    private async Task<DevelopmentWorkspace?> PrepareAssociatedAsync(WorkspaceOwner actor, WorkspacePrepare input, CancellationToken ct)
+    private async Task<DevelopmentWorkspace?> PrepareAssociatedAsync(WorkspaceOwner actor, WorkspacePrepare input, CancellationToken ct, WorkspaceParticipation? selected = null)
     {
-        var participation = await SessionParticipationAsync(actor, ct);
+        var participation = selected ?? await SessionParticipationAsync(actor, ct);
         if (participation is null)
         {
             // A detached creator must not silently recover source through legacy allocation lookup.
@@ -136,7 +136,10 @@ internal sealed partial class DevelopmentWorkspaceService
             var previous = tree.Operations.FirstOrDefault(o => o.Id == input.RequestId);
             if (previous is not null)
             {
-                if (previous.Kind != "prepare" || previous.Fingerprint != fingerprint) throw Error("request_conflict", "Reuse the original session and preparation arguments.");
+                // A new repository in an existing allocation is first written by PrepareCoreAsync.
+                var initialPreparation = previous.Actor?.SameIdentity(actor) == true && previous.Fingerprint == Hash(CoreJson.Text(input));
+                if (previous.Kind != "prepare" || previous.Fingerprint != fingerprint && !initialPreparation)
+                    throw Error("request_conflict", "Reuse the original session and preparation arguments.");
                 return tree;
             }
             if (input.LeaseId is not null)

@@ -1,16 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { AgentConfiguration, AgentSession, AgentSessionCreate, AgentRunInput, AgentRunSnapshot, AgentEvent, AgentControlReceipt, AgentProviderRef, AgentPendingDecision } from "@hosty-sdk/app/agent";
+import type { AgentConfiguration, AgentSession, AgentSessionCreate, AgentRunInput, AgentRunSnapshot, AgentEvent, AgentControlReceipt, AgentProviderRef, AgentPendingDecision, AgentWatchItem } from "@hosty-sdk/app/agent";
 import { AgentApiError } from "@hosty-sdk/app/agent";
 import type { AgentApprovalResponse, AgentQuestionResponse } from "@hosty-sdk/app/agent";
 import { durableMkdir, durableWriteFile, isUncertainWrite } from "./internal/persistence.js";
+import { InstallationHistory } from "./history.js";
 
 export type Actor = { userId: string; principalId: string; callerAppId: string; callerInstallation: string };
 export type VerifiedOperation = Actor & { admissionRef: string; operation: string; provider: AgentProviderRef; sessionId?: string; runId?: string; configurationDigest?: string; ceiling?: unknown; expiresAt?: string };
 export type ConfigurationRecord = { configuration: AgentConfiguration; digest: string; skillPath?: string; snapshotId?: string; snapshotDigest?: string; pinRequestId?: string; binding?: import("./internal/connections/registry.js").ConnectionBinding; resolvedSkills: Array<{ skillId: string; digest: string }> };
 export type ControlRecord = { hash: string; receipt: AgentControlReceipt; decisionId?: string; decision?: AgentPendingDecision; response?: unknown };
 export type RunRecord = {
+  historyVersion?: 1; historyOutbox?: AgentWatchItem[]; historyReceipt?: { sequence: string; kind: AgentWatchItem["kind"] }; historyPartial?: boolean;
   hash: string; input?: AgentRunInput; admissionRef: string; snapshot: AgentRunSnapshot;
   retiredDecisionIds?: string[];
   decisionDeliveries?: Record<string, import("./decision-continuation.js").DecisionDelivery>;
@@ -35,6 +37,8 @@ const safe = (value: string) => /^[A-Za-z0-9-]{1,100}$/.test(value);
 
 /** One atomic session aggregate owns admission, its active slot, controls, events and snapshots. */
 export class ProviderStore {
+  history!: InstallationHistory;
+  private initialized = false;
   private tail: Promise<unknown> = Promise.resolve();
   private runs = new Map<string, string>();
   private uncertain = new Set<string>();
@@ -42,6 +46,7 @@ export class ProviderStore {
   constructor(readonly directory: string, readonly provider: AgentProviderRef, readonly maxReplayBytes = 64 * 1024 * 1024, readonly replayRetentionMs = 7 * 24 * 60 * 60 * 1000) {}
   async initialize(): Promise<void> {
     await durableMkdir(this.directory);
+    this.history = new InstallationHistory(path.join(this.directory, "installation-history.sqlite"), this.provider);
     for (const file of await readdir(this.directory)) {
       if (!file.endsWith(".json") || !safe(file.slice(0, -5))) continue;
       const record = await this.load(file.slice(0, -5));
@@ -49,10 +54,43 @@ export class ProviderStore {
         if (this.runs.has(id)) throw new Error("Duplicate retained provider run identity.");
         this.runs.set(id, record.id);
       }
-      let expired = false;
-      for (const run of Object.values(record.runs)) if (this.expireReplay(run)) expired = true;
-      if (expired) await this.save(record);
+      let changed = false;
+      for (const run of Object.values(record.runs)) {
+        // Adopt the available detailed replay before its independent TTL can expire.
+        if (!run.historyVersion || this.history.needsRecovery(record, run)) { this.stageRetainedHistory(run); changed = true; }
+        if (this.expireReplay(run)) changed = true;
+      }
+      if (changed) await this.save(record);
+      else this.history.publish(record);
     }
+    this.initialized = true;
+  }
+  private stageRetainedHistory(run: RunRecord): void {
+    run.historyVersion = 1;
+    const pending = run.historyOutbox ?? [];
+    delete run.historyOutbox;
+    delete run.historyReceipt;
+    const latest = structuredClone(run.snapshot);
+    // The crash receipt can still hold public events which the per-run replay has already compacted.
+    const events = new Map(run.events.map(event => [event.sequence, event]));
+    for (const item of pending) if (item.kind === "event") events.set(item.event.sequence, item.event);
+    const ordered = [...events.values()].sort((a, b) => Number(BigInt(a.sequence) - BigInt(b.sequence)));
+    const gap = BigInt(ordered.length) !== BigInt(latest.lastSequence);
+    if (gap) run.historyPartial = true;
+    if (latest.lastSequence !== "0" && (ordered[0]?.type !== "run.updated" || gap)) {
+      // A trimmed replay cannot identify the initial status; never backdate the current lifecycle.
+      const initial: AgentRunSnapshot = { ref: latest.ref, generation: latest.generation, sessionId: latest.sessionId,
+        revision: "0", configurationRevision: latest.configurationRevision, lastSequence: "0", cursor: this.cursor(latest.generation, "0"),
+        state: "unknown", phase: "interrupted", freshness: "unavailable", stopConfirmed: false,
+        observedAt: ordered[0]?.occurredAt ?? latest.observedAt, pending: [], effects: { certainty: "unknown", unresolvedCallIds: [] },
+        coverage: { messages: "truncated", tools: "truncated", decisions: "truncated" } };
+      this.history.stage(run, { kind: "snapshot", snapshot: initial });
+    }
+    for (const event of ordered)
+      this.history.stage(run, { kind: "event", event, cursor: this.cursor(event.generation, event.sequence) });
+    if (gap) latest.coverage = { messages: "truncated", tools: "truncated", decisions: "truncated" };
+    latest.cursor ||= this.cursor(latest.generation, latest.lastSequence);
+    this.history.stage(run, { kind: "snapshot", snapshot: latest });
   }
   exclusive<T>(action: () => Promise<T>): Promise<T> { const next = this.tail.catch(() => {}).then(action); this.tail = next; return next; }
   private file(id: string) { if (!safe(id)) throw new AgentApiError("invalid_id", "Invalid resource identity.", 400); return path.join(this.directory, id + ".json"); }
@@ -64,12 +102,17 @@ export class ProviderStore {
     if (record.version !== 1 || record.id !== id || !record.owner || !record.session || !record.runs || !record.configurations)
       throw new AgentApiError("storage_unavailable", "Invalid retained provider state.", 503);
     if (actor && (!sameActor(record.owner, actor) || !sameProvider(record.session.ref.provider, this.provider))) throw new AgentApiError("session_not_found", "Session not found.", 404);
+    // After startup, committed outboxes have been published before the writer advances. A new
+    // loaded aggregate starts with an empty outbox. The on-disk copy remains a crash receipt.
+    if (this.initialized) for (const run of Object.values(record.runs)) this.history.acknowledge(run);
     return record;
   }
   async save(record: SessionRecord): Promise<void> {
     if (this.uncertain.has(record.id)) throw new AgentApiError("storage_uncertain", "Retained provider state requires recovery.", 503);
     try { await durableWriteFile(this.file(record.id), JSON.stringify(record)); }
     catch (error) { if (isUncertainWrite(error)) this.uncertain.add(record.id); throw error; }
+    try { this.history.publish(record); }
+    catch (error) { this.uncertain.add(record.id); throw error; }
     for (const id of Object.keys(record.runs)) { this.runs.set(id, record.id); for (const listener of this.listeners.get(id) ?? []) { try { listener(); } catch { /* A committed observation cannot undo a write. */ } } }
   }
   async create(id: string, actor: Actor, body: string, input: AgentSessionCreate, configuration: ConfigurationRecord, onFresh?: () => void): Promise<AgentSession> {
@@ -120,11 +163,14 @@ export class ProviderStore {
     run.events = []; run.firstSequence = increment(run.snapshot.lastSequence); return true;
   }
   async pruneReplay(id: string, actor?: Actor): Promise<void> {
+    // Active output cannot be TTL-pruned. Do not put observers behind a busy native writer.
+    const current = await this.run(id, actor);
+    if (!this.expireReplay(current.record)) return;
     await this.exclusive(async () => { const { session, record } = await this.run(id, actor); if (this.expireReplay(record)) await this.save(session); });
   }
   makeRun(session: SessionRecord, id: string, actor: VerifiedOperation, body: string, input?: AgentRunInput): RunRecord {
     if (this.runs.has(id)) throw new AgentApiError("request_conflict", "Run identity is already retained.", 409);
-    return { hash: bytesHash(body), admissionRef: actor.admissionRef, input, events: [], firstSequence: "1", controls: {}, nativeSequence: 0, nativeRevision: -1,
+    return { hash: bytesHash(body), admissionRef: actor.admissionRef, input, historyVersion: 1, events: [], firstSequence: "1", controls: {}, nativeSequence: 0, nativeRevision: -1,
       snapshot: { ref: { provider: this.provider, id }, sessionId: session.id, generation: randomUUID(), revision: "1", state: "queued", phase: "preparing", stopConfirmed: false,
         freshness: "current", observedAt: new Date().toISOString(), configurationRevision: session.session.configurationRevision, lastSequence: "0", cursor: "", pending: [],
         effects: { certainty: "known", unresolvedCallIds: [] }, messages: [], tools: [], decisions: [], coverage: { messages: "complete", tools: "complete", decisions: "complete" }, admissionRef: actor.admissionRef } };
@@ -176,6 +222,7 @@ export class ProviderStore {
       throw new AgentApiError("event_budget", "Persisted output exceeds the event allowance; reconcile execution before continuing.", 413);
     }
     record.events.push(event);
+    this.history.stage(record, { kind: "event", event, cursor: record.snapshot.cursor });
     let size = Buffer.byteLength(JSON.stringify(record.events));
     while (size > this.maxReplayBytes && record.events.length) { record.events.shift(); size = Buffer.byteLength(JSON.stringify(record.events)); }
     record.firstSequence = record.events[0]?.sequence ?? increment(record.snapshot.lastSequence);

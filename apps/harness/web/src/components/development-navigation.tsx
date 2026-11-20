@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Hammer, Loader2, MessageSquarePlus, Trash2, Search, ListFilter, Diamond, CircleAlert, MessageSquare, PanelLeftClose } from "lucide-react";
 import type { AssistantSession } from "@/lib/assistant-api";
 import type { DevelopmentWorkspace } from "@/lib/development-api";
+import { observedSessionStatus } from "@/lib/attention";
 import { navigationItems } from "@/lib/workspace-navigation";
 import { WorkspaceRowStatus } from "./workspace-row-status";
 import { WorkspaceActivityCounts } from "./workspace-activity-counts";
@@ -59,7 +60,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         {workspace ? <Hammer className="size-3.5 shrink-0 text-muted-foreground" role="img" aria-label="Workspace" /> : <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
         <span className="min-w-0 flex-1 text-left">
           <span className="flex min-w-0 items-center gap-2"><span className="block min-w-0 flex-1 truncate text-sm font-normal" title={label}>{label}</span>
-            {workspace ? <WorkspaceActivityCounts counts={item.counts} /> : session && <SessionActivityIndicator status={session.status} />}
+            {workspace ? <WorkspaceActivityCounts counts={item.counts} /> : session && <SessionActivityIndicator status={observedSessionStatus(session)} />}
           </span>
           {workspace ? <WorkspaceRowStatus workspace={workspace} now={now} /> : session && <SessionRowStatus session={session} now={now} />}
         </span>

@@ -19,6 +19,11 @@ const baseControl = { requestId: uuid, expectedGeneration: uuid, expectedRevisio
 const terminalStates = ["queued", "running", "waiting_for_input", "succeeded", "failed", "cancelled", "unknown"];
 const phases = ["preparing", "executing", "waiting", "finalizing", "cancelling", "parked", "interrupted", "terminal"];
 
+const historyObservation = {
+  sessionId: id, runId: id, generation: uuid, principalId: text(512), userId: text(512),
+  item: { oneOf: [object({ kind: { const: "snapshot" }, snapshot: ref("RunSnapshot") }),
+    object({ kind: { const: "event" }, event: ref("Event"), cursor: text(8192) })] },
+};
 export const AGENT_SCHEMAS: Record<string, Schema> = {
   ProviderRef: object(refProperties),
   QualifiedRef: object({ provider: ref("ProviderRef"), id }),
@@ -55,6 +60,8 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
     object({ ...baseControl, command: { const: "predictions" }, enabled: boolean }),
   ] },
   Source: object({ agentId: id, parentAgentId: id, parentToolCallId: id }, ["agentId"]),
+  ChildAgent: object({ agentId: id, parentAgentId: id, parentToolCallId: id, state: { enum: terminalStates }, stopConfirmed: boolean,
+      prompt: { type: "string", maxLength: 65536 }, response: { type: "string", maxLength: 65536 }, promptTruncated: boolean, responseTruncated: boolean }, ["agentId", "state"], true),
   PendingDecision: object({ id, revision, kind: { enum: ["approval", "question"] }, delivery: { enum: ["continue_run", "next_turn"] }, source: ref("Source"), title: text(65536), toolCallId: id, toolName: text(), input: {},
     questions: list(object({ id, text: text(65536), header: text(1024), allowText: boolean, multiple: boolean, required: boolean,
       options: list(object({ id, label: text(8192), description: text(8192), preview: text(65536) }, ["id", "label"]), 128) }, ["id", "text"]), 128) }, ["id", "revision", "kind", "delivery"], true),
@@ -66,7 +73,7 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
     state: { enum: terminalStates }, phase: { enum: phases }, stopConfirmed: boolean, freshness: { enum: ["current", "last_known", "unavailable"] }, observedAt: { type: "string", format: "date-time" },
     configurationRevision: revision, lastSequence: sequence, cursor: text(8192), pending: list(ref("PendingDecision"), 256),
     effects: object({ certainty: { enum: ["known", "unknown"] }, unresolvedCallIds: unique(id, 1024) }), result: ref("Result"), messages: list(ref("Message"), 4096), tools: list(ref("Tool"), 4096),
-    agents: list(object({ agentId: id, parentAgentId: id, parentToolCallId: id, state: { enum: terminalStates }, stopConfirmed: boolean }, ["agentId", "state"], true), 1024),
+    agents: list(ref("ChildAgent"), 1024),
     selection: object({ requested: ref("Selection"), effective: ref("Selection") }), admissionRef: text(),
     coverage: object({ messages: { enum: ["complete", "truncated"] }, tools: { enum: ["complete", "truncated"] }, decisions: { enum: ["complete", "truncated"] } }, ["messages", "tools"]),
     executionUsage: object({ sequence, activeMs: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }, unknown: boolean }),
@@ -75,6 +82,17 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
     decisions: list(object({ decision: ref("PendingDecision"), state: { enum: ["pending", "resolved", "superseded", "unknown"] }, response: ref("DecisionResponse") }, ["decision", "state"]), 256),
     pendingContinuations: list(object({ requestId: uuid, run: ref("QualifiedRef"), state: { enum: ["pending", "awaiting_authorization", "admitted", "superseded"] } }), 256) },
     ["ref", "sessionId", "generation", "revision", "state", "phase", "stopConfirmed", "freshness", "observedAt", "configurationRevision", "lastSequence", "cursor", "pending", "effects"], true),
+  HistoryObservation: object(historyObservation),
+  LiveHistoryReady: object({ through: text(8192) }),
+  LiveHistoryObservation: object({ ...historyObservation, epoch: uuid, sessionPosition: positive, sourceHistoryIncomplete: { const: true } }, [...Object.keys(historyObservation), "epoch"]),
+  HistoryStates: object({ through: text(8192), nextSession: nullableText, sessions: list(object({
+    sessionId: id, userId: text(512), principalId: text(512), epoch: uuid, head: positive, snapshot: ref("RunSnapshot"), sourceHistoryIncomplete: { const: true },
+  }, ["sessionId", "userId", "principalId", "epoch", "head", "snapshot"]), 100) }),
+  HistoryRange: object({ nextPosition: { type: ["integer", "null"], minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    observations: list(object({ ...historyObservation, cursor: text(8192), epoch: uuid, sessionPosition: positive, sourceHistoryIncomplete: { const: true } },
+      [...Object.keys(historyObservation), "cursor", "epoch", "sessionPosition"]), 100) }),
+  HistoryPage: object({ observations: list(object({ ...historyObservation, cursor: text(8192) }), 100),
+    through: text(8192), nextCursor: { type: ["string", "null"] } }),
   Session: object({ ref: ref("QualifiedRef"), revision, configurationRevision: revision, configurationDigest: digest,
     nativeState: { enum: ["not_created", "available", "missing", "unavailable", "unknown"] }, activeRun: { oneOf: [ref("QualifiedRef"), { type: "null" }] },
     resolvedSkills: list(object({ skillId: digest, digest }), 202), configuration: ref("Configuration"), correlation: object({ conversation: ref("QualifiedRef"), task: ref("QualifiedRef") }, []) },
@@ -99,6 +117,7 @@ AGENT_SCHEMAS.Event = { ...object({ schemaVersion: { const: "agent-event.1" }, r
       : name.startsWith("decision.") ? object({ decisionId: id, decision: ref("PendingDecision") }, ["decisionId"], true)
       : name === "control.updated" ? object({ requestId: uuid, receipt: ref("ControlReceipt") }, ["requestId"], true)
       : name === "session.bound" ? object({ sessionId: id }, ["sessionId"], true)
+      : name === "agent.updated" ? object({ agent: ref("ChildAgent") }, [], true)
       : name === "context.updated" ? object({ usage: { type: ["object", "null"], additionalProperties: true } }, ["usage"], true)
       : name === "extension" ? object({ namespace: text(), required: { const: false }, payload: {} }, ["namespace"], true)
       : { type: "object", additionalProperties: true } } } })),
@@ -113,9 +132,30 @@ function operation(operationId: string, response: string, input?: string, pathPa
   return { operationId, security: [{ coreOperation: [] }], parameters: pathParameters.map(parameter), ...(input ? { requestBody: { required: true, content: { "application/json": { schema: ref(input) } } } } : {}),
     responses: { ...errors, ...Object.fromEntries(statuses.map(status => [String(status), { description: "Authorized durable result.", headers: { "Cache-Control": { schema: { const: "no-store" } } }, content: { "application/json": { schema: ref(response) } } }])) } };
 }
+const historySecurity = [{ installationHistory: [] }];
+const historyParam = (name: string, schema: Schema, required = false) => ({ name, in: "query", schema, required });
+const pageLimit = historyParam("limit", { type: "integer", minimum: 1, maximum: 100 });
 export const AGENT_OPENAPI: Schema = {
   openapi: "3.1.0", info: { title: "Hosty Agent Execution API", version: "1.0.0", description: "Independent provider execution. Paths are relative to the current Core-declared interface base. Exact UTF-8 command bytes and stable mutation UUIDs are retained across retries. No Harness dependency or raw native session IDs." },
   paths: {
+    "/history/live": { get: { operationId: "history.live", security: historySecurity, parameters: [historyParam("after", text(8192))],
+      description: "Open a fresh live subscription. The optional previous cursor checks archive ancestry. The ready event returns the subscribed boundary. Subsequent observation events carry an SSE id and every durable record carries its session position.",
+      responses: { ...errors, "200": { description: "Ready boundary followed by live observations.", content: {
+        "text/event-stream": { schema: { type: "string" }, "x-event-schemas": { ready: ref("LiveHistoryReady"), observation: ref("LiveHistoryObservation") } },
+      } } } } },
+    "/history/states": { get: { operationId: "history.states", security: historySecurity,
+      parameters: [historyParam("through", text(8192)), historyParam("afterSession", id), pageLimit],
+      description: "List sessions with retained runs and their state and durable session head at the supplied or current installation boundary. Pass the returned boundary on later pages.",
+      responses: { ...errors, "200": { description: "States for the calling installation.", content: { "application/json": { schema: ref("HistoryStates") } } } } } },
+    "/history/range": { get: { operationId: "history.range", security: historySecurity,
+      parameters: [historyParam("through", text(8192), true), historyParam("sessionId", id, true), historyParam("epoch", uuid, true),
+        historyParam("from", positive, true), historyParam("to", positive, true), pageLimit],
+      description: "Read an inclusive interval of durable positions for one session and history epoch. nextPosition is the first unread position in the requested interval.",
+      responses: { ...errors, "200": { description: "Ordered durable session records.", content: { "application/json": { schema: ref("HistoryRange") } } } } } },
+    "/history/events": { get: { operationId: "history.events", security: [{ installationHistory: [] }],
+      parameters: [{ name: "after", in: "query", schema: text(8192) }, { name: "through", in: "query", schema: text(8192) }, { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100 } }],
+      description: "Resumable, read-only installation history. Frames use event: observation with an opaque installation feed position in id. Commit each observation before saving this position.",
+      responses: { ...errors, "200": { description: "History for the authenticated consumer installation.", content: { "text/event-stream": { schema: { type: "string" }, "x-event-schema": ref("HistoryObservation") }, "application/json": { schema: ref("HistoryPage") } } } } } },
     "/capabilities": { get: operation("capabilities", "Capabilities") },
     "/connections": { get: operation("connections.list", "ConnectionPage") },
     "/connections/{connectionId}/models": { get: operation("connections.models", "ModelCatalog", undefined, ["connectionId"]) },
@@ -133,7 +173,7 @@ export const AGENT_OPENAPI: Schema = {
     "/runs/{runId}/cancel": { post: operation("runs.cancel", "ControlReceipt", "CancelInput", ["runId"], [200, 202]) },
     "/runs/{runId}/controls": { post: { ...operation("runs.control", "ControlReceipt", "ControlInput", ["runId"], [200, 202]), description: "Optional controls require their advertised capabilities. Reconcile input is an attestation, never proof of actual native exit." } },
     "/runs/{runId}/controls/{requestId}": { get: operation("runs.controls.read", "ControlReceipt", undefined, ["runId", "requestId"]) },
-  }, components: { securitySchemes: { coreOperation: { type: "http", scheme: "bearer", description: "Fresh Core exact-operation credential, never the caller's service/user token." } }, schemas: AGENT_SCHEMAS },
+  }, components: { securitySchemes: { installationHistory: { type: "http", scheme: "bearer", description: "Core-issued installation history credential." }, coreOperation: { type: "http", scheme: "bearer", description: "Fresh Core exact-operation credential, never the caller's service/user token." } }, schemas: AGENT_SCHEMAS },
 };
 function localRefs(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(localRefs);

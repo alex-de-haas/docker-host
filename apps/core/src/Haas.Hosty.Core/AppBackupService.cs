@@ -33,6 +33,52 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
     // alone: an archive that changed is re-hashed, so the guard keeps its meaning exactly.
     private readonly ConcurrentDictionary<string, (FileStamp Stamp, string Sha256)> orphanArchiveDigests = new(StringComparer.Ordinal);
 
+    // Cleanup can run independently of app lifecycle. Serialize pin changes with the final
+    // deletion decision so a previously computed plan cannot remove a newly protected archive.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> retentionGates = new(StringComparer.Ordinal);
+
+    private string WorkspaceReturnFile(string appId) => Path.Combine(GetBackupRoot(appId), "workspace-return");
+    private Task<WorkspaceReturnBackup?> ReadWorkspaceReturnBackupAsync(string appId, CancellationToken ct)
+        => JsonStorage.ReadAsync<WorkspaceReturnBackup>(WorkspaceReturnFile(appId), ct);
+
+    private async Task<AppBackupRecord?> ReadWorkspaceBackupAsync(string appId, string backupId, bool verifyDigest, CancellationToken ct)
+    {
+        const string suffix = "_pre-development-mode";
+        if (!backupId.EndsWith(suffix, StringComparison.Ordinal) || !Guid.TryParseExact(backupId[..^suffix.Length], "D", out _))
+            throw new AppLifecycleException("backup_request_invalid", "A package recovery point requires a development backup.");
+
+        var root = GetBackupRoot(appId);
+        var saved = await JsonStorage.ReadAsync<AppBackupRecord>(Path.Combine(root, backupId + ".json"), ct);
+        if (saved is null) return null;
+        var archive = Path.Combine(root, backupId + ".zip");
+        if (saved.AppId != appId || saved.BackupId != backupId || saved.ArchivePath != archive ||
+            saved.Reason != "pre-development-mode" || !File.Exists(archive) ||
+            verifyDigest && await ComputeSha256Async(archive, ct) != saved.ArchiveSha256)
+            throw new AppLifecycleException("backup_changed", "The development backup is missing or changed. Restore it before recovery.");
+        return saved;
+    }
+
+    internal async Task VerifyWorkspaceBackupAsync(string appId, string backupId, CancellationToken ct)
+    {
+        _ = await ReadWorkspaceBackupAsync(appId, backupId, verifyDigest: true, ct)
+            ?? throw new AppLifecycleException("backup_changed", "The development backup is unavailable.");
+    }
+
+    internal async Task SetWorkspaceReturnBackupAsync(string appId, string backupId, DateTimeOffset installation, CancellationToken ct)
+    {
+        var gate = retentionGates.GetOrAdd(appId, _ => new(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            var point = new WorkspaceReturnBackup(backupId, installation);
+            if (point == await ReadWorkspaceReturnBackupAsync(appId, ct)) return;
+            _ = await ReadWorkspaceBackupAsync(appId, backupId, verifyDigest: false, ct)
+                ?? throw new AppLifecycleException("backup_changed", "The package recovery backup is unavailable.");
+            await JsonStorage.WriteAsync(WorkspaceReturnFile(appId), point, restrictToOwner: true, ct);
+        }
+        finally { gate.Release(); }
+    }
+
     public async Task<AppBackupRecord?> CreateBackupAsync(
         string appId,
         string reason,
@@ -60,16 +106,12 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
 
         if (operationId is not null)
         {
-            var saved = await JsonStorage.ReadAsync<AppBackupRecord>(metadataPath, cancellationToken);
-            if (saved is not null)
-            {
-                if (saved.AppId != appId || saved.BackupId != backupId || saved.ArchivePath != archivePath ||
-                    !File.Exists(archivePath) || await ComputeSha256Async(archivePath, cancellationToken) != saved.ArchiveSha256)
-                    throw new AppLifecycleException("backup_changed", "The development backup is missing or changed. Restore it before recovery.");
-                return saved;
-            }
+            var saved = await ReadWorkspaceBackupAsync(appId, backupId, verifyDigest: true, cancellationToken);
+            if (saved is not null) return saved;
             // The caller holds the app lifecycle lock and has verified Stop. An incomplete archive
             // has never authorized a runtime start and can be rebuilt under the same operation ID.
+            if ((await ReadWorkspaceReturnBackupAsync(appId, cancellationToken))?.BackupId == backupId)
+                throw new AppLifecycleException("backup_changed", "The package recovery backup was removed.");
             File.Delete(archivePath);
         }
 
@@ -96,18 +138,19 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
 
         if (IsRetentionManagedReason(reason))
         {
-            await ApplyAutomaticRetentionAsync(appId, cancellationToken);
+            await ApplyAutomaticRetentionAsync(appId, operationId is null ? null : backupId, cancellationToken);
         }
 
         return record;
     }
 
-    public async Task<IReadOnlyList<AppBackupRecord>> ListBackupsAsync(string appId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<AppBackupRecord>> ListBackupsAsync(string appId, CancellationToken cancellationToken = default, DateTimeOffset? installation = null)
     {
         // The records are handed to the plan builder rather than letting it re-read them: every
         // metadata file in the app's backup folder was otherwise opened and deserialized twice per
         // request, once here and once inside the plan.
-        var records = await ReadBackupRecordsAsync(appId, cancellationToken);
+        var recoveryPoint = await ReadWorkspaceReturnBackupAsync(appId, cancellationToken);
+        var records = await ReadBackupRecordsAsync(appId, cancellationToken, recoveryPoint);
         var plan = await CreateCleanupPlanCoreAsync(appId, records, cancellationToken);
         // One lookup keyed by app + backup id, so annotating N records costs N rather than N × plan
         // candidates.
@@ -118,6 +161,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
             .Select(record => record with
             {
                 Retention = BuildRetentionStatus(record, candidatesByBackup),
+                IsWorkspaceReturnBackup = record.IsWorkspaceReturnBackup && (installation is null || installation == recoveryPoint?.Installation),
             })
             .OrderByDescending(record => record.CreatedAt)
             .ToArray();
@@ -132,19 +176,19 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
             return false;
         }
 
-        var backupRoot = GetBackupRoot(appId);
-        if (IsSafeBackupPath(record.ArchivePath, backupRoot, ".zip"))
+        var gate = retentionGates.GetOrAdd(appId, _ => new(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try
         {
-            TryDelete(record.ArchivePath);
+            // Explicit deletion is allowed even when this archive is the recovery point.
+            // Leave the ID recorded: exact entry replay must not recreate the deleted copy.
+            var backupRoot = GetBackupRoot(appId);
+            if (IsSafeBackupPath(record.ArchivePath, backupRoot, ".zip")) TryDelete(record.ArchivePath);
+            var metadataPath = Path.Combine(backupRoot, $"{backupId}.json");
+            if (IsSafeBackupPath(metadataPath, backupRoot, ".json")) TryDelete(metadataPath);
+            return true;
         }
-
-        var metadataPath = Path.Combine(backupRoot, $"{backupId}.json");
-        if (IsSafeBackupPath(metadataPath, backupRoot, ".json"))
-        {
-            TryDelete(metadataPath);
-        }
-
-        return true;
+        finally { gate.Release(); }
     }
 
     public Task DeleteAllBackupsAsync(string appId, CancellationToken cancellationToken = default)
@@ -302,16 +346,19 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
         return await ApplyCleanupPlanAsync(plan, automaticOnly: true, cancellationToken);
     }
 
-    private async Task ApplyAutomaticRetentionAsync(string appId, CancellationToken cancellationToken)
+    private async Task ApplyAutomaticRetentionAsync(string appId, string? inProgressBackupId, CancellationToken cancellationToken)
     {
         var plan = await CreateCleanupPlanAsync(appId, cancellationToken);
-        _ = await ApplyCleanupPlanAsync(plan, automaticOnly: true, cancellationToken);
+        // Stable development IDs are UUIDs. Equal timestamps or a backwards clock can sort
+        // the archive just created into the cleanup plan before the switch can use it.
+        _ = await ApplyCleanupPlanAsync(plan, automaticOnly: true, cancellationToken, inProgressBackupId);
     }
 
     private async Task<AppBackupCleanupApplyResponse> ApplyCleanupPlanAsync(
         AppBackupCleanupPlan plan,
         bool automaticOnly,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? inProgressBackupId = null)
     {
         var deleted = new List<AppBackupCleanupCandidate>();
         var skipped = new List<AppBackupCleanupCandidate>();
@@ -322,7 +369,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
         foreach (var candidate in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (await TryDeleteCleanupCandidateAsync(candidate, cancellationToken))
+            if (candidate.BackupId != inProgressBackupId && await TryDeleteCleanupCandidateAsync(candidate, cancellationToken))
             {
                 deleted.Add(candidate);
             }
@@ -348,7 +395,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
     // returning so the sweep can collect it as a missing-archive candidate, and an operator who moves
     // HOSTY_DATA_ROOT leaves every stored path stale without their backups deserving to vanish from the
     // listing. Every path that reads, extracts or deletes an archive runs IsSafeBackupPath first.
-    private async Task<IReadOnlyList<AppBackupRecord>> ReadBackupRecordsAsync(string appId, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<AppBackupRecord>> ReadBackupRecordsAsync(string appId, CancellationToken cancellationToken, WorkspaceReturnBackup? recoveryPoint = null)
     {
         var backupRoot = GetBackupRoot(appId);
         if (!Directory.Exists(backupRoot))
@@ -411,7 +458,12 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
                 continue;
             }
 
-            records.Add(record with { Retention = null });
+            records.Add(record with
+            {
+                Retention = null,
+                IsWorkspaceReturnBackup = record.BackupId == recoveryPoint?.BackupId && record.Reason == "pre-development-mode" &&
+                    record.ArchivePath == Path.Combine(backupRoot, record.BackupId + ".zip") && File.Exists(record.ArchivePath),
+            });
         }
 
         return records;
@@ -429,7 +481,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
         }
 
         var candidates = new Dictionary<string, AppBackupCleanupCandidate>(StringComparer.Ordinal);
-        var records = knownRecords ?? await ReadBackupRecordsAsync(appId, cancellationToken);
+        var records = knownRecords ?? await ReadBackupRecordsAsync(appId, cancellationToken, await ReadWorkspaceReturnBackupAsync(appId, cancellationToken));
         // Safe to key on: ReadBackupRecordsAsync drops records with a missing or duplicate BackupId.
         var recordsById = records.ToDictionary(record => record.BackupId, StringComparer.Ordinal);
         var backupIds = new HashSet<string>(recordsById.Keys, StringComparer.Ordinal);
@@ -463,7 +515,7 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
         {
             var eligibleRecords = records
                 .Where(record =>
-                    string.Equals(record.Reason, ruleEntry.Key, StringComparison.Ordinal) &&
+                    !record.IsWorkspaceReturnBackup && string.Equals(record.Reason, ruleEntry.Key, StringComparison.Ordinal) &&
                     File.Exists(record.ArchivePath))
                 .OrderByDescending(record => record.CreatedAt)
                 .ThenByDescending(record => record.BackupId, StringComparer.Ordinal)
@@ -578,6 +630,9 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
                 WouldDeleteInCurrentPlan: true);
         }
 
+        if (record.IsWorkspaceReturnBackup)
+            return new AppBackupRetentionStatus(Eligible: false, Reason: "workspace-return-backup", WouldDeleteInCurrentPlan: false);
+
         if (string.Equals(record.Reason, ManualReason, StringComparison.Ordinal))
         {
             return new AppBackupRetentionStatus(
@@ -617,28 +672,28 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
             return false;
         }
 
-        var archiveDeleted = false;
-        if (candidate.ArchivePath is not null && File.Exists(candidate.ArchivePath))
+        var gate = retentionGates.GetOrAdd(candidate.AppId, _ => new(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try
         {
-            if (candidate.ArchiveSha256 is not null)
-            {
-                var currentSha256 = await ComputeSha256Async(candidate.ArchivePath, cancellationToken);
-                if (!string.Equals(currentSha256, candidate.ArchiveSha256, StringComparison.OrdinalIgnoreCase))
-                {
-                    return false;
-                }
-            }
-
-            if (!TryDeleteExisting(candidate.ArchivePath))
-            {
+            var recoveryPoint = await ReadWorkspaceReturnBackupAsync(candidate.AppId, cancellationToken);
+            if (recoveryPoint?.BackupId == candidate.BackupId && File.Exists(Path.Combine(backupRoot, candidate.BackupId + ".zip")))
                 return false;
+
+            var archiveDeleted = false;
+            if (candidate.ArchivePath is not null && File.Exists(candidate.ArchivePath))
+            {
+                if (candidate.ArchiveSha256 is not null &&
+                    !string.Equals(await ComputeSha256Async(candidate.ArchivePath, cancellationToken), candidate.ArchiveSha256, StringComparison.OrdinalIgnoreCase))
+                    return false;
+                if (!TryDeleteExisting(candidate.ArchivePath)) return false;
+                archiveDeleted = true;
             }
 
-            archiveDeleted = true;
+            var metadataDeleted = candidate.MetadataPath is not null && TryDeleteExisting(candidate.MetadataPath);
+            return archiveDeleted || metadataDeleted;
         }
-
-        var metadataDeleted = candidate.MetadataPath is not null && TryDeleteExisting(candidate.MetadataPath);
-        return archiveDeleted || metadataDeleted;
+        finally { gate.Release(); }
     }
 
     private IEnumerable<string> EnumerateBackupAppIds()
@@ -756,6 +811,8 @@ internal sealed class AppBackupService(CoreDataPaths paths, IClock clock, ILogge
     }
 }
 
+internal sealed record WorkspaceReturnBackup(string BackupId, DateTimeOffset Installation);
+
 internal sealed record AppBackupRecord(
     string AppId,
     string BackupId,
@@ -767,7 +824,8 @@ internal sealed record AppBackupRecord(
     long ArchiveSize,
     int FileCount,
     string? Note = null,
-    AppBackupRetentionStatus? Retention = null);
+    AppBackupRetentionStatus? Retention = null,
+    bool IsWorkspaceReturnBackup = false);
 
 internal sealed record AppBackupRetentionStatus(
     bool Eligible,

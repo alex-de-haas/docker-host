@@ -1020,7 +1020,7 @@ export function ShellClient({
   }), [coreOrigin, sendCsrfJson]);
 
   const switchAppRuntime = useCallback(
-    async (app: CoreApp, target: string | AppExecutionSelection) => {
+    async (app: CoreApp, target: string | AppExecutionSelection, workspaceName?: string) => {
       const selection: AppExecutionSelection = typeof target === "string" ? { kind: "package", runtime: target } : target;
       const currentApp = state.apps.find(candidate => candidate.id === app.id) ?? app;
       if (appActionActivations.current.has(app.id)) return;
@@ -1046,12 +1046,22 @@ export function ShellClient({
       // A retained intent still needs its receipt even if its target already appears selected or
       // its admitted operation is transitioning. These guards apply only to a new selection.
       if (!recovering && (isAppBusy(currentApp.runtimeState) || currentApp.operationStatus === "updating" ||
-          selection.kind === "package" && !currentApp.devMode && !currentApp.live && selection.runtime === currentApp.selectedRuntime)) return;
+          selection.kind === "package" && !workspaceName && !currentApp.devMode && !currentApp.live && selection.runtime === currentApp.selectedRuntime)) return;
       appActionActivations.current.add(app.id);
-      setBusyAction(actionKey);
-      setState(current => ({ ...current, error: null }));
       const statusUrl = appEndpoint(app, `/execution-target/${request.requestId}`);
       try {
+        const enterWorkspace = selection.kind === "workspace";
+        if (!recovering && (enterWorkspace || currentApp.devMode || workspaceName)) {
+          const name = workspaceName ? `“${workspaceName}”` : "the selected workspace";
+          const confirmed = await confirm(enterWorkspace
+            ? { title: `Switch ${app.displayName} to a workspace?`, action: "Switch to workspace",
+                description: `Run ${app.displayName} from ${name} using its current data. Migrations can make that data incompatible with the installed package.` }
+            : { title: `Return ${app.displayName} to its installed package?`, action: "Return to package",
+                description: "The installed package will use the current data, including any changes made by workspace migrations." });
+          if (!confirmed) return;
+        }
+        setBusyAction(actionKey);
+        setState(current => ({ ...current, error: null }));
         try { localStorage.setItem(storageKey, JSON.stringify(request)); localStorage.setItem(storageKey + ":state", "running"); } catch { /* In-memory identity remains available. */ }
         const submit = async (): Promise<AppExecutionResult | null> => {
           try {
@@ -1102,15 +1112,6 @@ export function ShellClient({
           }
           break;
         }
-        if (result.state === "failed") {
-          try {
-            if (["dev_selection_changed", "dev_installation_changed", "execution_request_conflict"].includes(result.code || "")) {
-              localStorage.removeItem(storageKey); localStorage.removeItem(storageKey + ":state");
-            } else localStorage.setItem(storageKey + ":state", "failed");
-          } catch { /* Optional local recovery journal. */ }
-          throw new Error(result.error || "The selected runtime could not start.");
-        }
-        try { localStorage.removeItem(storageKey); localStorage.removeItem(storageKey + ":state"); } catch { /* Optional local recovery journal. */ }
         // Apply the newer receipt before a stale list request can replace it.
         if (result.app) {
           const readId = ++appsReadSequence.current;
@@ -1119,6 +1120,23 @@ export function ShellClient({
           }, readId) }));
         }
         invalidateUpdateStatus(app.id);
+        if (result.state === "failed" && result.code !== "dev_workspace_start_failed") {
+          try {
+            if (["dev_selection_changed", "dev_installation_changed", "execution_request_conflict"].includes(result.code || "")) {
+              localStorage.removeItem(storageKey); localStorage.removeItem(storageKey + ":state");
+            } else localStorage.setItem(storageKey + ":state", "failed");
+          } catch { /* Optional local recovery journal. */ }
+          throw new Error(result.error || "The selected runtime could not start.");
+        }
+        try { localStorage.removeItem(storageKey); localStorage.removeItem(storageKey + ":state"); } catch { /* Optional local recovery journal. */ }
+        if (result.state === "failed") {
+          // Core settled the selection. A repaired worktree can start normally under the same binding.
+          toast.error(`Workspace selected. ${app.displayName} could not start`, {
+            appId: app.id, description: result.error || "Check the app’s console logs, repair the workspace and start the app again.",
+          });
+          void refreshApps();
+          return;
+        }
         if (app.id === shellAppId) {
           if (await waitForOwnOrigin()) window.location.reload();
           else toast.warning("Runtime switched; Shell page is not answering yet", {
@@ -1135,7 +1153,7 @@ export function ShellClient({
         appActionActivations.current.delete(app.id);
         setBusyAction(current => current === actionKey ? null : current);
       }
-    }, [appEndpoint, coreOrigin, installationClient, invalidateUpdateStatus, refresh, refreshApps, sendCsrfJson, shellAppId, state.apps],
+    }, [appEndpoint, confirm, coreOrigin, installationClient, invalidateUpdateStatus, refresh, refreshApps, sendCsrfJson, shellAppId, state.apps],
   );
 
   const loadAppBackups = useCallback(
@@ -1443,7 +1461,7 @@ export function ShellClient({
     if (!managementAppId || managementTab !== "backups") { loadedBackups.current = null; return; }
     if (loadedBackups.current !== managementAppId) {
       const app = state.apps.find(item => item.id === managementAppId);
-      if (app?.capabilities.includes("backup")) { loadedBackups.current = managementAppId; void loadAppBackups(app, false); }
+      if (app) { loadedBackups.current = managementAppId; void loadAppBackups(app, false); }
     }
   }, [managementAppId, managementTab, loadAppBackups, state.apps]);
 

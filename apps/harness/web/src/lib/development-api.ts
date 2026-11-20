@@ -27,7 +27,7 @@ export type Worktree = { observationHealth?: string; observationRevision?: strin
 export type WorkspaceParticipation = {
   id: string; revision: number; role: "operator" | "owner" | "contributor"; viewerUserId?: string;
   members: { userId: string; name: string; role: string; worktreeIds: string[]; revoked: boolean }[];
-  sessions: { appId: string; userId: string; sessionId: string; title: string; attached: boolean; canOpen: boolean; viewerPath: string | null; status: string; activityAt: string | null; changedAt?: string | null }[];
+  sessions: { kind?: string | null; activityGroup?: string | null; appId: string; userId: string; sessionId: string; title: string; attached: boolean; canOpen: boolean; viewerPath: string | null; status: string; activityAt: string | null; changedAt?: string | null }[];
   eligibleUsers: { id: string; name: string }[];
 };
 export type WorkspacePullRequestSummary = { count: number; openCount?: number; draftCount?: number; state: string; checks: string; observedAt?: string | null; partial: boolean };
