@@ -63,14 +63,16 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
       ] };
     case 'feedback':
     case 'harness-local':
-    case 'agent-providers':
+    case 'agent-providers': {
+      const image = suite === 'agent-providers' ? `hosty-harness-api-acceptance:${randomUUID()}` : null;
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker,
         command(node, ['--version']), command(node, ['-e', "require('node:child_process').execSync('npm --version', {stdio:'inherit'})"])], steps: [
         build(core), build(cli),
         ...(suite === 'agent-providers' ? [command(node, ['scripts/check-agent-provider-native.mjs'])] : []),
-        ...(suite === 'agent-providers' ? [command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', 'hosty-harness-api-acceptance:local', '.'])] : []),
-        command(python, ['scripts/check-workspace-activation.py', '.', suite, '--managed']),
+        ...(image ? [command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', image, '.'])] : []),
+        command(python, ['scripts/check-workspace-activation.py', '.', suite, '--managed'], image ? { HOSTY_AGENT_PROVIDERS_API_IMAGE: image } : {}),
       ] };
+    }
     case 'activation':
       return { prerequisites: [dotnet, command('git', ['--version']), pythonCheck, docker], steps: [
         build(core), build(cli),
