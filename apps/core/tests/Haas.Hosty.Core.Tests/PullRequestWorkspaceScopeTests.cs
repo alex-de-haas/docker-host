@@ -44,6 +44,45 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal("publication_forbidden", denied.Code);
     }
 
+    [Fact]
+    public async Task Publication_ObservationScopeUsesTheSameUsersConfiguringProviderAcrossSessions()
+    {
+        var creator = new WorkspaceOwner("example.creator", DateTimeOffset.UnixEpoch, "admin", "session-a");
+        var f = await ExternalPublicationFixture(creator);
+        var template = (await f.F.Apps.GetAppAsync(SourceTestApp))!;
+        var creatorApp = template with { Id = creator.AppId, InstalledAt = creator.Installation, GrantedCorePermissions = [] };
+        var publisherApp = template with { Id = "example.publisher", GrantedCorePermissions = [] };
+        var consumer = template with { Id = "example.consumer", GrantedCorePermissions = [CoreAppPermissions.AgentProviders, CoreAppPermissions.Sources, CoreAppPermissions.PublicationWrite] };
+        await f.F.Apps.UpsertAppAsync(creatorApp);
+        await f.F.Apps.UpsertAppAsync(publisherApp);
+        await f.F.Apps.UpsertAppAsync(consumer);
+        var publisher = new WorkspaceOwner(publisherApp.Id, publisherApp.InstalledAt, creator.UserId, "session-b");
+        var source = new CoreAppPermissionSource(consumer.Id, consumer.InstalledAt);
+        var configured = await f.Service.CommandAsync(f.W.Id, publisher, "configure",
+            new(Guid.NewGuid().ToString(), ConnectionId: "connection"), default, canonical: true, permissionSource: source);
+        Assert.Equal(publisher, configured.Owner);
+        await f.Service.CommandAsync(f.W.Id, publisher, "link", new(Guid.NewGuid().ToString(), Number: 42),
+            default, canonical: true, permissionSource: source);
+
+        var actor = new PullRequestActor(creator.UserId);
+        await f.Service.ValidateObservationScopesAsync(actor, [f.W.WorkspaceId], default);
+        var inspection = new WorkspaceInspectionService(f.Workspaces, f.F.Apps, f.F.Clock, f.Service, f.Users, f.Connections);
+        var displayed = Assert.Single(await inspection.PullRequestsAsync(f.W, creator.UserId, default));
+        Assert.Equal(f.Provider.Head, displayed.Observation?.Head);
+        await f.Users.UpdateAsync(state => state with { Users = [.. state.Users, state.Users[0] with { Id = "another-admin" }] });
+        var other = await Assert.ThrowsAsync<PullRequestException>(() =>
+            f.Service.ValidateObservationScopesAsync(new("another-admin"), [f.W.WorkspaceId], default));
+        Assert.Equal("pr_scope_forbidden", other.Code);
+        Assert.Null(Assert.Single(await inspection.PullRequestsAsync(f.W, "another-admin", default)).Observation);
+
+        await f.F.Apps.UpsertAppAsync(creatorApp with { GrantedCorePermissions = [CoreAppPermissions.Sources] });
+        await f.F.Apps.RemoveAppAsync(publisherApp.Id);
+        var denied = await Assert.ThrowsAsync<PublicationException>(() =>
+            f.Service.ValidateObservationScopesAsync(actor, [f.W.WorkspaceId], default));
+        Assert.Equal("publication_forbidden", denied.Code);
+        Assert.Null(Assert.Single(await inspection.PullRequestsAsync(f.W, creator.UserId, default)).Observation);
+    }
+
     [Theory]
     [InlineData("owner/repo", "main", true)]
     [InlineData("foreign/fork", "main", false)]

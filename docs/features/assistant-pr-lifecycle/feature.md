@@ -28,8 +28,10 @@ For Core MCP calls made through an agent provider, Core checks the initiating co
 require `core.publications.write`. Listing connections and local commits require only source access
 from the consumer. Core attributes the workspace and commands to the executing provider session.
 A newly configured publication records which consumer installation supplied the grant. Background
-observation rechecks both installations, the administrator and the consumer's reviewed access. A
-worktree with no publication or PR references contributes nothing to a grouped workspace's PR scope.
+observation rechecks both installations, the administrator and the consumer's reviewed access.
+If another session of the same administrator configures the publication, Core uses that publishing
+session's grant for PR observation and review. A worktree with no publication or PR references
+contributes nothing to a grouped workspace's PR scope.
 
 Each publication explicitly selects one of the user's GitHub connections. Core uses the existing
 per-user connection lock and refresh path; another user's connection cannot substitute for it.

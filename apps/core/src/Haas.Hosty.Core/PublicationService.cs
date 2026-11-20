@@ -22,6 +22,14 @@ internal sealed partial class PublicationService(CoreDataPaths paths, Developmen
         try { return await inspectionRecords.ReadAsync<PublicationRecord>(FilePath(id), ct); }
         catch (Exception ex) when (ex is JsonException or IOException) { return null; }
     }
+    internal async Task<bool> CanInspectRecordAsync(PublicationRecord record, DevelopmentWorkspace tree, string userId, CancellationToken ct)
+    {
+        if (!record.MatchesWorktree(tree, userId)) return false;
+        if (record.PermissionSource is null) return true;
+        try { await RequireOwner(record.Owner, ct, record.PermissionSource); }
+        catch (PublicationException) { return false; }
+        return true;
+    }
     private Task<PublicationRecord?> Read(string id, CancellationToken ct) => JsonStorage.ReadAsync<PublicationRecord>(FilePath(id), ct);
     private async Task<T> Locked<T>(Func<Task<T>> action, CancellationToken ct)
     {

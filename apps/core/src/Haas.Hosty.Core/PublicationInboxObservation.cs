@@ -36,15 +36,16 @@ internal sealed partial class PublicationService
             foreach (var tree in trees)
             {
                 if (tree.Owner.IsExternal) await ExternalConnection(tree, ct);
-                else
-                {
-                    var publication = await Read(tree.Id, ct);
-                    // An empty sibling contributes no provider reads to this workspace subscription.
-                    if (publication is null && tree.PullRequests.Length == 0) continue;
-                    var source = publication?.Owner.SameIdentity(tree.Owner) == true ? publication.PermissionSource : null;
-                    await RequireOwner(tree.Owner, ct, source);
-                    await workspaces.RequireParticipationSourceAsync(tree, actor.UserId, ct);
-                }
+                var publication = await Read(tree.Id, ct);
+                // An empty sibling contributes no provider reads to this workspace subscription.
+                if (publication is null && tree.PullRequests.Length == 0) continue;
+                if (publication is not null && (publication.WorkspaceId != tree.Id || publication.Owner.UserId != actor.UserId))
+                    throw new PublicationException("forbidden", "The publication belongs to another worktree or source account.");
+                if (publication?.PermissionSource is { } source)
+                    await RequireOwner(publication.Owner, ct, source);
+                else if (!tree.Owner.IsExternal)
+                    await RequireOwner(tree.Owner, ct);
+                await workspaces.RequireParticipationSourceAsync(tree, actor.UserId, ct);
                 references.UnionWith(tree.PullRequests);
             }
         }

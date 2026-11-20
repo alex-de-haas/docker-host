@@ -6,7 +6,7 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     private static async Task<(LifecycleFixture F, DevelopmentWorkspaceService Workspaces, PublicationService Service,
-        PublicationProviderFixture Provider, DevelopmentWorkspace W, UserDirectoryStore Users)> ExternalPublicationFixture(WorkspaceOwner? workspaceOwner = null)
+        PublicationProviderFixture Provider, DevelopmentWorkspace W, UserDirectoryStore Users, UserConnectionService Connections)> ExternalPublicationFixture(WorkspaceOwner? workspaceOwner = null)
     {
         var (f, _) = await SourceFixtureAsync();
         var owner = workspaceOwner ?? WorkspaceOwner.ForExternal("admin", "oauth:external", "external-pr", "Codex");
@@ -35,7 +35,7 @@ public sealed partial class CoreLifecycleServiceTests
             ProviderConnections: [new("connection", owner.UserId, "GitHub", "github", "", "", "42", "owner", "pat", "fixture-secret", null, null, null, f.Clock.UtcNow, null, "connected", "r1")]));
         var provider = new PublicationProviderFixture { Head = w.Observation!.Head! };
         var connections = new UserConnectionService(users, new SourceProviderRegistry([new GitHubSourceProvider(new HttpClient(), new ConfigurationBuilder().Build(), f.Clock, provider)]), f.Clock, new AuditStore(f.Paths), f.CoreSettings);
-        return (f, workspaces, new(f.Paths, workspaces, connections, f.Apps, users, f.Clock, new(f.Paths)), provider, w, users);
+        return (f, workspaces, new(f.Paths, workspaces, connections, f.Apps, users, f.Clock, new(f.Paths)), provider, w, users, connections);
     }
 
     [Fact]

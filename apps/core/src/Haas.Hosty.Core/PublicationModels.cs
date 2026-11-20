@@ -50,6 +50,12 @@ internal sealed record PublicationOperation(string Id, string Kind, string Finge
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ErrorCode = null);
 internal sealed record PublicationRecord
 {
+    // Core verifies that the worktree id binds its allocation owner and repository on read.
+    // A delegated publisher may belong to another session while using this same user's connection.
+    internal bool MatchesWorktree(DevelopmentWorkspace tree, string userId) =>
+        WorkspaceId == tree.Id && Owner.UserId == userId && tree.Owner.UserId == userId &&
+        (Owner.SameIdentity(tree.Owner) || PermissionSource is not null && !Owner.IsExternal);
+
     public string Provider { get; init; } = "github";
     public required string WorkspaceId { get; init; }
     public required WorkspaceOwner Owner { get; init; }
