@@ -153,7 +153,11 @@ export class ProviderStore {
     const sessions: AgentSession[] = [];
     for (const file of await readdir(this.directory)) {
       if (!file.endsWith(".json") || !safe(file.slice(0, -5))) continue;
-      const record = await this.load(file.slice(0, -5)); if (!record.deleted && sameActor(record.owner, actor) && sameProvider(record.session.ref.provider, this.provider)) sessions.push(record.session);
+      const record = await this.load(file.slice(0, -5));
+      if (record.deleted || !sameActor(record.owner, actor) || !sameProvider(record.session.ref.provider, this.provider)) continue;
+      const retirement = record.retirement;
+      if (retirement && record.runs[retirement.runId]?.controls[retirement.requestId]?.receipt.state === "applied") continue;
+      sessions.push(record.session);
     }
     return sessions.sort((a, b) => a.ref.id.localeCompare(b.ref.id));
   }

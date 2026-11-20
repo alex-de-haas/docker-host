@@ -488,7 +488,10 @@ outcomes separately from missing stop evidence. The original provider exposes `r
 explicit owner-confirmed Harness Delete. It verifies the exact retained terminal journal, SDK exit
 and owned process-tree receipts, including records written before retirement support. The provider
 fences new work on that native session and applies the retirement receipt after releasing the
-original admission's workspace claims. The native journal and its unresolved outcomes are retained.
+original admission's workspace claims. Once the receipt is applied, the retired session leaves the
+provider's session list. The provider retains the native journal and authorized installation-history
+replay, including unresolved outcomes and recorded gaps, across restart and any subsequent Harness
+conversation cleanup failure.
 For an interrupted journal, SDK and process-tree receipts establish exit if the Worker has released
 its execution handle. An unverified exit continues through normal Stop and reconciliation.
 
@@ -500,7 +503,8 @@ the same cleanup. Ordinary cancellation, message admission and task completion s
 Before launching a child, the provider durably records its intent. Durable SDK-stop confirmation,
 matching child receipts and a sealed/exited producer support reconciliation after restart. Missing
 proof stays `unknown`; a client-supplied stopped flag or a saved PID does not establish it. Automatic provider recovery
-never terminates processes by PIDs loaded from receipt files. Workspace release follows a confirmed stop or an applied retirement for the exact admission.
+never terminates processes by PIDs loaded from receipt files. Workspace release uses the original
+admission and begins after the provider confirms stop or accepts retirement.
 
 Codex protocol acknowledgments have a 30-second deadline, with a two-second polite interrupt
 budget and independently bounded metadata diagnostics. These bound RPC acknowledgments rather

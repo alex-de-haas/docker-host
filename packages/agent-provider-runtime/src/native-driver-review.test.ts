@@ -274,6 +274,14 @@ describe("native authority renewal and stop reconciliation", () => {
     expect(native).toMatchObject({ state: "completed", exitConfirmed: true, effects: { "unfinished-effect": "started" } });
     const snapshot = await f.controller.snapshot(id);
     expect(snapshot.effects.unresolvedCallIds).toHaveLength(1);
+    // A legacy run can have a known gap in its replayable facts.
+    await f.store.exclusive(async () => {
+      const { session, record } = await f.store.run(id);
+      record.historyPartial = true;
+      await f.store.save(session);
+    });
+    const history = f.store.history.page(f.actor, undefined, undefined, 100, false, true);
+    expect(history.observations).toContainEqual(expect.objectContaining({ runId: id, sourceHistoryIncomplete: true }));
     const input = { command: "retire", requestId: randomUUID(), expectedGeneration: snapshot.generation, expectedRevision: snapshot.revision } as const;
     const body = JSON.stringify(input);
     await expect(f.controller.control(id, input, body, { ...f.actor, userId: "another-user" })).rejects.toMatchObject({ status: 404 });
@@ -281,7 +289,7 @@ describe("native authority renewal and stop reconciliation", () => {
     const before = await f.store.run(id);
     expect(before.session.retirement).toEqual({ runId: id, requestId: input.requestId, nativeGeneration: native.generation, nativeRevision: native.revision });
     expect(before.record.controls[input.requestId]!.receipt.state).toBe("accepted");
-    expect(f.store.history.states(f.actor).sessions.map(state => state.sessionId)).toContain(f.sessionId);
+    expect((await f.store.list(f.actor)).map(session => session.ref.id)).toContain(f.sessionId);
     expect(before.record.workspaceRelease).toEqual({ requestId: expect.any(String), state: "pending" });
     const startInput: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "resume", input: { text: "Must stay fenced" } };
     await expect(f.controller.startRun(f.sessionId, randomUUID(), startInput, JSON.stringify(startInput), f.actor)).rejects.toMatchObject({ code: "session_retired" });
@@ -304,10 +312,16 @@ describe("native authority renewal and stop reconciliation", () => {
     expect(release.mock.calls).toEqual(Array.from({ length: 2 }, () =>
       ["original-admission", "release_all", { requestId: before.record.workspaceRelease!.requestId }]));
     const after = await reopenedStore.run(id);
-    expect(after.session).toMatchObject({ deleted: true, session: { activeRun: null } });
+    expect(after.session.session.activeRun).toBeNull();
     expect(await reopenedStore.list(f.actor)).toEqual([]);
-    expect(reopenedStore.history.states(f.actor).sessions).toEqual([]);
-    expect(reopenedStore.history.page(f.actor).observations).toEqual([]);
+    const archived = new ProviderStore(reopenedStore.directory, f.provider);
+    await archived.initialize();
+    try {
+      expect(await archived.list(f.actor)).toEqual([]);
+      expect(archived.history.page(f.actor, undefined, history.through, 100, false, true)).toEqual(history);
+      expect(archived.history.states(f.actor).sessions).toMatchObject([{ sessionId: f.sessionId, sourceHistoryIncomplete: true,
+        snapshot: { state: "unknown", stopConfirmed: false, effects: snapshot.effects } }]);
+    } finally { archived.history.close(); }
     expect(await reopened.snapshot(id)).toMatchObject({ state: "unknown", stopConfirmed: false, effects: snapshot.effects });
     expect((await driver.engine.journal.load(id)).receipt).toEqual(native);
     await expect(reopened.startRun(f.sessionId, randomUUID(), startInput, JSON.stringify(startInput), f.actor)).rejects.toMatchObject({ code: "session_retired" });

@@ -174,8 +174,11 @@ it("replays the exact owner retirement after a lost response and restart without
   expect(await next.store.readRecord(f.session.id)).toBeNull();
 });
 
-it("fences a pending retirement while the shared history feed updates another conversation", async () => {
-  const f = await fixture(undefined, true);
+it("preserves delayed history while Delete awaits retry or sandbox cleanup without reopening execution", async () => {
+  const core = new DevelopmentClient("http://core.invalid", "unrelated.consumer", "fixture-service");
+  vi.spyOn(core, "call").mockResolvedValue({});
+  const retention = vi.spyOn(core, "retention").mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: false });
+  const f = await fixture(core, true);
   const other = await f.manager.createSession({ createdBy: f.owner });
   await f.manager.postMessage(other.id, "Second conversation", f.credential);
   await f.interrupt();
@@ -183,16 +186,51 @@ it("fences a pending retirement while the shared history feed updates another co
   f.behavior.loseNextRetireResponse = true;
   await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toThrow("lost the retirement response");
   await f.manager.refreshSessionCredentials(f.session.id, f.owner, f.credential);
-  await expect(f.manager.refreshProviderHistory(f.session.id, f.owner, f.credential)).rejects.toMatchObject({ code: "session_deletion_pending" });
+  await f.manager.refreshProviderHistory(f.session.id, f.owner, f.credential);
+  f.emit(f.runId, "message.completed", { messageId: "delayed", text: "Delayed historical detail" });
+  await vi.waitFor(async () => expect(await f.store.readEvents(f.session.id)).toContainEqual(expect.objectContaining({
+    text: "Delayed historical detail", providerHistoryEarlier: true,
+  })));
 
+  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toMatchObject({ code: "resource_retained" });
+  const decision = { id: "late-approval", kind: "approval" as const, revision: "1", delivery: "continue_run" as const, toolName: "Bash" };
+  f.update(f.runId, { pending: [decision] });
   f.complete(f.runId, "Late observer output");
   f.complete(f.starts[1]!.runId, "Retained conversation output");
-  await vi.waitFor(async () => expect((await f.store.readEvents(other.id)).some(event => event.text === "Retained conversation output")).toBe(true));
-  expect((await f.store.readEvents(f.session.id)).some(event => event.text === "Late observer output")).toBe(false);
-  expect((await f.store.readProviderExecution(f.session.id))?.run?.stopConfirmed).toBe(false);
+  await vi.waitFor(async () => {
+    expect(await f.store.readEvents(other.id)).toContainEqual(expect.objectContaining({ text: "Retained conversation output" }));
+    const history = await f.store.readEvents(f.session.id);
+    expect(history).toContainEqual(expect.objectContaining({ text: "Late observer output", providerHistoryEarlier: true }));
+    const card = history.find(e => e.type === "approval_request" && e.providerHistoryEarlier === true);
+    expect(card).toBeDefined();
+    await expect(f.manager.resolveApproval(f.session.id, String(card!.approvalId), "allow")).rejects.toMatchObject({ code: "session_deletion_pending" });
+  });
+  expect((await f.store.readProviderExecution(f.session.id))?.run).toMatchObject({ state: "unknown", stopConfirmed: false, pending: [] });
+  expect(f.starts).toHaveLength(2);
+  expect(f.controls.map(c => c.input.command)).toEqual(["retire"]);
+  retention.mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true });
   expect(await f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
+  f.emit(f.runId, "message.completed", { messageId: "deleted", text: "After deletion" });
+  f.emit(f.starts[1]!.runId, "message.completed", { messageId: "other", text: "Bound chat still receives history" });
+  await vi.waitFor(async () => expect(await f.store.readEvents(other.id)).toContainEqual(expect.objectContaining({ text: "Bound chat still receives history" })));
   expect(await f.store.readRecord(f.session.id)).toBeNull();
   expect(f.activeHistoryStreams()).toBe(1);
+});
+
+it("reads retained snapshots without attaching a legacy run observer during retirement", async () => {
+  const f = await fixture(); await f.interrupt();
+  f.behavior.retire = "confirmed"; f.behavior.loseNextRetireResponse = true;
+  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toThrow("lost the retirement response");
+  await f.manager.shutdown();
+  const { manager, store } = f.makeManager();
+  f.complete(f.runId, "Retained snapshot detail");
+  const previous = f.requests.length;
+  await manager.refreshProviderHistory(f.session.id, f.owner, f.credential);
+  expect(await store.readEvents(f.session.id)).toContainEqual(expect.objectContaining({ text: "Retained snapshot detail", providerHistoryEarlier: true }));
+  expect((await store.readProviderExecution(f.session.id))?.run).toMatchObject({ state: "unknown", stopConfirmed: false });
+  expect(f.requests.slice(previous).some(request => request.path.includes("/runs/") && request.path.includes("/events"))).toBe(false);
+  expect(f.starts).toHaveLength(1);
+  expect(f.controls.map(c => c.input.command)).toEqual(["retire"]);
 });
 
 it("uses the same Delete confirmation when Stop leaves unresolved effects", async () => {

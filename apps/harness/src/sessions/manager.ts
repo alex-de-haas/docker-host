@@ -708,7 +708,7 @@ export class SessionManager {
     await this.serialize(id, async () => {
       if (this.stopping) return;
       const record = this.live.get(id)?.record ?? await this.store.readRecord(id);
-      if (!record || record.storageRecovery || record.providerRetirement) return;
+      if (!record || record.storageRecovery) return;
       const state = this.providerStates.get(id) ?? record.providerExecution;
       const run = state?.run;
       if (!state?.runId || expectedRunId && state.runId !== expectedRunId) return;
@@ -726,13 +726,20 @@ export class SessionManager {
     const session = await this.requireLive(id);
     if (session.record.createdBy !== user) throw new SessionNotFoundError(id);
     const state = this.providerStates.get(id);
-    this.assertNotRetiring(session.record);
     if (!state?.runId || !this.historyFeeds) throw new AppContextError(409, "run_not_found", "This chat has no retained provider run.");
     await this.indexInstallationHistory(true);
     if (await this.historyFeeds.refresh(state.selection.provider)) return;
     if (!credential) throw new AppContextError(401, "reauth_required", "Sign in to read this provider's retained run.");
     session.workspaceCredential = session.credential = credential;
     const { execution } = await this.publicExecution(session);
+    if (session.record.providerRetirement) {
+      const snapshot = await execution.read(false);
+      await this.serialize(id, async () => {
+        if (this.live.get(id) !== session || !session.record.providerRetirement) return;
+        await this.importHistoricalTranscript(session, createAgentRunProjection(snapshot), { kind: "snapshot", snapshot }, true);
+      });
+      return this.updateProviderContact(id, null, snapshot.ref.id);
+    }
     const snapshot = await execution.read("replay");
     await this.updateProviderContact(id, null, snapshot.ref.id);
     if (!snapshot.stopConfirmed) {
@@ -746,7 +753,7 @@ export class SessionManager {
   private updateProviderGaps(id: string, gaps: ProviderHistoryGap[]): Promise<void> {
     return this.serialize(id, async () => {
       const record = this.live.get(id)?.record ?? await this.store.readRecord(id);
-      if (!record || record.providerRetirement || JSON.stringify(record.providerHistoryGaps ?? []) === JSON.stringify(gaps)) return;
+      if (!record || JSON.stringify(record.providerHistoryGaps ?? []) === JSON.stringify(gaps)) return;
       record.providerHistoryGaps = gaps.length ? gaps : undefined;
       await this.store.saveRecord(record);
       const live = this.live.get(id);
@@ -787,7 +794,7 @@ export class SessionManager {
       return;
     }
     const record = live?.record ?? await this.store.readRecord(id);
-    if (!record || record.providerRetirement) return;
+    if (!record) return;
     const session = await this.requireLive(id);
     const state = this.providerStates.get(id);
     this.store.assertWritable(id);
@@ -795,10 +802,16 @@ export class SessionManager {
     if (session.record.createdBy !== fact.userId || state.sessionId !== fact.sessionId
       || state.selection.provider.installationId !== provider.installationId || state.selection.provider.appId !== provider.appId
       || state.selection.provider.key !== provider.key) return;
+    // Retiring seals execution and decisions. Its owner can still read transcript evidence until deletion commits.
+    const fenced = !!record.providerRetirement;
+    const historical = fenced || state.runId !== fact.runId;
+    if (fenced && fact.item.kind === "event" && fact.item.event.type === "tool.output") return;
+    if (fenced && state.runId === fact.runId && state.run && state.run.generation !== fact.generation)
+      throw new Error("The provider changed the recorded execution generation.");
     const retained = await this.store.readHistoryRun(id, fact.runId);
     if (retained && (retained.principalId !== fact.principalId || retained.snapshot.generation !== fact.generation))
       throw new Error("The provider changed the recorded history owner or execution generation.");
-    if (position && fact.item.kind === "event" && fact.item.event.type === "tool.completed"
+    if ((position || fenced) && fact.item.kind === "event" && fact.item.event.type === "tool.completed"
       && (!fact.item.event.data.name || fact.item.event.data.name === "unknown")) {
       const event = fact.item.event, toolId = String(event.data.toolCallId);
       const previous = retained?.snapshot.tools?.find(tool => tool.id === toolId && tool.source?.agentId === event.source.agentId);
@@ -813,7 +826,7 @@ export class SessionManager {
       if (!seen.has(key)) {
         await this.append(id, { type: "notice", message: "Some earlier events are unavailable in the provider's retained history.",
           providerEventId: key, providerGeneration: fact.generation,
-          providerSource: { provider, runId: fact.runId, generation: fact.generation, agentId: "root" }, providerHistoryEarlier: state.runId !== fact.runId });
+          providerSource: { provider, runId: fact.runId, generation: fact.generation, agentId: "root" }, providerHistoryEarlier: historical });
         seen.add(key);
       }
     }
@@ -822,7 +835,7 @@ export class SessionManager {
     const sourceSequence = BigInt(item.kind === "event" ? item.event.sequence : item.snapshot.lastSequence);
     // Latest state may already include this fact. Its original transcript slot still needs filling.
     const renderFact = async () => {
-      if (position) await this.importHistoricalTranscript(session, projectHistoryFact(provider, fact), item, state.runId !== fact.runId, position);
+      if (position || fenced && !stateOnly) await this.importHistoricalTranscript(session, projectHistoryFact(provider, fact), item, historical, position);
     };
     if (position || stateOnly) {
       const active = state.run?.ref.id === fact.runId && state.run.generation === fact.generation ? state.run : undefined;
@@ -836,7 +849,7 @@ export class SessionManager {
       const reconciled = reconcileHistoryProjection(previous, priorClock, item, stateOnly);
       if (reconciled) {
         const { projection, clock } = reconciled;
-        if (state.runId === fact.runId && (!state.run || state.run.generation === fact.generation)) {
+        if (!historical && (!state.run || state.run.generation === fact.generation)) {
           const advances = !held || sourceSequence > BigInt(held.lastSequence);
           const applied: AgentWatchItem = advances && item.kind === "event" ? item : { kind: "snapshot", snapshot: projection.snapshot };
           const handle = session.run;
@@ -857,7 +870,7 @@ export class SessionManager {
     if (!projection) {
       throw new Error("The provider did not supply the first snapshot for this run's history.");
     }
-    const current = state.runId === fact.runId && (!state.run || state.run.generation === fact.generation
+    const current = !historical && (!state.run || state.run.generation === fact.generation
       && sourceSequence >= BigInt(state.run.lastSequence) && BigInt(projection.snapshot.revision) >= BigInt(state.run.revision));
     if (current) {
       const handle = session.run;
@@ -866,7 +879,7 @@ export class SessionManager {
     } else {
       // Older turns may gain evidence after a newer turn starts. Preserve the origin in the
       // journal and leave the current turn's controls, status, usage and pending questions alone.
-      await this.importHistoricalTranscript(session, projection, item, state.runId !== fact.runId);
+      await this.importHistoricalTranscript(session, projection, item, historical);
     }
     await this.store.saveHistoryRun(id, fact.principalId, projection.snapshot);
   }
@@ -874,7 +887,7 @@ export class SessionManager {
   private async importHistoricalTranscript(session: LiveSession, projection: AgentRunProjection, item: AgentWatchItem, earlier: boolean, position?: HistoryPosition): Promise<void> {
     const id = session.record.id, snapshot = projection.snapshot, runId = snapshot.ref.id;
     const seen = this.providerProjectedIds.get(id) ?? projectedIds(await this.store.readEvents(id));
-    const specific = position && item.kind === "event" && item.event.type !== "run.updated" ? item.event : undefined;
+    const specific = (position || session.record.providerRetirement) && item.kind === "event" && item.event.type !== "run.updated" ? item.event : undefined;
     this.providerProjectedIds.set(id, seen);
     const append = async (key: string, event: HarnessEvent | ({ type: "approval_decision" | "question_answered" } & Record<string, unknown>), source?: AgentSource) => {
       const identity = runId + ":" + key;

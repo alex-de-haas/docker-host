@@ -248,7 +248,6 @@ export class ProviderController {
       if (receipt.state === "applied") return receipt;
       if (record.workspaceRelease?.state !== "released")
         throw new AgentApiError("retirement_cleanup_pending", "The provider is still releasing the retired execution's workspace leases.", 503, true);
-      session.deleted = true;
       session.session.activeRun = null;
       session.session.revision = increment(session.session.revision);
       this.store.lifecycle(record);
