@@ -151,6 +151,16 @@ it.each(["cancel", "conversation", "send"])("stops live analysis on %s without l
   expect(api.call.mock.calls.some(([path]) => path.startsWith('/speech/transcriptions'))).toBe(false);
 });
 
+it("releases a live microphone when the saved provider is still selected but goes offline", async () => {
+  await render(); await click("Dictate");
+  const selected = { appId: "whisper", installationId: "one", key: "default", displayName: "Whisper" };
+  api.call.mockResolvedValueOnce(Response.json({ granted: true, binding: "local", selected, providers: [{ ...selected, available: false }] }));
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
+  expect(stopTrack).toHaveBeenCalled();
+  expect(container.querySelector<HTMLButtonElement>('button[aria-label="Dictate"]')?.disabled).toBe(true);
+  expect(api.call.mock.calls.some(([path]) => path.startsWith("/speech/transcriptions"))).toBe(false);
+});
+
 it("keeps dictation usable when signal analysis is unavailable", async () => {
   await render(); await click("Dictate");
   await act(async () => activity.onFrame?.({ level: 0, speaking: false, available: false }));

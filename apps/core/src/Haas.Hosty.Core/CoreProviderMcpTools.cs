@@ -44,17 +44,19 @@ internal sealed class CoreProviderMcpTools(IHttpContextAccessor accessor, CoreCa
 
     [McpServerTool(Name = "task_providers", ReadOnly = true, Destructive = false)]
     [Description("Discover reviewed task providers accessible to the current user, including installation IDs and availability. Core does not select a default provider or store task records.")]
-    public Task<CallToolResult> TaskProviders(CancellationToken cancellationToken)
-        => CoreProviderResults.Run(async () => await tasks.ProvidersAsync(await Caller("tasks", "list", cancellationToken), cancellationToken));
+    public Task<CallToolResult> TaskProviders(CancellationToken cancellationToken,
+        [Description("Include named implementations in addition to static entries.")] bool named = false)
+        => CoreProviderResults.Run(async () => await tasks.ProvidersAsync(await Caller("tasks", "list", cancellationToken), cancellationToken, named));
 
     [McpServerTool(Name = "task_options", ReadOnly = true, Destructive = false)]
     [Description("Read the explicitly selected task provider's capabilities and accessible executor directory. Supply an executor reference for that executor's opaque options. Profiles and runtime settings remain private to their provider.")]
-    public Task<CallToolResult> TaskOptions([Description("Explicit task provider and optional executor, each qualified by installation and interface key.")] CoreTaskOptions input, CancellationToken cancellationToken)
+    public Task<CallToolResult> TaskOptions([Description("Explicit task provider and optional executor, each qualified by installation and interface key.")] CoreTaskOptions input, CancellationToken cancellationToken,
+        [Description("Include named implementations in the executor directory.")] bool named = false)
          => CoreProviderResults.Run(async () =>
         {
             var caller = await Caller("tasks", "options", cancellationToken);
             return await workflows.SessionWorkflowAsync(caller, "task-options", WorkflowInput(input, "provider", "executor"), cancellationToken, input.Provider)
-                ?? await tasks.OptionsAsync(caller, input, cancellationToken);
+                ?? await tasks.OptionsAsync(caller, input, cancellationToken, named);
         });
 
     [McpServerTool(Name = "task_list", ReadOnly = true, Destructive = false)]
@@ -109,8 +111,9 @@ internal sealed class CoreProviderMcpTools(IHttpContextAccessor accessor, CoreCa
 
     [McpServerTool(Name = "agent_session_providers", ReadOnly = true, Destructive = false)]
     [Description("Discover accessible reviewed agent-session providers independently of conversation-history providers. Native state stays at its owning provider; no Harness installation is required.")]
-    public Task<CallToolResult> SessionProviders(CancellationToken cancellationToken)
-        => CoreProviderResults.Run(async () => await sessions.ProvidersAsync(await Caller("agent-sessions", "sessions.get", cancellationToken), cancellationToken));
+    public Task<CallToolResult> SessionProviders(CancellationToken cancellationToken,
+        [Description("Include named implementations in addition to static entries.")] bool named = false)
+        => CoreProviderResults.Run(async () => await sessions.ProvidersAsync(await Caller("agent-sessions", "sessions.get", cancellationToken), cancellationToken, named));
 
     [McpServerTool(Name = "agent_session_list", ReadOnly = true, Destructive = false)]
     [Description("Query bounded native-session metadata from one qualified provider, optionally for a conversation. Availability and coverage must remain explicit; no transcript or hidden native state is included.")]

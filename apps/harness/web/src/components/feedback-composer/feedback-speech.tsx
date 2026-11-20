@@ -4,6 +4,8 @@ import { appFetch } from "@hosty-sdk/app/browser-auth";
 import { Loader2, Mic, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { recordingWave } from "./feedback-audio";
+import { call } from "@/lib/api";
+import { chatSpeechLimits } from "../../../../shared/speech";
 import { useSpeechRoster } from "@/lib/use-speech-roster";
 import { currentSpeechOption } from "../../../../shared/speech-selection";
 type Recording = { binding: string; controller: AbortController; onText: (text: string) => void; stream?: MediaStream; recorder?: MediaRecorder; timer?: ReturnType<typeof setTimeout> };
@@ -15,7 +17,7 @@ export function useFeedbackSpeech(disabled: boolean) {
   const [target, setTarget] = useState<string | null>(null);
   const active = useRef<Recording | null>(null);
   const { roster, error: rosterError } = useSpeechRoster(value => {
-    if (active.current && (active.current.binding !== value?.binding || !value?.granted)) cancel();
+    if (active.current && (!value?.granted || active.current.binding !== value.binding || !currentSpeechOption(value)?.available)) cancel();
   });
   useEffect(() => () => { dispose(active.current); active.current = null; }, []);
   // Recording cancellation synchronizes browser media resources with the disabled state.
@@ -30,6 +32,10 @@ export function useFeedbackSpeech(disabled: boolean) {
     setTarget(targetId); setPhase("starting"); setError("");
     try {
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") throw new Error("This browser cannot record audio here. Type your comment instead.");
+      const response = await call("/speech/capabilities?binding=" + encodeURIComponent(op.binding), { signal: op.controller.signal });
+      const limits = chatSpeechLimits(await response.json());
+      if (!valid()) return;
+      const maximumSeconds = Math.min(60, limits.maxDurationSeconds);
       op.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (!valid()) { dispose(op); return; }
       const recorder = new MediaRecorder(op.stream); op.recorder = recorder; const chunks: Blob[] = []; let bytes = 0;
@@ -40,7 +46,7 @@ export function useFeedbackSpeech(disabled: boolean) {
         setPhase("transcribing");
         void (async () => {
           try {
-            const wave = await recordingWave(new Blob(chunks, { type: recorder.mimeType }), 60); if (!valid()) return;
+            const wave = await recordingWave(new Blob(chunks, { type: recorder.mimeType }), maximumSeconds); if (!valid()) return;
             const response = await appFetch("/api/speech/feedback?binding=" + encodeURIComponent(op.binding), { method: "POST", credentials: "include", signal: op.controller.signal,
               headers: { "content-type": "audio/wav" }, body: wave });
             const value = await response.json(); if (!response.ok) throw new Error(value.message ?? "Speech recognition failed.");
@@ -49,7 +55,7 @@ export function useFeedbackSpeech(disabled: boolean) {
           finally { if (active.current === op) cancel(); }
         })();
       };
-      recorder.start(1000); setPhase("recording"); op.timer = setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, 60_000);
+      recorder.start(1000); setPhase("recording"); op.timer = setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, maximumSeconds * 1000);
     } catch (e) { if (valid()) { cancel(); setError(e instanceof Error ? e.message : "Microphone access failed."); } }
   }
   return { phase, target, error: error || rosterError, unavailable: roster && !selected?.available ? (!roster.granted ? "Speech input is not enabled for Harness." : roster.selected ? roster.selected.displayName + " is unavailable." : "Choose your dictation provider in Speech settings.") : null, available: !!selected?.available, start, cancel,
@@ -72,7 +78,7 @@ export function FeedbackSpeech({ speech, target, disabled, onText }: {
       <Button type="button" variant="ghost" size="icon-sm" aria-label="Cancel dictation" title="Cancel dictation" onClick={speech.cancel}><X /></Button>
       <span role="status" className="sr-only">{label}</span>
     </> : <Button type="button" variant="ghost" size="icon-sm" aria-label="Dictate"
-      title={speech.error || speech.unavailable || "Dictate up to one minute"}
+      title={speech.error || speech.unavailable || "Dictate feedback"}
       disabled={disabled || !speech.available || speech.phase !== "idle"} onClick={() => void speech.start(target, onText)}><Mic /></Button>}
   </div>;
 }

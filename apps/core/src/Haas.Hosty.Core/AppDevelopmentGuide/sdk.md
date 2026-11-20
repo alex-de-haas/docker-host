@@ -22,6 +22,9 @@ from the provider backend. Publish a complete snapshot for each declared key thr
 Each entry carries `id`, `displayName` and `available`. Keep the ID stable across renames and
 use a fresh identity when replacing an account. Persist the positive, increasing revision and
 resubmit the same snapshot after startup. An empty list withdraws every option for that key.
+A named entry must resolve to one endpoint. Use the full service-qualified endpoint key when
+multiple services use the same port key. A single matching port key is sufficient. An entry
+may omit the endpoint key when the installation has exactly one endpoint.
 
 Consumers use `listImplementations(kind)` or `ListImplementationsAsync(kind)`. Save the app ID,
 installation ID, interface key and optional implementation ID for each selection. Use the label

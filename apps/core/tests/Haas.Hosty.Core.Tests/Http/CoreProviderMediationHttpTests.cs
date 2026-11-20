@@ -88,6 +88,52 @@ public sealed class CoreProviderMediationHttpTests
         Assert.False(Assert.Single((await client.GetFromJsonAsync<ProviderDirectory>("/api/tasks/v1/providers"))!.Providers).Available);
     }
 
+    [Theory]
+    [InlineData("tasks", "task_providers", AccessTokenScopes.McpTasksRead)]
+    [InlineData("agent-sessions", "agent_session_providers", AccessTokenScopes.McpAgentSessionsRead)]
+    [InlineData("conversation-history", "history_providers", AccessTokenScopes.McpHistoryRead)]
+    public async Task McpDirectoriesRequireExplicitNamedDiscovery(string kind, string tool, string scope)
+    {
+        using var transport = new ProviderTransport();
+        await using var host = await Start(transport);
+        var provider = await AddProvider(host, "independent.publisher", kind, [NamedProviderImplementations.Capability]);
+        await host.Services.GetRequiredService<AppRegistryStore>().PublishImplementationsAsync(provider, kind,
+            new("custom", 1, [new("personal", "Personal", true)]), default);
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", await Issue(host, [AccessTokenScopes.McpRead, scope]));
+        var legacy = await DirectEnvironmentHttpTests.Tool(client, tool, new { });
+        Assert.Empty(legacy.GetProperty("structuredContent").GetProperty("providers").EnumerateArray());
+        var selected = await DirectEnvironmentHttpTests.Tool(client, tool, new { named = true });
+        var item = Assert.Single(selected.GetProperty("structuredContent").GetProperty("providers").EnumerateArray());
+        Assert.Equal("personal", item.GetProperty("implementationId").GetString());
+    }
+
+    [Fact]
+    public async Task TaskOptionsReturnsNamedExecutorsOnlyWhenRequestedOverHttpOrMcp()
+    {
+        using var transport = new ProviderTransport();
+        await using var host = await Start(transport);
+        transport.Services = host.Services;
+        transport.Provider = await AddProvider(host, "independent.tasks", "tasks", []);
+        transport.Reply = JsonSerializer.SerializeToElement(new { version = 1 });
+        var executor = await AddProvider(host, "independent.executor", "task-executor", [NamedProviderImplementations.Capability]);
+        await host.Services.GetRequiredService<AppRegistryStore>().PublishImplementationsAsync(executor, "task-executor",
+            new("custom", 1, [new("personal", "Personal", true)]), default);
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", await Issue(host, [AccessTokenScopes.McpRead, AccessTokenScopes.McpTasksRead]));
+        var input = new CoreTaskOptions(new(transport.Provider.Id, PanelIdentity.Installation(transport.Provider), "custom"));
+        foreach (var named in new[] { false, true })
+        {
+            using var http = await client.PostAsJsonAsync("/api/tasks/v1/options" + (named ? "?named=true" : ""), input);
+            http.EnsureSuccessStatusCode();
+            var api = await http.Content.ReadFromJsonAsync<JsonElement>();
+            var mcp = await DirectEnvironmentHttpTests.Tool(client, "task_options", named ? (object)new { input, named } : new { input });
+            var implementations = api.GetProperty("executors").GetProperty("providers").EnumerateArray().Select(p => p.GetProperty("implementationId").GetString()).ToArray();
+            Assert.Equal(named ? ["personal"] : Array.Empty<string>(), implementations);
+            Assert.Equal(api.GetProperty("executors").GetRawText(), mcp.GetProperty("structuredContent").GetProperty("executors").GetRawText());
+        }
+    }
+
     [Fact]
     public async Task NamedTaskDirectoryAndMediatedInvocationUseTheSameImplementation()
     {

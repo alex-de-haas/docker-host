@@ -92,6 +92,50 @@ public sealed class ProviderHttpTests
         Assert.Equal(HttpStatusCode.OK, (await Publish(1, beta)).StatusCode);
     }
 
+    [Theory]
+    [InlineData("http")]
+    [InlineData(null)]
+    public async Task NamedEntryRequiresAnUnambiguousEndpointAtPublicationAndUse(string? endpoint)
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        const string kind = "speech-to-text";
+        var provider = Speech("independent.multiservice");
+        var first = new AppEndpointContract("one.http", "http", "http://one.invalid", true);
+        var second = new AppEndpointContract("two.http", "http", "http://two.invalid", true);
+        AppRecord WithEndpoints(string? key, params AppEndpointContract[] endpoints) => provider with
+        {
+            Endpoints = endpoints,
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>>
+            {
+                [kind] = [new("static", key, "/static", 1, []), new("named", key, "/speech", 1, [NamedProviderImplementations.Capability])]
+            }
+        };
+        var original = WithEndpoints(endpoint, first);
+        await apps.UpsertAppAsync(original);
+        var snapshot = new ProviderImplementationPublication("named", 1, [new("account", "Account", true)]);
+        await apps.PublishImplementationsAsync(original, kind, snapshot, default);
+        var single = ProviderAccessService.Find((await apps.GetAppAsync(provider.Id))!, kind, "named", "account");
+        Assert.Equal("http://one.invalid/speech", single!.Url);
+
+        var ambiguous = WithEndpoints(endpoint, first, second);
+        await apps.UpsertAppAsync(ambiguous);
+        var current = (await apps.GetAppAsync(provider.Id))!;
+        var blocked = ProviderAccessService.Find(current, kind, "named", "account");
+        Assert.False(blocked!.Available);
+        Assert.Null(blocked.Url);
+        Assert.Equal("http://one.invalid/static", ProviderAccessService.Find(current, kind, "static", null)!.Url);
+        Assert.Equal("provider_publication_denied", (await Assert.ThrowsAsync<AppIdentityException>(() =>
+            apps.PublishImplementationsAsync(current, kind, snapshot, default))).Code);
+
+        var qualified = WithEndpoints("two.http", first, second);
+        await apps.UpsertAppAsync(qualified);
+        await apps.PublishImplementationsAsync(qualified, kind, snapshot, default);
+        var selected = ProviderAccessService.Find((await apps.GetAppAsync(provider.Id))!, kind, "named", "account");
+        Assert.True(selected!.Available);
+        Assert.Equal("http://two.invalid/speech", selected.Url);
+    }
+
     [Fact]
     public async Task ChangedDeclarationRequiresRepublishingAndDamagedCatalogPreservesStaticDiscovery()
     {

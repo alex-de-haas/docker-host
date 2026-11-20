@@ -7,6 +7,18 @@ export const maxDurationSeconds = 600;
 export const maxWavBytes = maxDurationSeconds * 32_000 + 44;
 const failed = () => new ProviderError("speech_upstream_failed", "OpenAI could not complete the speech request.", 502);
 
+export function transcriptionLanguage(value: string | null): string | null {
+  if (value === null) return null;
+  // OpenAI accepts a base language (including selected ISO 639-3 codes) and documented zh regions.
+  const language = value.split("-", 1)[0]!.toLowerCase();
+  const invalid = () => new ProviderError("speech_input_invalid", "Send a valid language tag.", 400);
+  if (!/^[a-z]{2,3}$/.test(language)) throw invalid();
+  let locale: Intl.Locale;
+  try { locale = new Intl.Locale(value); } catch { throw invalid(); }
+  const region = locale.region?.toLowerCase();
+  return language === "zh" && region && ["cn", "tw", "hk"].includes(region) ? `zh-${region}` : language;
+}
+
 export async function transcribe(key: string, bytes: Buffer, language: string | null, signal: AbortSignal, fetcher = fetch): Promise<{ text: string }> {
   const form = new FormData();
   form.set("model", "gpt-transcribe");
@@ -15,7 +27,11 @@ export async function transcribe(key: string, bytes: Buffer, language: string | 
   const result = await fetcher("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST", redirect: "error", headers: { authorization: "Bearer " + key }, body: form, signal,
   });
-  if (!result.ok || !result.body) { await result.body?.cancel(); throw failed(); }
+  if (!result.ok || !result.body) {
+    await result.body?.cancel();
+    if (result.status === 400) throw new ProviderError("speech_input_invalid", "OpenAI did not accept this recording or language hint.", 400);
+    throw failed();
+  }
   const chunks: Uint8Array[] = [];
   let length = 0;
   for await (const chunk of result.body) {

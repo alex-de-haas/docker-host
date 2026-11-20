@@ -11,7 +11,7 @@ import { ProviderError, type ProviderInvocation, type ProviderKind, type Provide
 import { CodexConnections, speechKinds } from "./connections.js";
 import { SpeechCatalog } from "./speech-catalog.js";
 import { speechRoutes } from "./speech.js";
-import { transcribe, synthesize } from "./openai-speech.js";
+import { transcribe, synthesize, transcriptionLanguage } from "./openai-speech.js";
 
 let root: string, accounts: CodexConnections, catalog: SpeechCatalog | undefined, server: Server | undefined;
 const secrets = new Map<string, string>();
@@ -114,10 +114,15 @@ it("checks Core and the role at dispatch and routes Russian input to the selecte
   server = createServer((req, res) => { void route(req, res, new URL(req.url!, "http://test")); });
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   const url = "http://127.0.0.1:" + (server.address() as AddressInfo).port + "/api/";
-  const call = (token: string, kind: string, body: string | Buffer<ArrayBuffer>) => fetch(url + kind + "/v1/" + (kind === speechKinds[0] ? "transcriptions?language=ru" : "speech"),
+  const call = (token: string, kind: string, body: string | Buffer<ArrayBuffer>) => fetch(url + kind + "/v1/" + (kind === speechKinds[0] ? "transcriptions?language=ru-RU" : "speech"),
     { method: "POST", headers: { authorization: "Bearer " + token, "content-type": kind === speechKinds[0] ? "audio/wav" : "application/json" }, body });
   expect(await (await call("first", speechKinds[0], wav())).json()).toEqual({ text: "Привет" });
   expect(adapter.transcribe).toHaveBeenCalledWith("fixture-key-1", wav(), "ru", expect.any(AbortSignal));
+  const malformed = await fetch(url + "speech-to-text/v1/transcriptions?language=ru--RU", {
+    method: "POST", headers: { authorization: "Bearer second", "content-type": "audio/wav" }, body: wav(),
+  });
+  expect(malformed.status).toBe(400);
+  expect(adapter.transcribe).toHaveBeenCalledTimes(1);
   const passage = "Двор № 17. Прочитайте: 32,5 километра.";
   const spoken = await call("second", speechKinds[1], JSON.stringify({ text: passage }));
   expect(spoken.headers.get("content-type")).toBe("audio/pcm;rate=24000");
@@ -131,9 +136,17 @@ it("checks Core and the role at dispatch and routes Russian input to the selecte
   expect(adapter.transcribe).toHaveBeenCalledTimes(1);
 });
 
+it.each([
+  ["ru-RU", "ru"], ["EN-us", "en"], ["es-419", "es"], ["cmn", "cmn"], ["yue-HK", "yue"],
+  ["zh-CN", "zh-cn"], ["zh-Hant-TW", "zh-tw"], ["zh-HK", "zh-hk"], ["zh-SG", "zh"], [null, null],
+])("normalizes the transcription hint %s to %s", (input, expected) => {
+  expect(transcriptionLanguage(input)).toBe(expected);
+});
+
 it("uploads completed WAV with the current model and language hint; upstream errors expose no body", async () => {
   const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ text: "тест" }))
-    .mockResolvedValueOnce(new Response("private error detail", { status: 401 }));
+    .mockResolvedValueOnce(new Response("private error detail", { status: 401 }))
+    .mockResolvedValueOnce(new Response("private upstream input diagnosis", { status: 400 }));
   const signal = new AbortController().signal;
   expect(await transcribe("fixture", wav(), "ru", signal, fetcher)).toEqual({ text: "тест" });
   const [url, init] = fetcher.mock.calls[0]!;
@@ -142,6 +155,7 @@ it("uploads completed WAV with the current model and language hint; upstream err
   expect(form.get("model")).toBe("gpt-transcribe"); expect(form.get("languages[]")).toBe("ru");
   expect(Buffer.from(await (form.get("file") as Blob).arrayBuffer())).toEqual(wav());
   await expect(transcribe("fixture", wav(), null, signal, fetcher)).rejects.toMatchObject({ code: "speech_upstream_failed" });
+  await expect(transcribe("fixture", wav(), "qq", signal, fetcher)).rejects.toMatchObject({ status: 400, code: "speech_input_invalid" });
 });
 
 class FakeSocket extends EventEmitter {

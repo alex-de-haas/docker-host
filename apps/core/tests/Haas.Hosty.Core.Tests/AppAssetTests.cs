@@ -250,6 +250,7 @@ public sealed class AppAssetTests
     [InlineData("runtimes/icon.png", "runtimes")]
     // Case-insensitive: on a case-insensitive filesystem this reaches the same directory.
     [InlineData("Data/icon.png", "Data")]
+    [InlineData("Provider-Implementations.JSON/icon.png", "Provider-Implementations.JSON")]
     public async Task VendorDisplayAssets_RefusesToWriteIntoAReservedNamespace(string reference, string headDirectory)
     {
         var source = NewTempDir();

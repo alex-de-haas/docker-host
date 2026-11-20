@@ -88,7 +88,7 @@ internal sealed partial class AppRegistryStore
             var entry = current?.Interfaces?.GetValueOrDefault(kind)?.SingleOrDefault(e => e.Key == publication.Key);
             if (current is null || current.InstalledAt != authenticated.InstalledAt || current.ConfirmedRoles?.Contains(kind) != true
                 || entry?.Capabilities?.Contains(NamedProviderImplementations.Capability) != true
-                || (entry.EndpointKey is null ? current.Endpoints.Count == 0 : AppSummary.ResolveDeclaredEndpoint(current.Endpoints, entry.EndpointKey) is null)
+                || AppSummary.ResolveDeclaredEndpoint(current.Endpoints, entry.EndpointKey) is null
                 || NamedProviderImplementations.RuntimeScope(current) != NamedProviderImplementations.RuntimeScope(authenticated))
                 throw new AppIdentityException("provider_publication_denied", "A confirmed interface with named implementation publication is required.");
             if (current.NamedCatalogUnreadable)

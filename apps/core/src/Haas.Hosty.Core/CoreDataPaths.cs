@@ -124,7 +124,7 @@ internal sealed record CoreDataPaths(
     // manifest-chosen relative paths against the whole app root, so without this an app-supplied
     // asset reference could land on app data, runtime logs, or Core's own manifest copy.
     private static readonly string[] ReservedAppRootDirectories = ["data", "logs", "run", "runtimes", "source"];
-    private static readonly string[] ReservedAppRootFiles = ["manifest.json", "state.json"];
+    private static readonly string[] ReservedAppRootFiles = ["manifest.json", "state.json", NamedProviderImplementations.FileName];
 
     public static bool IsReservedAppRootPath(string? rootRelativePath)
     {

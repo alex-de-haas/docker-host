@@ -22,7 +22,7 @@ internal static class CoreProviderApi
         app.MapGet(tasks + "/providers", async (HttpRequest request, CoreCapabilityAuthorization auth, CoreTaskAdapter service, CancellationToken ct) =>
             await Handle(async () => await service.ProvidersAsync(await Caller(request, auth, "tasks", "list", ct), ct, Named(request))));
         app.MapPost(tasks + "/options", async (CoreTaskOptions input, HttpRequest request, CoreCapabilityAuthorization auth, CoreTaskAdapter service, CancellationToken ct) =>
-            await Handle(async () => await service.OptionsAsync(await Caller(request, auth, "tasks", "options", ct), input, ct)));
+            await Handle(async () => await service.OptionsAsync(await Caller(request, auth, "tasks", "options", ct), input, ct, Named(request))));
         app.MapPost(tasks + "/list", async (CoreTaskQuery input, HttpRequest request, CoreCapabilityAuthorization auth, CoreTaskAdapter service, CancellationToken ct) =>
             await Handle(async () => await service.ListAsync(await Caller(request, auth, "tasks", "list", ct), input, ct)));
         app.MapPost(tasks + "/get", async (CoreTaskGet input, HttpRequest request, CoreCapabilityAuthorization auth, CoreTaskAdapter service, CancellationToken ct) =>

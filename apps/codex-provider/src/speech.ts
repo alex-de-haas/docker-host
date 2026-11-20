@@ -90,12 +90,11 @@ export function speechRoutes(accounts: Pick<CodexConnections, "speechCredential"
       const expected = isTranscription ? "audio/wav" : "application/json";
       if (request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== expected)
         throw new ProviderError("speech_format_unsupported", "Unsupported speech input format.", 415);
+      const language = isTranscription ? openai.transcriptionLanguage(url.searchParams.get("language")) : null;
       const bytes = await body(request, isTranscription ? openai.maxWavBytes : openai.maxCharacters * 6 + 64, signal);
       let text: string | undefined;
-      const language = url.searchParams.get("language");
       if (isTranscription) {
         validateRecording(bytes);
-        if (language && !/^[a-z]{2,3}(?:-[a-z]{2})?$/i.test(language)) throw inputError("Send a supported language code.");
       } else {
         let value: unknown;
         try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch { throw inputError("Send valid UTF-8 JSON."); }

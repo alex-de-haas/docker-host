@@ -1276,8 +1276,7 @@ internal sealed record AppSummary(
                 .Select(declaration =>
                 {
                     var endpoint = declaration.Capabilities?.Contains(NamedProviderImplementations.Capability) == true
-                        && declaration.EndpointKey is { } selectedKey
-                        ? ResolveDeclaredEndpoint(endpoints, selectedKey) : ResolveEndpoint(endpoints, declaration.EndpointKey);
+                        ? ResolveDeclaredEndpoint(endpoints, declaration.EndpointKey) : ResolveEndpoint(endpoints, declaration.EndpointKey);
                     return new AppInterfaceSummary(
                         declaration.Key,
                         declaration.Path,
@@ -1453,8 +1452,13 @@ internal sealed record AppSummary(
     }
 
     // Named providers must never forward a credential or payload to an unrelated fallback endpoint.
-    internal static AppEndpointContract? ResolveDeclaredEndpoint(IReadOnlyList<AppEndpointContract> endpoints, string key)
-        => endpoints.FirstOrDefault(e => e.Key == key) ?? endpoints.FirstOrDefault(e => e.Key.EndsWith("." + key, StringComparison.Ordinal));
+    internal static AppEndpointContract? ResolveDeclaredEndpoint(IReadOnlyList<AppEndpointContract> endpoints, string? key)
+    {
+        if (key is null) return endpoints.Count == 1 ? endpoints[0] : null;
+        if (endpoints.FirstOrDefault(e => e.Key == key) is { } exact) return exact;
+        var suffix = "." + key;
+        return endpoints.Where(e => e.Key.EndsWith(suffix, StringComparison.Ordinal)).Take(2).ToArray() is [var match] ? match : null;
+    }
 
     private static bool HasEndpointOpenUrl(AppEndpointContract endpoint)
         => !string.IsNullOrWhiteSpace(endpoint.PublicOrigin) || !string.IsNullOrWhiteSpace(endpoint.Url);

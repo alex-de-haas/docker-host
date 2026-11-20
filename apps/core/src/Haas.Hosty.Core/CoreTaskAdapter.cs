@@ -15,13 +15,13 @@ internal sealed record CoreTaskUserChoice(string Id, string DisplayName);
 internal sealed class CoreTaskAdapter(CoreProviderMediation providers, CoreProviderOperationStore operations, UserDirectoryStore users, AppIdentityService identity)
 {
     internal Task<ProviderDirectory> ProvidersAsync(CoreCapabilityCaller caller, CancellationToken ct, bool named = false) => providers.ListAsync(caller, "tasks", ct, named);
-    internal async Task<JsonElement> OptionsAsync(CoreCapabilityCaller caller, CoreTaskOptions input, CancellationToken ct)
+    internal async Task<JsonElement> OptionsAsync(CoreCapabilityCaller caller, CoreTaskOptions input, CancellationToken ct, bool named = false)
     {
         var provider = Ref(input.Provider);
         if (input.Executor is { } executor)
             return await providers.SendAsync<JsonElement?>(caller, Ref(executor), CoreProviderPolicy.For("task-executor", "options"), "GET", "/options", null, [], null, ct);
         var capabilities = await providers.SendAsync<JsonElement?>(caller, provider, CoreProviderPolicy.For("tasks", "options"), "GET", "/capabilities", null, [], null, ct);
-        var executors = await providers.ListAsync(caller, "task-executor", ct);
+        var executors = await providers.ListAsync(caller, "task-executor", ct, named);
         var choices = new List<CoreTaskUserChoice>();
         foreach (var user in (await users.ReadAsync(ct)).Users.Where(u => !u.Disabled))
         {

@@ -32,7 +32,7 @@ export function SpeechInput({ disabled, onText, onStart }: { disabled: boolean; 
     if (disabled) { setPhase("idle"); setMeterStream(undefined); }
   }
   const { roster, error: rosterError } = useSpeechRoster(value => {
-    if (active.current && (active.current.binding !== value?.binding || !value?.granted)) cancel();
+    if (active.current && (!value?.granted || active.current.binding !== value.binding || !currentSpeechOption(value)?.available)) cancel();
   });
   useEffect(() => () => { dispose(active.current); active.current = null; }, []);
   useEffect(() => { if (disabled) { dispose(active.current); active.current = null; } }, [disabled]);
