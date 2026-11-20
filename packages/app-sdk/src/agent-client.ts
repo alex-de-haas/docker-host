@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import {
   AgentApiError, type AgentAttachment, type AgentAttachmentChunk, type AgentAttachmentChunkReceipt, type AgentAuthorizer, type AgentAuthorizationRequest, type AgentCancelInput, type AgentCapabilities,
   type AgentConfigurationCreate, type AgentConnectionPage, type AgentConnectionUsage, type AgentControlReceipt,
-  type AgentEvent, type AgentModelCatalog, type AgentOperation, type AgentPreparedRequest, type AgentProviderRef,
+  type AgentEvent, type AgentHistoryObservation, type AgentHistorySessionState, type AgentModelCatalog, type AgentOperation, type AgentPreparedRequest, type AgentProviderRef,
   type AgentResponseInput, type AgentRunControlInput, type AgentRunInput, type AgentRunSnapshot, type AgentSession,
   type AgentSessionCreate, type AgentSessionPage, type AgentWatchItem,
 } from "./agent.js";
-import { validateAgentEvent, validateAgentRunSnapshot, validateAgentRequest, validateAgentSession, validateAgentCapabilities, validateAgentControlReceipt } from "./agent-server.js";
+import { agentReplayCursor, validateAgentEvent, validateAgentRunSnapshot, validateAgentRequest, validateAgentSession, validateAgentCapabilities, validateAgentControlReceipt } from "./agent-server.js";
 
 export type AgentClientOptions = { provider: AgentProviderRef; authorize: AgentAuthorizer; fetch?: typeof fetch; requestTimeoutMs?: number };
 export type AgentRequestOptions = { signal?: AbortSignal };
@@ -151,13 +151,14 @@ export class AgentClient {
     } else if (request.operation === "connections.usage" && (!record || typeof record.available !== "boolean" || typeof record.observedAt !== "string" || !Number.isFinite(Date.parse(record.observedAt)))) invalid();
   }
   /** One authenticated stream; watchRun adds reconnect and atomic snapshot recovery. */
-  async *events(runId: string, options: AgentRequestOptions & { cursor?: string } = {}): AsyncGenerator<{ event: AgentEvent; cursor: string }> {
+  async *events(runId: string, options: AgentRequestOptions & { cursor?: string; onRenewal?: () => void } = {}): AsyncGenerator<{ event: AgentEvent; cursor: string }> {
     const path = `/runs/${segment(runId)}/events` + queryString({ after: options.cursor });
     const response = await this.response({ operation: "runs.events", method: "GET", path, bodyHash: sha(""), runId }, undefined, options, true);
     if (!response.ok) { await this.json(response); return; }
     if (!response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase().includes("text/event-stream"))
       throw new AgentApiError("response_invalid", "The provider did not return an event stream.", 502);
     for await (const frame of parseAgentSse(response, MAX_BYTES)) {
+      if (frame.event === "renew" && frame.data === "{}") options.onRenewal?.();
       if (frame.event !== "agent") continue;
       let event: unknown;
       try { event = JSON.parse(frame.data); } catch { throw new AgentApiError("event_invalid", "The provider returned an invalid event.", 502); }
@@ -171,14 +172,16 @@ export class AgentClient {
   async *watchRun(runId: string, options: AgentWatchOptions = {}): AsyncGenerator<AgentWatchItem> {
     let snapshot = await this.run(runId, options);
     yield { kind: "snapshot", snapshot };
-    let cursor = snapshot.cursor, sequence = BigInt(snapshot.lastSequence), generation = snapshot.generation;
+    let cursor = snapshot.cursor, sequence = BigInt(snapshot.lastSequence);
+    const generation = snapshot.generation;
     let retries = 0;
     const max = options.maxReconnects ?? 5;
     if (!Number.isSafeInteger(max) || max < 0 || max > 100 || options.reconnectDelayMs !== undefined && (!Number.isSafeInteger(options.reconnectDelayMs) || options.reconnectDelayMs < 0 || options.reconnectDelayMs > 60000)) throw new AgentApiError("invalid_input", "Invalid bounded reconnect policy.", 400);
     while (!options.signal?.aborted) {
       if (snapshot.stopConfirmed && ["succeeded", "failed", "cancelled"].includes(snapshot.state)) return;
       try {
-        for await (const item of this.events(runId, { signal: options.signal, cursor })) {
+        let renewed = false;
+        for await (const item of this.events(runId, { signal: options.signal, cursor, onRenewal: () => { renewed = true; } })) {
           if (item.event.generation !== generation) throw new AgentApiError("event_generation_changed", "A run's durable generation changed.", 409);
           const next = BigInt(item.event.sequence);
           if (next <= sequence) continue;
@@ -188,21 +191,224 @@ export class AgentClient {
           yield { kind: "event", ...item };
           if (snapshot.stopConfirmed && ["succeeded", "failed", "cancelled"].includes(snapshot.state)) return;
         }
-        if (++retries > max) throw new AgentApiError("stream_closed", "The provider repeatedly closed its active stream.", 503, true);
+        // Older providers may change freshness without advancing the event sequence.
+        if (!renewed) throw new AgentApiError("stream_closed", "The provider closed its active stream.", 503, true);
+        retries = 0;
       } catch (error) {
         if (options.signal?.aborted) throw options.signal.reason;
-        if (error instanceof AgentApiError && error.status !== 410 && error.code !== "event_gap" && !error.retryable && ![429, 503, 504].includes(error.status)) throw error;
-        if (error instanceof AgentApiError && error.code === "stream_closed" || ++retries > max) throw error;
+        const reload = error instanceof AgentApiError && (error.status === 410 || error.code === "event_gap" || error.code === "stream_closed");
+        if (!reload && error instanceof AgentApiError && !error.retryable && ![429, 503, 504].includes(error.status)) throw error;
+        if (++retries > max) throw error;
+        if (reload) {
+          snapshot = await this.run(runId, options);
+          if (snapshot.generation !== generation) throw new AgentApiError("event_generation_changed", "A run's durable generation changed.", 409);
+          cursor = snapshot.cursor;
+          sequence = BigInt(snapshot.lastSequence);
+          yield { kind: "snapshot", snapshot };
+        }
       }
       options.signal?.throwIfAborted();
-      snapshot = await this.run(runId, options);
-      if (snapshot.generation !== generation) throw new AgentApiError("event_generation_changed", "A run's durable generation changed.", 409);
-      cursor = snapshot.cursor; sequence = BigInt(snapshot.lastSequence); generation = snapshot.generation;
-      yield { kind: "snapshot", snapshot };
       if (!snapshot.stopConfirmed) await pause(options.reconnectDelayMs ?? 250, options.signal);
     }
     options.signal?.throwIfAborted();
   }
+}
+
+export type AgentHistoryOptions = {
+  url: string; token: string; provider?: AgentProviderRef; cursor?: string; signal?: AbortSignal; fetch?: typeof fetch;
+  onOpen?: () => void | Promise<void>;
+  /** Silence between byte reads, including transport heartbeats, while the consumer is ready. */
+  idleTimeoutMs?: number;
+};
+export type AgentHistoryPage = { observations: AgentHistoryObservation[]; through: string; nextCursor: string | null };
+
+type HistoryPageOptions = { through?: string; limit?: number };
+type HistoryEndpoint = "live" | "states" | "range";
+async function historyResponse(options: AgentHistoryOptions, accept: string, page?: HistoryPageOptions,
+  endpoint?: HistoryEndpoint, parameters?: Record<string, string | number | undefined>): Promise<Response> {
+  const url = new URL(options.url);
+  if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash || !options.token)
+    throw new AgentApiError("authorization_invalid", "Invalid installation history binding.", 401);
+  if (endpoint) {
+    if (!url.pathname.endsWith("/history/events")) throw new AgentApiError("authorization_invalid", "Expected an installation history events URL.", 401);
+    url.pathname = url.pathname.slice(0, -"events".length) + endpoint;
+    for (const [key, value] of Object.entries(parameters ?? {})) if (value !== undefined) url.searchParams.set(key, String(value));
+  }
+  const after = agentReplayCursor(options.cursor);
+  if (after) url.searchParams.set("after", after);
+  if (page?.through) url.searchParams.set("through", agentReplayCursor(page.through)!);
+  if (page?.limit !== undefined) {
+    if (!Number.isInteger(page.limit) || page.limit < 1 || page.limit > 100)
+      throw new AgentApiError("invalid_input", "Page size must be between 1 and 100.", 400);
+    url.searchParams.set("limit", String(page.limit));
+  }
+  const response = await (options.fetch ?? globalThis.fetch)(url, {
+    headers: { accept, authorization: `Bearer ${options.token}` },
+    signal: options.signal, redirect: "error", cache: "no-store",
+  });
+  if (!response.ok) {
+    const raw = await boundedText(response, MAX_BYTES);
+    let detail: { code?: string; message?: string; retryable?: boolean } | undefined;
+    try { detail = JSON.parse(raw)?.error; } catch { /* Older providers may return a plain 404. */ }
+    if (endpoint === "live" && (response.status === 404 || response.status === 422 && ["unsupported_operation", "unsupported_capability"].includes(detail?.code ?? "")))
+      throw new AgentApiError("history_live_unsupported", "The provider does not support live history recovery.", 404);
+    throw new AgentApiError(detail?.code ?? "provider_failed", detail?.message ?? `History request failed (${response.status}).`, response.status, detail?.retryable === true);
+  }
+  if (response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== accept) {
+    await response.body?.cancel();
+    throw new AgentApiError("response_invalid", "The provider returned an unexpected history representation.", 502);
+  }
+  return response;
+}
+
+function historyObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+const historyIdentity = (id: unknown): id is string => typeof id === "string" && id.length > 0 && id.length <= 512;
+const historyPosition = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n > 0;
+function historyObservation(value: unknown, cursor: unknown, provider?: AgentProviderRef): AgentHistoryObservation {
+  if (!historyObject(value) || typeof cursor !== "string" || !agentReplayCursor(cursor))
+    throw new AgentApiError("event_invalid", "The history observation is missing its cursor.", 502);
+  const { sessionId, runId, generation, userId, principalId } = value;
+  if (!historyIdentity(sessionId) || !historyIdentity(runId) || !historyIdentity(generation) || !historyIdentity(userId) || !historyIdentity(principalId) || !historyObject(value.item))
+    throw new AgentApiError("event_invalid", "The history observation is missing its identity.", 502);
+  const raw = value.item;
+  let item: AgentWatchItem;
+  let snapshot: AgentRunSnapshot | undefined;
+  if (raw.kind === "event") {
+    validateAgentEvent(raw.event);
+    if (typeof raw.cursor !== "string" || !agentReplayCursor(raw.cursor) || raw.event.runId !== runId || raw.event.generation !== generation)
+      throw new AgentApiError("event_invalid", "History event identity changed.", 502);
+    if (raw.event.type === "run.updated") snapshot = raw.event.data.snapshot as AgentRunSnapshot;
+    item = { kind: "event", event: raw.event, cursor: raw.cursor };
+  } else if (raw.kind === "snapshot") {
+    validateAgentRunSnapshot(raw.snapshot);
+    item = { kind: "snapshot", snapshot: raw.snapshot };
+    snapshot = raw.snapshot;
+  } else throw new AgentApiError("event_invalid", "Unknown history observation.", 502);
+  if (snapshot && (snapshot.ref.id !== runId || snapshot.sessionId !== sessionId || snapshot.generation !== generation
+    || provider && !sameProvider(provider, snapshot.ref.provider)))
+    throw new AgentApiError("event_invalid", "History snapshot identity changed.", 502);
+  const { epoch, sessionPosition } = value;
+  if (value.sourceHistoryIncomplete !== undefined && value.sourceHistoryIncomplete !== true || epoch !== undefined && !historyIdentity(epoch) || sessionPosition !== undefined && (!epoch || !historyPosition(sessionPosition)))
+    throw new AgentApiError("event_invalid", "Invalid session history position.", 502);
+  return { sessionId, runId, generation, userId, principalId, item, cursor,
+    ...(epoch !== undefined ? { epoch } : {}), ...(sessionPosition !== undefined ? { sessionPosition } : {}),
+    ...(value.sourceHistoryIncomplete ? { sourceHistoryIncomplete: true } : {}) };
+}
+
+/** Open one read-only installation subscription. Resume from the last durably applied position. */
+export async function* watchAgentHistory(options: AgentHistoryOptions): AsyncGenerator<AgentHistoryObservation> {
+  const idleMs = options.idleTimeoutMs ?? 60000;
+  if (!Number.isSafeInteger(idleMs) || idleMs < 1 || idleMs > 2147483647) throw new AgentApiError("invalid_input", "Invalid history heartbeat timeout.", 400);
+  const response = await historyResponse(options, "text/event-stream");
+  try { await options.onOpen?.(); }
+  catch (error) { await response.body?.cancel().catch(() => {}); throw error; }
+  for await (const frame of parseAgentSse(response, MAX_BYTES + 32768, idleMs)) {
+    if (frame.event !== "observation") continue;
+    let value: unknown;
+    try { value = JSON.parse(frame.data); } catch { throw new AgentApiError("event_invalid", "Invalid installation history JSON.", 502); }
+    yield historyObservation(value, frame.id, options.provider);
+  }
+}
+
+/** Subscribe at the provider's current boundary. Supply a previous cursor to validate archive ancestry. */
+export async function* watchLiveAgentHistory(options: AgentHistoryOptions & {
+  onReady: (boundary: string) => void | Promise<void>;
+}): AsyncGenerator<AgentHistoryObservation> {
+  const idle = options.idleTimeoutMs ?? 60000;
+  if (!Number.isSafeInteger(idle) || idle < 1 || idle > 2147483647) throw new AgentApiError("invalid_input", "Invalid heartbeat timeout.", 400);
+  const response = await historyResponse(options, "text/event-stream", undefined, "live");
+  let ready = false;
+  try {
+    for await (const frame of parseAgentSse(response, MAX_BYTES + 32768, idle)) {
+      const value: unknown = JSON.parse(frame.data);
+      if (!ready) {
+        if (frame.event !== "ready" || !historyObject(value) || typeof value.through !== "string" || !agentReplayCursor(value.through))
+          throw new AgentApiError("event_invalid", "The provider did not establish a live history boundary.", 502);
+        ready = true;
+        await options.onOpen?.();
+        await options.onReady(value.through);
+      } else {
+        if (frame.event !== "observation") throw new AgentApiError("event_invalid", "Unexpected live history frame.", 502);
+        const observation = historyObservation(value, frame.id, options.provider);
+        const transient = observation.item.kind === "event" && ["message.delta", "tool.output"].includes(observation.item.event.type);
+        if (!observation.epoch || transient !== (observation.sessionPosition === undefined))
+          throw new AgentApiError("event_invalid", "Invalid live record position.", 502);
+        yield observation;
+      }
+    }
+  } finally { await response.body?.cancel().catch(() => {}); }
+  if (!ready) throw new AgentApiError("stream_closed", "The stream closed before its live boundary.", 503, true);
+}
+
+export async function readAgentHistoryStates(options: AgentHistoryOptions & HistoryPageOptions & { afterSession?: string }) {
+  const response = await historyResponse({ ...options, cursor: undefined }, "application/json", options, "states", { afterSession: options.afterSession });
+  const page: unknown = JSON.parse(await boundedText(response, 2 * MAX_BYTES + 32768));
+  if (!historyObject(page) || !isHistoryCursor(page.through) || options.through && page.through !== options.through
+    || !Array.isArray(page.sessions) || page.sessions.length > (options.limit ?? 100)
+    || !(page.nextSession === null || historyIdentity(page.nextSession)))
+    throw new AgentApiError("response_invalid", "Invalid provider history state page.", 502);
+  const sessions: AgentHistorySessionState[] = [];
+  let previous = options.afterSession ?? "";
+  for (const state of page.sessions) {
+    if (!historyObject(state) || !historyIdentity(state.sessionId) || state.sessionId <= previous || !historyIdentity(state.userId)
+      || state.sourceHistoryIncomplete !== undefined && state.sourceHistoryIncomplete !== true || !historyIdentity(state.principalId) || !historyIdentity(state.epoch) || !historyPosition(state.head))
+      throw new AgentApiError("response_invalid", "Invalid provider session state.", 502);
+    validateAgentRunSnapshot(state.snapshot);
+    if (state.sessionId !== state.snapshot.sessionId || options.provider && !sameProvider(options.provider, state.snapshot.ref.provider))
+      throw new AgentApiError("response_invalid", "Provider session state identity changed.", 502);
+    previous = state.sessionId;
+    sessions.push({ sessionId: state.sessionId, userId: state.userId, principalId: state.principalId,
+      epoch: state.epoch, head: state.head, snapshot: state.snapshot, ...(state.sourceHistoryIncomplete ? { sourceHistoryIncomplete: true } : {}) });
+  }
+  if (page.nextSession !== null && (!sessions.length || page.nextSession !== previous))
+    throw new AgentApiError("response_invalid", "The history states page did not advance.", 502);
+  return { through: page.through, sessions, nextSession: page.nextSession };
+}
+
+function isHistoryCursor(value: unknown): value is string {
+  return typeof value === "string" && Boolean(agentReplayCursor(value));
+}
+
+export async function readAgentHistoryRange(options: AgentHistoryOptions & {
+  through: string; sessionId: string; epoch: string; from: number; to: number; limit?: number;
+}) {
+  const { sessionId, epoch, from, to } = options;
+  if (!historyIdentity(sessionId) || !historyIdentity(epoch) || !isHistoryCursor(options.through)
+    || !historyPosition(from) || !historyPosition(to) || to < from)
+    throw new AgentApiError("invalid_input", "Invalid session history range.", 400);
+  const response = await historyResponse({ ...options, cursor: undefined }, "application/json", options, "range", { sessionId, epoch, from, to });
+  const page: unknown = JSON.parse(await boundedText(response, 2 * MAX_BYTES + 32768));
+  if (!historyObject(page) || !Array.isArray(page.observations) || !page.observations.length || page.observations.length > (options.limit ?? 100))
+    throw new AgentApiError("response_invalid", "Invalid session history range page.", 502);
+  const observations = page.observations.map((value, index) => {
+    const item = historyObservation(value, value?.cursor, options.provider);
+    if (item.sessionId !== sessionId || item.epoch !== epoch || item.sessionPosition !== from + index || item.sessionPosition > to
+      || item.item.kind === "event" && ["message.delta", "tool.output"].includes(item.item.event.type))
+      throw new AgentApiError("response_invalid", "Invalid durable session record or range ordering.", 502);
+    return item;
+  });
+  const next = from + observations.length;
+  const nextPosition = next <= to ? next : null;
+  if (page.nextPosition !== nextPosition) throw new AgentApiError("response_invalid", "The session range page did not advance.", 502);
+  return { observations, nextPosition };
+}
+
+/** Read a bounded page at a stable installation feed position. Pass through to subsequent pages. */
+export async function readAgentHistoryPage(options: AgentHistoryOptions & { through?: string; limit?: number }): Promise<AgentHistoryPage> {
+  const response = await historyResponse(options, "application/json", options);
+  const raw = await boundedText(response, 2 * MAX_BYTES + 32768);
+  let page: unknown;
+  try { page = JSON.parse(raw); } catch { throw new AgentApiError("response_invalid", "Invalid installation history page JSON.", 502); }
+  if (!historyObject(page) || typeof page.through !== "string" || !agentReplayCursor(page.through)
+    || options.through && page.through !== options.through || !Array.isArray(page.observations) || page.observations.length > (options.limit ?? 100)
+    || !(page.nextCursor === null || typeof page.nextCursor === "string" && agentReplayCursor(page.nextCursor)))
+    throw new AgentApiError("response_invalid", "Invalid installation history page.", 502);
+  const observations = page.observations.map(value => historyObservation(value, value?.cursor, options.provider));
+  if (page.nextCursor !== null && (!observations.length || page.nextCursor !== observations.at(-1)?.cursor || page.nextCursor === options.cursor))
+    throw new AgentApiError("response_invalid", "The history page did not advance.", 502);
+  return { observations, through: page.through, nextCursor: page.nextCursor };
 }
 
 function queryString(value: Record<string, string | number | undefined>): string {
@@ -220,13 +426,23 @@ async function boundedText(response: Response, max: number): Promise<string> {
   } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
   return Buffer.concat(chunks).toString("utf8");
 }
+async function readSseChunk(reader: ReadableStreamDefaultReader<Uint8Array>, idleMs?: number) {
+  if (idleMs === undefined) return reader.read();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([reader.read(), new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new AgentApiError("history_stream_idle", "Provider history heartbeats stopped.", 504, true)), idleMs);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
 /** Streaming decoder handles split UTF-8, CR/LF framing, multi-line data and comment heartbeats. */
-export async function* parseAgentSse(response: Pick<Response, "body">, maxBytes = MAX_BYTES): AsyncGenerator<{ id: string; event: string; data: string }> {
+export async function* parseAgentSse(response: Pick<Response, "body">, maxBytes = MAX_BYTES, idleMs?: number): AsyncGenerator<{ id: string; event: string; data: string }> {
   const reader = response.body?.getReader(); if (!reader) throw new AgentApiError("event_invalid", "The event stream is empty.", 502);
   const decoder = new TextDecoder("utf-8", { fatal: true }); let buffer = "", id = "", event = "message", data: string[] = [], bytes = 0;
   try {
     while (true) {
-      const chunk = await reader.read(); buffer += decoder.decode(chunk.value, { stream: !chunk.done });
+      const chunk = await readSseChunk(reader, idleMs); buffer += decoder.decode(chunk.value, { stream: !chunk.done });
       let match: RegExpExecArray | null;
       while ((match = /\r\n|\r|\n/.exec(buffer))) {
         // A CR at a chunk boundary may be the first half of CRLF.

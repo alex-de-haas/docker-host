@@ -39,9 +39,9 @@ function readPendingAction(workspaceId: string): PendingAction | null {
     return value && ["complete", "resume", "pause", "defer", "delete", "close"].includes(value.kind) && typeof value.requestId === "string" && Number.isSafeInteger(value.expectedRevision) ? value : null;
   } catch { return null; }
 }
-export function WorkspaceDetails({ workspace, title, sessionId, running, refresh, deleteConversation, onReview, onSessionSelected, onSessionPicked, onDeleteSession, sessionActions, appMetadata = [] }: {
+export function WorkspaceDetails({ workspace, title, sessionId, running, refresh, deleteConversation, onReview, onSessionSelected, onSessionPicked, onDeleteSession, sessionActions, chats, appMetadata = [] }: {
   workspace: DevelopmentWorkspace; title: string; sessionId?: string; running?: boolean; appMetadata?: readonly ContextApp[];
-  sessionActions?: WorkspaceSessionActions;
+  sessionActions?: WorkspaceSessionActions; chats?: readonly AssistantSession[];
   onSessionPicked?: (sessionId: string) => void; onDeleteSession?: (sessionId: string) => Promise<void>;
   onSessionSelected?: (session: AssistantSession) => void;
   refresh: () => void; deleteConversation?: () => Promise<void>; onReview?: (tree: Worktree, choice?: ReviewChoice) => void;
@@ -190,9 +190,9 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       <WorkspaceObservation trees={trees} now={now} />
     </div>
     <div className="space-y-4 p-4 [&>[data-workspace-section]~[data-workspace-section]]:border-t [&>[data-workspace-section]~[data-workspace-section]]:pt-4">
-      <WorkspaceSessions actions={sessionActions} workspace={workspace} sessionId={sessionId} running={running} refresh={refresh} onSelect={onSessionSelected} onPick={onSessionPicked} onDelete={onDeleteSession} />
+      <WorkspaceSessions chats={chats} now={now} actions={sessionActions} workspace={workspace} sessionId={sessionId} running={running} refresh={refresh} onSelect={onSessionSelected} onPick={onSessionPicked} onDelete={onDeleteSession} />
       {trees.some(tree => tree.apps.length || tree.consumers?.length) && <div data-workspace-section className="space-y-3"><WorkspaceSectionHeading informationLabel="About using apps on this Core" information={<WorkspaceConsumers trees={trees} />}>Used by</WorkspaceSectionHeading>
-      <WorkspaceActivation key={workspace.id} workspaceId={workspace.id} appMetadata={workspaceAppMetadata} apps={[...new Map(trees.flatMap(tree => tree.apps).map(app => [app.appId, app])).values()]}
+      <WorkspaceActivation key={workspace.id} workspaceId={workspace.id} workspaceName={workspace.name || workspace.owner.label || title} appMetadata={workspaceAppMetadata} apps={[...new Map(trees.flatMap(tree => tree.apps).map(app => [app.appId, app])).values()]}
         disabled={busy || recovering} canUse={workflowIsActive(state)} refresh={refresh} /></div>}
       {running && <p className="text-xs text-muted-foreground">An agent is running. Pause workspace fences all participants and waits for confirmed execution stops.</p>}
       {(state.closure || state.state === "deferred") && !["deleting", "deleted"].includes(state.state) && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Pausing: new development work is blocked while execution stop is verified." : "Paused: source, previews and conversation are retained. Resume to continue development."}</p>}

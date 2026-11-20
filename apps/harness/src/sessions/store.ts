@@ -3,6 +3,7 @@ import { constants, type BigIntStats } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { durableWriteFile, durableAppendFile, durableCreateFile, durableMkdir, syncDirectory, DurableWriteError, isUncertainWrite } from "../persistence.js";
 import path from "node:path";
+import { applyProviderHistoryContent } from "../agent-providers/history-content.js";
 
 // Session records and transcripts live in the gateway's app data directory (decision 2026-08-08):
 // standard app backup/removal semantics apply, Core audit never receives transcript content.
@@ -42,6 +43,8 @@ export interface SessionRecord {
   /** Provider-owned execution attempt identity; distinct from chat and native session IDs. */
   agentRunId?: string;
   providerObservedRunId?: string;
+  providerHistoryGaps?: import("../agent-providers/history.js").ProviderHistoryGap[];
+  providerHistoryContact?: { runId: string; observedAt: string; reason: import("../agent-providers/history.js").HistoryContactIssue };
   /** Harness's explicit caller guidance is stable with this conversation's provider configuration. */
   providerPlatformContext?: import("../skills.js").PlatformSkillContext;
   taskExecutionId?: string;
@@ -429,6 +432,33 @@ export class SessionStore {
       return value;
     } catch (error) { if (absent(error)) return null; throw this.problem(id, error, "The provider execution outbox needs recovery."); }
   }
+  /** The inbox is outside quarantined source. The source's deletion fence and write lane still apply. */
+  async withHistoryInbox<T>(id: string, work: (folder: string) => Promise<T>): Promise<T | undefined> {
+    return this.serialize(id, async () => {
+      if (await this.deleted(id)) return undefined;
+      return work(path.join(this.dataDir, "provider-history-inbox", id));
+    });
+  }
+
+  private historyRunFile(id: string, runId: string): string {
+    if (!/^[0-9a-f-]{36}$/i.test(runId)) throw new Error("Invalid provider run identity.");
+    return path.join(this.sessionDir(id), "provider-history", runId + ".json");
+  }
+  async readHistoryRun(id: string, runId: string): Promise<{ principalId: string; snapshot: import("@hosty-sdk/app/agent").AgentRunSnapshot; clock?: import("../agent-providers/history-projection.js").HistoryProjectionClock } | null> {
+    try { return JSON.parse(await readFile(this.historyRunFile(id, runId), "utf8")); }
+    catch (error) { if (absent(error)) return null; throw this.problem(id, error); }
+  }
+  async saveHistoryRun(id: string, principalId: string, snapshot: import("@hosty-sdk/app/agent").AgentRunSnapshot,
+    clock?: import("../agent-providers/history-projection.js").HistoryProjectionClock): Promise<void> {
+    const file = this.historyRunFile(id, snapshot.ref.id);
+    await this.serialize(id, async () => {
+      if (await this.deleted(id)) throw new Error("Installation history belongs to a deleted chat.");
+      await stat(path.join(this.sessionDir(id), "record.json"));
+      await durableMkdir(path.dirname(file));
+      await durableWriteFile(file, JSON.stringify({ principalId, snapshot, clock }));
+    }, true);
+  }
+
   /** An observer commits only its public projection; concurrent exact command bytes stay intact. */
   async commitProviderObservation(id: string, observed: import("../agent-providers/execution.js").ProviderExecutionState): Promise<import("../agent-providers/execution.js").ProviderExecutionState> {
     return this.serialize(id, async () => {
@@ -436,7 +466,7 @@ export class SessionStore {
       const current = await this.readProviderExecution(id);
       if (!current || current.runId !== observed.runId || current.sessionId !== observed.sessionId)
         throw new Error("The provider observation belongs to an earlier execution.");
-      const next = { ...current, run: observed.run, cursor: observed.cursor };
+      const next = { ...current, run: observed.run, cursor: observed.cursor, historyClock: observed.historyClock };
       await durableWriteFile(path.join(this.sessionDir(id), "provider-execution.json"), JSON.stringify(next));
       return next;
     }, true);
@@ -635,7 +665,9 @@ export class SessionStore {
     }, true);
     await this.changed(id);
   }
-  async readEvents(id: string, afterSeq = 0): Promise<StoredEvent[]> { return this.serialize(id, async () => (await this.journal(id)).events.filter(event => event.seq > afterSeq)); }
+  async readEvents(id: string, afterSeq = 0): Promise<StoredEvent[]> {
+    return this.serialize(id, async () => applyProviderHistoryContent((await this.journal(id)).events.filter(event => event.seq > afterSeq)));
+  }
   async deleteSession(id: string): Promise<void> {
     await this.serialize(id, async () => {
       this.journalTails.delete(id);
@@ -643,6 +675,9 @@ export class SessionStore {
       if (!await this.deleted(id)) await durableCreateFile(path.join(this.deletionRoot(), id + ".json"), JSON.stringify({ version: 1, sessionId: id }));
       try {
         await this.removeWorkspace(id);
+        const inboxRoot = path.join(this.dataDir, "provider-history-inbox");
+        await rm(path.join(inboxRoot, id), { recursive: true, force: true });
+        try { await syncDirectory(inboxRoot); } catch (error) { if (!absent(error)) throw error; }
         await rm(this.sessionDir(id), { recursive: true, force: true });
         try { await syncDirectory(this.sessionsRoot()); } catch (error) { if (!absent(error)) throw error; }
         if (this.workspaceRoot) {

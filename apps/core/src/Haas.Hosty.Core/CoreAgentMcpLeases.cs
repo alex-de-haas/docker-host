@@ -2,6 +2,19 @@ namespace Haas.Hosty.Core;
 
 internal sealed partial class CoreAgentExecution
 {
+    internal async Task<DevelopmentWorkspace> McpPrepare(CoreCallerAuthority origin, string userId, WorkspaceOwner actor, WorkspacePrepare input, CancellationToken ct)
+    {
+        return await McpLease(origin, userId, actor, input.RequestId, input.LeaseId!, async () =>
+        {
+            var record = await store.Get(origin.Mcp!.AgentAdmissionRef!, ct);
+            var conversation = record.Request.Conversation;
+            var chat = conversation is null ? null : new WorkspaceChatOrigin(
+                new(record.CallerAppId, record.CallerInstallation, record.UserId, conversation.SessionId), conversation,
+                record.Id, record.Request.RunId!, record.Generation);
+            return await workspaces.PrepareAsync(actor, input, ct, chat, nativeExecution: true);
+        }, ct);
+    }
+
     internal async Task<DevelopmentWorkspace> McpLease(CoreCallerAuthority? origin, string userId, WorkspaceOwner actor,
         string requestId, string leaseId, Func<Task<DevelopmentWorkspace>> acquire, CancellationToken ct)
     {

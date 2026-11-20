@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-11-04
+updated: 2026-11-19
 ---
 
 # Hosty Platform Vision
@@ -1383,6 +1383,16 @@ Decisions 1–5: 2026-08-19.
     explicit Normal-mode consent, native continuation, optional source binding and editable limits.
     The broader artifact/provider/event/scheduler plans retain their own remaining scope and status.
     Commits, publication and an ordinary-data runtime switch remain outside this authorization.
+
+71. **Delegate development end to end (2026-11-19).** Set the desired outcome, meaningful
+    product choices, target environments and publication scope when agreeing on the task.
+    Once work starts, an agent carries the agreed steps through implementation, isolated
+    setup, installation, verification, recovery and cleanup. It can commit, open a pull
+    request and follow review when the task and repository authorize those actions.
+    An autonomous chat executes enabled MCP tools according to their configured policy,
+    including explicit per-tool Ask and Disabled settings. Standing grants and agreed task
+    decisions cover repeated operations within their scope. Ask the operator when a new
+    decision changes the outcome or requires additional authority.
 
 ## Personal And Shared Environments (owner exploration, 2026-10-23)
 

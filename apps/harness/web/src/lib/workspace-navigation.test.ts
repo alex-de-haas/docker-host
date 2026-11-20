@@ -13,6 +13,13 @@ const workspace = (bindings: WorkspaceParticipation["sessions"]): DevelopmentWor
     id: "shared", revision: 1, role: "contributor", viewerUserId: "me", members: [], sessions: bindings, eligibleUsers: [],
   },
 });
+it("counts the originating chat and its execution once and keeps separately confirmed executions", () => {
+  const chat = { ...participant("origin", "running", true), activityGroup: "origin-group" };
+  const native = { ...participant("native", "running"), kind: "execution", activityGroup: "origin-group" };
+  expect(workspaceCounts(workspace([chat, native]), [], now).working).toBe(1);
+  expect(workspaceCounts(workspace([chat, native, { ...native, sessionId: "another-execution" }]), [], now).working).toBe(2);
+});
+
 it("counts each current participant once across simultaneous work, attention, and failure without exposing private tabs", () => {
   const space = workspace([participant("my", "running", true), participant("foreign-work", "running"), participant("approval", "awaiting_approval"), participant("question", "awaiting_question"), participant("error", "failed"), participant("idle", "idle")]);
   expect(workspaceCounts(space, [], now)).toEqual({ working: 2, waiting: 2, failed: 1, unknown: 0 });

@@ -17,7 +17,7 @@ import { CoreAgentBackend } from "./core.js";
 import { AgentConnectionDirectory, agentSelectionId } from "./directory.js";
 
 /** Test-only public HTTP/SSE peer. It contains no engine, worker transport or provider credentials. */
-export async function publicProviderFixture() {
+export async function publicProviderFixture(installationHistory = false) {
   const root = await mkdtemp(path.join(os.tmpdir(), "hosty-public-provider-"));
   const provider = { appId: "independent.example", installationId: "installation-one", key: "coding" };
   const selection = { provider, connection: { id: "account", revision: "1" } };
@@ -26,15 +26,29 @@ export async function publicProviderFixture() {
     capabilities: ["session.resume", "configuration.resume-compatible", "decisions.questions", "runs.barrier", "runs.park", "runs.reconcile", AGENT_CAPABILITIES.consumerWorkflow],
     limits: { maxCommandBytes: 1048576, maxEventBytes: 1048576, maxSnapshotBytes: 1048576, maxReplayBytes: 4194304,
       replayRetentionMs: 86400000, maxControls: 100, maxPageSize: 100 }, configuration: { resumeCompatible: [] } };
+  if (installationHistory) capabilities.capabilities.push("installation-history");
   const sessions = new Map<string, AgentSession>(), runs = new Map<string, AgentRunSnapshot>();
   const events = new Map<string, AgentEvent[]>(), receipts = new Map<string, AgentControlReceipt>();
   const watchers = new Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>();
-  const requests: Array<{ method: string; path: string; body: string; authorization: string | null; userToken: string | null }> = [];
+  const requests: Array<{ method: string; path: string; body: string; accept: string | null; authorization: string | null; userToken: string | null }> = [];
   const authorizations: AgentAuthorizationRequest[] = [];
+  const runOwners = new Map<string, string>();
+  const history: Uint8Array[] = [], historyStreams = new Set<ReadableStreamDefaultController<Uint8Array>>();
+  let denyHistory = false, expireHistoricalCursor = false;
+  const publishHistory = (sessionId: string, runId: string, userId: string, item: import("@hosty-sdk/app/agent").AgentWatchItem) => {
+    if (!installationHistory) return;
+    const generation = item.kind === "event" ? item.event.generation : item.snapshot.generation;
+    const value = JSON.stringify({ sessionId, runId, userId, principalId: userId, generation, item });
+    const frame = new TextEncoder().encode(`event: observation\nid: feed-${history.length + 1}\ndata: ${value}\n\n`);
+    history.push(frame);
+    for (const stream of historyStreams) stream.enqueue(frame);
+  };
   const starts: Array<{ runId: string; sessionId: string; input: AgentRunInput; body: string }> = [];
   const controls: Array<{ runId: string; input: Record<string, unknown>; path: string }> = [];
   const managers: SessionManager[] = [];
   const behavior: { startGate?: Promise<void>; cancel: "confirmed" | "unavailable"; reconcile: "confirmed" | "unavailable";
+    failHistoryTokenOnce?: boolean; rejectHistoryStream?: boolean;
+    legacyHistoryRoute?: boolean; capabilitiesTimeoutAfterStart?: boolean; snapshotIssue?: "denied" | "timeout";
     loseNextStartResponse?: boolean; keepReservationAfterCancel?: boolean; deferPredictions?: boolean; beforeCancel?: (runId: string) => void;
     connectionRevision: string } = { cancel: "confirmed", reconcile: "confirmed", connectionRevision: "1" };
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -50,6 +64,7 @@ export async function publicProviderFixture() {
       type, data: type === "run.updated" ? { snapshot: structuredClone(snapshot) } : data };
     (events.get(runId) ?? []).push(event);
     for (const watcher of watchers.get(runId) ?? []) watcher.enqueue(frame(event));
+    publishHistory(snapshot.sessionId, runId, runOwners.get(runId) ?? owner, { kind: "event", event, cursor: snapshot.cursor });
     return event;
   };
   const update = (runId: string, patch: Partial<AgentRunSnapshot>) => {
@@ -59,14 +74,26 @@ export async function publicProviderFixture() {
     return structuredClone(snapshot);
   };
   const fetcher: typeof fetch = async (input, init) => {
+    init?.signal?.throwIfAborted();
     const url = new URL(input instanceof Request ? input.url : String(input)), method = init?.method ?? "GET";
     const body = String(init?.body ?? "");
-    requests.push({ method, path: url.pathname + url.search, body, authorization: new Headers(init?.headers).get("authorization"),
+    requests.push({ method, path: url.pathname + url.search, body, accept: new Headers(init?.headers).get("accept"), authorization: new Headers(init?.headers).get("authorization"),
       userToken: new Headers(init?.headers).get("X-Hosty-User-Token") });
     if (url.hostname === "core.test") {
       if (url.pathname.endsWith("/providers/agent")) return json({ providers: [{ ...provider, displayName: "Independent coding provider", available: true, version: 1 }] });
+      if (url.pathname.endsWith("/agent/history/token")) {
+        if (behavior.failHistoryTokenOnce) { delete behavior.failHistoryTokenOnce; return error("unavailable", "Core is restarting.", 503); }
+        if (!installationHistory && !behavior.legacyHistoryRoute) return new Response(null, { status: 404 });
+        if (denyHistory) return error("permission_denied", "Installation access was revoked.", 403);
+        if (new Headers(init?.headers).has("X-Hosty-User-Token")) return error("unexpected_actor", "Expected installation authority.");
+        return json({ endpoint: "http://provider.test/api/agent/v1/coding", token: "installation-read-only", expiresAt: new Date(Date.now() + 60000).toISOString() });
+      }
       if (url.pathname.endsWith("/agent/authorize")) {
         const authorization = JSON.parse(body) as AgentAuthorizationRequest; authorizations.push(authorization);
+        if (authorization.operation === "runs.start" && authorization.runId) {
+          const actor = new Headers(init?.headers).get("X-Hosty-User-Token");
+          runOwners.set(authorization.runId, actor === credential ? owner : actor?.replace(/^user:/, "") ?? owner);
+        }
         return json({ provider, baseUrl: "http://provider.test/api/agent/v1/coding", token: "exact-operation-fixture",
           expiresAt: new Date(Date.now() + 60000).toISOString(), admissionRef: randomUUID() });
       }
@@ -74,6 +101,30 @@ export async function publicProviderFixture() {
     }
     if (url.hostname !== "provider.test") throw new Error("The public provider fixture cannot contact another origin.");
     const route = url.pathname.replace("/api/agent/v1/coding", ""), parts = route.split("/").filter(Boolean);
+    if (route === "/history/events" && behavior.legacyHistoryRoute)
+      return error("unsupported_operation", "Use a declared agent v1 operation.", 422);
+    if (route === "/history/events" && installationHistory) {
+      if (new Headers(init?.headers).get("authorization") !== "Bearer installation-read-only") return error("permission_denied", "Wrong authority.", 403);
+      const after = Number((url.searchParams.get("after") ?? "feed-0").slice(5));
+      if (expireHistoricalCursor && url.searchParams.has("after")) { expireHistoricalCursor = false; return error("history_cursor_expired", "Cursor expired.", 410); }
+      if (new Headers(init?.headers).get("accept") === "application/json") {
+        const through = Number((url.searchParams.get("through") ?? "feed-" + history.length).slice(5));
+        const end = Math.min(through, after + Number(url.searchParams.get("limit") ?? "100"));
+        const observations = history.slice(after, end).map((frame, index) => ({ ...JSON.parse(new TextDecoder().decode(frame).split("data: ")[1]!), cursor: "feed-" + (after + index + 1) }));
+        return json({ observations, through: "feed-" + through, nextCursor: end < through ? "feed-" + end : null });
+      }
+      if (behavior.rejectHistoryStream) return error("unavailable", "The provider stream is unavailable.", 503);
+      let stream!: ReadableStreamDefaultController<Uint8Array>;
+      const body = new ReadableStream<Uint8Array>({ start(controller) {
+        stream = controller; historyStreams.add(stream);
+        stream.enqueue(new TextEncoder().encode(": opened\n\n"));
+        for (const frame of history.slice(after)) stream.enqueue(frame);
+        init?.signal?.addEventListener("abort", () => { if (historyStreams.delete(stream)) stream.close(); }, { once: true });
+      }, cancel() { historyStreams.delete(stream); } });
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
+    }
+    if (route === "/capabilities" && starts.length && behavior.capabilitiesTimeoutAfterStart)
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
     if (route === "/capabilities") return json(capabilities);
     if (route === "/connections") return json({ connections: [{ id: "account", revision: behavior.connectionRevision, name: "Account", ready: true }], nextCursor: null });
     if (route === "/connections/account/models") return json({ revision: "1", models: [{ id: "model", reasoningEfforts: [null] }], defaultModel: "model" });
@@ -104,6 +155,7 @@ export async function publicProviderFixture() {
           phase: "executing", stopConfirmed: false, freshness: "current", observedAt: new Date().toISOString(), configurationRevision: session.configurationRevision,
           lastSequence: "0", cursor: "cursor-0", pending: [], effects: { certainty: "known", unresolvedCallIds: [] }, messages: [], tools: [] };
         runs.set(runId, snapshot); events.set(runId, []); session.activeRun = snapshot.ref; session.nativeState = "available";
+        publishHistory(sessionId, runId, runOwners.get(runId) ?? owner, { kind: "snapshot", snapshot });
       }
       if (behavior.loseNextStartResponse) { delete behavior.loseNextStartResponse; throw new TypeError("Fixture lost the start response after admission."); }
       return json(runs.get(runId));
@@ -111,6 +163,8 @@ export async function publicProviderFixture() {
     if (parts[0] === "runs") {
       const runId = parts[1]!, snapshot = runs.get(runId);
       if (!snapshot) return error("run_not_found", "Run not found.", 404);
+      if (parts.length === 2 && behavior.snapshotIssue === "denied") return error("permission_denied", "Owner credential expired.", 403);
+      if (parts.length === 2 && behavior.snapshotIssue === "timeout") throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
       if (parts.length === 2) return json(snapshot);
       if (parts[2] === "events") {
         const after = BigInt((url.searchParams.get("after") ?? "cursor-0").replace("cursor-", ""));
@@ -161,7 +215,11 @@ export async function publicProviderFixture() {
   const initial = makeManager();
   await initial.connections.setDefault(connectionId);
   return { ...initial, root, owner, credential, provider, selection, connectionId, capabilities, sessions, runs, starts, controls, receipts,
-    requests, authorizations, behavior, emit, update, makeManager,
+    requests, authorizations, behavior, emit, update, makeManager, publishHistory,
+    setHistoryDenied(value: boolean) { denyHistory = value; },
+    expireNextHistoryCursor() { expireHistoricalCursor = true; },
+    activeHistoryStreams() { return historyStreams.size; },
+    disconnectHistory() { for (const stream of historyStreams) stream.close(); historyStreams.clear(); },
     snapshot: (runId: string) => structuredClone(runs.get(runId)!),
     reconnect(runId: string) {
       const active = watchers.get(runId); watchers.delete(runId);

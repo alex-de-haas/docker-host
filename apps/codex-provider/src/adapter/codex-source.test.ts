@@ -29,9 +29,14 @@ describe("Codex app-server collaboration summaries", () => {
       const command = resolveCodexCommand();
       expect(spawn).toHaveBeenCalledWith(isNodeEntry(command) ? process.execPath : command, expect.arrayContaining(["-c", "features.multi_agent=true"]), expect.any(Object));
       const notification = (method: string, params: Record<string, unknown>) => stdout.write(JSON.stringify({ method, params }) + "\n");
-      const item = { type: "collabAgentToolCall", id: "collab-call", senderThreadId: "root-thread", receiverThreadIds: ["child-thread"], tool: "spawnAgent", status: "completed", agentsStates: { "child-thread": { status: "completed", message: "Native child output" } } };
+      const item = { type: "collabAgentToolCall", id: "collab-call", senderThreadId: "root-thread", receiverThreadIds: ["child-thread"], tool: "spawnAgent", prompt: "Research the fixture", status: "completed", agentsStates: { "child-thread": { status: "completed", message: "Native child output" } } };
       notification("item/completed", { threadId: "foreign-thread", turnId: "foreign-turn", item: { ...item, senderThreadId: "foreign-thread", receiverThreadIds: ["foreign-child"] } });
-      notification("item/completed", { threadId: "root-thread", turnId: "root-turn", item });
+      notification("item/completed", { threadId: "root-thread", turnId: "root-turn", item: {
+        ...item, id: "unobserved-wait", tool: "wait", receiverThreadIds: ["another-chat"],
+        agentsStates: { "another-chat": { status: "completed", message: "Foreign final answer" } },
+      } });
+      notification("item/completed", { threadId: "root-thread", turnId: "root-turn", item: { ...item, agentsStates: {} } });
+      notification("item/completed", { threadId: "root-thread", turnId: "root-turn", item: { ...item, id: "known-wait", tool: "wait", prompt: "Wrong task" } });
       stdout.write(JSON.stringify({ id: 9001, method: "item/fileChange/requestApproval", params: { threadId: "child-thread", turnId: "child-turn", itemId: "child-item" } }) + "\n");
       await vi.waitFor(() => expect(events.some(event => event.type === "approval_request")).toBe(true));
       const approval = events.find(event => event.type === "approval_request");
@@ -42,7 +47,11 @@ describe("Codex app-server collaboration summaries", () => {
       stdout.write(JSON.stringify({ id: 9000, method: "item/fileChange/requestApproval", params: { threadId: "foreign-thread", turnId: "foreign-turn", itemId: "foreign-item" } }) + "\n");
       notification("item/agentMessage/delta", { threadId: "root-thread", turnId: "root-turn", itemId: "root-message", delta: "Root continues" });
       await vi.waitFor(() => expect(events.some(event => event.type === "assistant_delta" && event.text === "Root continues")).toBe(true));
-      expect(events.filter(event => event.type === "agent_status")).toEqual([expect.objectContaining({ agentId: "child-thread", parentAgentId: "root", state: "succeeded", stopConfirmed: false, source: expect.objectContaining({ agentId: "child-thread" }) })]);
+      expect(events.filter(event => event.type === "agent_status")).toEqual([
+        expect.objectContaining({ agentId: "child-thread", state: "running", prompt: "Research the fixture" }),
+        expect.objectContaining({ agentId: "child-thread", parentAgentId: "root", state: "succeeded", stopConfirmed: false, response: "Native child output" }),
+      ]);
+      expect(JSON.stringify(events)).not.toContain("Foreign final answer");
       expect(events.some(event => event.type === "result")).toBe(false);
       expect(events.filter(event => event.type === "harness_session")).toEqual([{ type: "harness_session", harnessSessionId: "root-thread" }]);
       expect(events.some(event => JSON.stringify(event).includes("foreign-child"))).toBe(false);

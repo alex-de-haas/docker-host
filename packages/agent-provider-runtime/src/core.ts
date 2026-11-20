@@ -2,10 +2,12 @@ import type { AgentMcpTarget, AgentOperation, AgentSessionWorkflowRequest } from
 import { AgentApiError } from "@hosty-sdk/app/agent";
 import { DecisionClient } from "@hosty-sdk/app/decisions";
 import type { VerifiedOperation } from "./store.js";
+import type { HistoryAuthority } from "./history.js";
 
 export interface ProviderAuthority {
+  history(token: string, key: string): Promise<HistoryAuthority>;
   introspect(token: string, operation: AgentOperation, method: string, path: string, bodyHash: string): Promise<VerifiedOperation>;
-  admit(admissionRef: string): Promise<unknown>;
+  admit(admissionRef: string, generation?: string): Promise<unknown>;
   renew(admissionRef: string): Promise<unknown>;
   mcp(admissionRef: string, target: AgentMcpTarget, tools?: string[]): Promise<{ url: string; token: string; expiresAt: string }>;
   workspace<T>(admissionRef: string, operation: string, input: unknown): Promise<T>;
@@ -40,7 +42,8 @@ export class CoreAuthority implements ProviderAuthority {
       if (result[key] === null) delete result[key];
     return result;
   }
-  admit(admissionRef: string) { return this.json("/admit", { admissionRef }); }
+  history(token: string, key: string) { return this.json<HistoryAuthority>("/history/introspect", { token, key }); }
+  admit(admissionRef: string, generation?: string) { return this.json("/admit", { admissionRef, generation }); }
   renew(admissionRef: string) { return this.json("/renew", { admissionRef }); }
   mcp(admissionRef: string, target: AgentMcpTarget, tools?: string[]) { return this.json<{ url: string; token: string; expiresAt: string }>("/mcp/token", { admissionRef, target, tools }); }
   workspace<T>(admissionRef: string, operation: string, input: unknown) { return this.json<T>("/workspace", { admissionRef, operation, input }); }

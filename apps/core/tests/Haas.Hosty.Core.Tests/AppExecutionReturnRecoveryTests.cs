@@ -117,7 +117,7 @@ public sealed partial class CoreLifecycleServiceTests
     [Theory]
     [InlineData("git")]
     [InlineData("local-git")]
-    public async Task ExecutionTargets_DevReturnRetryAcceptsCapturedSourceBeforeProjection(string sourceType)
+    public async Task ExecutionTargets_LegacyDevReturnRetryAcceptsCapturedSourceBeforeProjection(string sourceType)
     {
         var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
         await AddManifestPackageRuntime(f, tree);
@@ -125,10 +125,17 @@ public sealed partial class CoreLifecycleServiceTests
         await f.Apps.UpdateAppAsync("test.created", a => a with { SourceState = a.SourceState! with
             { Type = sourceType, LocalOverridePath = tree.Path } });
         var captured = (await f.Apps.GetAppAsync("test.created"))!.SourceState;
-        var backupPath = Path.Combine(f.Paths.BackupsRoot, "test.created");
-        Directory.CreateDirectory(Path.GetDirectoryName(backupPath)!);
-        await File.WriteAllTextAsync(backupPath, "block backup before source projection");
-        var entry = await ExecutionRequest(f, owner, "workspace", tree);
+        // An older selector assigned DevModeId before creating its backup. A recovered
+        // Return must still accept the captured, not-yet-normalized source at this checkpoint.
+        var manifest = await f.Manifests.LoadAsync(Path.Combine(tree.Path, "manifest.json"), "dev", default);
+        var entry = (await ExecutionRequest(f, owner, "workspace", tree)) with
+        {
+            Prepared = new RuntimePreparation(new Dictionary<string, ArtifactLock>(), []),
+            Phase = "prepared", CandidateDigest = manifest.ManifestDigest
+        };
+        await AppExecutionStore.SaveAsync(f.Paths, entry, default);
+        Directory.CreateDirectory(f.Paths.BackupsRoot);
+        await File.WriteAllTextAsync(Path.Combine(f.Paths.BackupsRoot, entry.AppId), "block backup before source projection");
         await Assert.ThrowsAnyAsync<IOException>(() => f.Service.ExecuteTargetAsync(entry, default));
         var app = (await f.Apps.GetAppAsync("test.created"))!;
         var op = (await AppDevStore.ReadAsync(f.Paths, app, default))!;

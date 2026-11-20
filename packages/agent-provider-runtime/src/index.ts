@@ -42,6 +42,7 @@ export async function startAgentProvider(options: { engine: ProviderEngine; defa
     json(response, known ? error.status : 500, { error: { code: known ? error.code : "provider_unavailable", message: known ? error.message : "The provider could not complete the operation.", retryable: known ? error.retryable ?? error.status >= 500 : true } });
   }); });
   await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(port, "0.0.0.0", () => { server.off("error", reject); resolve(); }); });
+  server.once("close", () => store.history.close());
   console.log(`[agent-provider] ${appId} ready on port ${port}.`);
   let stopping = false;
   const close = async () => { if (stopping) return; stopping = true; await controller.close(); server.close(); server.closeAllConnections(); };

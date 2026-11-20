@@ -24,8 +24,9 @@ public sealed partial class CoreLifecycleServiceTests
         if (interrupted)
         {
             f.Adapter.StartContextProbe = (_, _) => throw new IOException("Interrupted workspace start");
-            await Assert.ThrowsAsync<IOException>(() => f.Service.ExecuteTargetAsync(request, default));
-            Assert.Equal("starting", (await f.Service.GetDevModeAsync(app.Id)).Phase);
+            var failed = await f.Service.ExecuteTargetAsync(request, default);
+            Assert.Equal("failed", failed.State);
+            Assert.Equal("dev_workspace_start_failed", failed.Code);
             f.Adapter.StartContextProbe = null;
         }
         else

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-17
-updated: 2026-11-10
+updated: 2026-11-20
 summary: Local Git app creation, child Core Docker preview, local acceptance, remote publication and versioned development guidance through Harness, MCP and CLI.
 components: [apps/core, apps/cli, apps/harness]
 ---
@@ -228,6 +228,11 @@ local main, the source directory, worktree identity and local acceptance do not 
 not write credentials or a remote URL into Git configuration. Local-only status works without a
 connection. Fetch records the observed remote head, time, relationship and ahead/behind counts in a
 separate upstream reference; it never pulls into a branch or rewrites working files.
+
+For an app installed from a Git repository, the registered repository is already the upstream.
+Calling `remote_status` on that binding returns `workspace_local_remote_not_applicable` and
+points the caller to `pr_connections` and `pr_list`. A changed repository or installation
+still reports a source binding error.
 
 Remote status, connection, fetch, base publication and PR publication also work while the app
 executes from that registered worktree. Core verifies the active development journal, installation,

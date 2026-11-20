@@ -137,7 +137,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             return new WorkspaceList(found.ToArray());
         }
 
-    public async Task<DevelopmentWorkspace> PrepareAsync(WorkspaceOwner owner, WorkspacePrepare input, CancellationToken ct)
+    public async Task<DevelopmentWorkspace> PrepareAsync(WorkspaceOwner owner, WorkspacePrepare input, CancellationToken ct, WorkspaceChatOrigin? origin = null, bool nativeExecution = false)
     {
         // Match source selection and local acceptance lock order: app, owner, repository.
         var gate = apps.OperationLock(input.AppId ?? "");
@@ -147,10 +147,17 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             if (owner.IsExternal) return await PrepareCoreAsync(owner, input, ct);
             return await Locked("workspace-participation", async () =>
             {
-                var associated = await PrepareAssociatedAsync(owner, input, ct);
-                if (associated is not null) return associated;
-                var prepared = await PrepareCoreAsync(owner, input, ct);
-                await ActivatePreparedParticipationAsync(prepared, input, ct);
+                var target = origin is null ? null : await PreparationParticipationAsync(owner, origin.Owner, ct);
+                var prepared = await PrepareAssociatedAsync(owner, input, ct, target);
+                if (prepared is null)
+                {
+                    prepared = await PrepareCoreAsync(owner, input, ct);
+                    await ActivatePreparedParticipationAsync(prepared, input, ct);
+                }
+                if (origin is not null)
+                    await BindPreparationAsync(prepared, owner, origin, input.RequestId, null, null, ct);
+                else if (nativeExecution)
+                    await MarkExecutionCoreAsync(prepared.WorkspaceId, owner, ct);
                 return prepared;
             }, ct);
         }

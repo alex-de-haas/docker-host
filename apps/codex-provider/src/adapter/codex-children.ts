@@ -5,6 +5,13 @@ import { toolResult } from "@hosty/agent-provider-runtime/harness/tool-result";
 
 const object = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const identity = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(value);
+function assignment(items: Array<Record<string, unknown> | null>): string | undefined {
+  const inputs = items.filter(item => item?.type === "userMessage");
+  const content = inputs.length === 1 ? inputs[0]?.content : undefined;
+  if (!Array.isArray(content)) return;
+  return content.map(object).flatMap(block => block?.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n");
+}
+
 export const CODEX_CHILD_METADATA_TIMEOUT_MS = 5_000;
 /** Pinned0.167 typed observations; reading history never starts or resumes a native thread. */
 export class CodexChildren {
@@ -16,10 +23,12 @@ export class CodexChildren {
   private readonly spawned = new Map<number, Set<string>>();
   private readonly verified = new Map<number, Set<string>>();
   private readonly activityRevisions = new Map<string, number>();
+  private readonly activeAssignments = new Set<string>();
+  private assignmentReads = 0;
   private warned = false;
   constructor(private readonly runId: string, readonly sources: Map<string, HarnessEventSource>,
     private readonly read: (threadId: string) => Promise<unknown>, private readonly emit: (event: HarnessEvent) => void,
-    private readonly available: () => boolean) {}
+    private readonly available: () => boolean, private readonly readCurrent?: (threadId: string) => Promise<unknown>) {}
 
   observe(params: Record<string, unknown>, rootThread: string, rootTurn: string, turn: number): void {
     this.observeItem(params, rootThread, rootTurn, turn);
@@ -60,6 +69,9 @@ export class CodexChildren {
     // an observation of the native control, never process-tree exit confirmation.
     this.emit({ type: "agent_status", ...source, source,
       state: item.kind === "completed" ? "succeeded" : item.kind === "interrupted" ? "unknown" : "running", stopConfirmed: false });
+    const assignmentKey = JSON.stringify([turn, source.agentId]);
+    if (item.kind === "started") this.readAssignment(source, rootTurn, turn, assignmentKey);
+    else this.activeAssignments.delete(assignmentKey);
     if (item.kind !== "completed") {
       const name = item.kind === "started" ? "spawn" : item.kind === "interrupted" ? "interrupt" : "sendInput";
       this.emit({ type: "tool_use", toolUseId: callId, toolName: `Agent: ${name}`, input: { operation: item.kind }, ...(parentSource ? { source: parentSource } : {}) });
@@ -72,6 +84,25 @@ export class CodexChildren {
       if (!identity(childTurn)) { this.incomplete("The completed native child turn was not identified; coverage is partial."); return; }
       this.history(source, source.parentAgentId === "root" ? rootThread : source.parentAgentId!, childTurn, rootThread, rootTurn, turn);
     }
+  }
+
+  private readAssignment(source: HarnessEventSource, rootTurn: string, turn: number, key: string): void {
+    if (!this.readCurrent || this.assignmentReads >= 8) return;
+    this.assignmentReads++;
+    this.activeAssignments.add(key);
+    void this.readCurrent(source.agentId).then(value => {
+      if (!this.available() || this.closedTurns.has(turn) || !this.activeAssignments.has(key)) return;
+      const page = object(value);
+      if (!Array.isArray(page?.data) || page.data.length !== 1 || Buffer.byteLength(JSON.stringify(value)) > 2 * 1024 * 1024) return;
+      const current = object(page.data[0]);
+      // A fork can contain inherited turns. Only a distinct, active child turn
+      // explicitly tied to this root turn can provide the in-flight assignment.
+      if (current?.rootTurnId !== rootTurn || !identity(current.id) || current.id === rootTurn || current.status !== "inProgress"
+        || !Array.isArray(current.items) || current.items.length > 512) return;
+      const prompt = assignment(current.items.map(object));
+      if (prompt) this.emit({ type: "agent_status", ...source, state: "running", prompt, source });
+    }).catch(() => { /* Completion also reads the exact finished child turn. */ })
+      .finally(() => { this.activeAssignments.delete(key); this.assignmentReads--; });
   }
 
   private history(source: HarnessEventSource, parent: string, expectedChildTurn: string, rootThread: string, rootTurn: string, turn: number): void {
@@ -91,6 +122,17 @@ export class CodexChildren {
       for (const entry of selected) {
         const childTurn = object(entry);
         if (!childTurn || !identity(childTurn.id) || !Array.isArray(childTurn.items)) throw new Error("The child turn history was not verified.");
+        // This exact completed turn belongs to the observed child. Its first
+        // assignment can be recovered even when the spawn activity carries no prompt.
+        // Neither inherited earlier turns nor hook prompts are child assignments.
+        if (this.activityRevisions.get(activityKey) === revision) {
+          const items = childTurn.items.map(object);
+          const prompt = revision === 1 ? assignment(items) : undefined;
+          const answer = items.findLast(item => item?.type === "agentMessage" && item.phase === "final_answer" && item.delivery !== "async");
+          const response = typeof answer?.text === "string" ? answer.text : undefined;
+          if (prompt || response) this.emit({ type: "agent_status", ...source, state: "succeeded", stopConfirmed: false, source,
+            ...(prompt ? { prompt } : {}), ...(response ? { response } : {}) });
+        }
         for (const value of childTurn.items) {
           if (++count > 512) { this.incomplete("Additional native child history exceeded the bounded inventory."); return; }
           const item = object(value); if (!item) throw new Error("The child item history was not verified.");
