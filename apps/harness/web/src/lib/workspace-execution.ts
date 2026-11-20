@@ -11,6 +11,15 @@ type Selection = { requestId: string; kind: "workspace" | "package"; appId?: str
 type Result = { requestId: string; state: string; error?: string; apps: { appId: string; state: string; error?: string; code?: string; review?: WorkspaceAccessReview }[] };
 type Phase = "idle" | "checking" | "switching" | "approval" | "failed";
 const terminalCode = (code?: string) => ["dev_selection_changed", "dev_installation_changed", "execution_request_conflict", "selection_changed", "installation_changed"].includes(code || "");
+const startFailed = (app: Result["apps"][number]) => app.state === "failed" && app.code === "dev_workspace_start_failed";
+
+function selectionIsSettled(result: Result) {
+  if (result.apps?.some(app => terminalCode(app.code))) return true;
+  // A group can have a bound app whose launch failed and another app still awaiting review or retry.
+  return result.state === "failed" && result.apps?.some(startFailed) &&
+    result.apps.every(app => app.state === "completed" || app.state === "skipped" || startFailed(app));
+}
+
 function savedSelection(key: string, workspaceId: string): Selection | null {
   try {
     const value = JSON.parse(localStorage.getItem(key) ?? "null");
@@ -40,6 +49,7 @@ export function useWorkspaceExecution(workspaceId: string, options: { disabled?:
   const [pending, setPending] = useState<Selection | null>(() => savedSelection(storageKey, workspaceId));
   const [phase, setPhase] = useState<Phase>(() => pending ? "checking" : "idle");
   const [error, setError] = useState("");
+  const [failedStarts, setFailedStarts] = useState<string[]>([]);
   const [approvalLink, setApprovalLink] = useState<string | null>(null);
   const current = useRef(options); current.current = options;
   const active = useRef<AbortController | null>(null);
@@ -56,7 +66,7 @@ export function useWorkspaceExecution(workspaceId: string, options: { disabled?:
     const save = (next: Selection) => { selection = next; if (alive()) record(next); };
     const request = async (read: boolean) => selectionResult(selection, await developmentRequest<Result>(
       selectionPath(workspaceId, selection) + (read ? `/${selection.requestId}` : ""), read ? undefined : selectionBody(selection), controller.signal));
-    setPhase(inspect ? "checking" : "switching"); setError(""); setApprovalLink(null); save(selection);
+    setPhase(inspect ? "checking" : "switching"); setError(""); setFailedStarts([]); setApprovalLink(null); save(selection);
     try {
       let next: Result;
       try { next = await request(inspect); }
@@ -65,7 +75,7 @@ export function useWorkspaceExecution(workspaceId: string, options: { disabled?:
         if (current.current.disabled || selection.kind === "workspace" && !current.current.canUse) throw new Error("Resume this workspace before switching its applications.");
         next = await request(false);
       }
-      if (replay && ["failed", "review-required"].includes(next.state) && !next.apps?.some(app => terminalCode(app.code))) next = await request(false);
+      if (replay && ["failed", "review-required"].includes(next.state) && !selectionIsSettled(next)) next = await request(false);
       const approved = new Set<string>();
       for (;;) {
         if (!alive()) return;
@@ -109,9 +119,14 @@ export function useWorkspaceExecution(workspaceId: string, options: { disabled?:
           if (!alive()) return;
           setPhase("switching"); next = await request(false); continue;
         }
-        if (next.apps?.some(app => terminalCode(app.code))) record(null);
-        throw new Error(next.apps?.filter(app => !["completed", "skipped"].includes(app.state))
-          .map(app => `${app.appId}: ${app.error || "Switch failed."}`).join("\n") || next.error || "Core could not complete the switch.");
+        if (selectionIsSettled(next)) {
+          record(null);
+          const failures = next.apps.filter(app => app.state === "failed");
+          if (failures.length && failures.every(startFailed)) setFailedStarts(failures.map(app => app.appId));
+        }
+        const causes = next.apps?.filter(app => app.state === "failed" && app.error?.trim())
+          .map(app => `${app.appId}: ${startFailed(app) ? "Workspace selected. Start failed. " : ""}${app.error!.trim()}`);
+        throw new Error(causes?.join("\n") || next.error || "Core could not complete the switch.");
       }
     } catch (cause) {
       if (!alive()) return;
@@ -154,5 +169,5 @@ export function useWorkspaceExecution(workspaceId: string, options: { disabled?:
   const reopenReview = () => {
     if (approvalLink && pending?.review) presentInstallationConfirmation({ id: pending.review.request.id, approvalUrl: approvalLink });
   };
-  return { phase, pending, error, approvalLink, reopenReview, busy: ["checking", "switching", "approval"].includes(phase), run, retry, cancelReview };
+  return { phase, pending, error, failedStarts, approvalLink, reopenReview, busy: ["checking", "switching", "approval"].includes(phase), run, retry, cancelReview };
 }

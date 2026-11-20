@@ -370,6 +370,13 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
 
     internal async Task<AppSourceResponse> SetLocalOverrideCoreAsync(AppRecord app, AppSourceOverrideRequest request, CancellationToken cancellationToken)
     {
+        var next = await PrepareLocalOverrideAsync(app, request, cancellationToken);
+        await apps.UpdateAppAsync(app.Id, current => current with { SourceState = next.SourceState, ActiveSourcePaths = next.ActiveSourcePaths }, cancellationToken);
+        return new AppSourceResponse(app.Id, next.SourceState);
+    }
+
+    internal async Task<AppRecord> PrepareLocalOverrideAsync(AppRecord app, AppSourceOverrideRequest request, CancellationToken cancellationToken)
+    {
         var appId = app.Id;
         var overridePath = await new HostPathAuthority(paths, apps).OverrideAsync(app, request.Path, cancellationToken);
         // Ask git rather than looking for a `.git` directory: that test misses a linked worktree (where
@@ -397,8 +404,7 @@ internal sealed partial class AppSourceService(CoreDataPaths paths, AppRegistryS
             ManifestSubpath: existing?.ManifestSubpath,
             OverrideCommit: string.IsNullOrWhiteSpace(commit) ? null : commit.Trim(),
             InspectionPaths: existing?.InspectionPaths, Remote: existing?.Remote);
-        await apps.UpdateAppAsync(appId, current => current with { SourceState = state, ActiveSourcePaths = app.ActiveSourcePaths }, cancellationToken);
-        return new AppSourceResponse(appId, state);
+        return app with { SourceState = state };
     }
 
     public Task<AppSourceResponse> ClearLocalOverrideAsync(string appId, CancellationToken cancellationToken = default)

@@ -28,7 +28,7 @@ afterEach(async () => { await act(async () => root.unmount()); container.remove(
 
 it.each([false, true])("keeps group and per-app controls stable through SSE refresh while current=%s", async current => {
   vi.mocked(developmentRequest).mockResolvedValueOnce({ apps: [row(current)] });
-  await act(async () => root.render(<WorkspaceActivation workspaceId="workspace" apps={[{ appId: "notes", name: "Notes" }]} refresh={vi.fn()} />));
+  await act(async () => root.render(<WorkspaceActivation workspaceId="workspace" workspaceName="Fix notes" apps={[{ appId: "notes", name: "Notes" }]} refresh={vi.fn()} />));
   await act(async () => { await sync(); });
   const shown = current ? "Return to packages" : "Use workspace";
   const hidden = current ? "Use workspace" : "Return to packages";

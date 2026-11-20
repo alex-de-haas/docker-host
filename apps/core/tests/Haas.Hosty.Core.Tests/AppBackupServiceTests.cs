@@ -263,6 +263,56 @@ public sealed class AppBackupServiceTests
         Assert.False(listed.Retention?.WouldDeleteInCurrentPlan);
     }
 
+    [Fact]
+    public async Task WorkspaceReturnBackup_SurvivesWorkspaceChainAndReturnUntilReplacedOrDeleted()
+    {
+        const string appId = "com.example.notes";
+        var fixture = BackupFixture.Create();
+        var data = Path.Combine(fixture.DataPath, "notes.txt");
+        async Task<AppBackupRecord> Snapshot(string content)
+        {
+            fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(1);
+            await File.WriteAllTextAsync(data, content);
+            return Assert.IsType<AppBackupRecord>(await fixture.Service.CreateBackupAsync(appId, "pre-development-mode",
+                operationId: Guid.NewGuid().ToString("D")));
+        }
+
+        var installation = fixture.Clock.UtcNow;
+        var original = await Snapshot("package data");
+        await fixture.Service.SetWorkspaceReturnBackupAsync(appId, original.BackupId, installation, default);
+        for (var index = 0; index < 7; index++) await Snapshot($"workspace {index}");
+
+        var restarted = new AppBackupService(fixture.Paths, fixture.Clock);
+        var listed = await restarted.ListBackupsAsync(appId);
+        var recovery = Assert.Single(listed, backup => backup.IsWorkspaceReturnBackup);
+        Assert.Equal(original.BackupId, recovery.BackupId);
+        var reinstalled = await restarted.ListBackupsAsync(appId, installation: installation.AddDays(1));
+        Assert.DoesNotContain(reinstalled, backup => backup.IsWorkspaceReturnBackup);
+        Assert.Contains(reinstalled, backup => backup.BackupId == original.BackupId);
+        Assert.False(recovery.Retention!.Eligible);
+        Assert.Equal(5, listed.Count(backup => !backup.IsWorkspaceReturnBackup));
+        await restarted.RestoreBackupAsync(appId, recovery.BackupId, createPreRestoreBackup: true);
+        Assert.Equal("package data", await File.ReadAllTextAsync(data));
+
+        // A clock adjustment must not let creation prune the new point before it is marked.
+        fixture.Clock.UtcNow = installation.AddDays(-1);
+        var nextTrial = await Snapshot("next package data");
+        await restarted.SetWorkspaceReturnBackupAsync(appId, nextTrial.BackupId, installation, default);
+        Assert.DoesNotContain(await restarted.ListBackupsAsync(appId), backup => backup.BackupId == original.BackupId && backup.IsWorkspaceReturnBackup);
+
+        // Once superseded, the first archive returns to ordinary keep-last-five retention.
+        fixture.Clock.UtcNow = installation.AddDays(1);
+        await Snapshot("changed again in the new workspace");
+        await restarted.ApplyScheduledCleanupAsync();
+        Assert.False(File.Exists(original.ArchivePath));
+        Assert.Equal(nextTrial.BackupId, Assert.Single(await restarted.ListBackupsAsync(appId), backup => backup.IsWorkspaceReturnBackup).BackupId);
+        Assert.True(await restarted.DeleteBackupAsync(appId, nextTrial.BackupId));
+        Assert.DoesNotContain(await restarted.ListBackupsAsync(appId), backup => backup.IsWorkspaceReturnBackup);
+        var replay = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            restarted.CreateBackupAsync(appId, "pre-development-mode", operationId: nextTrial.BackupId[..36]));
+        Assert.Equal("backup_changed", replay.Code);
+    }
+
     // A real backup beside the orphan, because a plan protects everything but a missing archive while
     // the app has only one backup id to its name — an orphan on its own is never a candidate.
     private static async Task<string> CreateOrphanArchiveAsync(BackupFixture fixture)
@@ -372,9 +422,10 @@ public sealed class AppBackupServiceTests
 
     private sealed class BackupFixture
     {
-        private BackupFixture(AppBackupService service, string root, string dataPath, string backupRoot, FakeClock clock)
+        private BackupFixture(AppBackupService service, CoreDataPaths paths, string root, string dataPath, string backupRoot, FakeClock clock)
         {
             Service = service;
+            Paths = paths;
             Root = root;
             DataPath = dataPath;
             BackupRoot = backupRoot;
@@ -382,6 +433,8 @@ public sealed class AppBackupServiceTests
         }
 
         public AppBackupService Service { get; }
+
+        public CoreDataPaths Paths { get; }
 
         public string Root { get; }
 
@@ -407,6 +460,7 @@ public sealed class AppBackupServiceTests
             var clock = new FakeClock(DateTimeOffset.Parse("2026-06-05T10:00:00Z"));
             return new BackupFixture(
                 new AppBackupService(paths, clock),
+                paths,
                 root,
                 dataPath,
                 Path.Combine(paths.BackupsRoot, "com.example.notes"),

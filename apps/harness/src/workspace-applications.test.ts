@@ -65,6 +65,39 @@ it("projects only installed bound apps, current target and granted action capabi
   }
 });
 
+it("reports a selected workspace's startup error independently of process state and log permission", async () => {
+  const original = fetcher.getMockImplementation()!;
+  let grant = true;
+  execution = { ...execution, current: target };
+  fetcher.mockImplementation((url, init) => url.pathname !== "/api/apps" ? original(url, init) : Promise.resolve(Response.json({ apps: [
+    { ...app, runtimeState: "stopped", operationStatus: "failed", lastOperation: "start", lastError: "Compiler failed" },
+    { id: connection.appId, grantedCorePermissions: grant ? ["apps.logs"] : [] },
+  ] })));
+  expect((await read()).apps[0]).toMatchObject({ runtimeState: "stopped", current: target, startError: "Compiler failed", canReadLogs: true });
+  grant = false;
+  expect((await read()).apps[0]).toMatchObject({ startError: "Compiler failed", canReadLogs: false });
+  execution = { ...execution, current: { ...target, workspaceId: "f".repeat(64) } };
+  expect((await read()).apps[0]).not.toHaveProperty("startError");
+});
+
+it("reads bounded logs only for an inspected binding through Core's log authorization", async () => {
+  const route = `${root}/${app.id}/logs`;
+  expect(workspaceApplicationsRoute("GET", route)).toEqual({ workspaceId, appId: app.id, logs: true });
+  expect(workspaceApplicationsRoute("POST", route)).toBeNull();
+  await expect(requestWorkspaceApplications("GET", `${root}/removed.app/logs`, "hostyg_user", undefined, connection))
+    .rejects.toMatchObject({ status: 403 }); expect(fetcher).not.toHaveBeenCalled();
+  const getLogs = () => requestWorkspaceApplications("GET", route, "hostyg_user", undefined, connection);
+  fetcher.mockResolvedValueOnce(Response.json({ code: "log_access_required" }, { status: 403 }));
+  await expect(getLogs()).rejects.toMatchObject({ status: 403, code: "log_access_required" });
+  fetcher.mockResolvedValueOnce(Response.json({ appId: "unrelated.app", text: "other log" }));
+  await expect(getLogs()).rejects.toMatchObject({ code: "core_response_invalid" });
+  fetcher.mockResolvedValueOnce(Response.json({ appId: app.id, text: "old lines" + "x".repeat(16384), services: ["private metadata"] }));
+  expect(await getLogs()).toEqual({ text: "[Earlier output omitted]\n" + "x".repeat(16384) });
+  expect(fetcher).toHaveBeenLastCalledWith(new URL(`https://core.test/api/apps/${app.id}/logs?tail=80`), expect.objectContaining({
+    method: "GET", headers: expect.objectContaining({ "X-Hosty-App-Identity": "hostyg_user", authorization: "Bearer service-secret" }),
+  }));
+});
+
 it("keeps inventory readable without optional lifecycle authority and never invents a current package", async () => {
   lifecycle = false;
   expect((await read()).apps[0]).toMatchObject({ canSwitch: false, unavailable: expect.stringContaining("lifecycle permission") });
