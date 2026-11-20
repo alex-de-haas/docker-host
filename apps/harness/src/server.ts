@@ -851,6 +851,10 @@ async function route(
     const body = await readJson(request);
     sendJson(response, 200, await manager.setAutonomy(sessionId, body.autonomy, actor.userId)); return;
   }
+  if (rest === "/history/refresh" && method === "POST") {
+    await manager.refreshProviderHistory(sessionId, actor.userId, actor.via === "app-session" ? readAppCredential(request) ?? undefined : undefined);
+    sendJson(response, 202, { accepted: true }); return;
+  }
   if (rest === "/credentials" && method === "POST") {
     const credential = readAppCredential(request);
     if (actor.via !== "app-session" || !credential)
@@ -1076,8 +1080,8 @@ async function route(
   }
 
   if (rest === "/cancel" && method === "POST") {
-    await manager.cancelSession(sessionId);
-    sendJson(response, 200, { cancelled: true });
+    const cancelled = await manager.cancelSession(sessionId);
+    sendJson(response, 200, { cancelled });
     return;
   }
 

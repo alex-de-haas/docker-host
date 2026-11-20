@@ -35,6 +35,7 @@ describe("attention", () => {
 
   it("counts the blocked ones", () => {
     expect(waitingCount([session("a", "running", "x"), session("b", "awaiting_approval", "x")])).toBe(1);
+    expect(waitingCount([{ ...session("a", "awaiting_question", "x"), providerHistoryContact: { runId: "run", observedAt: "2026-11-19T10:00:00Z", reason: "unavailable" } }])).toBe(0);
     expect(waitingCount([])).toBe(0);
   });
 });

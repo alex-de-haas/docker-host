@@ -78,8 +78,14 @@ internal sealed partial class CoreAgentExecution
             target is null ? null : PanelIdentity.Installation(target), claims.AgentTargetKey ?? "default", claims.AgentAllowedTools, ct);
         if (claims.UserId != record.UserId || claims.TargetInstallation != target?.InstalledAt || claims.GrantRevision != grant.Revision
             || claims.SessionId != record.Request.SessionId) return null;
+        // Keep the same provenance as the permissions, including when the originating task
+        // was itself admitted through a provider. Never substitute an intermediate provider.
+        var permissionSource = origin.EffectivePermissions is null && origin.App is { } app
+            ? new CoreAppPermissionSource(app.Id, app.InstalledAt) : origin.PermissionSource;
+        if (permissionSource is null) return null;
         var permissions = (origin.EffectivePermissions ?? origin.App?.GrantedCorePermissions ?? []).ToArray();
         return new(record.UserId, origin.User.Role, provider, AllowedTools: allowed, DeniedTools: grant.DeniedTools,
-            EffectivePermissions: permissions, AgentExecution: record.Id);
+            EffectivePermissions: permissions, AgentExecution: record.Id,
+            PermissionSource: permissionSource);
     }
 }

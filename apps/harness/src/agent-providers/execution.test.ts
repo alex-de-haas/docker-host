@@ -389,6 +389,14 @@ describe("public provider execution durability", () => {
     expect(f.persistence.observe).not.toHaveBeenCalled();
   });
 
+  it("retries a native Node timeout from the same committed run", async () => {
+    const f = fixture({ runId, run: snapshot(), cursor: "cursor-3" });
+    f.watch.push({ kind: "snapshot", snapshot: snapshot() });
+    f.persistence.observe.mockRejectedValueOnce(new DOMException("Deadline reached", "TimeoutError"));
+    await f.execution.observe();
+    expect(f.client.watchRun).toHaveBeenCalledTimes(2);
+    expect(f.client.execute).not.toHaveBeenCalled();
+  });
   it("reopens observation from the committed cursor after a temporary projection failure without a new execution", async () => {
     const before = snapshot({ revision: "2", lastSequence: "2", cursor: "committed-2" });
     const f = fixture({ runId, run: before, cursor: before.cursor });

@@ -280,8 +280,12 @@ export class ProviderController {
       this.store.emit(record, "control.updated", { requestId, receipt: control.receipt }); await this.store.save(session);
     });
   }
-  async snapshot(id: string, actor?: Actor) {
-    await this.driver.synchronize(id);
+  async snapshot(id: string, actor?: Actor, options?: { committedOnly: boolean }) {
+    if (!options?.committedOnly) await this.driver.synchronize(id);
+    const current = (await this.store.run(id, actor)).record;
+    // The atomic aggregate is authoritative at its cursor. Synchronization can continue while native output arrives.
+    if (options?.committedOnly && !current.snapshot.stopConfirmed) this.background(this.driver.synchronize(id));
+    if (!projectAppliedDecisionControls(this.store, current)) return current.snapshot;
     return this.store.exclusive(async () => {
       const { session, record } = await this.store.run(id, actor);
       if (projectAppliedDecisionControls(this.store, record)) { this.store.lifecycle(record); await this.store.save(session); }

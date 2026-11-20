@@ -1,10 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { transcriptItems } from "./transcript-items";
+import { orderedHistory, transcriptItems } from "./transcript-items";
 import type { AssistantEvent } from "./assistant-api";
 
 const event = (seq: number, type: string, extra = {}): AssistantEvent => ({ seq, ts: "", type, ...extra });
 
 describe("transcript activity", () => {
+  it("places an older run's recovered answer in its original turn", () => {
+    const providerSource = { runId: "old", generation: "first", provider: { installationId: "one", appId: "agent", key: "chat" } };
+    const events = [event(1, "user_message"), event(2, "assistant_text", { providerSource }), event(3, "result", { providerSource }),
+      event(4, "user_message"), event(5, "assistant_text"), event(6, "assistant_text", { providerSource, providerHistoryEarlier: true })];
+    expect(transcriptItems(events, new Set()).map(item => item.key)).toEqual(["event-1", "event-2", "event-6", "event-4", "event-5"]);
+  });
+
+  it("applies original content to a summary already rendered in the live chat", () => {
+    const events = [event(1, "assistant_text", { providerEventId: "r:message:m", text: "Excerpt" }),
+      event(2, "tool_result", { providerEventId: "r:output:cmd", output: "Excerpt", truncated: true }),
+      event(3, "provider_history_order", { target: "r:message:m", messageText: "Full message" }),
+      event(4, "provider_history_order", { target: "r:output:cmd", toolOutput: "Full output", toolOutputTruncated: false })];
+    expect(orderedHistory(events).map(row => [row.seq, row.text ?? row.output, row.truncated]))
+      .toEqual([[1, "Full message", undefined], [2, "Full output", undefined]]);
+  });
+
+  it("inserts separate recovery markers between disjoint ranges without hiding the new message", () => {
+    const scope = { sessionId: "s", epoch: "archive" };
+    const msg = (seq: number, position: number) => event(seq, "assistant_text", {
+      text: String(position), providerSource: { runId: "run" }, providerHistoryPosition: { ...scope, position },
+    });
+    const events = [msg(1, 140), msg(2, 185), msg(3, 211)];
+    const gaps = [{ ...scope, from: 141, to: 180 }, { ...scope, from: 186, to: 210 }];
+    expect(orderedHistory(events, gaps).map(e => e.text ?? e.gap)).toEqual(["140", gaps[0], "185", gaps[1], "211"]);
+    expect(orderedHistory([...events, msg(4, 210), msg(5, 180)], []).map(e => e.text)).toEqual(["140", "180", "185", "210", "211"]);
+  });
+
   it("groups calls without hiding approvals, questions or answer prose", () => {
     const items = transcriptItems([
       event(1, "user_message"), event(2, "tool_use", { toolName: "Read" }),

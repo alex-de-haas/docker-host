@@ -6,8 +6,8 @@ import { AgentSessionService } from "../agent-sessions/service.js";
 
 const fixtures: PublicProviderFixture[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const fixture of fixtures.splice(0)) await fixture.close(); });
-async function fixture(development?: DevelopmentClient) {
-  const fixture = await publicProviderFixture(); fixtures.push(fixture);
+async function fixture(development?: DevelopmentClient, installationHistory = false) {
+  const fixture = await publicProviderFixture(installationHistory); fixtures.push(fixture);
   const f = development ? { ...fixture, ...fixture.makeManager({ development }) } : fixture;
   const session = await f.manager.createSession({ createdBy: f.owner });
   const original = randomUUID();
@@ -172,6 +172,27 @@ it("replays the exact owner retirement after a lost response and restart without
   expect(f.controls.filter(control => control.input.command === "retire")).toHaveLength(1);
   expect(f.starts).toHaveLength(1);
   expect(await next.store.readRecord(f.session.id)).toBeNull();
+});
+
+it("fences a pending retirement while the shared history feed updates another conversation", async () => {
+  const f = await fixture(undefined, true);
+  const other = await f.manager.createSession({ createdBy: f.owner });
+  await f.manager.postMessage(other.id, "Second conversation", f.credential);
+  await f.interrupt();
+  f.behavior.retire = "confirmed";
+  f.behavior.loseNextRetireResponse = true;
+  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toThrow("lost the retirement response");
+  await f.manager.refreshSessionCredentials(f.session.id, f.owner, f.credential);
+  await expect(f.manager.refreshProviderHistory(f.session.id, f.owner, f.credential)).rejects.toMatchObject({ code: "session_deletion_pending" });
+
+  f.complete(f.runId, "Late observer output");
+  f.complete(f.starts[1]!.runId, "Retained conversation output");
+  await vi.waitFor(async () => expect((await f.store.readEvents(other.id)).some(event => event.text === "Retained conversation output")).toBe(true));
+  expect((await f.store.readEvents(f.session.id)).some(event => event.text === "Late observer output")).toBe(false);
+  expect((await f.store.readProviderExecution(f.session.id))?.run?.stopConfirmed).toBe(false);
+  expect(await f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
+  expect(await f.store.readRecord(f.session.id)).toBeNull();
+  expect(f.activeHistoryStreams()).toBe(1);
 });
 
 it("uses the same Delete confirmation when Stop leaves unresolved effects", async () => {

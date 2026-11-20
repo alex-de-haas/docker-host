@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { AgentClient, parseAgentSse, prepareAgentCancel, prepareAgentControl, prepareAgentRun, prepareAgentSessionCreate } from "./agent-client.js";
+import { AgentClient, readAgentHistoryPage, readAgentHistoryRange, readAgentHistoryStates, watchAgentHistory, watchLiveAgentHistory, parseAgentSse, prepareAgentCancel, prepareAgentControl, prepareAgentRun, prepareAgentSessionCreate } from "./agent-client.js";
 import { AGENT_CAPABILITIES, AgentApiError, type AgentAttachmentChunk, type AgentEvent, type AgentRunInput, type AgentRunSnapshot, type AgentSession } from "./agent.js";
 import { agentReplayCursor, encodeAgentSseEvent, validateAgentAttachmentChunk, validateAgentConfiguration, validateAgentEvent, validateAgentRequest, validateAgentResponseInput, validateAgentRunSnapshot } from "./agent-server.js";
 import { AGENT_EVENT_SCHEMA, AGENT_OPENAPI } from "./agent-schemas.js";
@@ -140,6 +140,18 @@ describe("SSE replay and recovery", () => {
     expect(items[1]).toMatchObject({ event: { source: child.source, sequence: "2" } });
     expect(authorize).toHaveBeenCalledTimes(2);
   });
+  it("reopens quiet subscriptions from their committed cursor without rereading the snapshot or exhausting the retry limit", async () => {
+    const done = snapshot("2", true);
+    const renewal = "event: renew\ndata: {}\n\n";
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json(snapshot()))
+      .mockResolvedValueOnce(stream(renewal)).mockResolvedValueOnce(stream(renewal))
+      .mockResolvedValueOnce(stream(encodeAgentSseEvent(event("2", "run.updated", { snapshot: done }), "cursor-2")));
+    const items = await collect(new AgentClient({ provider, authorize: async () => authorization(), fetch: fetcher })
+      .watchRun(runId, { maxReconnects: 0, reconnectDelayMs: 0 }));
+    expect(items.map(item => item.kind)).toEqual(["snapshot", "event"]);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher.mock.calls.slice(1).every(call => String(call[0]).endsWith("events?after=cursor-1"))).toBe(true);
+  });
   it("replaces state after expired replay, then follows the replacement watermark with fresh authority", async () => {
     const fresh = { ...snapshot("8"), latestContext: { sequence: "7", usage: { usedTokens: 108, maxTokens: 32768, estimated: false } } };
     const end = { ...snapshot("9", true), latestContext: { sequence: "8", usage: null } };
@@ -233,6 +245,94 @@ describe("recoverable public snapshot details", () => {
       { decisions: [{ decision, state: "resolved", response: { kind: "approval", decision: "invented" } }] },
       { pendingContinuations: [{ requestId, run: { id: runId }, state: "awaiting_authorization" }] },
     ]) expect(() => validateAgentRunSnapshot({ ...value, ...patch })).toThrow();
+  });
+});
+
+describe("installation history", () => {
+  const envelope = () => ({ sessionId, runId, generation, userId: "user-A", principalId: "principal-A", item: { kind: "snapshot", snapshot: snapshot() } });
+  it("keeps the installation cursor separate from the run cursor and sends only the history bearer", async () => {
+    const fetcher = vi.fn().mockResolvedValue(stream(`event: observation\nid: installation-9\ndata: ${JSON.stringify(envelope())}\n\n`));
+    const items = await collect(watchAgentHistory({ url: "http://provider.test/history/events", token: "read-token", provider, cursor: "previous", fetch: fetcher }));
+    expect(items).toEqual([{ ...items[0], cursor: "installation-9", item: { kind: "snapshot", snapshot: expect.objectContaining({ cursor: "cursor-1" }) } }]);
+    expect(fetcher.mock.calls[0][0].searchParams.get("after")).toBe("previous");
+    expect(fetcher.mock.calls[0][1].headers).toEqual({ accept: "text/event-stream", authorization: "Bearer read-token" });
+  });
+  it("accepts idle heartbeats, pauses the timer during consumer work and resumes a silent transport from its last observation", async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn(); let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const silent = new Response(new ReadableStream({ start(c) { controller = c; }, cancel }), { headers: { "content-type": "text/event-stream" } });
+    const frame = (id: string) => `event: observation\nid: ${id}\ndata: ${JSON.stringify(envelope())}\n\n`;
+    const fetcher = vi.fn().mockResolvedValueOnce(silent).mockResolvedValueOnce(stream(frame("next")));
+    const options = { url: "http://provider.test/history/events", token: "history", provider, fetch: fetcher, idleTimeoutMs: 40 };
+    try {
+      const iterator = watchAgentHistory(options), first = iterator.next();
+      for (let i = 0; i < 4; i++) {
+        await vi.advanceTimersByTimeAsync(30);
+        controller.enqueue(new TextEncoder().encode(": heartbeat\n\n"));
+      }
+      controller.enqueue(new TextEncoder().encode(frame("saved")));
+      expect((await first).value?.cursor).toBe("saved");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(cancel).not.toHaveBeenCalled();
+      const expired = expect(iterator.next()).rejects.toMatchObject({ code: "history_stream_idle", status: 504 });
+      await vi.advanceTimersByTimeAsync(41); await expired;
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect((await collect(watchAgentHistory({ ...options, cursor: "saved" }))).map(value => value.cursor)).toEqual(["next"]);
+      expect(fetcher.mock.calls[1][0].searchParams.get("after")).toBe("saved");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("pages an authorized range through its original watermark", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(Response.json({ through: "high", nextCursor: "p", observations: [{ ...envelope(), cursor: "p" }] }))
+      .mockResolvedValueOnce(Response.json({ through: "high", nextCursor: null, observations: [] }));
+    const options = { url: "http://provider.test/history/events", token: "read-token", provider, fetch: fetcher, limit: 1 };
+    const page = await readAgentHistoryPage(options);
+    expect(page.observations[0]?.cursor).toBe("p");
+    const last = await readAgentHistoryPage({ ...options, cursor: page.nextCursor!, through: page.through });
+    expect(last).toEqual({ observations: [], through: "high", nextCursor: null });
+    const query = fetcher.mock.calls[1]![0].searchParams;
+    expect(query.get("after")).toBe("p");
+    expect(query.get("through")).toBe("high");
+  });
+  it("only falls back for an unsupported live endpoint and rejects an observation before the ready boundary", async () => {
+    const fetcher = vi.fn();
+    const options = { url: "http://provider.test/history/events", token: "read-token", provider, fetch: fetcher, onReady: vi.fn() };
+    fetcher.mockResolvedValueOnce(Response.json({ error: { code: "unsupported_operation" } }, { status: 422 }));
+    await expect(collect(watchLiveAgentHistory(options))).rejects.toMatchObject({ code: "history_live_unsupported" });
+    fetcher.mockResolvedValueOnce(Response.json({ error: { code: "permission_denied" } }, { status: 403 }));
+    await expect(collect(watchLiveAgentHistory(options))).rejects.toMatchObject({ code: "permission_denied" });
+    fetcher.mockResolvedValueOnce(stream("event: observation\nid: pos\ndata: " + JSON.stringify(envelope()) + "\n\n"));
+    await expect(collect(watchLiveAgentHistory(options))).rejects.toMatchObject({ code: "event_invalid" });
+    expect(options.onReady).not.toHaveBeenCalled();
+  });
+  it("rejects missing durable positions, changed state identity and an incorrect next range position", async () => {
+    const fetcher = vi.fn();
+    const options = { url: "http://provider.test/history/events", token: "read-token", provider, fetch: fetcher,
+      through: "boundary", sessionId, epoch: "retained-epoch", from: 2, to: 3 };
+    const frame = { ...envelope(), cursor: "receipt", epoch: options.epoch, sessionPosition: 2 };
+    for (const page of [{ observations: [{ ...frame, sessionPosition: 3 }], nextPosition: 3 },
+      { observations: [frame], nextPosition: null }, { observations: [frame], nextPosition: 9 }]) {
+      fetcher.mockResolvedValueOnce(Response.json(page));
+      await expect(readAgentHistoryRange(options)).rejects.toMatchObject({ code: "response_invalid" });
+    }
+    fetcher.mockResolvedValueOnce(Response.json({ through: "boundary", nextSession: null, sessions: [{ ...envelope(),
+      sessionId: "different", epoch: options.epoch, head: 3, snapshot: snapshot() }] }));
+    await expect(readAgentHistoryStates(options)).rejects.toMatchObject({ code: "response_invalid" });
+  });
+  it("preserves retryable provider failures for state and range reads", async () => {
+    const fetcher = vi.fn(async () => Response.json({
+      error: { code: "history_temporarily_unavailable", message: "History is recovering.", retryable: true },
+    }, { status: 503 }));
+    const options = { url: "http://provider.test/history/events", token: "read-token", provider, fetch: fetcher,
+      through: "boundary", sessionId, epoch: "retained-epoch", from: 2, to: 3 };
+    const expected = { code: "history_temporarily_unavailable", status: 503, retryable: true };
+    await expect(readAgentHistoryStates(options)).rejects.toMatchObject(expected);
+    await expect(readAgentHistoryRange(options)).rejects.toMatchObject(expected);
+  });
+  it("rejects a different run in an otherwise valid history page", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ through: "t", nextCursor: null, observations: [{ ...envelope(), runId: requestId, cursor: "p" }] }));
+    await expect(readAgentHistoryPage({ url: "http://provider.test/history/events", token: "read-token", provider, fetch: fetcher })).rejects.toThrow("identity changed");
   });
 });
 

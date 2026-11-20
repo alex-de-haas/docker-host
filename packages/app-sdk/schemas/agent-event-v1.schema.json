@@ -1151,6 +1151,56 @@
       ],
       "additionalProperties": false
     },
+    "ChildAgent": {
+      "type": "object",
+      "properties": {
+        "agentId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,256}$"
+        },
+        "parentAgentId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,256}$"
+        },
+        "parentToolCallId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,256}$"
+        },
+        "state": {
+          "enum": [
+            "queued",
+            "running",
+            "waiting_for_input",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "stopConfirmed": {
+          "type": "boolean"
+        },
+        "prompt": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "response": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "promptTruncated": {
+          "type": "boolean"
+        },
+        "responseTruncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "agentId",
+        "state"
+      ],
+      "additionalProperties": true
+    },
     "PendingDecision": {
       "type": "object",
       "properties": {
@@ -1529,40 +1579,7 @@
           "type": "array",
           "maxItems": 1024,
           "items": {
-            "type": "object",
-            "properties": {
-              "agentId": {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9_-]{1,256}$"
-              },
-              "parentAgentId": {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9_-]{1,256}$"
-              },
-              "parentToolCallId": {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9_-]{1,256}$"
-              },
-              "state": {
-                "enum": [
-                  "queued",
-                  "running",
-                  "waiting_for_input",
-                  "succeeded",
-                  "failed",
-                  "cancelled",
-                  "unknown"
-                ]
-              },
-              "stopConfirmed": {
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "agentId",
-              "state"
-            ],
-            "additionalProperties": true
+            "$ref": "#/$defs/ChildAgent"
           }
         },
         "selection": {
@@ -1735,6 +1752,489 @@
         "effects"
       ],
       "additionalProperties": true
+    },
+    "HistoryObservation": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,256}$"
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,256}$"
+        },
+        "generation": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "principalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "item": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "snapshot"
+                },
+                "snapshot": {
+                  "$ref": "#/$defs/RunSnapshot"
+                }
+              },
+              "required": [
+                "kind",
+                "snapshot"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "event"
+                },
+                "event": {
+                  "$ref": "#/$defs/Event"
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                }
+              },
+              "required": [
+                "kind",
+                "event",
+                "cursor"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "sessionId",
+        "runId",
+        "generation",
+        "principalId",
+        "userId",
+        "item"
+      ],
+      "additionalProperties": false
+    },
+    "LiveHistoryReady": {
+      "type": "object",
+      "properties": {
+        "through": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        }
+      },
+      "required": [
+        "through"
+      ],
+      "additionalProperties": false
+    },
+    "LiveHistoryObservation": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,256}$"
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,256}$"
+        },
+        "generation": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "principalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "item": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "snapshot"
+                },
+                "snapshot": {
+                  "$ref": "#/$defs/RunSnapshot"
+                }
+              },
+              "required": [
+                "kind",
+                "snapshot"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "event"
+                },
+                "event": {
+                  "$ref": "#/$defs/Event"
+                },
+                "cursor": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                }
+              },
+              "required": [
+                "kind",
+                "event",
+                "cursor"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "epoch": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "sessionPosition": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "sourceHistoryIncomplete": {
+          "const": true
+        }
+      },
+      "required": [
+        "sessionId",
+        "runId",
+        "generation",
+        "principalId",
+        "userId",
+        "item",
+        "epoch"
+      ],
+      "additionalProperties": false
+    },
+    "HistoryStates": {
+      "type": "object",
+      "properties": {
+        "through": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "nextSession": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        },
+        "sessions": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,256}$"
+              },
+              "userId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "principalId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "epoch": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "head": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "snapshot": {
+                "$ref": "#/$defs/RunSnapshot"
+              },
+              "sourceHistoryIncomplete": {
+                "const": true
+              }
+            },
+            "required": [
+              "sessionId",
+              "userId",
+              "principalId",
+              "epoch",
+              "head",
+              "snapshot"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "through",
+        "nextSession",
+        "sessions"
+      ],
+      "additionalProperties": false
+    },
+    "HistoryRange": {
+      "type": "object",
+      "properties": {
+        "nextPosition": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "observations": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,256}$"
+              },
+              "runId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,256}$"
+              },
+              "generation": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "principalId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "userId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "item": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "snapshot"
+                      },
+                      "snapshot": {
+                        "$ref": "#/$defs/RunSnapshot"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "snapshot"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "event"
+                      },
+                      "event": {
+                        "$ref": "#/$defs/Event"
+                      },
+                      "cursor": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8192
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "event",
+                      "cursor"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "cursor": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "epoch": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "sessionPosition": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "sourceHistoryIncomplete": {
+                "const": true
+              }
+            },
+            "required": [
+              "sessionId",
+              "runId",
+              "generation",
+              "principalId",
+              "userId",
+              "item",
+              "cursor",
+              "epoch",
+              "sessionPosition"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "nextPosition",
+        "observations"
+      ],
+      "additionalProperties": false
+    },
+    "HistoryPage": {
+      "type": "object",
+      "properties": {
+        "observations": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,256}$"
+              },
+              "runId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,256}$"
+              },
+              "generation": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "principalId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "userId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "item": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "snapshot"
+                      },
+                      "snapshot": {
+                        "$ref": "#/$defs/RunSnapshot"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "snapshot"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "event"
+                      },
+                      "event": {
+                        "$ref": "#/$defs/Event"
+                      },
+                      "cursor": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8192
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "event",
+                      "cursor"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "cursor": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              }
+            },
+            "required": [
+              "sessionId",
+              "runId",
+              "generation",
+              "principalId",
+              "userId",
+              "item",
+              "cursor"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "through": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "observations",
+        "through",
+        "nextCursor"
+      ],
+      "additionalProperties": false
     },
     "Session": {
       "type": "object",
@@ -2699,6 +3199,12 @@
             "properties": {
               "data": {
                 "type": "object",
+                "properties": {
+                  "agent": {
+                    "$ref": "#/$defs/ChildAgent"
+                  }
+                },
+                "required": [],
                 "additionalProperties": true
               }
             }

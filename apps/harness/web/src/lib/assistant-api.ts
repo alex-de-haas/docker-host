@@ -26,7 +26,10 @@ export type AssistantQuestion = {
   options: Array<{ id?: string; label: string; description: string; preview?: string }>;
 };
 
+export type ProviderHistoryGap = { sessionId: string; epoch: string; archiveGeneration?: string; from: number; to: number; unavailable?: boolean };
 export type AssistantSession = {
+  providerHistoryGaps?: ProviderHistoryGap[];
+  providerHistoryContact?: { runId: string; observedAt: string; reason: "denied" | "invalid" | "unavailable" };
   workerRun?: { id: string; sequence: number; generation?: string };
   workerRecovery?: { state: "pending" | "completed" };
   storageRecovery?: { state: "required"; code: string; message: string };
@@ -140,6 +143,9 @@ export async function getStorageRecovery(signal?: AbortSignal): Promise<StorageR
 
 export async function createWorkspaceSession(input: { workspaceId: string; requestId: string; expectedRevision: number }): Promise<AssistantSession> {
   return (await call("/workspace-sessions", { method: "POST", body: JSON.stringify({ ...input, browserDefaults: await loadBrowserAgentDefaults() }) })).json();
+}
+export async function refreshProviderHistory(id: string): Promise<void> {
+  await call(`/sessions/${encodeURIComponent(id)}/history/refresh`, { method: "POST" });
 }
 export async function createSession(input: { profileId?: string | null; profileRevision?: number; connectionId?: string; title?: string; context?: Record<string, string>; appIds?: string[]; clientRequestId?: string;
   executionSelection?: NonNullable<AssistantSession["executionSelection"]>; autonomy?: "normal" | "autonomous"; browserDefaults?: BrowserAgentDefaults } = {}): Promise<AssistantSession> {

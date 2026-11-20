@@ -149,7 +149,7 @@ describe("native execution behind the public lifecycle", () => {
     await f.controller.startRun(f.sessionId, nextId, next, JSON.stringify(next), { ...actor, admissionRef: "new-exact-authorization" });
     await until(() => f.controller.snapshot(nextId), snapshot => snapshot.pending.length === 1);
     expect(f.starts).toHaveLength(2); expect(f.starts[1]).toMatchObject({ resumeHarnessSessionId: "native-fixture-session", requireNativeResume: true });
-    expect(f.authority.admit).toHaveBeenCalledWith("new-exact-authorization");
+    expect(f.authority.admit).toHaveBeenCalledWith("new-exact-authorization", (await f.controller.snapshot(nextId)).generation);
   });
   it("does not release an awaiting native callback until cancellation confirms the known execution stop", async () => {
     const f = await setup(true), id = randomUUID(), command: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start", input: { text: "Ask before acting" } };

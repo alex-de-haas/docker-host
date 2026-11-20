@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Check, Diamond, Loader2, Pencil, Trash2, X } from "lucide-react";
 import { AppContextIcons } from "@/components/app-context-icons";
-import { isWaiting } from "@/lib/attention";
+import { isWaiting, observedSessionStatus } from "@/lib/attention";
 import { cn } from "@/lib/utils";
 import type { AssistantSession } from "@/lib/assistant-api";
 
@@ -40,8 +40,9 @@ export function SessionList({
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
-      {sessions.map((record) => (
-        <div
+      {sessions.map((record) => {
+        const status = observedSessionStatus(record);
+        return <div
           key={record.id}
           className={cn(
             "group flex items-center gap-1 rounded-md pr-1 transition-colors hover:bg-muted",
@@ -104,15 +105,15 @@ export function SessionList({
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-normal">{record.title || "Untitled session"}</div>
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    {isWaiting(record.status) && (
+                    {isWaiting(status) && (
                       // Marked as well as ordered: ordering alone is invisible to someone who has not seen the
                       // list before, and the row has to say *why* it is first.
                       <Diamond className="size-3 shrink-0 text-warning-foreground" aria-hidden="true" />
                     )}
                     <span className="tabular-nums">{new Date(record.createdAt).toLocaleString()}</span>
                     <span aria-hidden>·</span>
-                    <span className={cn(isWaiting(record.status) && "font-medium text-warning-foreground")}>
-                      {isWaiting(record.status) ? "waiting for you" : record.status}
+                    <span className={cn(isWaiting(status) && "font-medium text-warning-foreground")}>
+                      {isWaiting(status) ? "waiting for you" : status === "unknown" ? "activity unconfirmed" : status}
                     </span>
                   </div>
                 </div>
@@ -139,8 +140,8 @@ export function SessionList({
               </button>
             </>
           )}
-        </div>
-      ))}
+        </div>;
+      })}
     </div>
   );
 }

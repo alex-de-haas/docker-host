@@ -273,6 +273,64 @@ function handle(msg) {
         turn: { id: "feedback-turn", status: "failed", error: { message: "Feedback acceptance fixture failed: " + error.message } } } }));
       return;
     }
+    if (currentTurnText.includes("NATIVE_SUBAGENT_DISCLOSURE")) {
+      const threadId = msg.params.threadId, turnId = "delegating-turn", child = "archive-reviewer";
+      send({ id: msg.id, result: { turn: { id: turnId } } });
+      send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+      const observe = (id, tool, prompt, status, message) => send({ method: "item/completed",
+        params: { threadId, turnId, item: { type: "collabAgentToolCall", id, tool, status: "completed",
+          senderThreadId: threadId, receiverThreadIds: [child], prompt, agentsStates: { [child]: { status, message } } } } });
+      observe("spawn-reviewer", "spawnAgent", "Inspect the archive index.", "running", null);
+      observe("wait-reviewer", "wait", null, "completed", "The archive index contains both records.");
+      send({ method: "item/completed", params: { threadId, turnId, item: {
+        type: "agentMessage", id: "root-summary", phase: "final_answer", text: "The archive review is finished." } } });
+      send({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "completed" } } });
+      return;
+    }
+    const ranges = currentTurnText.match(/HISTORY_RANGES:(\d{1,5}):([a-f0-9]{32})/);
+    if (ranges) {
+      const [, port, chat] = ranges;
+      const threadId = msg.params.threadId;
+      send({ id: msg.id, result: {} });
+      send({ method: "turn/started", params: { threadId, turn: { id: chat } } });
+      void (async () => {
+        for (let batch = 0; ; batch++) {
+          const result = await fetch(`http://127.0.0.1:${port}/${chat}/${batch}`, { signal: AbortSignal.timeout(240_000) });
+          if (!result.ok) throw new Error("History range fixture closed unexpectedly");
+          const { messages, done } = await result.json();
+          for (const [index, text] of messages.entries()) {
+            send({ method: "item/completed", params: { threadId, turnId: chat,
+              item: { type: "agentMessage", id: `${chat}-${batch}-${index}`, text } } });
+          }
+          if (done) break;
+        }
+        send({ method: "turn/completed", params: { threadId, turn: { id: chat, status: "completed" } } });
+      })().catch(error => fail(error.message));
+      return;
+    }
+    const historyGate = currentTurnText.match(/HISTORY_ACCEPTANCE:(\d{1,5}):([a-f0-9]{32})/);
+    if (historyGate) {
+      const [, port, marker] = historyGate;
+      send({ id: msg.id, result: {} });
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: marker } } });
+      const source = currentTurnText.match(/WORKSPACE_SOURCE:([a-zA-Z0-9.-]+)/)?.[1];
+      void (async () => {
+        const gate = new URL(`http://127.0.0.1:${port}/${marker}`);
+        if (source) {
+          const tree = await prepareHistoryWorkspace(source, marker);
+          gate.searchParams.set("workspace", tree.workspaceId);
+          gate.searchParams.set("worktree", tree.id);
+        }
+        return fetch(gate, { signal: AbortSignal.timeout(120000) });
+      })().then(async response => {
+        if (!response.ok) throw new Error("History fixture gate rejected the run");
+        await response.text();
+        send({ method: "item/completed", params: { threadId: activeThreadId, turnId: marker,
+          item: { type: "agentMessage", id: "final-" + marker, text: "Completed " + marker } } });
+        send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: marker, status: "completed" } } });
+      }).catch(error => fail(error.message));
+      return;
+    }
     if (currentTurnText.includes("DECISIONS_ACCEPTANCE:LIVE")) currentTurnText = "question-native";
     if (currentTurnText.includes("TASK_ACCEPTANCE:QUESTION")) currentTurnText = "question-task";
     if (currentTurnText.includes("Continue the same task in its selected workspace.")) currentTurnText = "TASK_ACCEPTANCE:RESULT";
@@ -552,6 +610,37 @@ function handle(msg) {
 }
 
 // Exercise the real session MCP transport and approval gate; never write task/session state.
+async function prepareHistoryWorkspace(appId, marker) {
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  const config = Object.fromEntries(argv.filter(arg => arg.startsWith("mcp_servers.")).map(arg => {
+    const split = arg.indexOf("="); return [arg.slice(0, split), JSON.parse(arg.slice(split + 1))];
+  }));
+  for (const [key, endpoint] of Object.entries(config)) {
+    if (!key.endsWith(".url")) continue;
+    const token = process.env[config[key.replace(/url$/, "bearer_token_env_var")]];
+    const client = new Client({ name: "workspace-history-acceptance", version: "1" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(endpoint), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+    try {
+      const tools = await client.listTools();
+      if (!tools.tools.some(tool => tool.name === "prepare_workspace")) continue;
+      const command = { name: "prepare_workspace", arguments: { appId, name: "Workspace history acceptance", targetBranch: "main",
+        taskId: marker, requestId: crypto.randomUUID(), leaseId: crypto.randomUUID() } };
+      const prepare = async () => {
+        const response = await client.callTool(command);
+        if (response.isError) throw new Error("Workspace preparation refused: " + response.content.find(item => item.type === "text")?.text);
+        return response.structuredContent ?? JSON.parse(response.content.find(item => item.type === "text").text);
+      };
+      const tree = await prepare(), replay = await prepare();
+      if (!tree.path || !tree.workspaceId || !tree.id || tree.path !== replay.path || tree.id !== replay.id || tree.workspaceId !== replay.workspaceId)
+        throw new Error("Workspace preparation did not replay the original worktree");
+      writeFileSync(path.join(tree.path, "history-" + marker + ".txt"), marker, { flag: "wx" });
+      return tree;
+    } finally { await client.close(); }
+  }
+  throw new Error("The admitted run did not receive prepare_workspace");
+}
+
 async function taskOutcome(text, emitItem) {
   if (text.includes("TASK_ACCEPTANCE:NO_OUTCOME")) return;
   const config = Object.fromEntries(argv.filter(a => a.startsWith("mcp_servers.")).map(a => {

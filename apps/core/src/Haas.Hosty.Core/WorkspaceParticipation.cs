@@ -4,8 +4,8 @@ internal sealed record WorkspaceMember(string UserId, string Role, string[] Work
     DateTimeOffset GrantedAt, string GrantedBy, DateTimeOffset? RevokedAt = null, string? SourceRevision = null);
 internal sealed record WorkspaceSessionBinding(WorkspaceOwner Session, string Title, string? ViewerPath,
     DateTimeOffset AttachedAt, DateTimeOffset? DetachedAt = null, string Status = "unknown",
-    DateTimeOffset? ActivityAt = null, string? LeaseId = null, DateTimeOffset? ChangedAt = null, long? ActivitySequence = null);
-internal sealed record WorkspaceParticipationOperation(string Id, string Actor, string Fingerprint);
+    DateTimeOffset? ActivityAt = null, string? LeaseId = null, DateTimeOffset? ChangedAt = null, long? ActivitySequence = null, string? Kind = null, WorkspaceOwner? Origin = null);
+internal sealed record WorkspaceParticipationOperation(string Id, string Actor, string Fingerprint, WorkspacePreparationEvidence? Preparation = null);
 internal sealed record WorkspaceParticipation(string Id, WorkspaceOwner AllocationOwner, long Revision,
     WorkspaceMember[] Members, WorkspaceSessionBinding[] Sessions, WorkspaceParticipationOperation[] Operations, DateTimeOffset? RetiredAt = null);
 internal sealed record WorkspaceMemberCommand(string RequestId, long ExpectedRevision, string UserId,
@@ -129,10 +129,10 @@ internal sealed partial class DevelopmentWorkspaceService
     }
 
     private async Task<WorkspaceParticipation> SaveParticipationCommandAsync(WorkspaceParticipation value,
-        string requestId, string actor, string fingerprint, CancellationToken ct)
+        string requestId, string actor, string fingerprint, CancellationToken ct, WorkspacePreparationEvidence? evidence = null)
     {
         value = value with { Revision = checked(value.Revision + 1),
-            Operations = [.. value.Operations, new(requestId, actor, fingerprint)] };
+            Operations = [.. value.Operations, new(requestId, actor, fingerprint, evidence)] };
         await SaveParticipationAsync(value, ct);
         return value;
     }
@@ -176,7 +176,7 @@ internal sealed partial class DevelopmentWorkspaceService
         }, ct);
 
     internal Task<WorkspaceParticipation> ChangeSessionAsync(string workspaceId, WorkspaceOwner actor, string kind,
-        WorkspaceSessionCommand input, CancellationToken ct)
+        WorkspaceSessionCommand input, CancellationToken ct, bool nativeExecution = false)
         => Locked("workspace-participation", async () =>
         {
             RequestId(input.RequestId);
@@ -209,7 +209,9 @@ internal sealed partial class DevelopmentWorkspaceService
                 await RequireSessionIdleAsync(trees, actor, ct);
                 foreach (var tree in trees.Where(t => t.State == "active"))
                     await RequireParticipationSourceAsync(tree, actor.UserId, ct);
-                session = new(actor, input.Title.Trim(), path, clock.UtcNow, Status: "idle", ActivityAt: clock.UtcNow);
+                session = nativeExecution
+                    ? new(actor, "Native agent execution", null, clock.UtcNow, Kind: "execution")
+                    : new(actor, input.Title.Trim(), path, clock.UtcNow, Status: "idle", ActivityAt: clock.UtcNow);
             }
             else
             {

@@ -83,7 +83,7 @@ beforeEach(() => {
   fixture.pathname = "/dashboard"; fixture.params = new URLSearchParams(); fixture.openUpdateLogs = null;
   fixture.router.push.mockReset(); fixture.router.replace.mockReset();
   fixture.read.mockReset(); fixture.settle.mockReset(); fixture.showConfirmation.mockReset();
-  fixture.confirm.mockReset();
+  fixture.confirm.mockReset().mockResolvedValue(true);
   fixture.switchSettle.mockReset().mockResolvedValue({ kind: "unresolved" });
   for (const toast of Object.values(fixture.toast)) toast.mockReset();
   fixture.read.mockImplementation(async (url: string, init?: RequestInit) => {
@@ -93,7 +93,7 @@ beforeEach(() => {
     if (path === "/api/auth/csrf") return Response.json({ token: "csrf" });
     if (path === "/api/apps") return Response.json({ apps });
     if (path === "/api/apps/execution-targets") return Response.json({ apps: apps.map(app => ({ appId: app.id,
-      packageRuntime: app.selectedRuntime, current: { kind: "package", runtime: app.selectedRuntime },
+      packageRuntime: app.selectedRuntime, current: { kind: app.runtimeProfiles?.some(p => p.key === app.selectedRuntime && p.development) ? "legacy" : "package", runtime: app.selectedRuntime },
       choices: app.runtimeProfiles?.filter(profile => !profile.development).map(profile => ({ kind: "package", runtime: profile.key, available: true })) ?? [],
     })) });
     if (path.endsWith("/execution-target") && init?.method === "POST") {
@@ -925,14 +925,14 @@ it("guards duplicate Shell confirmations and releases the guard on cancellation"
   expect(shell.pendingAppActions).toEqual({});
 });
 
-it("switches directly to a package without planning or compatibility confirmation", async () => {
+it("confirms a manual package return with current data before submitting it", async () => {
   apps = [{ ...target, selectedRuntime: "dev", live: true, devMode: { operationId: "trial", phase: "active", previousRuntime: "docker" } }];
   await mount();
   await act(async () => actions.switchAppRuntime(apps[0], { kind: "package", runtime: "docker" }));
   expect(callsTo("/api/apps/routine.app/execution-target")).toHaveLength(1);
   expect(JSON.parse(callsTo("/api/apps/routine.app/execution-target")[0][1].body)).toMatchObject({ kind: "package", runtime: "docker" });
   expect(callsTo("/api/apps/routine.app/dev-mode/plan")).toHaveLength(0);
-  expect(fixture.confirm).not.toHaveBeenCalled();
+  expect(fixture.confirm).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ action: "Return to package", description: expect.stringContaining("current data") }));
   expect(fixture.toast.success).not.toHaveBeenCalled();
   expect(fixture.toast.info).not.toHaveBeenCalled();
 });
@@ -959,12 +959,29 @@ it("retains one request while Shell is switching and recovers its lost response 
   expect(shell.busyAction).toBeNull();
 });
 
+it("cancels workspace entry before journaling or submitting, even on a double click", async () => {
+  const confirmation = deferred<boolean>();
+  fixture.confirm.mockReturnValueOnce(confirmation.promise);
+  const selection = { kind: "workspace" as const, workspaceId: "w", worktreeId: "t" };
+  await mount();
+  let switching!: Promise<void>;
+  await act(async () => {
+    switching = actions.switchAppRuntime(target, selection);
+    await actions.switchAppRuntime(target, selection);
+  });
+  await act(async () => { confirmation.resolve(false); await switching; });
+  expect(fixture.confirm).toHaveBeenCalledOnce();
+  expect(callsTo(`/api/apps/${target.id}/execution-target`)).toHaveLength(0);
+  expect(localStorage.getItem(`hosty.execution-target:https://core.test:${target.id}`)).toBeNull();
+});
+
 it("reconnects using the original saved request instead of inventing another switch", async () => {
   const request = { kind: "workspace", workspaceId: "workspace-a", worktreeId: "tree-a", requestId: "4d12ad26-e645-41de-9814-98b6d60811a9" };
   localStorage.setItem("hosty.execution-target:https://core.test:routine.app", JSON.stringify(request));
   await mount();
   await act(async () => {});
   expect(callsTo("/api/apps/routine.app/execution-target").map(([, init]) => JSON.parse(init.body))).toEqual([request]);
+  expect(fixture.confirm).not.toHaveBeenCalled();
 });
 
 it("reconciles a saved return after reload when the package already appears selected, then permits another workspace", async () => {
@@ -1023,12 +1040,27 @@ it.each(["succeeded", "denied"])("registers and submits actual access review, th
   expect(fixture.showConfirmation).toHaveBeenCalledWith(null, submitted);
   expect(callsTo("/api/installations").map(([, init]) => JSON.parse(init.body))).toEqual([review]);
   expect(callsTo("/api/installations/approval/submit")).toHaveLength(1);
-  expect(fixture.confirm).not.toHaveBeenCalled();
+  expect(fixture.confirm).toHaveBeenCalledOnce();
   expect(targetCalls).toBe(1);
   await act(async () => { await vi.advanceTimersByTimeAsync(1000); await switching; });
   const requests = callsTo("/api/apps/routine.app/execution-target").map(([, init]) => JSON.parse(init.body));
   if (outcome === "succeeded") expect(requests).toEqual([requests[0], requests[0]]);
   else expect(requests).toHaveLength(1);
+});
+
+it("settles a failed startup with the workspace selected and reports the runtime error", async () => {
+  const app = { ...target, capabilities: ["logs"], selectedRuntime: "dev", runtimeState: "stopped",
+    live: true, lastError: "Compiler exited with code 1", operationStatus: "failed" };
+  overrideRequests(path => {
+    if (!path.endsWith("/execution-target")) return;
+    apps = [app];
+    return Response.json({ state: "failed", code: "dev_workspace_start_failed", app, error: app.lastError });
+  });
+  await mount();
+  await act(async () => actions.switchAppRuntime(target, { kind: "workspace", workspaceId: "w", worktreeId: "t" }));
+  expect(fixture.toast.error).toHaveBeenCalledWith("Workspace selected. Routine app could not start", expect.objectContaining({ description: app.lastError }));
+  expect(shell.state.apps[0]).toMatchObject({ selectedRuntime: "dev", runtimeState: "stopped" });
+  expect(localStorage.getItem("hosty.execution-target:https://core.test:routine.app")).toBeNull();
 });
 
 it("surfaces a definite refusal and allows a new explicit retry", async () => {
@@ -1069,8 +1101,7 @@ it("offers only package profiles and named app-bound workspaces in one dropdown"
   const choice = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "Dashboard layout")!;
   await act(async () => choice.click());
   expect(JSON.parse(callsTo("/api/apps/routine.app/execution-target")[0][1].body)).toMatchObject({ kind: "workspace", workspaceId: "workspace-a", worktreeId: "tree-a" });
-  expect(document.querySelector('[role="dialog"]')).toBeNull();
-  expect(fixture.confirm).not.toHaveBeenCalled();
+  expect(fixture.confirm).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ title: "Switch Routine app to a workspace?", description: expect.stringContaining("Dashboard layout") }));
 });
 
 it.each(["empty", "current package", "current workspace", "unavailable alternative"])("hides the runtime menu for %s without an available alternative", async kind => {
@@ -1091,6 +1122,19 @@ it.each(["empty", "current package", "current workspace", "unavailable alternati
   else expect(appRow().querySelector(".dashboard-runtime")?.textContent).toBe("docker");
 });
 
+it("identifies the installed package even when its only runtime is a development profile", async () => {
+  apps = [{ ...target, selectedRuntime: "dev", runtimeProfiles: [workspaceProfiles[1]], sourceLivePath: "/work/dashboard" }];
+  mockWorkspaceRequests();
+  overrideRequests(path => path === "/api/apps/execution-targets" ? Response.json({ apps: [{ appId: target.id,
+    current: { kind: "package", runtime: "dev" }, choices: [{ kind: "package", runtime: "dev", available: true }],
+  }] }) : undefined);
+  await mount(true);
+  expect(appRow().querySelector(".dashboard-version")?.textContent).toContain(target.version);
+  expect(appRow().querySelector(".dashboard-runtime")?.textContent).toBe("dev");
+  await openAppMenu();
+  expect(document.querySelector('[aria-label="Switch runtime for Routine app"]')).toBeNull();
+});
+
 it("offers a single package choice when it is an alternative to the current legacy source runtime", async () => {
   apps = [{ ...target, selectedRuntime: "dev", runtimeProfiles: workspaceProfiles }];
   mockWorkspaceRequests();
@@ -1104,16 +1148,20 @@ it("offers a single package choice when it is an alternative to the current lega
   expect(JSON.parse(callsTo("/api/apps/routine.app/execution-target")[0][1].body)).toMatchObject({ kind: "package", runtime: "docker" });
 });
 
-it("keeps package choices enabled while a workspace is active, with no duplicate return action", async () => {
-  apps = [{ ...target, selectedRuntime: "debug", live: true, runtimeProfiles: workspaceProfiles, sourceLivePath: "/work/dashboard" }];
+it.each(["running", "stopped"])("keeps logs and the package return accessible when the selected workspace is %s", async runtimeState => {
+  apps = [{ ...target, runtimeState, capabilities: ["logs"], selectedRuntime: "debug", live: true,
+    lastError: runtimeState === "stopped" ? "Compilation failed" : null, runtimeProfiles: workspaceProfiles, sourceLivePath: "/work/dashboard" }];
   mockWorkspaceRequests(); await mount(true);
+  expectDevelopmentMetadata("workspace");
+  expect(appRow().querySelector(".dashboard-status")?.textContent?.toLowerCase()).toContain(runtimeState);
   await openRuntimeMenu();
+  expect([...document.querySelectorAll('[role="menuitem"]')].some(item => item.textContent === "Console logs")).toBe(true);
   const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "docker")!;
   expect(item.hasAttribute("data-disabled")).toBe(false);
   expect(document.querySelector('[role="menu"]')?.textContent).not.toContain("Return");
   await act(async () => item.click());
   expect(JSON.parse(callsTo("/api/apps/routine.app/execution-target")[0][1].body)).toMatchObject({ kind: "package", runtime: "docker" });
-  expect(fixture.confirm).not.toHaveBeenCalled();
+  expect(fixture.confirm).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ action: "Return to package" }));
 });
 
 it("shows one workspace name with its icon and Git details, clearing them after Return", async () => {
@@ -1336,6 +1384,40 @@ it("keeps lifecycle and menu actions independent of row settings navigation", as
   expect(callsTo(`/api/apps/${target.id}/logs`, "GET")).toHaveLength(0);
 });
 
+it("opens the backup archive for a stopped logs-only app after package return without reading backups on Dashboard", async () => {
+  apps = [{ ...target, capabilities: ["logs"], runtimeState: "stopped", selectedRuntime: "docker" }];
+  const backupPath = `/api/apps/${target.id}/backups`;
+  const saved = { appId: target.id, reason: "pre-development-mode", createdAt: "2026-11-20T10:00:00Z", fileCount: 3, archiveSize: 42 };
+  overrideRequests(path => path === backupPath ? Response.json({ backups: [
+    { ...saved, backupId: "before-second-workspace" },
+    { ...saved, backupId: "leave-package", isWorkspaceReturnBackup: true },
+  ] }) : path === backupPath + "/leave-package/restore" ? Response.json({ status: "restored" }) : undefined);
+  await mount(true);
+  await openAppMenu();
+  expect(callsTo(backupPath, "GET")).toHaveLength(0);
+  const backups = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "Backups")!;
+  await act(async () => backups.click());
+  expect(fixture.router.push).toHaveBeenCalledWith(getManageAppHref(target.id, "backups"), { scroll: false });
+  setRoute(getManageAppHref(target.id, "backups")); await mount();
+  expect(callsTo(backupPath, "GET")).toHaveLength(1);
+  const baseline = [...container.querySelectorAll("tr")].find(row => row.textContent.includes("Before switching from the installed package"))!;
+  expect(baseline.textContent).toContain("leave-package");
+  expect(baseline.textContent).not.toContain("before-second-workspace");
+  expect(container.textContent).toContain("Before workspace switch");
+  expect(container.textContent).not.toContain("Create backup");
+  const restore = baseline.querySelector<HTMLButtonElement>('[aria-label="Restore"]')!;
+  fixture.confirm.mockResolvedValueOnce(false);
+  await act(async () => restore.click());
+  expect(fixture.confirm).toHaveBeenCalledWith(expect.objectContaining({ action: "Restore backup", destructive: true, description: expect.stringContaining("leave-package") }));
+  expect(callsTo(backupPath + "/leave-package/restore")).toHaveLength(0);
+  await act(async () => restore.click());
+  expect(callsTo(backupPath + "/leave-package/restore")).toHaveLength(1);
+  expect(fixture.toast.success).toHaveBeenCalledWith("Backup restored", { description: "leave-package" });
+  apps = [{ ...apps[0], runtimeState: "running" }];
+  await act(async () => actions.refresh());
+  expect(container.querySelector<HTMLButtonElement>('[aria-label="Restore"]')?.disabled).toBe(true);
+});
+
 it.each(["host.admin", "host.user"])("routes the contextual Logs shortcut to the app Logs tab for %s", async role => {
   apps = [{ ...target, updateCheck: null, capabilities: ["logs"], health: observedHealth("degraded") }];
   overrideRequests(path => path === "/api/auth/session"
@@ -1412,6 +1494,7 @@ it.each([false, true])("retains an assigned ordinary user's Logs page and factua
 it.each([
   { section: "logs", logs: false, assigned: true },
   { section: "source", logs: true, assigned: true },
+  { section: "backups", logs: true, assigned: true },
   { section: "permissions", logs: true, assigned: true },
   { section: "logs", logs: true, assigned: false },
 ])("refuses an ordinary-user management deep link without the exact assigned Logs capability: %j", async ({ section, logs, assigned }) => {
@@ -1423,6 +1506,7 @@ it.each([
   expect(fixture.router.replace).toHaveBeenCalledWith("/");
   expect(container.querySelector("form")).toBeNull();
   expect(container.querySelector("pre")).toBeNull();
+  expect(callsTo(`/api/apps/${target.id}/backups`, "GET")).toHaveLength(0);
   expect(callsTo(`/api/apps/${target.id}/logs`, "GET")).toHaveLength(0);
   expect(callsTo(`/api/apps/${target.id}/health`, "GET")).toHaveLength(0);
 });

@@ -85,9 +85,24 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
     case "agent_status": {
       const statusSource = publicSource({ agentId: event.agentId, parentAgentId: event.parentAgentId, parentToolCallId: event.parentToolCallId });
       const agents = snapshot.agents ??= [], existing = agents.find(item => item.agentId === statusSource.agentId);
-      const entry = { ...statusSource, state: event.state, stopConfirmed: event.stopConfirmed === true };
-      if (existing) Object.assign(existing, entry); else agents.push(entry);
-      store.emit(record, "agent.updated", { agent: entry }, statusSource); break;
+      const update: NonNullable<typeof snapshot.agents>[number] = { ...statusSource, state: event.state, stopConfirmed: event.stopConfirmed === true };
+      const entry = existing ?? { ...update };
+      Object.assign(entry, update);
+      if (!existing) agents.push(entry);
+      for (const field of ["prompt", "response"] as const) {
+        const raw = event[field];
+        if (typeof raw !== "string" || !raw.length) continue;
+        const flag = field === "prompt" ? "promptTruncated" : "responseTruncated";
+        update[field] = clipped(raw, 64 * 1024);
+        update[flag] = event[flag] === true || update[field] !== raw;
+        // The journal retains the full public observation even when many children
+        // would together overflow the one-MiB lifecycle snapshot.
+        entry[field] = update[field];
+        const size = agents.reduce((sum, item) => sum + Buffer.byteLength(JSON.stringify([item.prompt, item.response])), 0);
+        if (size > 128 * 1024) { delete entry[field]; entry[flag] = true; }
+        else entry[flag] = update[flag];
+      }
+      store.emit(record, "agent.updated", { agent: update }, statusSource); break;
     }
     case "harness_session":
       if (child) break;

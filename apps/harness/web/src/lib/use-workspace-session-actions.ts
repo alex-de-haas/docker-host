@@ -2,11 +2,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AssistantApiError, createWorkspaceSession, listSessions, workspaceAction, type AssistantSession } from "@/lib/assistant-api";
 import { developmentRequest, DevelopmentRequestError, type DevelopmentWorkspace } from "@/lib/development-api";
-export type Action = { kind: "new" | "attach" | "detach" | "grant" | "revoke"; sessionId?: string; input: Record<string, unknown> };
+export type Action = { kind: "new" | "attach" | "recover-origin" | "detach" | "grant" | "revoke"; sessionId?: string; input: Record<string, unknown> };
 function readPending(key: string | null, workspaceId?: string): Action | null {
   try {
     const saved = JSON.parse(key ? sessionStorage.getItem(key) ?? "null" : "null") as Action | null;
-    return saved && ["new", "attach", "detach", "grant", "revoke"].includes(saved.kind) && saved.input?.workspaceId === workspaceId && typeof saved.input.requestId === "string" ? saved : null;
+    return saved && ["new", "attach", "recover-origin", "detach", "grant", "revoke"].includes(saved.kind) && saved.input?.workspaceId === workspaceId && typeof saved.input.requestId === "string" ? saved : null;
   } catch { return null; }
 }
 export function useWorkspaceSessionActions(workspace: DevelopmentWorkspace | undefined, refresh: () => void, onSelect?: (session: AssistantSession) => void) {
@@ -38,10 +38,10 @@ export function useWorkspaceSessionActions(workspace: DevelopmentWorkspace | und
         const session = await createWorkspaceSession(action.input as { workspaceId: string; requestId: string; expectedRevision: number });
         acknowledged = true;
         if (isCurrent()) onSelect?.(session);
-      } else if (action.kind === "attach" || action.kind === "detach") {
+      } else if (action.kind === "attach" || action.kind === "recover-origin" || action.kind === "detach") {
         await workspaceAction(action.sessionId!, action.kind, action.input);
         acknowledged = true;
-        if (action.kind === "attach") {
+        if (action.kind !== "detach") {
           const record = (await listSessions()).find(s => s.id === action.sessionId);
           if (record && isCurrent()) onSelect?.(record);
         }

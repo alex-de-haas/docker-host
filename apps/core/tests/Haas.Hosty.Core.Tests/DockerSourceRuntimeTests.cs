@@ -131,6 +131,55 @@ public sealed class DockerSourceRuntimeTests : IDisposable
     }
 
     [Fact]
+    public async Task BoundWorkspace_RepairsFailedDockerBuildInPlace()
+    {
+        var dockerfile = Path.Combine(root, "Dockerfile.dev");
+        await File.WriteAllTextAsync(dockerfile, "broken");
+        var context = Context with { BoundWorktreeId = "workspace" };
+        var service = SourceService() with { Runtime = SourceService().Runtime with { Build = new() } };
+        var runner = new Runner(build: (file, directory) =>
+        {
+            Assert.Equal(MountPathPolicy.ResolveRealPath(root), directory);
+            Assert.Equal(Path.Combine(directory, "Dockerfile.dev"), file);
+            return File.ReadAllText(file) == "broken"
+                ? new DockerCommandResult(17, "", "fixture build diagnostic") : new DockerCommandResult(0, "", "");
+        });
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            DockerSourceRuntime.ResolveBuildAsync(context, service, runner, null, default));
+        Assert.Equal("docker_dev_build_failed", error.Code);
+        Assert.Contains("fixture build diagnostic", error.Message);
+
+        await File.WriteAllTextAsync(dockerfile, "FROM scratch");
+        var rebuilt = await DockerSourceRuntime.ResolveBuildAsync(context, service, runner, null, default);
+        Assert.Equal(2, runner.Builds);
+        Assert.Equal("sha256:" + new string('a', 64), rebuilt.Lock.ImageDigest);
+    }
+
+    [Fact]
+    public async Task BoundWorktrees_IsolateGeneratedFilesAndDependencyVolumesAcrossTargets()
+    {
+        var source = Path.Combine(root, "next-env.d.ts");
+        await File.WriteAllTextAsync(source, "workspace declaration");
+        var context = Context with { AppRoot = Path.Combine(root, "app"),
+            Manifest = Context.Manifest with { RuntimeProfile = new() { Key = "dev", Type = "docker", Development = true } } };
+        var service = SourceService(new() { GeneratedFiles = ["next-env.d.ts"], Caches = ["node_modules"] });
+        async Task<DockerSourceRuntime.Launch> Prepare(string? worktreeId) =>
+            (await DockerSourceRuntime.PrepareAsync(context with { BoundWorktreeId = worktreeId }, service, new Runner(), default))!;
+        var package = await Prepare(null);
+        var first = await Prepare("tree-a");
+        var second = await Prepare("tree-b");
+        foreach (var prefix in new[] { "type=volume,", "type=bind," })
+        {
+            string Mount(DockerSourceRuntime.Launch launch) => Assert.Single(launch.Arguments, arg =>
+                arg.StartsWith(prefix) && (arg.Contains("next-env.d.ts") || arg.Contains("node_modules")));
+            Assert.NotEqual(Mount(package), Mount(first));
+            Assert.NotEqual(Mount(first), Mount(second));
+        }
+        Assert.Equal(first.Arguments, (await Prepare("tree-a")).Arguments);
+        Assert.Equal(package.Arguments, (await Prepare(null)).Arguments);
+    }
+
+    [Fact]
     public async Task GeneratedFiles_KeepSourceReadOnlyAndIsolateServiceCachesAcrossRestart()
     {
         var source = Path.Combine(root, "next-env.d.ts");
@@ -216,12 +265,16 @@ public sealed class DockerSourceRuntimeTests : IDisposable
         finally { File.Delete(link); }
     }
 
-    private sealed class Runner(bool remote = false) : IDockerCommandRunner
+    private sealed class Runner(bool remote = false, Func<string, string, DockerCommandResult>? build = null) : IDockerCommandRunner
     {
         public int Builds { get; private set; }
         public Task<DockerCommandResult> RunAsync(IReadOnlyList<string> args, IReadOnlyDictionary<string, string>? environment, CancellationToken cancellationToken)
         {
-            if (args[0] == "build") Builds++;
+            if (args[0] == "build")
+            {
+                Builds++;
+                if (build is not null) return Task.FromResult(build(args[4], args[5]));
+            }
             return Task.FromResult(new DockerCommandResult(0,
                 args[0] == "context" ? remote ? "ssh://remote" : "unix:///var/run/docker.sock" : "sha256:" + new string('a', 64), ""));
         }

@@ -585,17 +585,17 @@ public sealed class ExternalWorkspaceMcpHttpTests
             host.Services.GetRequiredService<IClock>(), host.Services.GetRequiredService<AuthLifetimes>(), default,
             audience: scopes is null ? null : AccessTokenScopes.CoreAudience, scopes: scopes)).Id;
 
-    internal static async Task<string> SeedSourceAsync(CoreHttpHarness host)
+    internal static async Task<string> SeedSourceAsync(CoreHttpHarness host, string appId = SourceApp)
     {
         var paths = host.Services.GetRequiredService<CoreDataPaths>();
-        var origin = Path.Combine(paths.CoreRoot, "external-source");
+        var origin = Path.Combine(paths.CoreRoot, appId == SourceApp ? "external-source" : appId);
         Directory.CreateDirectory(origin);
         await GitAsync(origin, "init", "--initial-branch=main");
         await File.WriteAllTextAsync(Path.Combine(origin, "README.md"), "source\n");
         await GitAsync(origin, "add", "README.md");
         await GitAsync(origin, "-c", "user.name=Test Author", "-c", "user.email=author@example.test", "commit", "-m", "initial");
         var now = host.Services.GetRequiredService<IClock>().UtcNow;
-        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(new AppRecord(SourceApp, "Source", null,
+        await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(new AppRecord(appId, "Source", null,
             "1.0.0", "runtime", false, "installed", null, null, "docker", "installed", "stopped", null, null, [],
             new Dictionary<string, AppSettingValue>(), [], [], [], now, now)
             { SourceState = new("git", origin, "main", null, origin, null, now) });

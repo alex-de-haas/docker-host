@@ -145,7 +145,7 @@ export function AppDetailsDialog({
     {collectAppProblems(app).map(problem => <Alert key={problem.title} severity={problem.severity} title={problem.title} detail={problem.detail} />)}
     {appReadinessProblem(app) && onShowLogs && <Button type="button" variant="outline" size="sm" className="self-start" onClick={onShowLogs}><FileText className="size-4" />Open console logs</Button>}
     {canConfigureApp ? <SettingsDialog app={app} serviceRevision={serviceRevision} isShell={isShell} onCheckUpdate={onCheckUpdate} onUpdate={onUpdate} busyAction={busyAction} canManageApps={canConfigureApp} globalMounts={globalMounts} initialTab={settingsTab} onTabChange={onTabChange} coreOrigin={coreOrigin} onSetFeed={onSetFeed} onConfigure={onConfigure} onConfigureMounts={onConfigureMounts} onConfigureSource={onConfigureSource} onClearSource={onClearSource} onRevealSetting={onRevealSetting}
-      backups={app.capabilities.includes("backup") ? <BackupsPanel app={app} detail={detail} busyAction={busyAction} onRefresh={onRefreshBackups} onCreateBackup={onCreateBackup} onRestoreBackup={onRestoreBackup} onDeleteBackup={onDeleteBackup} onPreviewCleanup={onPreviewBackupCleanup} onApplyCleanup={onApplyBackupCleanup} /> : undefined} />
+      backups={<BackupsPanel app={app} detail={detail} busyAction={busyAction} onRefresh={onRefreshBackups} onCreateBackup={onCreateBackup} onRestoreBackup={onRestoreBackup} onDeleteBackup={onDeleteBackup} onPreviewCleanup={onPreviewBackupCleanup} onApplyCleanup={onApplyBackupCleanup} />} />
       : settingsTab === "logs" && app.capabilities.includes("logs") ? <Tabs value="logs" className="min-w-0 gap-5"><TabsList variant="line" aria-label="App details"><TabsTrigger value="logs">Logs</TabsTrigger></TabsList><TabsContent value="logs"><ConsoleLogsPanel key={app.id} app={app} coreOrigin={coreOrigin} /></TabsContent></Tabs>
         : <InlineError message="You do not have permission to manage this application." />}
   </section>;
@@ -230,6 +230,7 @@ function BackupsPanel({
   onApplyCleanup: (app: CoreApp, plan: CoreBackupCleanupPlan) => void;
 }) {
   const backups = detail.backups || [];
+  const canCreate = app.capabilities.includes("backup");
   const cleanupPlan = detail.backupCleanupPlan;
   const isRunning = isAppUp(app.runtimeState);
   // Restore writes over the app's data directory, so it needs the narrowest gate: stopped, not
@@ -241,10 +242,10 @@ function BackupsPanel({
     <DialogBody className="space-y-4">
       <section className="rounded-xl border bg-card px-4 py-4" aria-label="Backup coverage"><h3 className="text-sm font-medium">App data</h3><p className="mt-1 text-sm text-muted-foreground">Backups include only this app’s primary data directory. Cache, attached host folders and additional storage mappings are excluded.</p></section>
       <div className="flex flex-wrap gap-2">
-        <Button onClick={() => onCreateBackup(app)} disabled={busyAction === `${app.id}:backup`}>
+        {canCreate && <Button onClick={() => onCreateBackup(app)} disabled={busyAction === `${app.id}:backup`}>
           {busyAction === `${app.id}:backup` ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Archive className="h-4 w-4" />}
           Create backup
-        </Button>
+        </Button>}
         <Button variant="outline" onClick={() => onRefresh(app, false)} disabled={detail.loading}>
           <RefreshCw className={cn("h-4 w-4", detail.loading && "animate-spin motion-reduce:animate-none")} />
           Refresh
@@ -254,7 +255,7 @@ function BackupsPanel({
           Preview prune
         </Button>
       </div>
-      {isRunning && (
+      {isRunning && canCreate && (
         <div className="flex items-start gap-2 rounded-md border p-3 text-sm text-muted-foreground">
           <Info className="mt-0.5 h-4 w-4 shrink-0" />
           <span>Creating a backup briefly stops this running app while its data is copied, then restarts it.</span>
@@ -293,7 +294,7 @@ function BackupsPanel({
             {backups.map((backup) => (
               <TableRow key={backup.backupId}>
                 <TableCell>
-                  <div className="font-medium">{backup.reason}</div>
+                  <div className="font-medium">{backup.isWorkspaceReturnBackup ? "Before switching from the installed package" : backup.reason === "pre-development-mode" ? "Before workspace switch" : backup.reason}</div>
                   <div className="text-xs text-muted-foreground">{new Date(backup.createdAt).toLocaleString()}</div>
                   <code className="text-xs text-muted-foreground">{backup.backupId}</code>
                 </TableCell>
@@ -762,7 +763,7 @@ function MountsForm({
   return (
     <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
       <DialogBody className="space-y-4">
-        <section className="overflow-hidden rounded-xl border bg-card" aria-label="Primary app data"><div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/25 px-4 py-3"><h3 className="text-sm font-medium">App data</h3><Badge variant="outline">{app.capabilities.includes("backup") ? "Included in backups" : "No backup capability"}</Badge></div><div className="space-y-1 px-4 py-4"><p className="text-sm text-muted-foreground">Hosty keeps this app’s primary data separately from attached host folders.</p><p className="text-xs text-muted-foreground">Size unavailable</p></div></section>
+        <section className="overflow-hidden rounded-xl border bg-card" aria-label="Primary app data"><div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/25 px-4 py-3"><h3 className="text-sm font-medium">App data</h3><Badge variant="outline">Included in Core backups</Badge></div><div className="space-y-1 px-4 py-4"><p className="text-sm text-muted-foreground">Hosty keeps this app’s primary data separately from attached host folders.</p><p className="text-xs text-muted-foreground">Size unavailable</p></div></section>
         {slots.length === 0 && managed.length === 0 && <p className="rounded-xl border px-4 py-5 text-sm text-muted-foreground">This app does not declare any external mount slots.</p>}
         {(slots.length > 0 || managed.length > 0) && <p className="text-sm text-muted-foreground">
           Global mounts come from Shared mounts — label and path are fixed. Local paths bind a host folder directly; they must be absolute and outside the Hosty data root. External folders are never backed up or deleted by Hosty.

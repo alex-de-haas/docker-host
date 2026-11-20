@@ -39,7 +39,7 @@ it("persists bounded output, streams it and restores the same recorded result wi
   const saved = (await results())[0]!;
   expect(saved.output).toHaveLength(32_768); expect(saved.truncated).toBe(true);
   expect(Object.keys(saved).sort()).toEqual(["seq", "ts", "type", "toolUseId", "status", "output", "truncated"].sort());
-  expect(seen.find(event => event.type === "tool_result")).toEqual(saved);
+  await vi.waitFor(() => expect(seen.find(event => event.type === "tool_result")).toEqual(saved));
   sub.unsubscribe(); adapter.emit({ type: "result", status: "success" });
   await vi.waitFor(async () => expect((await manager.getSession(id))?.status).toBe("idle"));
   await manager.shutdown();

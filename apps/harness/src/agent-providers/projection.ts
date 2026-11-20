@@ -1,5 +1,5 @@
 import type {
-  AgentEvent, AgentMessageBlock, AgentPendingDecision, AgentResult, AgentRunSnapshot,
+  AgentEvent, AgentHistoryObservation, AgentProviderRef, AgentMessageBlock, AgentPendingDecision, AgentResult, AgentRunSnapshot,
   AgentSource, AgentToolBlock, AgentWatchItem,
 } from "@hosty-sdk/app/agent";
 import { validateAgentEvent, validateAgentRunSnapshot } from "@hosty-sdk/app/agent/server";
@@ -13,6 +13,14 @@ export type AgentRunProjection = {
   result?: AgentResult;
   childResults: Array<{ source: AgentSource; result: AgentResult }>;
 };
+
+/** Retained results can contain the final reply after its source message falls outside a bounded snapshot. */
+export function historyMessages(projection: AgentRunProjection): AgentMessageBlock[] {
+  const final = projection.result;
+  if (!final?.text || projection.messages.some(message => message.role === "assistant" && !message.source?.parentAgentId
+    && message.state === "complete" && (final.messageId ? message.id === final.messageId : message.text === final.text))) return projection.messages;
+  return [...projection.messages, { id: final.messageId ?? "retained-result", role: "assistant", state: "complete", text: final.text }];
+}
 
 /** The caller must obtain an authoritative snapshot; this reducer never repairs missing events. */
 export class AgentProjectionResyncError extends Error {
@@ -59,6 +67,20 @@ export function createAgentRunProjection(value: AgentRunSnapshot): AgentRunProje
   return { snapshot, cursor: snapshot.cursor, messages: snapshot.messages ?? [], tools: snapshot.tools ?? [],
     pending: snapshot.pending, ...(snapshot.result ? { result: snapshot.result } : {}), childResults: [] };
 }
+/** Reduce one archived fact for display without borrowing the current run's state or watermark. */
+export function projectHistoryFact(provider: AgentProviderRef, fact: AgentHistoryObservation): AgentRunProjection {
+  const { item } = fact;
+  if (item.kind === "snapshot") return createAgentRunProjection(item.snapshot);
+  if (item.event.type === "run.updated") return createAgentRunProjection(item.event.data.snapshot as AgentRunSnapshot);
+  const base = createAgentRunProjection({
+    ref: { provider, id: fact.runId }, sessionId: fact.sessionId, generation: fact.generation,
+    state: "unknown", phase: "interrupted", stopConfirmed: false, freshness: "unavailable",
+    revision: "0", lastSequence: "0", configurationRevision: "1", observedAt: item.event.occurredAt,
+    cursor: item.cursor, pending: [], effects: { certainty: "unknown", unresolvedCallIds: [] },
+  });
+  return reduceAgentRunProjection(base, item, true);
+}
+
 function replace(current: AgentRunProjection, snapshot: AgentRunSnapshot): AgentRunProjection {
   validateSnapshot(snapshot); sameRun(current.snapshot, snapshot);
   if (BigInt(snapshot.lastSequence) < BigInt(current.snapshot.lastSequence)
@@ -131,16 +153,16 @@ function selection(value: Record<string, unknown>): NonNullable<AgentRunSnapshot
 }
 
 /** Pure reduction: callers persist this whole value, including its cursor, in one transaction. */
-export function reduceAgentRunProjection(current: AgentRunProjection, item: AgentWatchItem): AgentRunProjection {
+export function reduceAgentRunProjection(current: AgentRunProjection, item: AgentWatchItem, sparseHistory = false): AgentRunProjection {
   if (item.kind === "snapshot") return replace(current, item.snapshot);
   const { event } = item;
-  try { validateAgentEvent(event); } catch { invalid("invalid event"); }
+  try { validateAgentEvent(event); } catch { invalid(event.type === "agent.updated" ? "invalid agent status" : "invalid event"); }
   cursor(item.cursor);
   if (event.runId !== current.snapshot.ref.id) invalid("event belongs to another run");
   if (event.generation !== current.snapshot.generation) invalid("execution generation changed");
   const sequence = BigInt(event.sequence), previous = BigInt(current.snapshot.lastSequence);
   if (sequence <= previous) return current;
-  if (sequence !== previous + 1n) invalid("event sequence gap");
+  if (!sparseHistory && sequence !== previous + 1n) invalid("event sequence gap");
   if (BigInt(event.revision) < BigInt(current.snapshot.revision)) invalid("event revision regressed");
   if (event.type === "run.updated") {
     const snapshot = event.data.snapshot as AgentRunSnapshot;
@@ -173,7 +195,11 @@ export function reduceAgentRunProjection(current: AgentRunProjection, item: Agen
     if (!sameSource(supplied, event.source)) invalid("agent status source changed");
     const agents = structuredClone(snapshot.agents ?? []), index = agents.findIndex(agent => agent.agentId === supplied.agentId);
     if (index >= 0 && !sameSource(agents[index], supplied)) invalid("agent parent changed");
-    if (index < 0) agents.push(structuredClone(supplied)); else agents[index] = structuredClone(supplied);
+    // The transcript retains each prompt and response at its original native position. Accumulating
+    // those event payloads again in the lifecycle snapshot can exceed its one-MiB wire allowance.
+    const status = { ...structuredClone(event.source), state: supplied.state,
+      ...(supplied.stopConfirmed !== undefined ? { stopConfirmed: supplied.stopConfirmed } : {}) };
+    if (index < 0) agents.push(status); else agents[index] = status;
     snapshot.agents = agents;
   }
   else if (event.type === "selection.updated" && event.source.parentAgentId === undefined) snapshot.selection = selection(event.data);

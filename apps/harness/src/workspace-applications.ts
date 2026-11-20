@@ -8,9 +8,10 @@ export type WorkspaceApplicationChoice = {
 export type WorkspaceApplication = {
   appId: string; name: string; version?: string; runtimeState?: string; operationStatus?: string; health?: string;
   current?: WorkspaceApplicationChoice; target?: WorkspaceApplicationChoice;
+  startError?: string; canReadLogs?: boolean;
   source?: { path?: string; branch?: string; state?: string }; canSwitch: boolean; unavailable?: string;
 };
-export type WorkspaceApplicationsRoute = { workspaceId: string; appId?: string; requestId?: string };
+export type WorkspaceApplicationsRoute = { workspaceId: string; appId?: string; requestId?: string; logs?: boolean };
 const appPattern = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const object = (value: unknown): Json | undefined => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Json : undefined;
@@ -19,6 +20,8 @@ const objects = (value: unknown): Json[] => Array.isArray(value) ? value.flatMap
 
 /** This is a workspace-bound surface, never an arbitrary Core management proxy. */
 export function workspaceApplicationsRoute(method: string, path: string): WorkspaceApplicationsRoute | null {
+  const logs = method === "GET" && path.match(/^\/api\/development-workspaces\/([a-f0-9]{64})\/applications\/([a-z0-9][a-z0-9._-]{0,62})\/logs$/);
+  if (logs) return { workspaceId: logs[1]!, appId: logs[2]!, logs: true };
   const match = path.match(/^\/api\/development-workspaces\/([a-f0-9]{64})\/applications(?:\/([a-z0-9][a-z0-9._-]{0,62})\/execution-target(?:\/([0-9a-f-]{36}))?)?$/i);
   if (!match || !/^[a-f0-9]{64}$/.test(match[1]!) || match[2] && !appPattern.test(match[2]) || match[3] && !uuidPattern.test(match[3])) return null;
   if (method === "GET" && (!match[2] || match[3]) || method === "POST" && match[2] && !match[3])
@@ -79,6 +82,14 @@ export async function requestWorkspaceApplications(method: string, path: string,
     return value;
   };
 
+  if (route.logs && route.appId) {
+    const result = object(await request(`/api/apps/${encodeURIComponent(route.appId)}/logs?tail=80`));
+    if (result?.appId !== route.appId || typeof result.text !== "string")
+      throw new AppContextError(502, "core_response_invalid", "Core returned an incomplete application log.");
+    const limit = 16384;
+    return { text: result.text.length > limit ? "[Earlier output omitted]\n" + result.text.slice(-limit) : result.text };
+  }
+
   if (route.appId) {
     let result: unknown;
     let expectedRequestId = route.requestId;
@@ -126,6 +137,11 @@ export async function requestWorkspaceApplications(method: string, path: string,
     const row: WorkspaceApplication = { appId, name: binding.name, version: text(app?.version), runtimeState: text(app?.runtimeState),
       operationStatus: text(app?.operationStatus), health: text(object(app?.health)?.status), current, target,
       canSwitch: unavailable === undefined, unavailable };
+    if (current?.kind === "workspace" && current.workspaceId === route.workspaceId &&
+        app?.operationStatus === "failed" && (app.lastOperation === "start" || app.lastOperation === "restart")) {
+      row.startError = text(app.lastError)?.trim().slice(0, 2048) || "The application failed to start.";
+      row.canReadLogs = grants.includes("apps.logs");
+    }
     const profiles = objects(app?.runtimeProfiles);
     const live = current?.kind === "legacy" || current?.kind !== "workspace" &&
       (app?.live === true || profiles.some(profile => profile.key === app?.selectedRuntime && profile.development === true));

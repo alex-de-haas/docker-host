@@ -15,28 +15,32 @@ internal sealed partial class PublicationService
         if (!(await users.ReadAsync(ct)).Users.Any(u => u.Id == userId && !u.Disabled && AppAccessPolicy.IsAdmin(u)))
             throw new PublicationException("forbidden", "PR review requires an active administrator account.");
         var saved = await Read(tree.Id, ct);
-        if (saved is not null && !saved.Owner.SameIdentity(tree.Owner))
-            throw new PublicationException("forbidden", "Publication belongs to another workspace owner.");
+        if (saved is not null && !saved.MatchesWorktree(tree, userId))
+            throw new PublicationException("forbidden", "Publication belongs to another workspace or source account.");
+        if (!tree.Owner.IsExternal || saved?.PermissionSource is not null)
+            await RequireOwner(saved?.Owner ?? tree.Owner, ct, saved?.PermissionSource);
         UserProviderConnection selected;
         PublicationRecord record;
         if (tree.Owner.IsExternal)
         {
             var binding = await ExternalConnection(tree, ct, heldConnection);
             selected = binding.Connection;
-            record = new() { WorkspaceId = tree.Id, Owner = tree.Owner, Provider = binding.Source.Descriptor.Id,
+            if (saved?.PermissionSource is not null && (saved.Repository != binding.Repository ||
+                saved.TargetBranch != binding.TargetBranch || saved.Provider != binding.Source.Descriptor.Id || saved.ConnectionId != selected.Id))
+                throw new PublicationException("remote_changed", "The publication no longer matches the external workspace's reviewed source.");
+            record = saved?.PermissionSource is not null ? saved : new() { WorkspaceId = tree.Id, Owner = tree.Owner, Provider = binding.Source.Descriptor.Id,
                 Repository = binding.Repository, HeadRepository = binding.Repository, ConnectionId = selected.Id,
                 Branch = tree.Branch, TargetBranch = binding.TargetBranch };
         }
         else
         {
-            await RequireOwner(tree.Owner, ct);
             record = saved ?? throw new PublicationException("pr_required", "Publish or link a PR before reviewing it.");
             selected = (await users.ReadAsync(ct)).ProviderConnections?.SingleOrDefault(c => c.Id == record.ConnectionId && c.UserId == userId)
                 ?? throw new PublicationException("connection_required", "Reconnect the workspace owner's source account.");
             var remote = await workspaces.PublicationRemoteAsync(tree, ct, validateGrant: heldConnection is null);
             if (remote is not null && heldConnection is not null) workspaces.ValidateHeldSourceGrant(remote.Grant, heldConnection);
             if (Publication(record.Provider).NormalizeRepository(remote?.Repository ?? tree.Repository) != record.Repository ||
-                remote is not null && (remote.TargetBranch != record.TargetBranch || remote.Grant.ConnectionId != record.ConnectionId))
+                record.TargetBranch != (remote?.TargetBranch ?? tree.TargetBranch) || remote is not null && remote.Grant.ConnectionId != record.ConnectionId)
                 throw new PublicationException("remote_changed", "The PR no longer matches the workspace's reviewed source remote.");
         }
         if (selected.Provider != record.Provider || selected.Status != "connected")
@@ -116,7 +120,8 @@ internal sealed partial class PublicationService
                         authorized.Record.Repository != binding.Record.Repository ||
                         authorized.Record.HeadRepository != binding.Record.HeadRepository ||
                         authorized.Record.TargetBranch != binding.Record.TargetBranch ||
-                        authorized.Record.Branch != binding.Record.Branch)
+                        authorized.Record.Branch != binding.Record.Branch || !authorized.Record.Owner.SameIdentity(binding.Record.Owner) ||
+                        authorized.Record.PermissionSource != binding.Record.PermissionSource)
                         throw new PublicationException("review_changed", "The workspace source changed before review admission. Refresh the review.");
                     ct.ThrowIfCancellationRequested();
                     // Persist immediately before the provider side effect. Recovery preserves

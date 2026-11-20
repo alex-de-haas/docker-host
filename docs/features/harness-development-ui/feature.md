@@ -205,8 +205,9 @@ away from the current conversation. Deleting the selected session clears its dra
 deleting another session preserves the selected conversation. A terminal deletion event detaches
 the session immediately, including when a locally initiated DELETE loses its HTTP response.
 Harness emits this event after it deletes the stored conversation. A refusal to delete, including
-an unconfirmed provider stop, appears in the dialog. If the DELETE response is lost or times out,
-Harness checks the selected session through its authenticated API. Both requests have deadlines.
+an unconfirmed provider stop, appears in the dialog. Harness waits up to 45 seconds for the
+DELETE response. If the response is lost or times out, it allows up to eight seconds to check
+the selected session through its authenticated API.
 A confirmed missing session clears its row and draft. When the session still exists or its status
 is unavailable, the dialog shows the error and allows the owner to close it or retry.
 
@@ -510,7 +511,8 @@ source-path name fallback and the full path retained in the title. Selection and
 provenance do not establish process state; missing observations remain Unknown or Target unavailable.
 The accessible per-app Use this workspace icon targets the exact bound worktree in multi-app
 workspaces and is omitted for a single app, which already has the group action. Unavailable rights,
-targets and other app transitions disable switching with an explanation.
+targets and other app transitions disable that app's switch. A missing binding or an invalid
+inventory row leaves independently observed applications selectable from their own rows.
 
 Used by has one primary transition. Fresh observations show Use workspace when any bound app is
 outside the exact target, including an observed legacy development runtime, and Return to packages
@@ -520,14 +522,23 @@ using this workspace. Missing or disconnected observations offer refresh rather 
 target. Background reads preserve the last verified rows and focus. An operation receipt never
 establishes the current target or process readiness.
 
-Submitting a switch replaces actions with one progress line. A failure replaces the primary
-transition with Try again and a concise error; technical details stay collapsed. Retained request
-IDs do not create extra Use workspace, Return or Retry runtime switch buttons. A package recovery
-alternative remains available when an app is actually observed in this workspace. Paused workspaces
-block entry and its retry while retaining observed package return.
+Selecting a new workspace or package action opens a short confirmation with the workspace name
+and observed applications. A row selects one worktree and runtime. The group action covers the
+apps bound when Core accepts the request. The dialog explains that these versions use the app's current data and that a
+migration can make the data incompatible with the installed package. Cancel leaves the selection
+untouched. Confirm submits the existing execution request. Reconnecting or retrying an already
+submitted request keeps its original identity.
+
+Submitting a switch replaces actions with one progress line. Harness shows the first failure
+with its app name and keeps full multi-app diagnostics in Details. A settled workspace startup
+failure leaves the selected source visible and restores normal selection controls. When Core
+reports a failed start, the app row shows its error and authorized operators can open recent
+logs. The operator can fix the worktree and use ordinary app Start or Restart. Retry remains
+available for an uncertain request or a group with another retryable participant. Paused
+workspaces retain an observed package return.
 
 Core access confirmation is prepared and opened automatically only when the exact candidate needs
-additional authority. Ordinary code/metadata changes with no authority delta need no popup. Explicit
+additional authority. For ordinary code or metadata changes, the workspace dialog is the only confirmation. Explicit
 approval stays in Core; matching branches, user permissions and selecting a workspace do not grant
 app access. Approval automatically resumes the original execution request. Group selections handle
 each required app review before resuming; Core skips completed children. A direct confirmation link
@@ -1042,7 +1053,10 @@ records the startup/recovery measurements; Linux and Windows lifecycle checks ar
 
 ## Testing Expectations
 
-- Exercise a stalled Delete request, a failed status check and a provider refusal. Verify draft retention, retry, and terminal event delivery after durable removal.
+- Exercise a stalled Delete request, a failed status check and a provider refusal. Verify draft retention,
+  retry, and terminal event delivery after durable removal. In a signed-in child Core browser, hold
+  the first DELETE for a synthetic failed chat and return a provider refusal on retry. Check that
+  the dialog restores both actions, shows the refusal and keeps the chat when the owner closes it.
 
 - Verify first-message and inventory-only title propagation without a reload, newer manual and
   cross-window renames against delayed metadata/rename replies, session-switch isolation and draft
@@ -1190,6 +1204,7 @@ records the startup/recovery measurements; Linux and Windows lifecycle checks ar
   selection; package version/runtime, workspace name and source branch/path labels must not use
   installation provenance as a substitute. Verify exact workspace/worktree matching, current-target
   icon hiding, unavailable/permission/transition refusal, observation-driven primary actions, mixed-selection package alternatives and Core exclusion.
+- Check manual entry and Return, cancellation before submission, and a healthy single-app action when another binding is missing.
 - Exercise workspace-scoped BFF binding checks and minimal projections, automatic access confirmation, explicit Core approval, blocked/isolated popup, explicit cancellation and denial, retained review identity across reload and
   retained per-app arguments/UUID through approval, uncertain dispatch, retry and reload. Verify
   shared visible-consumer SSE, failed/disconnected snapshot clearing, scope changes and action

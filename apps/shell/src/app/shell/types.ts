@@ -482,6 +482,7 @@ export type CoreBackup = {
   archiveSha256: string;
   archiveSize: number;
   fileCount: number;
+  isWorkspaceReturnBackup?: boolean;
   retention?: CoreBackupRetentionStatus | null;
 };
 

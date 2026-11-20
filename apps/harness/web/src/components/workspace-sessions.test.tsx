@@ -14,7 +14,7 @@ let root: Root, container: HTMLDivElement;
 const workspace = (): DevelopmentWorkspace => ({ id: "workspace", state: "active", owner: { kind: "assistant", label: "Assistant", reference: "first" }, workflow: { state: "in-progress", revision: 0 }, worktrees: [], participation: {
   id: "workspace", revision: 4, role: "contributor", viewerUserId: "member", eligibleUsers: [],
   members: [{ userId: "owner", name: "Owner", role: "owner", worktreeIds: [], revoked: false }, { userId: "member", name: "Member", role: "contributor", worktreeIds: [], revoked: false }],
-  sessions: [{ appId: "assistant", userId: "owner", sessionId: "first", title: "Private owner chat", attached: true, canOpen: false, viewerPath: null, status: "running", activityAt: null },
+  sessions: [{ appId: "assistant", userId: "owner", sessionId: "first", title: "Private owner chat", attached: true, canOpen: false, viewerPath: null, status: "running", activityAt: new Date().toISOString() },
     { appId: "assistant", userId: "member", sessionId: "second", title: "My chat", attached: true, canOpen: true, viewerPath: "/assistant?session=second", status: "idle", activityAt: null }],
 } });
 function SessionList({ space, select, refresh = () => {} }: { space: DevelopmentWorkspace; select: (s: AssistantSession) => void; refresh?: () => void }) {
@@ -39,6 +39,31 @@ it("shows activity but cannot open another participant's conversation or manage 
   expect(container.textContent).toContain("Private chat"); expect(button("Private owner chat")).toBeUndefined(); expect(button("Manage sharing")).toBeUndefined();
   expect(button("My chat")).toBeUndefined(); expect(select).not.toHaveBeenCalled();
 });
+it("shows lost contact for the originating chat and its single execution while private work stays independent", async () => {
+  const space = workspace();
+  const rows = space.participation!.sessions;
+  rows[1] = { ...rows[1]!, status: "running", activityAt: rows[0]!.activityAt, activityGroup: "my-run" };
+  rows.push({ ...rows[1]!, kind: "execution", canOpen: false, sessionId: "native", title: "Native execution" });
+  const mine: AssistantSession = { id: "second", title: "My chat", status: "running", createdAt: rows[1]!.activityAt!, providerHistoryContact: { runId: "native", reason: "unavailable", observedAt: rows[1]!.activityAt! } };
+  await act(async () => root.render(<WorkspaceSessions workspace={space} chats={[mine]} refresh={() => {}} />));
+  const [other, own, native] = container.querySelectorAll("li");
+  expect(other?.textContent).toContain("Owner · running");
+  expect(own?.textContent).toContain("unknown (not confirmed)");
+  expect(native?.textContent).toContain("unknown (not confirmed)");
+});
+
+it("shows native execution as activity alongside the selectable originating chat", async () => {
+  const selected = vi.fn(), space = workspace();
+  space.participation!.sessions[0] = { ...space.participation!.sessions[0]!, kind: "execution", title: "Native agent execution" };
+  await act(async () => root.render(<WorkspaceSessions workspace={space} refresh={() => {}} onPick={selected} />));
+  expect(container.textContent).toContain("Agent execution");
+  expect(container.textContent).not.toContain("Private chat");
+  expect(container.querySelector('button[aria-label="Open session Native agent execution"]')).toBeNull();
+  const chat = space.participation!.sessions.find(s => s.canOpen)!;
+  await act(async () => container.querySelector<HTMLButtonElement>(`button[aria-label="Open session ${chat.title}"]`)!.click());
+  expect(selected).toHaveBeenCalledWith(chat.sessionId);
+});
+
 it("persists uncertain new-session requests and retries the exact ID after remount", async () => {
   const select = vi.fn(); vi.mocked(createWorkspaceSession).mockRejectedValueOnce(new Error("response lost"));
   await act(async () => root.render(<SessionList space={workspace()} select={select} />));

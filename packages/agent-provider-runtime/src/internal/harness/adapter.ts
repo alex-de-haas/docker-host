@@ -71,7 +71,7 @@ export type HarnessEvent = (
   | { type: "answer_complete" }
   /** Private execution evidence used only for task barriers, never transcript display. */
   | { type: "native_effect"; id: string; state: "started" | "settled" | "unknown" }
-  | { type: "agent_status"; agentId: string; parentAgentId?: string; parentToolCallId?: string; state: "running" | "waiting_for_input" | "succeeded" | "failed" | "cancelled" | "unknown"; stopConfirmed?: boolean }
+  | { type: "agent_status"; agentId: string; parentAgentId?: string; parentToolCallId?: string; state: "running" | "waiting_for_input" | "succeeded" | "failed" | "cancelled" | "unknown"; stopConfirmed?: boolean; prompt?: string; response?: string; promptTruncated?: boolean; responseTruncated?: boolean }
   | { type: "execution_parked"; runId: string; barrier?: import("../worker/contracts.js").WorkerBarrier }
   | { type: "provider_usage"; usage: import("./provider-usage.js").ProviderUsage }
   | { type: "context_usage"; usage: import("./context-usage.js").ContextUsage | null }

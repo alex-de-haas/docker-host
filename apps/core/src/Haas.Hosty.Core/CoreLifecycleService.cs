@@ -997,7 +997,11 @@ internal sealed partial class CoreLifecycleService(
         // Captured BEFORE the stamp below, because the stamp destroys the evidence: an app whose runtime
         // is already up (a Core restart that kept its containers, a repeated start) legitimately holds
         // its own reserved ports, and the port preflight must keep exempting them.
+        var beforeStart = app;
         var wasUp = AppRuntimeStates.IsUp(app.RuntimeState);
+        var survivingServices = app.DevModeId is not null && app.RuntimeState == AppRuntimeStates.Unknown
+            ? app.Health?.Services.Where(s => s.Status == "running").Select(s => s.Service).ToHashSet(StringComparer.Ordinal)
+            : null;
         IAppRuntimeAdapter? adapter = null;
         RuntimeLifecycleContext? context = null;
         var runtimeStarted = false;
@@ -1030,7 +1034,8 @@ internal sealed partial class CoreLifecycleService(
 
             await EnsureRequiredSettingsConfiguredAsync(app, cancellationToken);
             // A repeated start/adoption must not turn an existing runtime into a fictitious wait.
-            if (!wasUp && await DeferDependencyStartAsync(app, cancellationToken, preserveOperationStatus) is { } waiting)
+            if (!wasUp && survivingServices is not { Count: > 0 } &&
+                await DeferDependencyStartAsync(app, cancellationToken, preserveOperationStatus) is { } waiting)
                 return waiting;
             // A reserved port that is still busy means two different things, and treating them alike was
             // the defect. On a cold start nothing of ours holds it, so it is a genuine conflict and the
@@ -1058,7 +1063,12 @@ internal sealed partial class CoreLifecycleService(
             }
             else
             {
-                await WaitForLoopbackAssignmentsReleasedAsync(app, LoopbackReleaseTimeout, cancellationToken, wasUp);
+                // A partial workspace can still own its surviving services' ports. Keep checking
+                // the reservations of the services that actually need to come back up.
+                var portProbe = survivingServices is { Count: > 0 }
+                    ? app with { PortAssignments = app.PortAssignments?.Where(p => !survivingServices.Contains(p.Service)).ToArray() }
+                    : app;
+                await WaitForLoopbackAssignmentsReleasedAsync(portProbe, LoopbackReleaseTimeout, cancellationToken, wasUp);
             }
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
             app = await EnsureIngressPublicOriginsAsync(app, selection, cancellationToken);
@@ -1144,12 +1154,7 @@ internal sealed partial class CoreLifecycleService(
         }
         catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
         {
-            if (runtimeStarted && adapter is not null && context is not null)
-            {
-                await TryStopRuntimeAsync(adapter, context);
-            }
-
-            await RecordForegroundLifecycleFailureAsync(appId, "start", AppRuntimeStates.Stopped, ex.Message, cancellationToken);
+            await RecordFailedStartAsync(beforeStart, "start", ex.Message, adapter, context, runtimeStarted, cancellationToken);
             throw;
         }
     }
@@ -1157,7 +1162,12 @@ internal sealed partial class CoreLifecycleService(
     public Task<AppLifecycleResponse> StopAsync(string appId, CancellationToken cancellationToken = default)
         => WithAppLockAsync(appId, async () =>
         {
-            await RequireAppAsync(appId, cancellationToken);
+            var installed = await RequireAppAsync(appId, cancellationToken);
+            // An explicit Stop replaces any running intent carried from the package through
+            // failed workspace launches. Internal switch stops do not change that intent.
+            if (await AppDevStore.ReadAsync(paths, installed, cancellationToken) is
+                { WorkspaceStartAfterBinding: true, Active: true, WasRunning: true } operation)
+                await AppDevStore.SaveAsync(paths, operation with { WasRunning = false }, cancellationToken);
             await apps.UpdateAppAsync(appId, app => app with
             {
                 DependencyStart = null,
@@ -1531,6 +1541,8 @@ internal sealed partial class CoreLifecycleService(
                 RuntimeState = AppRuntimeStates.Stopping,
             }, cancellationToken);
             stopAttempted = true;
+            adapter = stopAdapter;
+            context = stopContext;
             _ = await stopAdapter.StopAsync(stopContext, cancellationToken);
             if (await DeferDependencyStartAsync(app, cancellationToken, preserveOperationStatus) is { } waiting)
                 return waiting;
@@ -1544,6 +1556,7 @@ internal sealed partial class CoreLifecycleService(
             // failed update may have saved a new pin while the checkout still contains the old code.
             app = await EnsureLocalCommandSourceReadyAsync(app, selection, cancellationToken);
             context = await CreateRuntimeContextAsync(app, selection, cancellationToken);
+            adapter = ResolveAdapter(selection.RuntimeProfile.Type);
             await new HostPathAuthority(paths, apps).AppAsync(context.App, cancellationToken);
             context = await ReserveRuntimePathsAsync(EnsureMountsReadyForStart(context), cancellationToken);
             context = context with { ReportLaunchProgress = (stage, service) => SetLaunchProgressAsync(appId, stage, service, cancellationToken) };
@@ -1601,13 +1614,8 @@ internal sealed partial class CoreLifecycleService(
         }
         catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
         {
-            if (runtimeStarted && adapter is not null && context is not null)
-            {
-                await TryStopRuntimeAsync(adapter, context);
-            }
-
             if (stopAttempted)
-                await RecordForegroundLifecycleFailureAsync(appId, "restart", AppRuntimeStates.Stopped, ex.Message, cancellationToken);
+                await RecordFailedStartAsync(app, "restart", ex.Message, adapter, context, runtimeStarted, cancellationToken);
             else
                 await RecordBackgroundLifecycleFailureAsync(appId, "restart", ex.Message, cancellationToken);
             throw;
@@ -2602,28 +2610,34 @@ internal sealed partial class CoreLifecycleService(
         await apps.HostPathMutationLock.WaitAsync(cancellationToken);
         try
         {
-            var authorityRecord = record;
-            if (allowIncompleteConfiguration && record.RuntimeState == AppRuntimeStates.Stopped)
-            {
-                var readiness = await GetConfigurationReadinessAsync(record, cancellationToken);
-                if (readiness.Required)
-                {
-                    // Preserve the operator's bindings on the stopped target, but do not reserve or
-                    // use unready mounts while applying its metadata. Source authority and every
-                    // remaining valid mount still validate; actual Start validates the full record.
-                    authorityRecord = record with
-                    {
-                        Mounts = readiness.Error is not null ? [] : (record.Mounts ?? []).Where(binding =>
-                            !readiness.Mounts.Any(issue => issue.Key == binding.Key &&
-                                (issue.Label is null || issue.Label == binding.Label || issue.Label == binding.GlobalMountName))).ToArray(),
-                    };
-                }
-            }
-            await new HostPathAuthority(paths, apps).AppAsync(authorityRecord, cancellationToken);
-            return portAllocator is null ? await apps.UpsertAppAsync(record, cancellationToken)
-                : await portAllocator.AssignAndPersistAsync(record, selection, apps.ListAppRecordsAsync, apps.UpsertAppAsync, cancellationToken);
+            return await PersistRuntimePortsUnderHostPathLockAsync(record, selection, cancellationToken, allowIncompleteConfiguration);
         }
         finally { apps.HostPathMutationLock.Release(); }
+    }
+
+    private async Task<AppStateDocument> PersistRuntimePortsUnderHostPathLockAsync(AppRecord record,
+        RuntimeAppManifestSelection selection, CancellationToken cancellationToken, bool allowIncompleteConfiguration = false)
+    {
+        var authorityRecord = record;
+        if (allowIncompleteConfiguration && record.RuntimeState == AppRuntimeStates.Stopped)
+        {
+            var readiness = await GetConfigurationReadinessAsync(record, cancellationToken);
+            if (readiness.Required)
+            {
+                // Preserve the operator's bindings on the stopped target, but do not reserve or
+                // use unready mounts while applying its metadata. Source authority and every
+                // remaining valid mount still validate; actual Start validates the full record.
+                authorityRecord = record with
+                {
+                    Mounts = readiness.Error is not null ? [] : (record.Mounts ?? []).Where(binding =>
+                        !readiness.Mounts.Any(issue => issue.Key == binding.Key &&
+                            (issue.Label is null || issue.Label == binding.Label || issue.Label == binding.GlobalMountName))).ToArray(),
+                };
+            }
+        }
+        await new HostPathAuthority(paths, apps).AppAsync(authorityRecord, cancellationToken);
+        return portAllocator is null ? await apps.UpsertAppAsync(record, cancellationToken)
+            : await portAllocator.AssignAndPersistAsync(record, selection, apps.ListAppRecordsAsync, apps.UpsertAppAsync, cancellationToken);
     }
 
     public async Task<AppRuntimeSwitchPlan> CreateRuntimeSwitchPlanAsync(
@@ -2993,8 +3007,8 @@ internal sealed partial class CoreLifecycleService(
 
     public async Task<AppBackupsResponse> ListBackupsAsync(string appId, CancellationToken cancellationToken = default)
     {
-        _ = await RequireAppAsync(appId, cancellationToken);
-        return new AppBackupsResponse(await backups.ListBackupsAsync(appId, cancellationToken));
+        var app = await RequireAppAsync(appId, cancellationToken);
+        return new AppBackupsResponse(await backups.ListBackupsAsync(appId, cancellationToken, app.InstalledAt));
     }
 
     public Task<AppBackupResponse> CreateManualBackupAsync(string appId, AppManualBackupRequest request, CancellationToken cancellationToken = default)
@@ -4266,7 +4280,8 @@ internal sealed partial class CoreLifecycleService(
         string operation,
         string runtimeState,
         string message,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AppHealthSummary? health = null)
     {
         try
         {
@@ -4275,7 +4290,7 @@ internal sealed partial class CoreLifecycleService(
                 RuntimeState = runtimeState,
                 DependencyStart = null,
                 DependencyBorrowedStart = false,
-                Health = null,
+                Health = health,
                 OperationStatus = "failed",
                 LastOperation = operation,
                 LastError = message,
@@ -4287,19 +4302,63 @@ internal sealed partial class CoreLifecycleService(
         }
     }
 
-    private static async Task TryStopRuntimeAsync(IAppRuntimeAdapter adapter, RuntimeLifecycleContext context)
+    private async Task RecordFailedStartAsync(AppRecord previous, string operation, string error,
+        IAppRuntimeAdapter? adapter, RuntimeLifecycleContext? context, bool runtimeStarted, CancellationToken ct)
+    {
+        var state = AppRuntimeStates.Stopped;
+        AppHealthSummary? health = null;
+        if (adapter is null || context is null)
+        {
+            // A preflight failure has not stopped the selected workspace or its surviving services.
+            if (previous.DevModeId is not null && previous.RuntimeState is AppRuntimeStates.Unknown or AppRuntimeStates.Running)
+                (state, health) = (previous.RuntimeState, previous.Health);
+        }
+        else
+        {
+            var stopped = false;
+            if (runtimeStarted)
+            {
+                // Readiness failed after the runtime launched. Attempt ordinary cleanup and
+                // preserve the original launch error if Stop cannot confirm termination.
+                try { stopped = (await adapter.StopAsync(context, CancellationToken.None)).RuntimeState == AppRuntimeStates.Stopped; }
+                catch (Exception ex) { logger.LogWarning(ex, "Could not stop {AppId} after a failed {Operation}.", previous.Id, operation); }
+            }
+            if (!stopped && context.BoundWorktreeId is not null)
+                (state, health) = await ObserveFailedRuntimeAsync(adapter, context, AppRuntimeStates.Unknown, ct);
+        }
+        await RecordForegroundLifecycleFailureAsync(previous.Id, operation, state, error, ct, health);
+    }
+
+    private async Task<(string State, AppHealthSummary? Health)> ObserveFailedRuntimeAsync(IAppRuntimeAdapter adapter,
+        RuntimeLifecycleContext context, string unobservedState, CancellationToken ct)
     {
         try
         {
-            _ = await adapter.StopAsync(context, CancellationToken.None);
+            var observed = await adapter.GetHealthAsync(context with { ConfirmServiceAbsence = true }, ct);
+            var services = observed.Services;
+            if (services.Count == 0) return (unobservedState, null);
+
+            // A failed start or stop can leave only some services alive. Only a complete
+            // observation can authorize a further operation that requires a stopped app.
+            var state = AppRuntimeStates.Unknown;
+            if (context.Manifest.Services.All(service => services.Any(reading => reading.Service == service.Key)))
+            {
+                if (services.All(service => service.Status is "stopped" or "exited")) state = AppRuntimeStates.Stopped;
+                else if (services.All(service => service.Status == "running")) state = AppRuntimeStates.Running;
+            }
+            return (state, AppReadinessProbes.Summarize(services, clock.UtcNow));
         }
-        catch
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            logger.LogWarning(ex, "Could not observe {AppId} after a lifecycle failure.", context.App.Id);
+            return (unobservedState, null);
         }
     }
 
     private static bool IsRecordableLifecycleFailure(Exception ex)
-        => ex is AppLifecycleException or AppManifestException or SandboxException or IOException or UnauthorizedAccessException or JsonException;
+        => ex is AppLifecycleException or AppManifestException or SandboxException or DockerUnavailableException or
+            System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or JsonException ||
+            ex is AggregateException aggregate && aggregate.InnerExceptions.All(IsRecordableLifecycleFailure);
 
     private AppSourceState? BuildSourceState(RuntimeAppManifestSelection selection, AppRecord? existing)
     {
@@ -4775,6 +4834,10 @@ internal sealed partial class CoreLifecycleService(
         var activationId = development is { PreparedRuntime: not null, Phase: "starting" or "active" or "restarting" }
             ? development.ActivationId : null;
 
+        var boundWorktreeId = development is { WorkspaceStartAfterBinding: true, Active: true } &&
+            app.SourceState?.LocalOverridePath == development.SourcePath && app.SelectedRuntime == development.TargetRuntime &&
+            selection.RuntimeProfile.Key == development.TargetRuntime ? development.WorktreeId : null;
+
         return new(
             app,
             selection,
@@ -4784,7 +4847,7 @@ internal sealed partial class CoreLifecycleService(
             mounts,
             await ResolveTelemetryEndpointAsync(app, cancellationToken),
             ResolveLockedSourceRoot(app, await ResolveRuntimeProfilesAsync(app, cancellationToken)),
-            AppCachePath: GetAppCachePath(app.Id), WorkspaceActivationId: activationId);
+            AppCachePath: GetAppCachePath(app.Id), WorkspaceActivationId: activationId, BoundWorktreeId: boundWorktreeId);
     }
 
     // The source root a locked (development: false) source runtime executes from: the managed checkout

@@ -56,6 +56,24 @@ describe("native provider children in the Harness transcript", () => {
     subscription.unsubscribe();
   });
 
+  it("persists public child prompt and response without promoting them to root output or requiring a final message", async () => {
+    const { f, record, runId } = await start();
+    f.emit(runId, "agent.updated", { agent: { ...child, state: "running", prompt: "Original task" } }, child);
+    f.emit(runId, "agent.updated", { agent: { ...child, state: "succeeded", response: "Public final", responseTruncated: true } }, child);
+    f.emit(runId, "agent.updated", { agent: { ...child, state: "succeeded", response: "Second answer" } }, child);
+    f.emit(runId, "agent.updated", { agent: { ...child, state: "succeeded", response: "Public final", responseTruncated: true } }, child);
+    const other = { ...child, agentId: "other", parentToolCallId: "second-launch" };
+    f.emit(runId, "result.available", { result: { status: "succeeded", text: "Result without a message", messageId: "response" } }, other);
+    await vi.waitFor(async () => expect((await f.store.readEvents(record.id)).filter(event => event.type === "native_agent_details")).toHaveLength(5));
+    const events = await f.store.readEvents(record.id);
+    expect(events.filter(event => event.type === "native_agent_details")).toMatchObject([
+      { providerSource: child, prompt: "Original task" }, { providerSource: child, result: "Public final", resultTruncated: true },
+      { providerSource: child, result: "Second answer" }, { providerSource: child, result: "Public final" },
+      { providerSource: other, result: "Result without a message", resultMessageId: "response" }]);
+    expect(events.some(event => event.type === "result" || event.type === "assistant_text")).toBe(false);
+    expect((await f.store.readRecord(record.id))?.status).toBe("running");
+  });
+
   it.each(["root", "primary"])("joins source-less retained root tools without rewriting their stored IDs (root: %s)", async rootId => {
     const { f, record, runId } = await start();
     const source = { ...child, parentAgentId: rootId };

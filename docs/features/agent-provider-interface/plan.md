@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-10-10
-updated: 2026-11-18
+updated: 2026-11-20
 summary: Extract independent local agent-provider apps consumed by Docker-hosted Harness, with explicit discovery, authority, recovery and host-tool readiness.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -1010,7 +1010,9 @@ neither caching nor a universal inference API is a prerequisite to this provider
 
 - [x] D30. Settle Claude background Bash cards with the outcome of the exact native command, including commands owned by children that have already yielded. Verify attribution, late completion and preservation of final answer delivery.
 
-- [x] D31. Let explicit owner-confirmed session deletion retire an exact provider run with proved native exit and unresolved tool outcomes, including retained terminal journals. Retain unknown outcomes and source, fence continuation, release only the original execution claims, and verify retry and refusal behavior.
+- [x] D31. Show native subagents in a collapsed chat disclosure with individual status, parent, delegated prompt and final reply where observed. Preserve attribution through live updates and replay, including older conversations with partial evidence.
+
+- [x] D32. Let explicit owner-confirmed session deletion retire an exact provider run with proved native exit and unresolved tool outcomes, including retained terminal journals. Retain unknown outcomes and source, fence continuation, release only the original execution claims, and verify retry and refusal behavior.
 
 ### Implementation Order
 

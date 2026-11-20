@@ -245,7 +245,7 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
             url => new InspectionPullRequest(url, null, null, "No verified provider observation."), StringComparer.Ordinal);
         if (publications is null || users is null || connections is null) return result.Values.ToArray();
         var record = await publications.ReadInspectionRecordAsync(tree.Id, ct);
-        if (record is null || record.WorkspaceId != tree.Id || !record.Owner.SameIdentity(tree.Owner) || record.Owner.UserId != userId) return result.Values.ToArray();
+        if (record is null || !await publications.CanInspectRecordAsync(record, tree, userId, ct)) return result.Values.ToArray();
         foreach (var previous in record.History.Where(p => SafeUrl(p.Url)))
             result[previous.Url] = new(previous.Url, previous.Head, null, "Historical reference; no authorized retained observation.", Historical: true);
         if (record.Url is { } recordedUrl && SafeUrl(recordedUrl))
@@ -259,7 +259,7 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
         {
             var remote = await workspaces.PublicationRemoteAsync(tree, ct, localOnly: true);
             if (provider.NormalizeRepository(remote?.Repository ?? tree.Repository) != record.Repository ||
-                (remote is not null && (remote.TargetBranch != record.TargetBranch || remote.Grant.ConnectionId != record.ConnectionId)))
+                record.TargetBranch != (remote?.TargetBranch ?? tree.TargetBranch) || remote is not null && remote.Grant.ConnectionId != record.ConnectionId)
                 return result.Values.ToArray();
         }
         catch (Exception ex) when (ex is PublicationException or UserConnectionException or AppLifecycleException) { return result.Values.ToArray(); }
