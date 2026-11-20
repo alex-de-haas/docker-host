@@ -37,7 +37,7 @@ import {
   MessageScroller, MessageScrollerButton, MessageScrollerContent,
   MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
-import { transcriptItems } from "@/lib/transcript-items";
+import { orderedHistory, transcriptItems } from "@/lib/transcript-items";
 import { nativeAgentTranscript, nativeAgentKey, nativeSource, receiveTranscriptText, emptyTranscriptStreams } from "@/lib/native-subagents";
 import { NativeSubagents } from "./native-subagents";
 import { feedbackCardForEvent, useFeedbackTranscript } from "@/lib/feedback-transcript";
@@ -82,6 +82,7 @@ import {
   streamEvents,
   type AssistantEvent,
   type AssistantSession,
+  type ProviderHistoryGap,
   type HarnessHealth,
   type StreamConnection,
 } from "@/lib/assistant-api";
@@ -99,6 +100,13 @@ const HISTORY_STORAGE_KEY = "hosty.assistant.history";
 const MAX_ASK_CHARS = 4_000;
 const EMPTY_MCP_ACTIVITY: McpActivity = { total: 0, tools: [] };
 
+function HistoryGapMarker({ gap }: { gap: ProviderHistoryGap }) {
+  const count = gap.to - gap.from + 1;
+  return <p role="status" data-history-gap-from={gap.from} data-history-gap-to={gap.to}
+    className="px-2 py-1 text-sm text-muted-foreground">
+    {gap.unavailable ? "History unavailable" : "Syncing history"} · {count} {count === 1 ? "record" : "records"}{gap.unavailable ? "" : " remaining"}
+  </p>;
+}
 
 export function AssistantConversation({ fullPage = false }: { fullPage?: boolean }) {
   const ui = useHostyUi();
@@ -115,6 +123,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // Retain the expected message-selected session even if fetching it fails.
   const [surfaceSessionId, setSurfaceSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<AssistantSession | null>(null);
+  const [historyGaps, setHistoryGaps] = useState<ProviderHistoryGap[]>([]);
   const sessionSnapshot = useRef<AssistantSession | null>(null);
   const titleChanges = useRef(new Map<string, number>());
   useLayoutEffect(() => { sessionSnapshot.current = session; }, [session]);
@@ -488,6 +497,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setContextDetailsOpen(false);
     setSession(record);
     sessionSnapshot.current = record;
+    setHistoryGaps(record.providerHistoryGaps ?? []);
     setHealth(null);
     void getHealth(record.id).then(value => { if (activeSessionId.current === record.id) setHealth(value); }).catch(() => {});
     setError(null);
@@ -537,6 +547,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (abort.signal.aborted) return;
         suggestionsReceive(event);
         queueReceive(event);
+        if (event.type === "provider_history_gaps") {
+          setHistoryGaps(event.gaps as ProviderHistoryGap[]);
+          return;
+        }
         if (event.type === "session_message_queue") return;
         if (event.type === "session_suggestion") return;
         if (event.type === "context_usage") {
@@ -606,7 +620,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           setStreams(current => receiveTranscriptText(current, event));
           return;
         }
-        if (event.type === "assistant_text") {
+        if (event.type === "assistant_text" && !event.providerHistoryRecovered) {
           setStreams(current => receiveTranscriptText(current, event));
         }
         if (event.type === "session_status") {
@@ -614,6 +628,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           if (event.status === "cancelled") setEvents(current => [...current, event]);
           if (event.historical === true) return;
           const value = String(event.status ?? "idle");
+          if (Array.isArray(event.providerHistoryGaps)) setHistoryGaps(event.providerHistoryGaps as ProviderHistoryGap[]);
           setStatus(value);
           const applyStatus = (item: AssistantSession) => item.id === record.id ? { ...item, status: value,
             ...("providerHistoryContact" in event ? { providerHistoryContact: event.providerHistoryContact as AssistantSession["providerHistoryContact"] ?? undefined } : {}),
@@ -1216,8 +1231,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // Which message each uploaded file belongs to, so a claimed file is drawn under its message and
   // nowhere else.
   const attachmentIndex = useMemo(() => indexAttachments(events), [events]);
-  const nativeTranscript = useMemo(() => nativeAgentTranscript(events, streams.children), [events, streams.children]);
-  const items = useMemo(() => transcriptItems(nativeTranscript.events, attachmentIndex.claimed, decidedApprovals), [nativeTranscript, attachmentIndex, decidedApprovals]);
+  const orderedEvents = useMemo(() => orderedHistory(events, historyGaps), [events, historyGaps]);
+  const nativeTranscript = useMemo(() => nativeAgentTranscript(orderedEvents, streams.children), [orderedEvents, streams.children]);
+  const items = useMemo(() => transcriptItems(nativeTranscript.events, attachmentIndex.claimed, decidedApprovals, true), [nativeTranscript, attachmentIndex, decidedApprovals]);
   const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
   const mcpActivity = useMemo(() => contextDetailsOpen ? observedMcpActivity(events) : EMPTY_MCP_ACTIVITY, [events, contextDetailsOpen]);
 
@@ -1382,6 +1398,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                   {items.map((item) => item.kind === "activity" ? (
                     <MessageScrollerItem key={item.key} messageId={item.key}>
                       <ToolActivity events={item.events} appNames={appNames} reviewContext={transcriptReviewContext} commandResults={item.commandResults} toolResults={item.toolResults} approvals={item.approvals} />
+                    </MessageScrollerItem>
+                  ) : item.event.type === "provider_history_gap" ? (
+                    <MessageScrollerItem key={item.key} messageId={item.key}>
+                      <HistoryGapMarker gap={item.event.gap as ProviderHistoryGap} />
                     </MessageScrollerItem>
                   ) : item.event.type === "native_agent_group" ? (
                     <MessageScrollerItem key={`native-${nativeTranscript.groups.get(item.event.seq)!.key}`} messageId={`native-${nativeTranscript.groups.get(item.event.seq)!.key}`}>

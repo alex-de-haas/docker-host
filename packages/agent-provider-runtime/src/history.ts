@@ -1,17 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { AgentApiError, type AgentProviderRef, type AgentRunSnapshot, type AgentWatchItem } from "@hosty-sdk/app/agent";
+import { AgentApiError, type AgentProviderRef, type AgentRunSnapshot, type AgentHistorySessionState, type AgentWatchItem } from "@hosty-sdk/app/agent";
+import { shouldRetainToolOutput } from "./internal/harness/tool-result.js";
 import type { Actor, RunRecord, SessionRecord } from "./store.js";
 
 export type HistoryOwner = Pick<Actor, "callerAppId" | "callerInstallation">;
 export type HistoryAuthority = HistoryOwner & { provider: AgentProviderRef; expiresAt: string };
 export type HistoryObservation = { sessionId: string; runId: string; generation: string; userId: string; principalId: string; item: AgentWatchItem };
-export type HistoryFrame = HistoryObservation & { cursor: string };
+export type HistoryFrame = HistoryObservation & { cursor: string; epoch?: string; sessionPosition?: number; sourceHistoryIncomplete?: true };
 
 const ownerKey = (owner: HistoryOwner) => JSON.stringify([owner.callerAppId, owner.callerInstallation]);
 const sequenceOf = (item: AgentWatchItem) => item.kind === "snapshot" ? item.snapshot.lastSequence : item.event.sequence;
 const isTransient = (item: AgentWatchItem) => item.kind === "event" && (item.event.type === "message.delta" || item.event.type === "tool.output");
+
+const sourceIncomplete = `EXISTS(SELECT 1 FROM history_run_gaps AS g WHERE g.scope=f.scope AND g.session=f.session AND g.run=f.run AND g.generation=f.generation)`;
 
 /** Retained public facts, scoped to both installations. Each installation gets its own ordering and opaque cursor. */
 export class InstallationHistory {
@@ -27,12 +30,44 @@ export class InstallationHistory {
       CREATE TABLE IF NOT EXISTS history_commits (
         scope TEXT NOT NULL, position INTEGER NOT NULL, marker TEXT NOT NULL, PRIMARY KEY(scope,position)
       );
+      CREATE TABLE IF NOT EXISTS history_run_gaps (
+        scope TEXT NOT NULL, session TEXT NOT NULL, run TEXT NOT NULL, generation TEXT NOT NULL,
+        PRIMARY KEY(scope,session,run,generation)
+      );
       CREATE TABLE IF NOT EXISTS history_facts (
         scope TEXT NOT NULL, position INTEGER NOT NULL, session TEXT NOT NULL, run TEXT NOT NULL,
         generation TEXT NOT NULL, sequence TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL,
         PRIMARY KEY(scope,position), UNIQUE(scope,session,run,generation,sequence,kind)
       );
+      CREATE INDEX IF NOT EXISTS history_tool_start ON history_facts(scope,session,run,generation,
+        json_extract(body,'$.item.event.source.agentId'),json_extract(body,'$.item.event.data.toolCallId'),position DESC)
+        WHERE json_extract(body,'$.item.event.type')='tool.started';
     `));
+    this.withDatabase(() => {
+      // A v1 archive already has a stable committed order. Number its durable rows once.
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        if (!this.db.prepare("PRAGMA table_info(history_facts)").all().some(column => column.name === "ordinal")) {
+          this.db.exec(`
+            ALTER TABLE history_facts ADD COLUMN ordinal INTEGER;
+            ALTER TABLE history_facts ADD COLUMN state_run_start INTEGER;
+            WITH ranked AS MATERIALIZED (
+              SELECT scope, position, row_number() OVER(PARTITION BY scope, session ORDER BY position) AS ordinal,
+                min(position) OVER(PARTITION BY scope, session, run) AS run_start
+              FROM history_facts
+            )
+            UPDATE history_facts AS f SET ordinal = r.ordinal, state_run_start = CASE
+              WHEN kind='snapshot' OR json_extract(body,'$.item.event.type')='run.updated' THEN r.run_start END
+            FROM ranked AS r WHERE r.scope=f.scope AND r.position=f.position;
+            CREATE UNIQUE INDEX history_session_ordinal ON history_facts(scope,session,ordinal);
+            CREATE INDEX history_session_position ON history_facts(scope,session,position);
+            CREATE INDEX history_session_state ON history_facts(scope,session,state_run_start DESC,position DESC)
+              WHERE state_run_start IS NOT NULL;
+          `);
+        }
+        this.db.exec("COMMIT");
+      } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    });
   }
   /** An open subscription keeps its live buffer. Idle stores release their SQLite file handles. */
   private withDatabase<T>(action: () => T): T {
@@ -107,10 +142,17 @@ export class InstallationHistory {
     if (session.deleted) {
       this.withDatabase(() => {
         this.db.prepare("DELETE FROM history_facts WHERE scope=? AND session=?").run(scope, session.id);
+        this.db.prepare("DELETE FROM history_run_gaps WHERE scope=? AND session=?").run(scope, session.id);
         this.db.prepare("DELETE FROM live_facts WHERE scope=? AND session=?").run(scope, session.id);
       });
       return;
     }
+    // Startup also publishes aggregates whose older journal rows predate the explicit source-gap flag.
+    const incomplete = Object.values(session.runs).filter(run => run.historyPartial);
+    if (incomplete.length) this.withDatabase(() => {
+      const recordGap = this.db.prepare("INSERT OR IGNORE INTO history_run_gaps(scope,session,run,generation) VALUES(?,?,?,?)");
+      for (const run of incomplete) recordGap.run(scope, session.id, run.snapshot.ref.id, run.snapshot.generation);
+    });
     if (!Object.values(session.runs).some(run => run.historyOutbox?.length || this.listeners.has(scope) && this.transients.has(run))) return;
     const changed = this.withDatabase(() => this.append(scope, session));
     for (const run of Object.values(session.runs)) { this.acknowledge(run); this.transients.delete(run); }
@@ -122,12 +164,17 @@ export class InstallationHistory {
     try {
       let { position } = this.boundary(scope);
       let firstDurable: number | undefined;
-      const append = this.db.prepare(`INSERT INTO history_facts(scope,position,session,run,generation,sequence,kind,body)
-        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(scope,session,run,generation,sequence,kind) DO NOTHING`);
+      const append = this.db.prepare(`INSERT INTO history_facts(scope,position,session,run,generation,sequence,kind,body,ordinal,state_run_start)
+        VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(scope,session,run,generation,sequence,kind) DO NOTHING`);
       const live = this.db.prepare("INSERT INTO live_facts(scope,position,session,body) VALUES(?,?,?,?)");
+      const head = this.db.prepare("SELECT MAX(ordinal) AS n FROM history_facts WHERE scope=? AND session=?");
+      let ordinal = Number(head.get(scope, session.id)?.n ?? 0);
+      const firstRecord = this.db.prepare("SELECT MIN(position) AS n FROM history_facts WHERE scope=? AND session=? AND run=?");
       for (const run of Object.values(session.runs)) {
         const transients = this.listeners.has(scope) ? this.transients.get(run) ?? [] : [];
         const durable = run.historyOutbox ?? [];
+        if (!durable.length && !transients.length) continue;
+        let runStart = durable.length ? Number(firstRecord.get(scope, session.id, run.snapshot.ref.id)?.n ?? 0) : 0;
         const items = transients.length
           ? [...durable, ...transients].sort((a, b) => Number(BigInt(sequenceOf(a)) - BigInt(sequenceOf(b))))
           : durable;
@@ -138,7 +185,12 @@ export class InstallationHistory {
           if (isTransient(item)) {
             live.run(scope, ++position, session.id, body);
             changed = true;
-          } else if (append.run(scope, position + 1, session.id, observation.runId, observation.generation, sequenceOf(item), item.kind, body).changes) {
+          } else {
+            runStart ||= position + 1;
+            const state = item.kind === "snapshot" || item.event.type === "run.updated";
+            if (!append.run(scope, position + 1, session.id, observation.runId, observation.generation,
+              sequenceOf(item), item.kind, body, ordinal + 1, state ? runStart : null).changes) continue;
+            ordinal++;
             position++;
             firstDurable ??= position;
             changed = true;
@@ -157,11 +209,55 @@ export class InstallationHistory {
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     return changed;
   }
-  page(owner: HistoryOwner, after?: string, through?: string, limit = 32, live = false): { observations: HistoryFrame[]; through: string; nextCursor: string | null } {
-    return this.withDatabase(() => this.readPage(owner, after, through, limit, live));
+  /** Read the public name from the earlier start even when neither the page nor the run snapshot contains it. */
+  private readObservation(scope: string, position: number, body: string): HistoryObservation {
+    const observation = JSON.parse(body) as HistoryObservation;
+    const { item } = observation;
+    if (item.kind !== "event" || item.event.type !== "tool.completed") return observation;
+    const { event } = item, { toolCallId, state } = event.data;
+    let name = event.data.name;
+    if ((!name || name === "unknown") && typeof toolCallId === "string") {
+      const start = this.db.prepare(`
+        SELECT json_extract(body,'$.item.event.data.name') AS name FROM history_facts
+        WHERE scope=? AND session=? AND run=? AND generation=? AND json_extract(body,'$.item.event.type')='tool.started'
+          AND json_extract(body,'$.item.event.source.agentId')=? AND json_extract(body,'$.item.event.data.toolCallId')=?
+          AND position<? ORDER BY position DESC LIMIT 1`)
+        .get(scope, observation.sessionId, observation.runId, observation.generation, event.source.agentId, toolCallId, position);
+      if (typeof start?.name === "string" && start.name) event.data.name = name = start.name;
+    }
+    if (typeof name !== "string" || !name || name === "unknown" || !shouldRetainToolOutput(name)) {
+      // Keep the outcome while withholding output and command summaries for unclassified or private tools.
+      event.data = { toolCallId, state, ...(typeof name === "string" && name ? { name } : {}) };
+    }
+    return observation;
   }
-  private readPage(owner: HistoryOwner, after: string | undefined, through: string | undefined, limit: number, live: boolean) {
-    const scope = this.scope(owner), boundary = this.boundary(scope);
+  page(owner: HistoryOwner, after?: string, through?: string, limit = 32, live = false, positioned = false): { observations: HistoryFrame[]; through: string; nextCursor: string | null } {
+    return this.withDatabase(() => this.readPage(owner, after, through, limit, live, positioned));
+  }
+  private readPage(owner: HistoryOwner, after: string | undefined, through: string | undefined, limit: number, live: boolean, positioned: boolean) {
+    const scope = this.scope(owner);
+    const { boundary, cursor, position } = this.coordinates(scope);
+    const start = position(after, 0), end = position(through, boundary.position);
+    if (start > end || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new AgentApiError("invalid_input", "Invalid history page bounds.", 400);
+    const select = "SELECT position,ordinal,body," + (positioned ? sourceIncomplete : "0")
+      + " AS partial FROM history_facts AS f WHERE scope=? AND position>? AND position<=?";
+    const query = live ? select + " UNION ALL SELECT position,NULL AS ordinal,body,0 AS partial FROM live_facts WHERE scope=? AND position>? AND position<=?" : select;
+    const rows = this.db.prepare(query + " ORDER BY position LIMIT ?");
+    const observations: HistoryFrame[] = [];
+    let pageBytes = 0, more = false;
+    const range = [scope, start, end];
+    for (const row of rows.iterate(...range, ...(live ? range : []), limit + 1)) {
+      const body = String(row.body), size = Buffer.byteLength(body);
+      if (observations.length >= limit || observations.length > 0 && pageBytes + size > 2 * 1024 * 1024) { more = true; break; }
+      observations.push({ cursor: cursor(Number(row.position)), ...this.readObservation(scope, Number(row.position), body),
+        ...(positioned ? { epoch: boundary.epoch } : {}), ...(row.partial ? { sourceHistoryIncomplete: true as const } : {}),
+        ...(positioned && row.ordinal !== null ? { sessionPosition: Number(row.ordinal) } : {}) });
+      pageBytes += size;
+    }
+    return { observations, through: cursor(end), nextCursor: more ? observations.at(-1)!.cursor : null };
+  }
+  private coordinates(scope: string) {
+    const boundary = this.boundary(scope);
     const marker = this.db.prepare("SELECT marker FROM history_commits WHERE scope=? AND position<=? ORDER BY position DESC LIMIT 1");
     const cursor = (n: number) => boundary.epoch + "." + n + "." + (marker.get(scope, n)?.marker ?? "0");
     const position = (value: string | undefined, fallback: number) => {
@@ -174,21 +270,76 @@ export class InstallationHistory {
       if (cursor(n) !== value) throw new AgentApiError("history_cursor_invalid", "The retained history at this cursor has changed.", 410);
       return n;
     };
-    const start = position(after, 0), end = position(through, boundary.position);
-    if (start > end || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new AgentApiError("invalid_input", "Invalid history page bounds.", 400);
-    const select = "SELECT position,body FROM history_facts WHERE scope=? AND position>? AND position<=?";
-    const query = live ? select + " UNION ALL SELECT position,body FROM live_facts WHERE scope=? AND position>? AND position<=?" : select;
-    const rows = this.db.prepare(query + " ORDER BY position LIMIT ?");
-    const observations: HistoryFrame[] = [];
-    let pageBytes = 0, more = false;
-    const range = [scope, start, end];
-    for (const row of rows.iterate(...range, ...(live ? range : []), limit + 1)) {
-      const body = String(row.body), size = Buffer.byteLength(body);
-      if (observations.length >= limit || observations.length > 0 && pageBytes + size > 2 * 1024 * 1024) { more = true; break; }
-      observations.push({ cursor: cursor(Number(row.position)), ...JSON.parse(body) as HistoryObservation });
-      pageBytes += size;
-    }
-    return { observations, through: cursor(end), nextCursor: more ? observations.at(-1)!.cursor : null };
+    return { boundary, cursor, position };
+  }
+
+  currentBoundary(owner: HistoryOwner, previous?: string): string {
+    return this.withDatabase(() => {
+      const { boundary, cursor, position } = this.coordinates(this.scope(owner));
+      if (previous) position(previous, 0);
+      return cursor(boundary.position);
+    });
+  }
+
+  states(owner: HistoryOwner, through?: string, afterSession = "", limit = 32) {
+    return this.withDatabase(() => {
+      const scope = this.scope(owner), { boundary, cursor, position } = this.coordinates(scope);
+      const end = position(through, boundary.position);
+      const names = this.db.prepare(`
+        SELECT DISTINCT session FROM history_facts WHERE scope=? AND session>? AND position<=?
+        ORDER BY session LIMIT ?`).all(scope, afterSession, end, limit + 1);
+      const latest = this.db.prepare(`
+        SELECT body, ${sourceIncomplete} AS partial FROM history_facts AS f WHERE scope=? AND session=? AND position<=? AND state_run_start IS NOT NULL
+        ORDER BY state_run_start DESC,position DESC LIMIT 1`);
+      const head = this.db.prepare("SELECT ordinal FROM history_facts WHERE scope=? AND session=? AND position<=? ORDER BY position DESC LIMIT 1");
+      const sessions: AgentHistorySessionState[] = [];
+      let bytes = 0, more = false;
+      for (const name of names) {
+        if (sessions.length === limit) { more = true; break; }
+        const sessionId = String(name.session), row = latest.get(scope, sessionId, end);
+        if (!row) throw new AgentApiError("history_state_missing", "Retained history lacks an initial run state.", 503, true);
+        const { item, userId, principalId }: HistoryObservation = JSON.parse(String(row.body));
+        const snapshot = item.kind === "snapshot" ? item.snapshot : item.event.data.snapshot as AgentRunSnapshot;
+        const { ref, generation, revision, state, phase, stopConfirmed, freshness, observedAt,
+          configurationRevision, lastSequence, cursor: runCursor, pending, effects } = snapshot;
+        const summary: AgentHistorySessionState = { sessionId, userId, principalId, epoch: boundary.epoch,
+          head: Number(head.get(scope, sessionId, end)!.ordinal), ...(row.partial ? { sourceHistoryIncomplete: true as const } : {}),
+          snapshot: { ref, sessionId, generation, revision, state, phase, stopConfirmed, freshness, observedAt,
+            configurationRevision, lastSequence, cursor: runCursor, pending, effects } };
+        const size = Buffer.byteLength(JSON.stringify(summary));
+        if (sessions.length && bytes + size > 2 * 1024 * 1024) { more = true; break; }
+        sessions.push(summary); bytes += size;
+      }
+      return { through: cursor(end), sessions, nextSession: more ? sessions.at(-1)!.sessionId : null };
+    });
+  }
+
+  range(owner: HistoryOwner, through: string, sessionId: string, epoch: string, from: number, to: number, limit: number) {
+    return this.withDatabase(() => {
+      const scope = this.scope(owner), { boundary, cursor, position } = this.coordinates(scope);
+      const end = position(through, boundary.position);
+      if (epoch !== boundary.epoch) throw new AgentApiError("history_cursor_invalid", "The session history epoch changed.", 410);
+      const head = this.db.prepare("SELECT ordinal FROM history_facts WHERE scope=? AND session=? AND position<=? ORDER BY position DESC LIMIT 1")
+        .get(scope, sessionId, end);
+      if (!head) throw new AgentApiError("history_range_unavailable", "This session range is unavailable at this boundary.", 410);
+      if (to > Number(head.ordinal)) throw new AgentApiError("invalid_input", "Requested range exceeds the session head.", 400);
+      const rows = this.db.prepare(`
+        SELECT position,ordinal,body,${sourceIncomplete} AS partial FROM history_facts AS f WHERE scope=? AND session=?
+          AND ordinal BETWEEN ? AND ? AND position<=? ORDER BY ordinal LIMIT ?`).iterate(scope, sessionId, from, to, end, limit);
+      const observations: HistoryFrame[] = [];
+      let bytes = 0;
+      for (const row of rows) {
+        const body = String(row.body), size = Buffer.byteLength(body);
+        if (observations.length && bytes + size > 2 * 1024 * 1024) break;
+        if (Number(row.ordinal) !== from + observations.length) throw new AgentApiError("history_range_invalid", "Session history has lost a durable record.", 503);
+        observations.push({ ...this.readObservation(scope, Number(row.position), body), cursor: cursor(Number(row.position)), epoch, sessionPosition: Number(row.ordinal),
+          ...(row.partial ? { sourceHistoryIncomplete: true as const } : {}) });
+        bytes += size;
+      }
+      if (!observations.length) throw new AgentApiError("history_range_invalid", "Session history is incomplete.", 503);
+      const next = from + observations.length;
+      return { observations, nextPosition: next <= to ? next : null };
+    });
   }
   subscribe(owner: HistoryOwner, listener: () => void): () => void {
     const scope = this.scope(owner), set = this.listeners.get(scope) ?? new Set();

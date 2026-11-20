@@ -273,6 +273,27 @@ function handle(msg) {
         turn: { id: "feedback-turn", status: "failed", error: { message: "Feedback acceptance fixture failed: " + error.message } } } }));
       return;
     }
+    const ranges = currentTurnText.match(/HISTORY_RANGES:(\d{1,5}):([a-f0-9]{32})/);
+    if (ranges) {
+      const [, port, chat] = ranges;
+      const threadId = msg.params.threadId;
+      send({ id: msg.id, result: {} });
+      send({ method: "turn/started", params: { threadId, turn: { id: chat } } });
+      void (async () => {
+        for (let batch = 0; ; batch++) {
+          const result = await fetch(`http://127.0.0.1:${port}/${chat}/${batch}`, { signal: AbortSignal.timeout(240_000) });
+          if (!result.ok) throw new Error("History range fixture closed unexpectedly");
+          const { messages, done } = await result.json();
+          for (const [index, text] of messages.entries()) {
+            send({ method: "item/completed", params: { threadId, turnId: chat,
+              item: { type: "agentMessage", id: `${chat}-${batch}-${index}`, text } } });
+          }
+          if (done) break;
+        }
+        send({ method: "turn/completed", params: { threadId, turn: { id: chat, status: "completed" } } });
+      })().catch(error => fail(error.message));
+      return;
+    }
     const historyGate = currentTurnText.match(/HISTORY_ACCEPTANCE:(\d{1,5}):([a-f0-9]{32})/);
     if (historyGate) {
       const [, port, marker] = historyGate;

@@ -74,10 +74,20 @@ public record HostyAgentExecutionFrame(string Kind, string? Cursor, HostyAgentEx
 
 /// <summary>One observation from a provider subscription shared across this installation's chats.</summary>
 public record HostyAgentHistoryObservation(string SessionId, string RunId, string Generation, string UserId,
-    string PrincipalId, HostyAgentExecutionFrame Item, string Cursor);
+    string PrincipalId, HostyAgentExecutionFrame Item, string Cursor, string? Epoch = null, long? SessionPosition = null, bool? SourceHistoryIncomplete = null);
 
 /// <summary>A stable page in the retained installation history.</summary>
 public record HostyAgentHistoryPage(HostyAgentHistoryObservation[] Observations, string Through, string? NextCursor);
+
+/// <summary>Connection boundary or the following live observation.</summary>
+public record HostyAgentLiveHistoryFrame(string? Through, HostyAgentHistoryObservation? Observation);
+/// <summary>Session state and durable history watermark at the requested boundary.</summary>
+public record HostyAgentHistorySessionState(string SessionId, string UserId, string PrincipalId, string Epoch,
+    long Head, HostyAgentExecutionSnapshot Snapshot, bool? SourceHistoryIncomplete = null);
+/// <summary>A page of session states at one common installation boundary.</summary>
+public record HostyAgentHistoryStatesPage(string Through, HostyAgentHistorySessionState[] Sessions, string? NextSession);
+/// <summary>Consecutive durable facts of a single session.</summary>
+public record HostyAgentHistoryRange(HostyAgentHistoryObservation[] Observations, long? NextPosition);
 
 /// <summary>Direct HTTP/SSE consumer for agent v1. It never retries mutations or silently changes providers.</summary>
 /// <param name="http">Use automatic redirects disabled, with a timeout suitable for streaming.</param>
@@ -87,6 +97,8 @@ public record HostyAgentHistoryPage(HostyAgentHistoryObservation[] Observations,
 public sealed class HostyAgentExecutionClient(HttpClient http, HostyProviderRef provider, HostyAgentAuthorizer authorize, bool runningInContainer = false)
 {
     private const int MaxBytes = 1024 * 1024;
+    private const long MaxHistoryPosition = (1L << 53) - 1;
+    private static bool HistoryCursor(string? value) => value is { Length: > 0 and <= 8192 } && value.IndexOfAny(['\r', '\n']) < 0;
     private static string Segment(string value) => Guid.TryParse(value, out _) ? value : throw new ArgumentException("Use a public UUID.", nameof(value));
     private static string Digest(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
     private static HostyAgentPreparedRequest Prepare<T>(string operation, string method, string path, T input,
@@ -264,15 +276,95 @@ public sealed class HostyAgentExecutionClient(HttpClient http, HostyProviderRef 
         return page;
     }
 
+    /// <summary>The first frame supplies the boundary shared with the state and range reads. An optional previous cursor checks archive ancestry.</summary>
+    public async IAsyncEnumerable<HostyAgentLiveHistoryFrame> LiveHistoryAsync(HostyAgentHistoryBinding binding, string? previousCursor = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (previousCursor is not null && !HistoryCursor(previousCursor)) throw new ArgumentException("Invalid history cursor.", nameof(previousCursor));
+        using var response = await HistoryResponse(binding, previousCursor, "text/event-stream", null, null, cancellationToken, "live");
+        var ready = false;
+        await foreach (var (kind, id, json) in Frames(response, MaxBytes + 32768, cancellationToken))
+        {
+            if (kind == "ready" && !ready)
+            {
+                var value = JsonSerializer.Deserialize(json, AgentJsonContext.Default.JsonElement);
+                if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("through", out var boundary)
+                    || boundary.ValueKind != JsonValueKind.String || !HistoryCursor(boundary.GetString())) throw InvalidHistory();
+                ready = true;
+                yield return new(boundary.GetString(), null);
+            }
+            else if (kind == "observation" && ready)
+            {
+                var fact = ValidateHistory(JsonSerializer.Deserialize(json, AgentJsonContext.Default.HostyAgentHistoryObservation), id);
+                if (string.IsNullOrEmpty(fact.Epoch) || (fact.Item.Event?.Type is "message.delta" or "tool.output"
+                    ? fact.SessionPosition is not null : fact.SessionPosition is null or < 1)) throw InvalidHistory();
+                yield return new(null, fact);
+            }
+            else throw InvalidHistory();
+        }
+        if (!ready) throw InvalidHistory();
+    }
+
+    /// <summary>Read the state of owned provider sessions even when there is no live subscription.</summary>
+    public async Task<HostyAgentHistoryStatesPage> HistoryStatesAsync(HostyAgentHistoryBinding binding, string? through = null,
+        string? afterSession = null, int limit = 32, CancellationToken cancellationToken = default)
+    {
+        if (limit is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(limit));
+        using var response = await HistoryResponse(binding, null, "application/json", through, limit, cancellationToken,
+            "states", afterSession is null ? [] : [new("afterSession", afterSession)]);
+        var page = Decode(await Read(response, cancellationToken, 2 * MaxBytes + 32768), AgentJsonContext.Default.HostyAgentHistoryStatesPage);
+        if (!HistoryCursor(page.Through) || through is not null && through != page.Through || page.Sessions is null
+            || page.Sessions.Length > limit || page.Sessions.Any(s => s?.Snapshot?.Ref?.Provider != provider || s.SessionId != s.Snapshot.SessionId
+                || string.IsNullOrEmpty(s.SessionId) || string.IsNullOrEmpty(s.Epoch) || string.IsNullOrEmpty(s.UserId) || string.IsNullOrEmpty(s.PrincipalId)
+                || s.Head is < 1 or > MaxHistoryPosition || s.SourceHistoryIncomplete == false || !Guid.TryParse(s.Snapshot.Generation, out _)
+                || string.IsNullOrEmpty(s.Snapshot.Ref.Id) || !HistoryCursor(s.Snapshot.Cursor))
+            || page.NextSession is not null && (page.Sessions.Length == 0 || page.NextSession == afterSession || page.NextSession != page.Sessions[^1].SessionId))
+            throw InvalidHistory();
+        var previous = afterSession;
+        foreach (var session in page.Sessions)
+        {
+            if (previous is not null && string.CompareOrdinal(session.SessionId, previous) <= 0) throw InvalidHistory();
+            previous = session.SessionId;
+        }
+        return page;
+    }
+
+    /// <summary>Read one inclusive interval at a fixed installation boundary.</summary>
+    public async Task<HostyAgentHistoryRange> HistoryRangeAsync(HostyAgentHistoryBinding binding, string through,
+        string sessionId, string epoch, long from, long to, int limit = 32, CancellationToken cancellationToken = default)
+    {
+        if (from < 1 || to < from || to > MaxHistoryPosition || limit is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(from));
+        if (!HistoryCursor(through)) throw new ArgumentException("Invalid history boundary.", nameof(through));
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(epoch);
+        using var response = await HistoryResponse(binding, null, "application/json", through, limit, cancellationToken,
+            "range", [new("sessionId", sessionId), new("epoch", epoch),
+            new("from", from.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            new("to", to.ToString(System.Globalization.CultureInfo.InvariantCulture))]);
+        var page = Decode(await Read(response, cancellationToken, 2 * MaxBytes + 32768), AgentJsonContext.Default.HostyAgentHistoryRange);
+        if (page.Observations is null || page.Observations.Length == 0 || page.Observations.Length > limit) throw InvalidHistory();
+        long next = from;
+        foreach (var value in page.Observations)
+        {
+            var fact = ValidateHistory(value, value?.Cursor);
+            if (fact.SessionId != sessionId || fact.Epoch != epoch || fact.SessionPosition != next || next > to || fact.Item.Event?.Type is "message.delta" or "tool.output") throw InvalidHistory();
+            next = checked(next + 1);
+        }
+        if (page.NextPosition != (next > to ? (long?)null : next)) throw InvalidHistory();
+        return page;
+    }
+
+    private static HostyProviderException InvalidHistory() => new("provider_response_invalid", "Invalid positioned history response.", 502);
+
     private HostyAgentHistoryObservation ValidateHistory(HostyAgentHistoryObservation? value, string? id)
     {
-        if (value?.Item is null || string.IsNullOrEmpty(id) || string.IsNullOrWhiteSpace(value.RunId) || string.IsNullOrWhiteSpace(value.SessionId)
+        if (value?.Item is null || !HistoryCursor(id) || value.SourceHistoryIncomplete == false || value.SessionPosition is < 1 or > MaxHistoryPosition || string.IsNullOrWhiteSpace(value.RunId) || string.IsNullOrWhiteSpace(value.SessionId)
             || !Guid.TryParse(value.Generation, out _) || string.IsNullOrWhiteSpace(value.UserId) || string.IsNullOrWhiteSpace(value.PrincipalId))
             throw new HostyProviderException("provider_response_invalid", "Invalid installation history observation.", 502);
         bool Matches(HostyAgentExecutionSnapshot snapshot) => snapshot.Ref?.Provider == provider && snapshot.Ref.Id == value.RunId
             && snapshot.SessionId == value.SessionId && snapshot.Generation == value.Generation;
         if (value.Item.Kind == "snapshot" && value.Item.Snapshot is { } snapshot && Matches(snapshot))
-            return value with { Cursor = id };
+            return value with { Cursor = id! };
         if (value.Item.Kind != "event" || value.Item.Event is not { } item || item.RunId != value.RunId
             || item.Generation != value.Generation || item.SchemaVersion != "agent-event.1" || string.IsNullOrEmpty(value.Item.Cursor))
             throw new HostyProviderException("provider_response_invalid", "History observation identity changed.", 502);
@@ -284,11 +376,11 @@ public sealed class HostyAgentExecutionClient(HttpClient http, HostyProviderRef 
             if (!Matches(update) || update.LastSequence != item.Sequence || update.Revision != item.Revision)
                 throw new HostyProviderException("provider_response_invalid", "History update does not match the run watermark.", 502);
         }
-        return value with { Cursor = id };
+        return value with { Cursor = id! };
     }
 
     private async Task<HttpResponseMessage> HistoryResponse(HostyAgentHistoryBinding binding, string? cursor,
-        string accept, string? through, int? limit, CancellationToken ct)
+        string accept, string? through, int? limit, CancellationToken ct, string route = "events", KeyValuePair<string, string>[]? parameters = null)
     {
         if (binding.ExpiresAt <= DateTimeOffset.UtcNow || string.IsNullOrEmpty(binding.Token))
             throw new HostyProviderException("authorization_invalid", "History credential expired.", 401);
@@ -296,11 +388,12 @@ public sealed class HostyAgentExecutionClient(HttpClient http, HostyProviderRef 
         if (uri.Scheme is not ("http" or "https") || uri.UserName.Length != 0 || uri.Password.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0)
             throw new HostyProviderException("provider_url_invalid", "Invalid provider endpoint.", 409);
         if (runningInContainer && uri.Host is "localhost" or "127.0.0.1" or "[::1]") uri.Host = "host.docker.internal";
-        uri.Path = uri.Path.TrimEnd('/') + "/history/events";
+        uri.Path = uri.Path.TrimEnd('/') + "/history/" + route;
         var query = new List<string>();
         if (cursor is not null) query.Add("after=" + Uri.EscapeDataString(cursor));
         if (through is not null) query.Add("through=" + Uri.EscapeDataString(through));
         if (limit is not null) query.Add("limit=" + limit.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (parameters is not null) foreach (var parameter in parameters) query.Add(parameter.Key + "=" + Uri.EscapeDataString(parameter.Value));
         uri.Query = string.Join("&", query);
         using var request = new HttpRequestMessage(HttpMethod.Get, uri.Uri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", binding.Token);
@@ -308,7 +401,17 @@ public sealed class HostyAgentExecutionClient(HttpClient http, HostyProviderRef 
         var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         try
         {
-            if (!response.IsSuccessStatusCode) await Read(response, ct);
+            if (route == "live" && response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                throw new HostyProviderException("history_live_unsupported", "The provider does not support live history recovery.", 404);
+            if (!response.IsSuccessStatusCode)
+            {
+                try { await Read(response, ct); }
+                catch (HostyProviderException error) when (route == "live" && error.StatusCode == 422
+                    && error.Code is "unsupported_operation" or "unsupported_capability")
+                {
+                    throw new HostyProviderException("history_live_unsupported", "The provider does not support live history recovery.", 404);
+                }
+            }
             if (response.Content.Headers.ContentType?.MediaType != accept)
                 throw new HostyProviderException("provider_response_invalid", "Unexpected history representation.", 502);
             return response;
@@ -351,4 +454,6 @@ public sealed class HostyAgentExecutionClient(HttpClient http, HostyProviderRef 
 [JsonSerializable(typeof(HostyAgentExecutionEvent))]
 [JsonSerializable(typeof(HostyAgentHistoryObservation))]
 [JsonSerializable(typeof(HostyAgentHistoryPage))]
+[JsonSerializable(typeof(HostyAgentHistoryStatesPage))]
+[JsonSerializable(typeof(HostyAgentHistoryRange))]
 internal partial class AgentJsonContext : JsonSerializerContext;

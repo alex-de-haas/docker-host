@@ -2,16 +2,20 @@ import { createHash } from "node:crypto";
 import { readFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { AgentApiError, type AgentHistoryObservation, type AgentProviderRef } from "@hosty-sdk/app/agent";
+import { AgentApiError, type AgentHistoryObservation, type AgentHistorySessionState, type AgentProviderRef } from "@hosty-sdk/app/agent";
 import { agentReplayCursor } from "@hosty-sdk/app/agent/server";
 import { durableMkdir, durableWriteFile, syncDirectory } from "../persistence.js";
 import type { CoreAgentBackend } from "./core.js";
 import type { SessionStore } from "../sessions/store.js";
 import { ProviderHistoryInbox } from "./history-inbox.js";
+import { ProviderHistoryCoverage, type ProviderHistoryGap } from "./history-coverage.js";
+import { followLiveHistory } from "./live-history.js";
+
+export type { ProviderHistoryGap } from "./history-coverage.js";
 
 export type HistoryContactIssue = "denied" | "invalid" | "unavailable";
 const providerKey = (p: AgentProviderRef) => JSON.stringify([p.appId, p.installationId, p.key]);
-type InstallationFeed = { stop: AbortController; ready: Promise<boolean>; attempted: Promise<boolean>; done: Promise<void>; supported?: boolean; retry?: AbortController };
+type InstallationFeed = { stop: AbortController; ready: Promise<boolean>; attempted: Promise<boolean>; done: Promise<void>; supported?: boolean; liveRanges?: boolean; retry?: AbortController };
 
 async function readCheckpoint(filename: string): Promise<{ cursor: string; incomplete?: string[] } | undefined> {
   let raw: string;
@@ -38,13 +42,18 @@ export class ProviderHistoryFeeds {
   private readonly shutdown = new AbortController();
 
   private readonly inbox: ProviderHistoryInbox;
+  private readonly coverage: ProviderHistoryCoverage;
   private readonly incomplete = new Set<string>();
   private readonly transport = new Map<string, HistoryContactIssue | null>();
   constructor(private readonly store: SessionStore, private readonly backend: CoreAgentBackend,
     importItem: (id: string, provider: AgentProviderRef, fact: AgentHistoryObservation & { replayed?: boolean }) => Promise<void>,
     private readonly contact: (id: string, issue: HistoryContactIssue | null) => Promise<void>,
-    private readonly unsupported: (id: string) => void) {
-    this.inbox = new ProviderHistoryInbox(store, this.shutdown.signal, importItem, async (id, failed) => {
+    private readonly unsupported: (id: string) => void,
+    gaps: (id: string, gaps: ProviderHistoryGap[]) => Promise<void> = async () => {},
+    private readonly state: (id: string, provider: AgentProviderRef, state: AgentHistorySessionState) => Promise<void> = async () => {}) {
+    this.coverage = new ProviderHistoryCoverage(store, gaps);
+    this.inbox = new ProviderHistoryInbox(store, this.shutdown.signal,
+      (id, provider, fact) => this.coverage.accept(id, provider, fact, () => importItem(id, provider, fact)), async (id, failed) => {
       for (const [key, sessions] of this.bindings) for (const chats of sessions.values()) if (chats.has(id)) {
         await contact(id, failed ? "invalid" : this.transport.get(key) ?? null);
         return;
@@ -65,13 +74,17 @@ export class ProviderHistoryFeeds {
     if (!sessions) this.bindings.set(key, sessions = new Map());
     let chats = sessions.get(sessionId);
     if (!chats) sessions.set(sessionId, chats = new Map());
+    const changed = chats.get(chatId) !== owner;
     chats.set(chatId, owner);
+    const feed = this.feeds.get(key);
+    if (changed && feed?.liveRanges) feed.retry?.abort();
     void this.inbox.resume(chatId).catch(() => {});
   }
 
   unbind(chatId: string): void {
     this.incomplete.delete(chatId);
     this.inbox.forget(chatId);
+    this.coverage.forget(chatId);
     for (const [key, sessions] of this.bindings) {
       for (const [sessionId, chats] of sessions) if (chats.delete(chatId) && !chats.size) sessions.delete(sessionId);
       if (sessions.size) continue;
@@ -119,6 +132,13 @@ export class ProviderHistoryFeeds {
     }
   }
 
+  private match(key: string, sessionId: string, userId: string): string | undefined {
+    const chats = this.bindings.get(key)?.get(sessionId);
+    const matching = [...chats ?? []].filter(([, owner]) => owner === userId);
+    if (matching.length > 1) for (const [id] of matching) this.incomplete.add(id);
+    return matching.length === 1 ? matching[0]![0] : undefined;
+  }
+
   private async follow(provider: AgentProviderRef, decide: (supported: boolean) => void, unavailable: () => void, feed: InstallationFeed): Promise<void> {
     const signal = AbortSignal.any([this.shutdown.signal, feed.stop.signal]), key = providerKey(provider);
     const directory = path.join(this.store.dataDir, "provider-history");
@@ -139,13 +159,26 @@ export class ProviderHistoryFeeds {
         await durableMkdir(directory);
         stage = "subscribe";
         const supported = () => { knownSupported = true; decide(true); };
-        for await (const observation of this.backend.history(provider, cursor, attempt, supported, () => this.report(key, null))) {
+        const grant = await this.backend.historyOptions(provider, attempt);
+        try {
+          await followLiveHistory(this.backend, provider, filename + ".live", attempt, this.coverage, {
+            match: (session, owner) => this.match(key, session, owner),
+            bindings: () => [...this.bindings.get(key) ?? []].flatMap(([sessionId, chats]) =>
+              [...chats].map(([id, userId]) => ({ id, sessionId, userId }))),
+            invalid: id => this.contact(id, "invalid").catch(() => {}),
+            ready: async () => { feed.liveRanges = true; supported(); failures = 0; await this.report(key, null); },
+            receive: (id, observation) => this.inbox.deliver(id, provider, observation),
+            state: (id, state) => this.state(id, provider, state),
+          }, grant);
+        } catch (error) {
+          if (!(error instanceof AgentApiError && error.code === "history_live_unsupported")) throw error;
+          feed.liveRanges = false;
+        }
+        for await (const observation of this.backend.history(provider, cursor, attempt, supported, () => this.report(key, null), grant)) {
           supported();
           signal.throwIfAborted(); stage = "import";
-          const chats = this.bindings.get(key)?.get(observation.sessionId);
-          const matching = [...chats ?? []].filter(([, owner]) => owner === observation.userId);
-          if (matching.length > 1) for (const [id] of matching) this.incomplete.add(id);
-          if (matching.length === 1) await this.inbox.deliver(matching[0]![0], provider, observation);
+          const id = this.match(key, observation.sessionId, observation.userId);
+          if (id) await this.inbox.deliver(id, provider, observation);
           signal.throwIfAborted();
           if (observation.item.kind === "event" && ["message.delta", "tool.output"].includes(observation.item.event.type)) continue;
           await durableWriteFile(filename, JSON.stringify({ version: 1, cursor: observation.cursor, ...(this.incomplete.size ? { incomplete: [...this.incomplete] } : {}) }));

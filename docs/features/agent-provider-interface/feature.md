@@ -166,9 +166,18 @@ sequenceDiagram
     H->>H: Retain the chat and qualified run association
     H->>C: Authenticate the installation for history delivery
     C-->>H: Read-only credential for the selected provider
-    H->>P: Subscribe from the committed position
-    P-->>H: Observations for this consumer across its users and chats
-    H->>H: Persist the observation before advancing the cursor
+    H->>P: Open live subscription
+    P-->>H: Ready with installation boundary
+    par Live updates
+        P-->>H: New observations across owned chats
+        H->>H: Commit each fact to its chat
+    and Recover missed records
+        H->>P: Read session states and heads at the boundary
+        P-->>H: Current state and last durable position per session
+        H->>P: Page each missing session range at the same boundary
+        P-->>H: Durable facts with original positions
+        H->>H: Commit facts and extend stored ranges
+    end
     U->>H: Open an authorized chat
     H-->>U: Return its local conversation history
 ```
@@ -178,6 +187,22 @@ The TypeScript SDK exposes `watchAgentHistory` and `readAgentHistoryPage` from
 on `HostyAgentExecutionClient`. Both verify the run and generation inside each observation
 against its envelope. Consumers persist the outer installation cursor only after applying its
 observations. Each run also has its own sequence and cursor.
+
+Providers advertising `installation-history.live` also expose three independent reads under the
+provider's `history/` endpoint. They share the installation credential and ownership rules.
+
+| Route | Result |
+| --- | --- |
+| `live` (SSE) | A ready frame with the registered subscription boundary, then observations committed after it. An optional prior cursor verifies archive ancestry. |
+| `states` (HTTP) | The latest run state and durable head per owned session. The caller can pin pages to the ready boundary or request current state without opening SSE. |
+| `range` (HTTP) | Consecutive durable records in the requested session and epoch between inclusive positions, paged at a fixed boundary. |
+
+The TypeScript methods are `watchLiveAgentHistory`, `readAgentHistoryStates` and
+`readAgentHistoryRange`. The .NET methods are `LiveHistoryAsync`, `HistoryStatesAsync` and
+`HistoryRangeAsync`. Durable positions start at one and span runs within a session. Streaming
+fragments have no durable position. A prior SQLite journal receives positions in its original
+commit order. Source history reconstructed from partial evidence carries `sourceHistoryIncomplete`.
+Rolling message and tool limits constrain the run summary independently of this journal.
 
 The provider commits completed messages, tool observations, decisions and execution state to a
 SQLite history journal. SSE resumes from an opaque installation-bound cursor. A client can also
@@ -580,6 +605,10 @@ releases and selected lock closures are described in the
 [repository release model](../repository-release-model/feature.md).
 
 ## Testing Expectations
+
+- Capture a live boundary while two users generate events. Read state at the boundary, read an
+  owned range, and verify that the stream starts after the cut. Check a foreign installation,
+  a deleted range, archive replacement and migration of an existing SQLite journal.
 
 - Stop the consuming Harness while three runs complete at the provider. Use two password-authenticated
   users with two chats for one owner and one for the other. Check all three durable transcripts

@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { preProcessFile } from "typescript";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +21,7 @@ it("keeps concrete engines and application imports out of shared production infr
   for (const filename of files) {
     const source = await readFile(filename, "utf8"), label = path.relative(packageRoot, filename);
     expect(source, label).not.toMatch(/\b(?:claude|codex|ollama)\b/i);
-    const imports = [...source.matchAll(/(?:from\s*|import\s*\()\s*["']([^"']+)["']/g)].map(match => match[1]!);
+    const imports = preProcessFile(source, true, true).importedFiles.map(file => file.fileName);
     for (const specifier of imports) {
       if (specifier.startsWith(".")) {
         const relative = path.relative(packageRoot, path.resolve(path.dirname(filename), specifier));

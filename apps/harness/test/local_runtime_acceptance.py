@@ -138,6 +138,13 @@ def check(context):
     if context.get('scenario') == 'agent-providers':
         from installation_history_acceptance import check as check_installation_history
         check_installation_history(context, app, app_origin, link, timed)
+        if os.environ.get('HOSTY_LIVE_HISTORY_ACCEPTANCE') == '1':
+            import subprocess
+            connection = providers.harness_connection(app_origin, call, 'codex')
+            subprocess.run(['node', str(workspace/'apps/harness/test/live-history-browser.mjs')], check=True, cwd=workspace,
+                input=json.dumps({'core': origin, 'harness': app_origin, 'app': app, 'link': link, 'password': password,
+                    'connection': connection['id'], 'root': str(root), 'cli': str(cli), 'policy': str(base/'range-policy.json'),
+                    'provider': providers.entries['codex']['appId']}), text=True)
 
     if context.get('scenario') == 'agent-providers' or os.environ.get('HOSTY_EXECUTION_RECOVERY'):
         import importlib.util

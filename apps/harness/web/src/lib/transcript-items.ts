@@ -1,5 +1,6 @@
-import type { AssistantEvent } from "./assistant-api";
+import type { AssistantEvent, ProviderHistoryGap } from "./assistant-api";
 import { transcriptDecisionId } from "../../../src/agent-providers/decision-identity";
+import { applyProviderHistoryContent } from "../../../src/agent-providers/history-content";
 import { isListedToolUse } from "./tool-display";
 import { commandOutcome, commandResultId, isCommandTool, type CommandOutcome } from "./transcript-activity";
 import { canShowToolOutput, recordedToolOutput, type ToolOutput } from "./tool-output";
@@ -142,8 +143,47 @@ function originalTurnOrder(events: AssistantEvent[]): AssistantEvent[] {
   return [...result, ...inserts.get(base.length) ?? []];
 }
 
-export function transcriptItems(events: AssistantEvent[], claimed: ReadonlySet<string>, decided: ReadonlyMap<string, ApprovalDecision> = new Map()): TranscriptItem[] {
-  events = originalTurnOrder(events);
+interface HistoryPosition { sessionId: string; epoch: string; archiveGeneration?: string; position: number }
+
+/** Arrival sequence remains the browser resume cursor. Only the presentation order changes. */
+export function orderedHistory(events: AssistantEvent[], gaps: ProviderHistoryGap[] = []): AssistantEvent[] {
+  const positions = new Map<string, HistoryPosition>();
+  const rows = originalTurnOrder(applyProviderHistoryContent(events).filter(event => {
+    if (event.type !== "provider_history_order") return true;
+    positions.set(String(event.target), event.providerHistoryPosition as HistoryPosition);
+    return false;
+  }));
+  const byRun = new Map<string, Array<{ slot: number; event: AssistantEvent; position: number }>>();
+  for (const [slot, event] of rows.entries()) {
+    const pos = positions.get(String(event.providerEventId)) ?? event.providerHistoryPosition as HistoryPosition | undefined;
+    if (!pos) continue;
+    const source = event.providerSource as { runId?: string } | undefined;
+    const key = JSON.stringify([pos.sessionId, pos.epoch, pos.archiveGeneration, source?.runId]);
+    let entries = byRun.get(key);
+    if (!entries) byRun.set(key, entries = []);
+    entries.push({ slot, event: { ...event, providerHistoryPosition: pos }, position: pos.position });
+  }
+  for (const entries of byRun.values()) {
+    const sorted = [...entries].sort((a, b) => a.position - b.position || a.slot - b.slot);
+    entries.forEach((entry, i) => { rows[entry.slot] = sorted[i].event; });
+  }
+  const markers = new Map<number, AssistantEvent[]>();
+  for (const [i, gap] of gaps.entries()) {
+    const next = rows.findIndex(event => {
+      const pos = event.providerHistoryPosition as HistoryPosition | undefined;
+      return pos?.sessionId === gap.sessionId && pos.epoch === gap.epoch && pos.archiveGeneration === gap.archiveGeneration && pos.position > gap.to;
+    });
+    const slot = next === -1 ? rows.length : next;
+    const bucket = markers.get(slot) ?? [];
+    bucket.push({ type: "provider_history_gap", seq: Number.MIN_SAFE_INTEGER + i, ts: "", gap });
+    markers.set(slot, bucket);
+  }
+  if (!markers.size) return rows;
+  return [...rows.flatMap((event, slot) => [...markers.get(slot) ?? [], event]), ...markers.get(rows.length) ?? []];
+}
+
+export function transcriptItems(events: AssistantEvent[], claimed: ReadonlySet<string>, decided: ReadonlyMap<string, ApprovalDecision> = new Map(), ordered = false): TranscriptItem[] {
+  if (!ordered) events = orderedHistory(events);
   const items: TranscriptItem[] = [];
   const joined = commandResults(events), outputs = toolResults(events), paired = approvalCalls(events);
   const folded = new Map<number, ApprovalDecision>(), foldedIds = new Set<string>();
@@ -168,7 +208,7 @@ export function transcriptItems(events: AssistantEvent[], claimed: ReadonlySet<s
     }
     activity = undefined;
     const visible = event.type === "attachment_added" ? !claimed.has(String(event.name ?? ""))
-      : ["native_agent_group", "user_message", "assistant_text", "prompt_suggestion_created", "app_context_changed", "approval_request", "question_request", "notice", "error", "command_result", "tool_result"].includes(event.type);
+      : ["provider_history_gap", "native_agent_group", "user_message", "assistant_text", "prompt_suggestion_created", "app_context_changed", "approval_request", "question_request", "notice", "error", "command_result", "tool_result"].includes(event.type);
     if (visible) items.push({ kind: "event", key: `event-${event.seq}`, event });
   }
   return items;

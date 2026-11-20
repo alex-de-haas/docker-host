@@ -27,6 +27,7 @@ export type ProviderExecutionState = {
   appliedConfiguration?: { revision: string; digest: string; value: AgentConfiguration };
   runId?: string;
   run?: AgentRunSnapshot;
+  historyClock?: import("./history-projection.js").HistoryProjectionClock;
   cursor?: string;
   lastRunInput?: { runId: string; input: AgentRunInput; deadline?: string; workflow?: AgentSessionWorkflowBinding };
   continuations?: Record<string, ProviderContinuation>;
@@ -65,7 +66,7 @@ export class ProviderExecution {
   private async save(next: ProviderExecutionState): Promise<void> {
     const committed = structuredClone(next);
     await this.persistence.save(structuredClone(committed));
-    for (const key of ["session", "appliedConfiguration", "runId", "run", "cursor", "mutations", "lastRunInput", "continuations", "cancellations", "settledMutations"] as const)
+    for (const key of ["session", "appliedConfiguration", "runId", "run", "historyClock", "cursor", "mutations", "lastRunInput", "continuations", "cancellations", "settledMutations"] as const)
       if (!(key in committed)) delete this.state[key];
     Object.assign(this.state, committed);
   }
@@ -143,7 +144,7 @@ export class ProviderExecution {
       if (deadline) prepared.ceiling = { ...prepared.ceiling, deadline };
       if (workflow) prepared.ceiling = { ...prepared.ceiling, workflow: structuredClone(workflow) };
       const snapshot = await this.execute(prepared, next => {
-        next.runId = runId; delete next.run; delete next.cursor;
+        next.runId = runId; delete next.run; delete next.historyClock; delete next.cursor;
         next.lastRunInput = { runId, input: structuredClone(JSON.parse(prepared.body) as AgentRunInput), ...(deadline ? { deadline } : {}), ...(workflow ? { workflow: structuredClone(workflow) } : {}) };
       });
       await this.retain(snapshot);

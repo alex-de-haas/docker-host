@@ -1,6 +1,6 @@
 import { AgentApiError, type AgentCapabilities, type AgentConnectionUsage, type AgentModelCatalog,
   type AgentOperationAuthorization, type AgentProviderRef } from "@hosty-sdk/app/agent";
-import { AgentClient, readAgentHistoryPage, watchAgentHistory } from "@hosty-sdk/app/agent/client";
+import { AgentClient, readAgentHistoryPage, readAgentHistoryRange, readAgentHistoryStates, watchAgentHistory, watchLiveAgentHistory } from "@hosty-sdk/app/agent/client";
 
 import type { AgentConsumerAuthority, AgentDirectoryBackend, AgentProviderEntry } from "./types.js";
 
@@ -56,14 +56,32 @@ export class CoreAgentBackend implements AgentDirectoryBackend {
     } });
   }
 
-  async *history(provider: AgentProviderRef, cursor: string | undefined, signal: AbortSignal, onCatchUp: () => void, onOpen: () => Promise<void>) {
+  async historyOptions(provider: AgentProviderRef, signal: AbortSignal) {
     const grant = await this.core<{ token: string; endpoint: string }>("/agent/history/token", null, { provider }, signal);
     const base = new URL(grant.endpoint);
     if (this.options.runningInContainer && ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname))
       base.hostname = "host.docker.internal";
     base.pathname = base.pathname.replace(/\/$/, "") + "/history/events";
+    return { url: base.href, provider, token: grant.token, fetch: this.fetcher };
+  }
+
+  async liveHistory(provider: AgentProviderRef, signal: AbortSignal, grant?: Awaited<ReturnType<CoreAgentBackend["historyOptions"]>>) {
+    const options = grant ?? await this.historyOptions(provider, signal);
+    const pageSignal = () => AbortSignal.any([signal, AbortSignal.timeout(15000)]);
+    return {
+      observe: (cursor: string | undefined, onReady: (boundary: string) => Promise<void>, streamSignal: AbortSignal) =>
+        watchLiveAgentHistory({ ...options, cursor, onReady, signal: streamSignal }),
+      states: (through: string, afterSession?: string) =>
+        readAgentHistoryStates({ ...options, through, afterSession, limit: 64, signal: pageSignal() }),
+      range: (through: string, sessionId: string, epoch: string, from: number, to: number) =>
+        readAgentHistoryRange({ ...options, through, sessionId, epoch, from, to, limit: 64, signal: pageSignal() }),
+    };
+  }
+
+  async *history(provider: AgentProviderRef, cursor: string | undefined, signal: AbortSignal, onCatchUp: () => void,
+    onOpen: () => Promise<void>, grant?: Awaited<ReturnType<CoreAgentBackend["historyOptions"]>>) {
+    const options = grant ?? await this.historyOptions(provider, signal);
     try {
-      const options = { url: base.href, provider, token: grant.token, fetch: this.fetcher };
       let through: string | undefined, position = cursor;
       do {
         const page = await readAgentHistoryPage({ ...options, cursor: position, through, limit: 64,

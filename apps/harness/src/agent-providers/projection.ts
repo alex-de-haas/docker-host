@@ -1,5 +1,5 @@
 import type {
-  AgentEvent, AgentMessageBlock, AgentPendingDecision, AgentResult, AgentRunSnapshot,
+  AgentEvent, AgentHistoryObservation, AgentProviderRef, AgentMessageBlock, AgentPendingDecision, AgentResult, AgentRunSnapshot,
   AgentSource, AgentToolBlock, AgentWatchItem,
 } from "@hosty-sdk/app/agent";
 import { validateAgentEvent, validateAgentRunSnapshot } from "@hosty-sdk/app/agent/server";
@@ -67,6 +67,20 @@ export function createAgentRunProjection(value: AgentRunSnapshot): AgentRunProje
   return { snapshot, cursor: snapshot.cursor, messages: snapshot.messages ?? [], tools: snapshot.tools ?? [],
     pending: snapshot.pending, ...(snapshot.result ? { result: snapshot.result } : {}), childResults: [] };
 }
+/** Reduce one archived fact for display without borrowing the current run's state or watermark. */
+export function projectHistoryFact(provider: AgentProviderRef, fact: AgentHistoryObservation): AgentRunProjection {
+  const { item } = fact;
+  if (item.kind === "snapshot") return createAgentRunProjection(item.snapshot);
+  if (item.event.type === "run.updated") return createAgentRunProjection(item.event.data.snapshot as AgentRunSnapshot);
+  const base = createAgentRunProjection({
+    ref: { provider, id: fact.runId }, sessionId: fact.sessionId, generation: fact.generation,
+    state: "unknown", phase: "interrupted", stopConfirmed: false, freshness: "unavailable",
+    revision: "0", lastSequence: "0", configurationRevision: "1", observedAt: item.event.occurredAt,
+    cursor: item.cursor, pending: [], effects: { certainty: "unknown", unresolvedCallIds: [] },
+  });
+  return reduceAgentRunProjection(base, item, true);
+}
+
 function replace(current: AgentRunProjection, snapshot: AgentRunSnapshot): AgentRunProjection {
   validateSnapshot(snapshot); sameRun(current.snapshot, snapshot);
   if (BigInt(snapshot.lastSequence) < BigInt(current.snapshot.lastSequence)

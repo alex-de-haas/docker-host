@@ -18,7 +18,7 @@ function sameProvider(a: AgentProviderRef, b: AgentProviderRef): boolean { retur
 export function agentRoutes(controller: ProviderController, attachments: AttachmentStore) {
   return async (request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> => {
     if (!url.pathname.startsWith(API_PREFIX + "/")) return false;
-    if (url.pathname === API_PREFIX + "/history/events") {
+    if (["/history/events", "/history/live", "/history/states", "/history/range"].includes(url.pathname.slice(API_PREFIX.length))) {
       const page = await serveHistory(controller, request, response, url);
       if (page) json(response, 200, page);
       return true;

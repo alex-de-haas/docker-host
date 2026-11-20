@@ -26,7 +26,9 @@ export type AssistantQuestion = {
   options: Array<{ id?: string; label: string; description: string; preview?: string }>;
 };
 
+export type ProviderHistoryGap = { sessionId: string; epoch: string; archiveGeneration?: string; from: number; to: number; unavailable?: boolean };
 export type AssistantSession = {
+  providerHistoryGaps?: ProviderHistoryGap[];
   providerHistoryContact?: { runId: string; observedAt: string; reason: "denied" | "invalid" | "unavailable" };
   workerRun?: { id: string; sequence: number; generation?: string };
   workerRecovery?: { state: "pending" | "completed" };
