@@ -5,6 +5,8 @@ import { messageRequestId, type SessionRecord, type SessionStore } from "../sess
 import type { AgentProfile } from "../profiles/types.js";
 import { childFinished, completedChildren, observeChild, type ChildLaunch, type ChildWait, type SessionFamily, type SessionSubagent } from "./types.js";
 
+export const stoppedAssignment = { code: "subagent_stopped_before_start", message: "The child assignment was stopped before the provider started it." };
+
 type Ports = {
   parent(id: string): Promise<SessionRecord | null>;
   profiles(): Promise<AgentProfile[]>;
@@ -15,7 +17,7 @@ type Ports = {
   track(action: Promise<void>): void;
   stopping(): boolean;
   admitted(id: string, runId: string): Promise<void>;
-  failedLaunch(parent: string, id: string): Promise<void>;
+  failedLaunch(parent: string, id: string, stoppedRunId?: string): Promise<void>;
   joinWorkspace(parent: SessionRecord, childId: string): Promise<void>;
   workspace(parent: SessionRecord): Promise<ChildLaunch["workspace"]>;
 };
@@ -193,9 +195,26 @@ export class SessionSubagents {
     this.kick(parent);
   }
 
+  private async settleStoppedAssignment(parent: SessionRecord, assignment: ChildLaunch): Promise<boolean> {
+    const { child: { id }, runId } = assignment;
+    const receipt = await this.store.readMessageReceipt(id, runId);
+    if (receipt?.state !== "rejected" || receipt.actorUserId !== parent.createdBy || receipt.error?.code !== stoppedAssignment.code) return false;
+    await this.ports.failedLaunch(parent.id, id, runId);
+    await this.change(parent.id, async (family, save) => {
+      const launch = family.launches.find(row => row.child.id === id && row.runId === runId);
+      if (!launch || launch.dispatched || childFinished(launch.child)) return;
+      const { detail: _detail, ...child } = launch.child;
+      launch.child = { ...child, chatAvailable: true, status: "cancelled", result: stoppedAssignment.message };
+      await save();
+    });
+    this.kick(parent.id);
+    return true;
+  }
+
   private async advanceLaunch(parent: SessionRecord, launch: ChildLaunch): Promise<void> {
     let next: SessionSubagent;
     let dispatched = false;
+    if (await this.settleStoppedAssignment(parent, launch)) return;
     try {
       if (!launch.workspace && !launch.workspaceResolved) {
         const workspace = await this.ports.workspace(parent);
@@ -212,6 +231,7 @@ export class SessionSubagents {
       next = { ...child, chatAvailable: true, status: "running" };
       dispatched = true;
     } catch (error) {
+      if (await this.settleStoppedAssignment(parent, launch)) return;
       const child = await this.ports.parent(launch.child.id);
       next = { ...launch.child, chatAvailable: !!child, ...this.failure(error) };
       if (this.retryable(error)) this.retryLater(parent.id);

@@ -163,6 +163,67 @@ it.each([false, true])("recovers the original child admission after temporarily 
   await vi.waitFor(async () => expect((await store.readSessionFamily(parent.id)).launches[0]!.child).toMatchObject({ status: "completed", result: "Checked" }));
 });
 
+it.each([false, true])("settles an explicitly stopped child preflight and its parent's wait (recover %s)", async recover => {
+  const { f, manager, store, profiles, settings, providers } = await fixture({ subagents: true, permission: false });
+  const parent = await manager.createSession({ createdBy: f.owner });
+  await manager.refreshSessionCredentials(parent.id, f.owner, f.credential);
+  const profile = (await profiles!.read()).profiles[0]!;
+  f.behavior.failSessionLookup = true;
+  const { childSessionId } = await manager.subagentAction(parent.id, "subagent-spawn", {
+    requestId: randomUUID(), profileId: profile.id, profileRevision: profile.revision, prompt: "Stop during preflight.",
+  }, async () => {}) as { childSessionId: string };
+  await vi.waitFor(async () => expect((await store.readSessionFamily(parent.id)).launches[0]!.child.status).toBe("unknown"));
+  const ticket = { requestId: randomUUID(), mode: "all", childSessionIds: [childSessionId] };
+  expect(await manager.subagentAction(parent.id, "subagent-wait", ticket, async () => {})).toMatchObject({ state: "pending" });
+  const pendingFamily = await store.readSessionFamily(parent.id);
+  const runId = pendingFamily.launches[0]!.runId;
+  const pendingChild = (await store.readRecord(childSessionId))!;
+  expect(await store.readMessageReceipt(childSessionId, runId)).toMatchObject({ state: "unknown" });
+  await manager.cancelSession(childSessionId);
+  expect(await store.readMessageReceipt(childSessionId, runId)).toMatchObject({ state: "rejected", error: { code: "subagent_stopped_before_start" } });
+  let active = manager;
+  if (recover) {
+    // Reopen the persisted Stop receipt before either dependent record was updated.
+    await manager.shutdown();
+    await store.saveRecord(pendingChild);
+    await store.saveSessionFamily(parent.id, pendingFamily);
+    active = f.makeManager({ settings, providers, profiles }).manager;
+    await active.recoverSubagents();
+  }
+  await vi.waitFor(async () => expect((await store.readSessionFamily(parent.id)).launches[0]!.child).toMatchObject({ status: "cancelled", chatAvailable: true }));
+  const child = await store.readRecord(childSessionId);
+  expect(child!.subagentStartPending).toBeUndefined();
+  expect(child!.sourceAdmission).toBeUndefined();
+  expect(child!.status).toBe("cancelled");
+  f.behavior.failSessionLookup = false;
+  await active.refreshActorCredentials(f.owner, f.credential);
+  await vi.waitFor(async () => expect((await store.readSessionFamily(parent.id)).waits[0]).toMatchObject({ state: "delivered", outcomes: [{ status: "cancelled" }] }), { timeout: 5000 });
+  await active.postMessage(childSessionId, "New user turn", f.credential, [], { actorUserId: f.owner, clientRequestId: randomUUID() });
+  expect(f.starts.some(start => start.runId === runId)).toBe(false);
+  expect(f.starts).toHaveLength(2);
+}, 15000);
+
+it("keeps a child fenced when its native start acknowledgement and Stop confirmation are missing", async () => {
+  const { f, manager, store, profiles } = await fixture({ subagents: true, permission: false });
+  const parent = await manager.createSession({ createdBy: f.owner });
+  await manager.refreshSessionCredentials(parent.id, f.owner, f.credential);
+  const profile = (await profiles!.read()).profiles[0]!;
+  f.behavior.loseNextStartResponse = true;
+  f.behavior.cancel = "unavailable";
+  const { childSessionId } = await manager.subagentAction(parent.id, "subagent-spawn", {
+    requestId: randomUUID(), profileId: profile.id, profileRevision: profile.revision, prompt: "Provider loses the acknowledgement.",
+  }, async () => {}) as { childSessionId: string };
+  const { runId } = (await store.readSessionFamily(parent.id)).launches[0]!;
+  await vi.waitFor(async () => expect((await store.readSessionFamily(parent.id)).launches[0]!.child.status).toBe("unknown"));
+  expect(await store.readMessageReceipt(childSessionId, runId)).toMatchObject({ state: "unknown" });
+  expect(f.starts.map(start => start.runId)).toEqual([runId]);
+  await expect(manager.cancelSession(childSessionId)).rejects.toThrow();
+  expect(f.controls.some(control => control.runId === runId && control.path.endsWith("/cancel"))).toBe(true);
+  expect((await store.readMessageReceipt(childSessionId, runId))!.state).not.toBe("rejected");
+  expect((await store.readSessionFamily(parent.id)).launches[0]!.child.status).not.toBe("cancelled");
+  expect(f.starts).toHaveLength(1);
+});
+
 it("reconciles a lost child start response and retries its parent's original preflight without repeating either input", async () => {
   const { f, record: parent, manager, store, profiles } = await admitted({ subagents: true, permission: false });
   const profile = (await profiles!.read()).profiles[0]!;

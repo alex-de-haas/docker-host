@@ -9,7 +9,7 @@ import { coreAliases } from "../mcp/core-migration.js";
 import { AgentObservations } from "../agent-sessions/observations.js";
 import { suggestionText } from "../harness/prompt-suggestion.js";
 import { SuggestionPreferences } from "./suggestion-preferences.js";
-import { SessionSubagents } from "../subagents/service.js";
+import { SessionSubagents, stoppedAssignment } from "../subagents/service.js";
 import type { ChildLaunch, ChildWait, SessionSubagent } from "../subagents/types.js";
 import { SuggestionHistory, legacyCompatibleSuggestion } from "./suggestion-history.js";
 import { MessageQueue, type QueueAttempt, type QueueSnapshot } from "./message-queue.js";
@@ -412,11 +412,16 @@ export class SessionManager {
           throw error;
         }
       },
-      failedLaunch: (parent, id) => this.serialize(id, async () => {
-        const session = await this.requireLive(id);
-        if (session.record.parentSessionId === parent && session.record.subagentStartPending) {
-          delete session.record.subagentStartPending; await this.store.saveRecord(session.record);
+      failedLaunch: (parent, id, stoppedRunId) => this.serialize(id, async () => {
+        const session = await this.requireLive(id), record = session.record;
+        if (record.parentSessionId !== parent || !record.subagentStartPending) return;
+        if (stoppedRunId) {
+          if (record.subagentAssignmentRunId !== stoppedRunId || (record.sourceAdmission && record.sourceAdmission.subagentRunId !== stoppedRunId)) return;
+          await this.setStatus(id, "cancelled");
+          delete record.sourceAdmission;
         }
+        delete record.subagentStartPending;
+        await this.store.saveRecord(record);
       }),
       stopping: () => this.stopping,
     });
@@ -1672,6 +1677,19 @@ export class SessionManager {
     return !!runId && !!this.connections?.remote && source?.subagentRunId === runId && source.clientRequestId === runId
       && provider?.runId !== runId && provider?.lastRunInput?.runId !== runId
       && !Object.values(provider?.mutations ?? {}).some(request => request.operation === "runs.start");
+  }
+
+  private async rejectUnstartedChildAssignment(record: SessionRecord): Promise<string | undefined> {
+    const { id, parentSessionId, subagentAssignmentRunId: runId } = record;
+    if (!parentSessionId || !runId || !record.subagentStartPending || !this.beforeSubagentStart(record, runId)) return;
+    const durable = await this.store.readProviderExecution(id);
+    if (!this.beforeSubagentStart({ ...record, providerExecution: durable ?? undefined }, runId)) return;
+    const receipt = await this.store.readMessageReceipt(id, runId);
+    if (receipt?.state !== "unknown" || receipt.actorUserId !== record.createdBy) return;
+    // Admission is quiescent and has no prepared provider start. The receipt fences retries
+    // and lets recovery finish publishing this Stop even if Harness exits between writes.
+    await this.store.saveMessageReceipt(id, { ...receipt, state: "rejected", error: stoppedAssignment });
+    return parentSessionId;
   }
 
   private async dispatchSubagentInput(record: SessionRecord, credential: string, runId: string, text: string, kind: "assignment" | "result"): Promise<void> {
@@ -4699,6 +4717,7 @@ export class SessionManager {
     this.proxy?.unregister(id);
     this.developmentMcp.unregister(id);
     const execution = session.record.providerExecution;
+    const stoppedAssignmentParent = await this.rejectUnstartedChildAssignment(session.record);
     const alreadyFinished = execution && stopped?.stopConfirmed && (stopped.state === "succeeded" || stopped.state === "failed");
     if (alreadyFinished) {
       // Stop can be the first observer to learn the original turn already has a final result.
@@ -4706,10 +4725,12 @@ export class SessionManager {
     } else {
       await this.setStatus(id, "cancelled", false, stopped?.stopConfirmed === true);
     }
-    if (this.connections?.remote && session.record.sourceAdmission) {
+    if (this.connections?.remote && (stoppedAssignmentParent || session.record.sourceAdmission)) {
       delete session.record.sourceAdmission;
+      if (stoppedAssignmentParent) delete session.record.subagentStartPending;
       await this.store.saveRecord(session.record);
     }
+    if (stoppedAssignmentParent) this.subagents.kick(stoppedAssignmentParent);
     if (!alreadyFinished) this.audit.report("ai_session_cancelled", { sessionId: id });
     return !alreadyFinished;
   }
