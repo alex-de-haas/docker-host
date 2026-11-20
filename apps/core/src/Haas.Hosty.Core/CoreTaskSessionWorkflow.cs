@@ -9,7 +9,10 @@ using ModelContextProtocol.Server;
 
 namespace Haas.Hosty.Core;
 
-internal sealed record CoreTaskSessionWorkflowBinding(HostyProviderRef Executor, string SessionId, string[]? Tools = null, JsonElement? Policy = null);
+internal sealed record CoreTaskSessionWorkflowBinding(HostyProviderRef Executor, string SessionId, string[]? Tools = null, JsonElement? Policy = null)
+{
+    internal bool IsSubagentOnly => Tools is { Length: > 0 } && Tools.All(CoreProviderMediation.IsSubagentTool);
+}
 internal sealed record CoreAgentWorkflowRequest(string AdmissionRef, string Action, JsonElement Input, HostyTaskProviderRef? Source = null);
 internal sealed record CoreAgentWorkflowInvocation(HostyProviderRef Provider, string SessionId, string RunId);
 internal sealed record CoreAgentWorkflowGrant(string AdmissionRef, CoreTaskSessionWorkflowBinding Binding, CoreAgentWorkflowInvocation Agent);
@@ -30,17 +33,17 @@ internal sealed partial class CoreAgentExecution
         if (selectedSubagents && (input.Conversation?.SessionId != binding.SessionId
             || !ProviderAccessService.Describe(consumer, "agent-sessions").Any(d => d.Key == binding.Executor.Key && d.Version == 1 && d.Capabilities.Contains("session.subagents"))))
             throw new CoreProviderException("unsupported_capability", "Session subagents require the originating conversation and its reviewed session.subagents endpoint.", 422);
-        if (selectedSubagents && binding.Tools!.All(CoreProviderMediation.IsSubagentTool)) return;
+        if (binding.IsSubagentOnly) return;
         if (!AppManagementAuthorization.HasPermission(consumer, CoreAppPermissions.TaskExecutors))
             throw new AppIdentityException("app_permission_required", "Session workflows require providers.task-executor.");
         if (!ProviderAccessService.Describe(consumer, "task-executor").Any(d => d.Key == binding.Executor.Key && d.Version == 1 && d.Capabilities.Contains("session-workflow")))
             throw new CoreProviderException("unsupported_capability", "The consumer must declare the reviewed session-workflow executor capability.", 422);
     }
 
-    internal async Task<bool> HasWorkflow(AppRecord provider, string admission, CancellationToken ct)
+    internal async Task<bool> HasTaskWorkflow(AppRecord provider, string admission, CancellationToken ct)
     {
         var (record, _) = await ValidateRecord(provider, await store.Get(admission, ct), ct);
-        return Workflow(record.Request) is not null;
+        return Workflow(record.Request) is { IsSubagentOnly: false };
     }
 
     internal async Task<(CoreAgentAuthorization Record, CoreCapabilityCaller Origin, CoreTaskSessionWorkflowBinding Binding)> WorkflowScope(
@@ -72,8 +75,8 @@ internal sealed partial class CoreProviderMediation
     {
         if (caller.AgentExecution is null || caller.App is null) return null;
         var agents = services.GetRequiredService<CoreAgentExecution>();
-        // An ordinary agent consumer needs no workflow endpoint at all.
-        if (!await agents.HasWorkflow(caller.App, caller.AgentExecution, ct)) return null;
+        // Only a task workflow overrides the independently authorized Core task tools.
+        if (!await agents.HasTaskWorkflow(caller.App, caller.AgentExecution, ct)) return null;
         var scope = await agents.WorkflowScope(caller.App, caller.AgentExecution, ct);
         if (caller.User.Id != scope.Record.UserId || caller.PrincipalId != CoreCapabilityAuthorization.AppPrincipal(caller.App))
             throw new AppIdentityException("permission_denied", "The current provider execution changed.");
