@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { AgentClient, readAgentHistoryPage, readAgentHistoryRange, readAgentHistoryStates, watchAgentHistory, watchLiveAgentHistory, parseAgentSse, prepareAgentCancel, prepareAgentRun, prepareAgentSessionCreate } from "./agent-client.js";
-import { AgentApiError, type AgentAttachmentChunk, type AgentEvent, type AgentRunInput, type AgentRunSnapshot, type AgentSession } from "./agent.js";
+import { AgentClient, readAgentHistoryPage, readAgentHistoryRange, readAgentHistoryStates, watchAgentHistory, watchLiveAgentHistory, parseAgentSse, prepareAgentCancel, prepareAgentControl, prepareAgentRun, prepareAgentSessionCreate } from "./agent-client.js";
+import { AGENT_CAPABILITIES, AgentApiError, type AgentAttachmentChunk, type AgentEvent, type AgentRunInput, type AgentRunSnapshot, type AgentSession } from "./agent.js";
 import { agentReplayCursor, encodeAgentSseEvent, validateAgentAttachmentChunk, validateAgentConfiguration, validateAgentEvent, validateAgentRequest, validateAgentResponseInput, validateAgentRunSnapshot } from "./agent-server.js";
 import { AGENT_EVENT_SCHEMA, AGENT_OPENAPI } from "./agent-schemas.js";
 
@@ -62,6 +62,16 @@ describe("independent agent request boundary", () => {
     const fence = prepareAgentCancel(runId, { requestId, fenceIfNotAdmitted: { sessionId, startDigest: hash("original input") } });
     expect(JSON.parse(fence.body)).not.toHaveProperty("expectedGeneration");
     expect(() => validateAgentRequest("POST", `/runs/${runId}/cancel`, JSON.stringify({ ...JSON.parse(fence.body), expectedRevision: "1" }))).toThrow();
+  });
+  it("prepares retirement for the exact run without accepting caller-supplied exit proof", () => {
+    expect(AGENT_CAPABILITIES.retire).toBe("runs.retire");
+    const input = { requestId, expectedGeneration: generation, expectedRevision: "4", command: "retire" } as const;
+    const request = prepareAgentControl(runId, input);
+    expect(request).toMatchObject({ operation: "runs.control", method: "POST", path: `/runs/${runId}/controls`, runId,
+      body: JSON.stringify(input), bodyHash: hash(JSON.stringify(input)) });
+    expect(validateAgentRequest(request.method, request.path, request.body)).toMatchObject({ runId, input });
+    expect(() => validateAgentRequest(request.method, request.path, JSON.stringify({ ...input, stopped: true }))).toThrow();
+    expect(() => validateAgentRequest(request.method, request.path, JSON.stringify({ ...input, expectedGeneration: undefined }))).toThrow();
   });
   it("bounds UTF-8 bytes and rejects ambiguous routes/query/cursors before authorization", () => {
     expect(() => prepareAgentRun(sessionId, runId, { ...runInput(), input: { text: "界".repeat(400000) } })).toThrowError(expect.objectContaining({ status: 413 }));

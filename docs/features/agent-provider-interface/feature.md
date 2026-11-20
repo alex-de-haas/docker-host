@@ -483,17 +483,28 @@ control channels stay separate from native stdin/stdout/stderr. Native environme
 service/control credentials and unrelated tool bearers.
 
 When the native receipt confirms physical exit but effect outcomes remain unresolved, the provider
-emits a distinct diagnostic with that distinction and retains the execution fence. Harness reports
-unreconciled native tool outcomes separately from missing stop evidence. Neither diagnostic releases
-capacity, permits another turn or repairs historical effects. Older interrupted runs still require
-the original provider's supported reconciliation and retained native evidence; edited receipt files
-or a new prompt do not establish recovery.
+emits a distinct diagnostic and keeps ordinary execution fenced. Harness reports unreconciled tool
+outcomes separately from missing stop evidence. The original provider exposes `runs.retire` for an
+explicit owner-confirmed Harness Delete. It verifies the exact retained terminal journal, SDK exit
+and owned process-tree receipts, including records written before retirement support. The provider
+fences new work on that native session and applies the retirement receipt after releasing the
+original admission's workspace claims. Once the receipt is applied, the retired session leaves the
+provider's session list. The provider retains the native journal and authorized installation-history
+replay, including unresolved outcomes and recorded gaps, across restart and any subsequent Harness
+conversation cleanup failure.
+For an interrupted journal, SDK and process-tree receipts establish exit if the Worker has released
+its execution handle. An unverified exit continues through normal Stop and reconciliation.
+
+The retirement request carries the exact run generation and revision. Harness saves the request
+before dispatch. Retrying after an uncertain reply or app restart reuses the same request and awaits
+the same cleanup. Ordinary cancellation, message admission and task completion still use
+`stopConfirmed`.
 
 Before launching a child, the provider durably records its intent. Durable SDK-stop confirmation,
 matching child receipts and a sealed/exited producer support reconciliation after restart. Missing
 proof stays `unknown`; a client-supplied stopped flag or a saved PID does not establish it. Automatic provider recovery
-never terminates processes by PIDs loaded from receipt files. Workspace/capacity release follows
-confirmed provider outcomes, rather than a disconnected consumer or an elapsed timeout.
+never terminates processes by PIDs loaded from receipt files. Workspace release uses the original
+admission and begins after the provider confirms stop or accepts retirement.
 
 Codex protocol acknowledgments have a 30-second deadline, with a two-second polite interrupt
 budget and independently bounded metadata diagnostics. These bound RPC acknowledgments rather
@@ -700,6 +711,10 @@ working account. A synthetic protocol check does not establish real OpenAI accou
   Windows native process launch from a prepared generation. Codex sign-in startup verification uses
   the pinned npm wrapper with an empty isolated home and confirms initialization and shutdown.
   CI/release fixtures require a Codex-only SDK pin to leave Claude, Ollama and Harness unselected.
+- Retirement tests cover a retained terminal journal with missing tool results, an unconfirmed process,
+  foreign ownership, stale revisions, a lost reply, exact workspace claim release and a fenced native
+  resume. The managed `agent-providers` suite exercises owner Delete against a retained provider run
+  with synthetic incomplete search outcomes and verifies that the dirty worktree survives.
 - Cleanup fixtures cover both storage locks, exact inventory digests, changed/linked paths, foreign
   or unsettled execution metadata, interrupted/replayed deletion and preservation of unrelated data.
 - Runtime acceptance uses Core-managed apps, normal password/app-code identity, separate test data

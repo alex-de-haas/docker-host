@@ -70,6 +70,12 @@ Owner approval, 2026-11-17: repair provider access after ordinary updates first,
 background Bash cards from native command outcomes. Add regressions, publish both corrections
 through CI and review, merge, update the ordinary host and verify both behaviors live.
 
+Owner approval, 2026-11-18: let the conversation owner delete a session with one confirmation
+when provider-owned evidence establishes native exit, even if historical tool outcomes remain
+unknown. This applies to runs retained before the change, including the stopped Plan Review run
+from November 17. Keep the existing workspace and unknown outcome evidence. Actual live or
+unverified execution continues through the normal Stop path.
+
 ## Accepted Delivery Scope
 
 The recommended first delivery is the complete extraction: three Local providers, Docker Harness,
@@ -1005,6 +1011,8 @@ neither caching nor a universal inference API is a prerequisite to this provider
 - [x] D30. Settle Claude background Bash cards with the outcome of the exact native command, including commands owned by children that have already yielded. Verify attribution, late completion and preservation of final answer delivery.
 
 - [x] D31. Show native subagents in a collapsed chat disclosure with individual status, parent, delegated prompt and final reply where observed. Preserve attribution through live updates and replay, including older conversations with partial evidence.
+
+- [x] D32. Let explicit owner-confirmed session deletion retire an exact provider run with proved native exit and unresolved tool outcomes, including retained terminal journals. Retain unknown outcomes and source, fence continuation, release only the original execution claims, and verify retry and refusal behavior.
 
 ### Implementation Order
 

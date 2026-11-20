@@ -34,10 +34,11 @@ export class AgentSessionService {
       conversation: value.conversation ? { provider: this.provider, id: value.conversation } : null };
   }
   private session(value: ObservedNativeSession, runs: ObservedRun[]): AgentSession {
-    if (runs.filter(r => r.owner === value.owner && r.nativeSession === value.id && !r.stopConfirmed).length > 200)
+    const activeRuns = runs.filter(run => run.owner === value.owner && run.nativeSession === value.id && !run.stopConfirmed && !run.retired);
+    if (activeRuns.length > 200)
       fail("budget_exceeded", "Reconcile retained unconfirmed native attempts before listing this session.", 429);
     return { ref: { provider: this.provider, id: value.id }, revision: value.revision,
-      activeRuns: runs.filter(r => r.owner === value.owner && r.nativeSession === value.id && !r.stopConfirmed).map(r => ({ provider: this.provider, id: r.id })),
+      activeRuns: activeRuns.map(run => ({ provider: this.provider, id: run.id })),
       capabilities: executionCapabilities, conversation: value.conversation ? { provider: this.provider, id: value.conversation } : null };
   }
   async getRun(actor: Actor, ref: RunRef): Promise<AgentRun> {
@@ -97,6 +98,7 @@ export class AgentSessionService {
       await validate();
       const admission = await this.manager.observations.change(state => {
         const run = state.runs.find(r => r.id === id && r.owner === actor.userId); if (!run) return missing();
+        if (run.retired) return fail("run_retired", "The conversation owner retired this execution.", 409);
         const receipt = state.cancellations.find(r => r.key === key);
         if (receipt) {
           if (receipt.fingerprint !== fingerprint) return fail("request_conflict", "This cancellation UUID identifies different input.", 409);

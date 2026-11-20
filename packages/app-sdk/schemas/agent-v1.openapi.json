@@ -2945,7 +2945,7 @@
             }
           }
         },
-        "description": "Optional controls require their advertised capabilities. Reconcile input is an attestation, never proof of actual native exit."
+        "description": "Optional controls require their advertised capabilities. Reconcile input is an attestation, never proof of actual native exit. Retirement requires provider-owned evidence of native process exit. Its applied receipt records retirement of the exact run and preserves unresolved tool outcomes."
       }
     },
     "/runs/{runId}/controls/{requestId}": {
@@ -4114,6 +4114,33 @@
               "expectedRevision",
               "command",
               "stopped"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "requestId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "expectedGeneration": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "expectedRevision": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]{0,39}$"
+              },
+              "command": {
+                "const": "retire"
+              }
+            },
+            "required": [
+              "requestId",
+              "expectedGeneration",
+              "expectedRevision",
+              "command"
             ],
             "additionalProperties": false
           },
