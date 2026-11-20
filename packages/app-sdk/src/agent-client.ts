@@ -248,11 +248,11 @@ async function historyResponse(options: AgentHistoryOptions, accept: string, pag
   });
   if (!response.ok) {
     const raw = await boundedText(response, MAX_BYTES);
-    let detail: { code?: string; message?: string } | undefined;
+    let detail: { code?: string; message?: string; retryable?: boolean } | undefined;
     try { detail = JSON.parse(raw)?.error; } catch { /* Older providers may return a plain 404. */ }
     if (endpoint === "live" && (response.status === 404 || response.status === 422 && ["unsupported_operation", "unsupported_capability"].includes(detail?.code ?? "")))
       throw new AgentApiError("history_live_unsupported", "The provider does not support live history recovery.", 404);
-    throw new AgentApiError(detail?.code ?? "provider_failed", detail?.message ?? `History request failed (${response.status}).`, response.status);
+    throw new AgentApiError(detail?.code ?? "provider_failed", detail?.message ?? `History request failed (${response.status}).`, response.status, detail?.retryable === true);
   }
   if (response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== accept) {
     await response.body?.cancel();

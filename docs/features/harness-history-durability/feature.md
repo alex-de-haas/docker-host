@@ -1,6 +1,6 @@
 ---
 created: 2026-11-12
-updated: 2026-11-19
+updated: 2026-11-20
 summary: Per-conversation storage commits accepted Harness input before dispatch and isolates damaged history without replaying uncertain execution.
 components: [apps/harness]
 ---
@@ -34,7 +34,11 @@ describes retention, paging and stream authorization.
 With a provider that advertises `installation-history.live`, Harness opens the live subscription
 first. At its ready boundary it reads each owned session's state and durable head. Incoming live
 messages are visible while independent HTTP requests fill older gaps. A late state response or an
-older run's record cannot move the current execution backwards.
+older run's record cannot move the current execution backwards. A retryable HTTP error while
+reading state or a range leaves live delivery active. If a run summary supplied shortened text or
+tool output, the original durable event fills in the existing transcript entry when it arrives.
+Harness tracks the lifecycle separately from later message and control events. Recovered usage
+and context update their own checkpoints, including when the terminal state arrived first.
 
 For each bound chat, Harness stores the inclusive intervals it has applied. It commits transcript
 entries under stable source identities before recording coverage. Retrying after a crash can repeat

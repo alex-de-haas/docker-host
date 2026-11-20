@@ -56,6 +56,7 @@ import type { AgentConnectionSelection } from "../agent-providers/types.js";
 import { withAgentAuthority } from "../agent-providers/context.js";
 import { ProviderHarnessRun, type ProviderRunContext } from "../agent-providers/run.js";
 import { providerDecisionCard, providerDecisionCardId, type QuestionAnswers } from "../agent-providers/decision-identity.js";
+import { reconcileHistoryProjection, type HistoryProjectionClock } from "../agent-providers/history-projection.js";
 import { createAgentRunProjection, historyMessages, projectHistoryFact, reduceAgentRunProjection, type AgentRunProjection } from "../agent-providers/projection.js";
 import { nativeAgentStatus, nativeAgentStatusIdentity, providerAgentKey, providerTranscriptSource, transcriptToolId, type NativeAgentStatusEvent } from "../agent-providers/transcript-source.js";
 import { ProviderExecution, type ProviderExecutionState } from "../agent-providers/execution.js";
@@ -752,8 +753,7 @@ export class SessionManager {
   private async applyHistoryState(id: string, provider: AgentProviderRef, summary: AgentHistorySessionState): Promise<void> {
     const { snapshot } = summary, state = this.providerStates.get(id);
     if (!state || state.runId !== snapshot.ref.id || state.sessionId !== summary.sessionId) return;
-    if (state.run && (state.run.generation !== snapshot.generation || BigInt(state.run.revision) > BigInt(snapshot.revision)
-      || BigInt(state.run.lastSequence) > BigInt(snapshot.lastSequence))) return;
+    if (state.run && state.run.generation !== snapshot.generation) return;
     await this.importProviderFact(id, provider, { ...summary, runId: snapshot.ref.id, generation: snapshot.generation,
       item: { kind: "snapshot", snapshot }, cursor: snapshot.cursor, replayed: true }, undefined, true);
   }
@@ -816,31 +816,50 @@ export class SessionManager {
     const renderFact = async () => {
       if (position) await this.importHistoricalTranscript(session, projectHistoryFact(provider, fact), item, state.runId !== fact.runId, position);
     };
+    if (position || stateOnly) {
+      const active = state.run?.ref.id === fact.runId && state.run.generation === fact.generation ? state.run : undefined;
+      const useActive = active && (!retained || BigInt(active.lastSequence) >= BigInt(retained.snapshot.lastSequence));
+      const held = useActive ? active : retained?.snapshot;
+      const previous = held ?? snapshot;
+      if (!previous) return renderFact();
+      const priorClock = held ? (useActive ? state.historyClock : retained?.clock) : {
+        runId: fact.runId, generation: fact.generation, lifecycle: "0", details: "0", changes: {},
+      };
+      const reconciled = reconcileHistoryProjection(previous, priorClock, item, stateOnly);
+      if (reconciled) {
+        const { projection, clock } = reconciled;
+        if (state.runId === fact.runId && (!state.run || state.run.generation === fact.generation)) {
+          const advances = !held || sourceSequence > BigInt(held.lastSequence);
+          const applied: AgentWatchItem = advances && item.kind === "event" ? item : { kind: "snapshot", snapshot: projection.snapshot };
+          const handle = session.run;
+          const partial = stateOnly || clock.details !== clock.lifecycle && !projection.snapshot.result;
+          await this.projectProviderItem(session, applied, state, true, projection, fact.replayed || !advances, partial, clock);
+          if (!fact.replayed && advances && handle instanceof ProviderHarnessRun) handle.onHistoryObserved(item);
+        }
+        await renderFact();
+        return this.store.saveHistoryRun(id, fact.principalId, projection.snapshot, clock);
+      }
+      return renderFact();
+    }
     if (retained && (sourceSequence < BigInt(retained.snapshot.lastSequence)
       || sourceSequence === BigInt(retained.snapshot.lastSequence) && item.kind === "event")) return renderFact();
-    const previous = retained?.snapshot ?? ((position || stateOnly) && state.run?.ref.id === fact.runId && state.run.generation === fact.generation ? state.run : undefined);
-    if (position && previous && (sourceSequence <= BigInt(previous.lastSequence) || item.kind === "event" && BigInt(item.event.revision) < BigInt(previous.revision))) return renderFact();
-    // A state page omits transcript and accounting fields. Preserve evidence already held for this run.
-    const stateItem = stateOnly && previous && item.kind === "snapshot"
-      ? { ...item, snapshot: { ...previous, ...item.snapshot } } : item;
-    const projection = previous ? reduceAgentRunProjection(createAgentRunProjection(previous), stateItem, true)
+    const previous = retained?.snapshot;
+    const projection = previous ? reduceAgentRunProjection(createAgentRunProjection(previous), item, true)
       : snapshot ? createAgentRunProjection(snapshot) : undefined;
     if (!projection) {
-      if (position) return renderFact();
       throw new Error("The provider did not supply the first snapshot for this run's history.");
     }
     const current = state.runId === fact.runId && (!state.run || state.run.generation === fact.generation
       && sourceSequence >= BigInt(state.run.lastSequence) && BigInt(projection.snapshot.revision) >= BigInt(state.run.revision));
     if (current) {
       const handle = session.run;
-      await this.projectProviderItem(session, stateItem, state, true, projection, fact.replayed, stateOnly);
+      await this.projectProviderItem(session, item, state, true, projection, fact.replayed);
       if (!fact.replayed && handle instanceof ProviderHarnessRun) handle.onHistoryObserved(item);
-    } else if (!position) {
+    } else {
       // Older turns may gain evidence after a newer turn starts. Preserve the origin in the
       // journal and leave the current turn's controls, status, usage and pending questions alone.
       await this.importHistoricalTranscript(session, projection, item, state.runId !== fact.runId);
     }
-    await renderFact();
     await this.store.saveHistoryRun(id, fact.principalId, projection.snapshot);
   }
 
@@ -860,7 +879,11 @@ export class SessionManager {
           || specific.type === "decision.resolved" && (event.type === "approval_decision" || event.type === "question_answered"));
         if (position && original && !seen.has(positionKey(identity, position))) {
           const key = positionKey(identity, position);
-          await this.append(id, { type: "provider_history_order", target: identity, providerEventId: key, providerHistoryPosition: position });
+          // Recover display content clipped by the summary. Status-only completions carry no replacement.
+          const content = event.type === "assistant_text" && typeof specific.data.text === "string" ? { messageText: event.text }
+            : event.type === "tool_result" && typeof specific.data.output === "string"
+              ? { toolOutput: event.output, toolOutputTruncated: event.truncated === true } : {};
+          await this.append(id, { type: "provider_history_order", target: identity, providerEventId: key, providerHistoryPosition: position, ...content });
           seen.add(key);
         }
         return;
@@ -926,7 +949,7 @@ export class SessionManager {
   }
 
   /** The caller holds the session lane; Stop projects its final snapshot before its turn boundary. */
-  private async projectProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState, projectStatus = true, history?: AgentRunProjection, replayed = false, stateOnly = false): Promise<void> {
+  private async projectProviderItem(session: LiveSession, item: AgentWatchItem, value: ProviderExecutionState, projectStatus = true, history?: AgentRunProjection, replayed = false, stateOnly = false, historyClock?: HistoryProjectionClock): Promise<void> {
       if (this.stopping) return;
       const id = session.record.id;
       let previous = this.providerProjections.get(id);
@@ -943,7 +966,7 @@ export class SessionManager {
         : item.kind === "snapshot" ? createAgentRunProjection(item.snapshot) : undefined);
       if (!projection) throw new AppContextError(409, "resync_required", "Read the provider run snapshot before following its events.");
       const retainedRun = session.record.providerExecution?.run;
-      const next = { ...value, run: projection.snapshot, cursor: projection.cursor };
+      const next = { ...value, run: projection.snapshot, cursor: projection.cursor, historyClock };
       session.record.providerExecution = next;
       session.record.harnessSessionId = next.sessionId;
       if (session.record.providerObservedRunId !== projection.snapshot.ref.id) {
@@ -1111,7 +1134,8 @@ export class SessionManager {
         const context = projection.snapshot.latestContext;
         if (context) await append(`context:${context.sequence}`, { type: "context_usage",
           usage: context.usage as import("../harness/context-usage.js").ContextUsage | null });
-        if (projection.snapshot.executionUsage) {
+        if (projection.snapshot.executionUsage && (!historyClock || value.run?.ref.id !== projection.snapshot.ref.id
+          || value.run.executionUsage?.sequence !== projection.snapshot.executionUsage.sequence)) {
           const usage = projection.snapshot.executionUsage, sequence = Number(usage.sequence);
           if (!Number.isSafeInteger(sequence)) throw new AppContextError(502, "provider_usage_invalid", "The provider execution usage exceeds the supported accounting range.");
           await this.taskUsage?.(session.record, projection.snapshot.ref.id, { ...usage, sequence });
@@ -1162,7 +1186,7 @@ export class SessionManager {
         session.record.providerExecution = await this.store.commitProviderObservation(id, next);
         const current = this.providerStates.get(id);
         if (current && current.runId === next.runId) {
-          current.run = structuredClone(projection.snapshot); current.cursor = projection.cursor;
+          current.run = structuredClone(projection.snapshot); current.cursor = projection.cursor; current.historyClock = historyClock;
         }
         this.providerProjections.set(id, projection);
       } catch (error) { this.providerProjectedIds.delete(id); this.providerAgentStatuses.delete(id); throw error; }

@@ -3,6 +3,7 @@ import { constants, type BigIntStats } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { durableWriteFile, durableAppendFile, durableCreateFile, durableMkdir, syncDirectory, DurableWriteError, isUncertainWrite } from "../persistence.js";
 import path from "node:path";
+import { applyProviderHistoryContent } from "../agent-providers/history-content.js";
 
 // Session records and transcripts live in the gateway's app data directory (decision 2026-08-08):
 // standard app backup/removal semantics apply, Core audit never receives transcript content.
@@ -443,17 +444,18 @@ export class SessionStore {
     if (!/^[0-9a-f-]{36}$/i.test(runId)) throw new Error("Invalid provider run identity.");
     return path.join(this.sessionDir(id), "provider-history", runId + ".json");
   }
-  async readHistoryRun(id: string, runId: string): Promise<{ principalId: string; snapshot: import("@hosty-sdk/app/agent").AgentRunSnapshot } | null> {
+  async readHistoryRun(id: string, runId: string): Promise<{ principalId: string; snapshot: import("@hosty-sdk/app/agent").AgentRunSnapshot; clock?: import("../agent-providers/history-projection.js").HistoryProjectionClock } | null> {
     try { return JSON.parse(await readFile(this.historyRunFile(id, runId), "utf8")); }
     catch (error) { if (absent(error)) return null; throw this.problem(id, error); }
   }
-  async saveHistoryRun(id: string, principalId: string, snapshot: import("@hosty-sdk/app/agent").AgentRunSnapshot): Promise<void> {
+  async saveHistoryRun(id: string, principalId: string, snapshot: import("@hosty-sdk/app/agent").AgentRunSnapshot,
+    clock?: import("../agent-providers/history-projection.js").HistoryProjectionClock): Promise<void> {
     const file = this.historyRunFile(id, snapshot.ref.id);
     await this.serialize(id, async () => {
       if (await this.deleted(id)) throw new Error("Installation history belongs to a deleted chat.");
       await stat(path.join(this.sessionDir(id), "record.json"));
       await durableMkdir(path.dirname(file));
-      await durableWriteFile(file, JSON.stringify({ principalId, snapshot }));
+      await durableWriteFile(file, JSON.stringify({ principalId, snapshot, clock }));
     }, true);
   }
 
@@ -464,7 +466,7 @@ export class SessionStore {
       const current = await this.readProviderExecution(id);
       if (!current || current.runId !== observed.runId || current.sessionId !== observed.sessionId)
         throw new Error("The provider observation belongs to an earlier execution.");
-      const next = { ...current, run: observed.run, cursor: observed.cursor };
+      const next = { ...current, run: observed.run, cursor: observed.cursor, historyClock: observed.historyClock };
       await durableWriteFile(path.join(this.sessionDir(id), "provider-execution.json"), JSON.stringify(next));
       return next;
     }, true);
@@ -663,7 +665,9 @@ export class SessionStore {
     }, true);
     await this.changed(id);
   }
-  async readEvents(id: string, afterSeq = 0): Promise<StoredEvent[]> { return this.serialize(id, async () => (await this.journal(id)).events.filter(event => event.seq > afterSeq)); }
+  async readEvents(id: string, afterSeq = 0): Promise<StoredEvent[]> {
+    return this.serialize(id, async () => applyProviderHistoryContent((await this.journal(id)).events.filter(event => event.seq > afterSeq)));
+  }
   async deleteSession(id: string): Promise<void> {
     await this.serialize(id, async () => {
       this.journalTails.delete(id);

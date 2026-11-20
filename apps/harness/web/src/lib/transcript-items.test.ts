@@ -12,6 +12,15 @@ describe("transcript activity", () => {
     expect(transcriptItems(events, new Set()).map(item => item.key)).toEqual(["event-1", "event-2", "event-6", "event-4", "event-5"]);
   });
 
+  it("applies original content to a summary already rendered in the live chat", () => {
+    const events = [event(1, "assistant_text", { providerEventId: "r:message:m", text: "Excerpt" }),
+      event(2, "tool_result", { providerEventId: "r:output:cmd", output: "Excerpt", truncated: true }),
+      event(3, "provider_history_order", { target: "r:message:m", messageText: "Full message" }),
+      event(4, "provider_history_order", { target: "r:output:cmd", toolOutput: "Full output", toolOutputTruncated: false })];
+    expect(orderedHistory(events).map(row => [row.seq, row.text ?? row.output, row.truncated]))
+      .toEqual([[1, "Full message", undefined], [2, "Full output", undefined]]);
+  });
+
   it("inserts separate recovery markers between disjoint ranges without hiding the new message", () => {
     const scope = { sessionId: "s", epoch: "archive" };
     const msg = (seq: number, position: number) => event(seq, "assistant_text", {

@@ -310,6 +310,16 @@ describe("installation history", () => {
       sessionId: "different", epoch: options.epoch, head: 3, snapshot: snapshot() }] }));
     await expect(readAgentHistoryStates(options)).rejects.toMatchObject({ code: "response_invalid" });
   });
+  it("preserves retryable provider failures for state and range reads", async () => {
+    const fetcher = vi.fn(async () => Response.json({
+      error: { code: "history_temporarily_unavailable", message: "History is recovering.", retryable: true },
+    }, { status: 503 }));
+    const options = { url: "http://provider.test/history/events", token: "read-token", provider, fetch: fetcher,
+      through: "boundary", sessionId, epoch: "retained-epoch", from: 2, to: 3 };
+    const expected = { code: "history_temporarily_unavailable", status: 503, retryable: true };
+    await expect(readAgentHistoryStates(options)).rejects.toMatchObject(expected);
+    await expect(readAgentHistoryRange(options)).rejects.toMatchObject(expected);
+  });
   it("rejects a different run in an otherwise valid history page", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ through: "t", nextCursor: null, observations: [{ ...envelope(), runId: requestId, cursor: "p" }] }));
     await expect(readAgentHistoryPage({ url: "http://provider.test/history/events", token: "read-token", provider, fetch: fetcher })).rejects.toThrow("identity changed");

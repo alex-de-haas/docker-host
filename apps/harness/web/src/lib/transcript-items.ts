@@ -1,5 +1,6 @@
 import type { AssistantEvent, ProviderHistoryGap } from "./assistant-api";
 import { transcriptDecisionId } from "../../../src/agent-providers/decision-identity";
+import { applyProviderHistoryContent } from "../../../src/agent-providers/history-content";
 import { isListedToolUse } from "./tool-display";
 import { commandOutcome, commandResultId, isCommandTool, type CommandOutcome } from "./transcript-activity";
 import { canShowToolOutput, recordedToolOutput, type ToolOutput } from "./tool-output";
@@ -147,7 +148,7 @@ interface HistoryPosition { sessionId: string; epoch: string; archiveGeneration?
 /** Arrival sequence remains the browser resume cursor. Only the presentation order changes. */
 export function orderedHistory(events: AssistantEvent[], gaps: ProviderHistoryGap[] = []): AssistantEvent[] {
   const positions = new Map<string, HistoryPosition>();
-  const rows = originalTurnOrder(events.filter(event => {
+  const rows = originalTurnOrder(applyProviderHistoryContent(events).filter(event => {
     if (event.type !== "provider_history_order") return true;
     positions.set(String(event.target), event.providerHistoryPosition as HistoryPosition);
     return false;
