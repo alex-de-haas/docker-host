@@ -1,6 +1,6 @@
 import { providerIdentityParts } from "../../shared/provider-reference.js";
 import { createHash } from "node:crypto";
-import type { AgentRunSnapshot, AgentRunState, AgentSource } from "@hosty-sdk/app/agent";
+import type { AgentRunSnapshot, AgentRunState, AgentSource, AgentWatchItem, AgentResult } from "@hosty-sdk/app/agent";
 
 /** Public execution attribution retained with transcript content; native IDs stay provider-owned. */
 export type ProviderTranscriptSource = AgentSource & {
@@ -17,6 +17,7 @@ export type NativeAgentStatusEvent = {
   freshness: AgentRunSnapshot["freshness"];
   observedAt: string;
   lastKnownState?: AgentRunState;
+  sourceSequence?: string;
 };
 
 export function transcriptToolId(runId: string, source: AgentSource | undefined, toolId: string): string {
@@ -49,8 +50,38 @@ export function nativeAgentStatus(snapshot: AgentRunSnapshot, agent: NonNullable
   return { type: "native_agent_status", providerSource: providerTranscriptSource(snapshot, agent),
     state: uncertain ? "unknown" : agent.state, stopConfirmed: agent.stopConfirmed === true,
     freshness: uncertain && snapshot.freshness === "current" ? "last_known" : snapshot.freshness,
-    observedAt: snapshot.observedAt, ...(uncertain ? { lastKnownState: agent.state } : {}) };
+    observedAt: snapshot.observedAt, sourceSequence: snapshot.lastSequence, ...(uncertain ? { lastKnownState: agent.state } : {}) };
 }
 export function nativeAgentStatusIdentity(event: NativeAgentStatusEvent): string {
   return JSON.stringify([event.providerSource, event.state, event.stopConfirmed, event.freshness, event.lastKnownState]);
+}
+
+/** These are public, child-attributed facts. A completed message alone may be a progress report. */
+export type NativeAgentDetailsEvent = {
+  type: "native_agent_details"; sourceSequence: string;
+  prompt?: string; promptTruncated?: boolean;
+  result?: string; resultTruncated?: boolean; resultMessageId?: string;
+};
+
+export function nativeAgentDetails(item: AgentWatchItem): Array<{ source: AgentSource; event: NativeAgentDetailsEvent; key: string }> {
+  const sequence = item.kind === "snapshot" ? item.snapshot.lastSequence : item.event.sequence;
+  const entries: Array<{ source: AgentSource; event: NativeAgentDetailsEvent; key: string }> = [];
+  const add = (source: AgentSource, details: Omit<NativeAgentDetailsEvent, "type" | "sourceSequence">) => {
+    if (source.parentAgentId === undefined || !Object.keys(details).length) return;
+    const fingerprint = createHash("sha256").update(JSON.stringify([source.agentId, details])).digest("hex");
+    entries.push({ source, event: { type: "native_agent_details", sourceSequence: sequence, ...details }, key: `child-details:${sequence}:${fingerprint}` });
+  };
+  if (item.kind === "event" && item.event.type === "result.available") {
+    const result = item.event.data.result as AgentResult;
+    add(item.event.source, { ...(result.text ? { result: result.text } : {}), ...(result.messageId ? { resultMessageId: result.messageId } : {}) });
+  } else {
+    const agents = item.kind === "snapshot" ? item.snapshot.agents : item.event.type === "run.updated"
+      ? (item.event.data.snapshot as AgentRunSnapshot).agents : item.event.type === "agent.updated"
+        ? [item.event.data.agent as NonNullable<AgentRunSnapshot["agents"]>[number]] : [];
+    for (const agent of agents ?? []) {
+      add(agent, { ...(agent.prompt ? { prompt: agent.prompt, ...(agent.promptTruncated ? { promptTruncated: true } : {}) } : {}),
+        ...(agent.response ? { result: agent.response, ...(agent.responseTruncated ? { resultTruncated: true } : {}) } : {}) });
+    }
+  }
+  return entries;
 }

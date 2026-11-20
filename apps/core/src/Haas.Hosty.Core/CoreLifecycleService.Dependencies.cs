@@ -158,7 +158,7 @@ internal sealed partial class CoreLifecycleService
         Func<Task<T>> start, CancellationToken ct)
     {
         await ValidateDevBindingAsync(app, development, ct);
-        var installed = await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
+        var installed = await LoadDevelopmentBaselineAsync(app, app.SelectedRuntime, ct);
         await ValidateDevSourceAuthorityAsync(app, installed, development.Actor, ct);
         if (development.WorktreeId is { } treeId)
             return await DevWorkspaces.WithDevAdmissionAsync(treeId, app, development.Actor.WorkspaceOwner, start, ct);
@@ -309,7 +309,7 @@ internal sealed partial class CoreLifecycleService
         if (await AppDevStore.ReadAsync(paths, root, ct) is { Active: true } development)
         {
             await ValidateDevBindingAsync(root, development, ct);
-            var selection = await manifests.LoadAsync(root.ManifestPath!, root.SelectedRuntime, ct);
+            var selection = await LoadDevelopmentBaselineAsync(root, root.SelectedRuntime, ct);
             await ValidateDevSourceAuthorityAsync(root, selection, development.Actor, ct);
         }
     }

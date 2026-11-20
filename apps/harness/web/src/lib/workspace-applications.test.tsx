@@ -140,6 +140,12 @@ describe("workspace application observations", () => {
     },
   );
 
+  it("retains the valid observation when a sibling row is malformed", async () => {
+    vi.mocked(developmentRequest).mockResolvedValueOnce({ apps: [application(), null, { appId: "other", canSwitch: "yes" }] });
+    await render(); await sync();
+    expect(latest.applications).toEqual([application()]); expect(latest.error).toBe("");
+  });
+
   it("clears revoked observations, preserves the failure reason and recovers on a fresh authorized read", async () => {
     await render(); await sync();
     vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Workspace access revoked.")); await sync();

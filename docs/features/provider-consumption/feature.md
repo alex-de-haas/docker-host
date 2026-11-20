@@ -84,7 +84,7 @@ general delegation.
 
 ### Named implementations
 
-Core 0.183.0 supports the `implementations.named` capability on a reviewed interface entry. One
+Core 0.184.0 supports the `implementations.named` capability on a reviewed interface entry. One
 entry can publish several choices under the same key. Its backend authenticates as the current installation and publishes an increasing revision
 with a complete list of up to 256 opaque IDs, display names and availability flags. An empty list withdraws every
 choice. A retry of the same snapshot is safe. Core persists the catalog and rejects conflicting
@@ -146,7 +146,7 @@ the corresponding task/executor routes.
 
 ## SDKs
 
-TypeScript SDK 0.51.0 and .NET SDK 0.19.0 support named discovery, snapshot publication, speech
+TypeScript SDK 0.52.0 and .NET SDK 0.19.0 support named discovery, snapshot publication, speech
 capabilities and streamed synthesis. A TypeScript consumer can resolve a saved dictation choice as follows.
 
 ```ts
@@ -201,7 +201,7 @@ Cancelling playback closes the upstream request.
 
 ## Harness Dictation
 
-Harness 0.103.0 requests separate optional speech grants. **Settings → Speech** stores
+Harness 0.105.0 requests separate optional speech grants. **Settings → Speech** stores
 **Dictation** and **Read aloud** separately for each signed-in user. Both choices survive chat
 changes and reloads. A single static dictation provider preserves existing microphone behavior.
 Selecting a named connection is explicit. A withdrawn selection remains visible as unavailable

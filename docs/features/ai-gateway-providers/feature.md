@@ -78,7 +78,7 @@ it does not install/start Ollama, download model weights or change the server's 
 
 ### Speech on Codex API connections
 
-Codex Provider 0.4.0 gives each managed OpenAI API-key connection independent **Provide speech to text** and
+Codex Provider 0.5.0 gives each managed OpenAI API-key connection independent **Provide speech to text** and
 **Provide text to speech** switches, initially off. Enabling a switch publishes one named
 implementation under that speech interface. The connection name supplies the user-facing label.
 Renaming preserves the selection. Rotating its API key changes its published identity. Removing
@@ -89,7 +89,7 @@ Codex Provider sends completed recordings to OpenAI file transcription with `gpt
 read-aloud audio from OpenAI Realtime using `gpt-realtime-2.1-mini`. Each call uses the credential of the selected connection.
 The Harness user selects dictation and read-aloud independently of the chat's agent.
 The shared provider runtime also retains the implementation identity in history and native execution references.
-Claude Code Provider 0.3.1 and Ollama Provider 0.3.1 include that change.
+Claude Code Provider 0.4.1 and Ollama Provider 0.3.1 include that change.
 See [provider consumption and speech](../provider-consumption/feature.md), [file transcription](https://developers.openai.com/api/docs/guides/speech-to-text)
 and [speech generation](https://developers.openai.com/api/docs/guides/text-to-speech).
 

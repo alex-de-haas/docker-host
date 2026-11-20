@@ -9,7 +9,7 @@ internal sealed record AppDevRequest(string RequestId, string Action, string? Ta
 internal sealed record AppDevPlan(string AppId, string Action, string PlanDigest, string? OperationId,
     string? CurrentRuntime, string? TargetRuntime, string? WorktreeId, string? SourcePath, string? Head,
     string[] Changes, bool DataChanged, string[] OutsideBackup);
-internal sealed record AppDevReceipt(string RequestId, string Fingerprint, string Action, string State);
+internal sealed record AppDevReceipt(string RequestId, string Fingerprint, string Action, string State, string? Error = null);
 internal sealed record AppDevOperation(string Id, string AppId, DateTimeOffset Installation, AppDevActor Actor,
     string TargetRuntime, string SourcePath, string? WorktreeId, string ManifestDigest, string PreviousManifest,
     string? PreviousRuntime, AppSourceState? PreviousSource, IReadOnlyDictionary<string, ArtifactLock>? PreviousArtifacts,
@@ -20,7 +20,8 @@ internal sealed record AppDevOperation(string Id, string AppId, DateTimeOffset I
     string[]? ExecutionGrantedPermissions = null, string[]? BaseConfirmedRoles = null, string[]? ExecutionConfirmedRoles = null,
     string? ExecutionConfigurationHash = null, string? PriorExecutionConfigurationHash = null,
     string? ReturnConfigurationHash = null, bool ExecutionProjectionPending = false,
-    AppDevelopmentAccessPlan? ExecutionAccessPlan = null, string? ExecutionPermissionRevision = null)
+    AppDevelopmentAccessPlan? ExecutionAccessPlan = null, string? ExecutionPermissionRevision = null,
+    bool WorkspaceStartAfterBinding = false, bool PackageDataBaseline = false, string? SupersededDevModeId = null)
 {
     [JsonIgnore] public bool Active => Phase != "returned";
 }

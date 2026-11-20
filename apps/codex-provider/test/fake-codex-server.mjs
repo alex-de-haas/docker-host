@@ -280,6 +280,20 @@ function handle(msg) {
         turn: { id: "feedback-turn", status: "failed", error: { message: "Feedback acceptance fixture failed: " + error.message } } } }));
       return;
     }
+    if (currentTurnText.includes("NATIVE_SUBAGENT_DISCLOSURE")) {
+      const threadId = msg.params.threadId, turnId = "delegating-turn", child = "archive-reviewer";
+      send({ id: msg.id, result: { turn: { id: turnId } } });
+      send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+      const observe = (id, tool, prompt, status, message) => send({ method: "item/completed",
+        params: { threadId, turnId, item: { type: "collabAgentToolCall", id, tool, status: "completed",
+          senderThreadId: threadId, receiverThreadIds: [child], prompt, agentsStates: { [child]: { status, message } } } } });
+      observe("spawn-reviewer", "spawnAgent", "Inspect the archive index.", "running", null);
+      observe("wait-reviewer", "wait", null, "completed", "The archive index contains both records.");
+      send({ method: "item/completed", params: { threadId, turnId, item: {
+        type: "agentMessage", id: "root-summary", phase: "final_answer", text: "The archive review is finished." } } });
+      send({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "completed" } } });
+      return;
+    }
     const ranges = currentTurnText.match(/HISTORY_RANGES:(\d{1,5}):([a-f0-9]{32})/);
     if (ranges) {
       const [, port, chat] = ranges;

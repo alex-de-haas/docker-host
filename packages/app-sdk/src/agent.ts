@@ -93,7 +93,15 @@ export type AgentRunSnapshot = {
   configurationRevision: Revision; lastSequence: Revision; cursor: string; pending: AgentPendingDecision[];
   effects: { certainty: "known" | "unknown"; unresolvedCallIds: string[] };
   result?: AgentResult; messages?: AgentMessageBlock[]; tools?: AgentToolBlock[];
-  agents?: Array<AgentSource & { state: AgentRunState; stopConfirmed?: boolean }>;
+  agents?: Array<AgentSource & {
+    state: AgentRunState;
+    stopConfirmed?: boolean;
+    /** Native assignment and final answer, when the provider can attribute them to this child. */
+    prompt?: string;
+    response?: string;
+    promptTruncated?: boolean;
+    responseTruncated?: boolean;
+  }>;
   selection?: { requested: { model: string | null; reasoningEffort: string | null }; effective: { model: string | null; reasoningEffort: string | null } };
   admissionRef?: string;
   coverage?: { messages: "complete" | "truncated"; tools: "complete" | "truncated"; decisions?: "complete" | "truncated" };

@@ -137,7 +137,7 @@ internal static class DockerSourceRuntime
         {
             var output = (result.StandardOutput + "\n" + result.StandardError).Trim();
             if (output.Length > 16384) output = "[Earlier build output omitted]\n" + output[^16384..];
-            throw new AppLifecycleException("docker_dev_build_failed", $"Environment build failed for service '{service.Key}' (exit {result.ExitCode}). Fix the Dockerfile/source and retry in the same sandbox.\n{output}");
+            throw new AppLifecycleException("docker_dev_build_failed", $"Environment build failed for service '{service.Key}' (exit {result.ExitCode}). Fix the Dockerfile or source and retry the build.\n{output}");
         }
         var image = await runner.RunAsync(["image", "inspect", "--format", "{{.Id}}", tag], null, cancellationToken);
         var id = image.StandardOutput.Trim();
@@ -239,15 +239,18 @@ internal static class DockerSourceRuntime
         IDockerCommandRunner runner, CancellationToken cancellationToken, string instanceId = "")
     {
         if (service.Runtime.SourceMount is not { } mount) return null;
-        if (context.WorkspaceActivationId is { } activationId)
+        var activationId = context.WorkspaceActivationId ?? (context.BoundWorktreeId is { } worktreeId
+            ? Haas.Hosty.Launch.WorkspaceRuntimeFiles.ChildId(worktreeId, context.Manifest.RuntimeProfile.Key)
+            : null);
+        if (activationId is not null)
         {
             if (!Guid.TryParseExact(activationId, "D", out _))
                 throw new AppLifecycleException("docker_source_cache_invalid", "The workspace activation cache identity is invalid.");
-            // Preparation and active restarts share this candidate cache; the previous runtime's
-            // cache stays untouched and becomes available again on Return.
+            // Each bound workspace and runtime has its own generated files and build caches.
+            // A supervised activation keeps its prepared cache through startup and restart.
             context = context with { AppCachePath = System.IO.Path.Combine(context.AppRoot, "cache", "workspace-activations", activationId) };
         }
-        var cacheIdentity = context.AppRoot + (context.WorkspaceActivationId is null ? "" : "|activation:" + context.WorkspaceActivationId);
+        var cacheIdentity = context.AppRoot + (activationId is null ? "" : "|activation:" + activationId);
         var path = ResolveSourcePath(context, mount);
         // Docker resolves bind sources on its daemon host. A remote context cannot mount this checkout.
         var host = Environment.GetEnvironmentVariable("DOCKER_HOST");

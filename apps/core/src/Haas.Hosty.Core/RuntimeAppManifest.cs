@@ -2264,6 +2264,7 @@ internal sealed partial class DockerRuntimeAdapter(
         var services = await InspectServicesHealthAsync(
             context.App.Id,
             [.. context.Manifest.Services.Select(service => service.Key)],
+            context.ConfirmServiceAbsence || context.BoundWorktreeId is not null,
             cancellationToken);
 
         return new AppRuntimeHealthResult(SummarizeHealthStatus(services), services);
@@ -2308,8 +2309,8 @@ internal sealed partial class DockerRuntimeAdapter(
 
     // Inspects ALL of an app's service containers in one `docker inspect` call, then resolves the
     // running images' first repo digests (`repository@sha256:...`) so clients can detect
-    // "running != lock" drift. A missing container or unavailable docker is reported as "stopped" —
-    // health is best-effort observation and never throws.
+    // "running != lock" drift. A bound workspace reports an unverified container as unknown so a
+    // failed launch cannot hide a surviving writer when the daemon is inaccessible.
     //
     // One spawn per app rather than two per service: this runs for every believed-running app on every
     // 15s supervision tick, where a per-service pair of spawns made steady-state process churn scale
@@ -2317,6 +2318,7 @@ internal sealed partial class DockerRuntimeAdapter(
     private async Task<IReadOnlyList<AppRuntimeServiceHealth>> InspectServicesHealthAsync(
         string appId,
         IReadOnlyList<string> serviceKeys,
+        bool requireConfirmedAbsence,
         CancellationToken cancellationToken)
     {
         if (serviceKeys.Count == 0)
@@ -2341,9 +2343,8 @@ internal sealed partial class DockerRuntimeAdapter(
         // {{.State.Health.Status}} would error out the whole inspect. RestartCount and StartedAt are
         // observation-only signals for uptime / crash-loop legibility.
         const string format = "{{.Name}}\t{{.State.Status}}\t{{.State.Pid}}\t{{.State.ExitCode}}\t{{.Image}}\t{{.Config.Image}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}\t{{.RestartCount}}\t{{.State.StartedAt}}";
-        // The exit code is deliberately ignored: a batch naming one absent container exits non-zero
-        // while still printing good lines for the containers that do exist. Absence IS the "stopped"
-        // answer, so what matters is which names came back, not the status of the call as a whole.
+        // A batch naming one absent container exits non-zero while still printing good lines for
+        // the others. Only Docker's per-name missing-object diagnostic confirms absence.
         var inspect = await RunRawAsync(["inspect", "--format", format, .. distinctNames], cancellationToken);
         var parsedByName = new Dictionary<string, ContainerInspectInfo>(StringComparer.Ordinal);
         foreach (var line in (inspect.StandardOutput ?? string.Empty)
@@ -2374,9 +2375,14 @@ internal sealed partial class DockerRuntimeAdapter(
         var services = new List<AppRuntimeServiceHealth>(serviceKeys.Count);
         foreach (var serviceKey in serviceKeys)
         {
-            if (!parsedByName.TryGetValue(namesByService[serviceKey], out var parsed))
+            var name = namesByService[serviceKey];
+            if (!parsedByName.TryGetValue(name, out var parsed))
             {
-                services.Add(new AppRuntimeServiceHealth(serviceKey, "stopped", null, null, null, null, null));
+                var stopped = !requireConfirmedAbsence || inspect.StandardError.Split('\n').Any(line =>
+                    line.TrimEnd().EndsWith("No such object: " + name, StringComparison.OrdinalIgnoreCase) ||
+                    line.TrimEnd().EndsWith("No such container: " + name, StringComparison.OrdinalIgnoreCase));
+                services.Add(new AppRuntimeServiceHealth(serviceKey, stopped ? "stopped" : "unknown", null, null, null, null,
+                    stopped ? null : "Docker could not verify the state of this container."));
                 continue;
             }
 
@@ -3476,7 +3482,8 @@ internal sealed record RuntimeLifecycleContext(
     IReadOnlyList<RuntimeSelectedService>? GraphServices = null,
     [property: System.Text.Json.Serialization.JsonIgnore]
     Func<string, string?, Task>? ReportLaunchProgress = null,
-    string[]? PreparedSetupServices = null, bool PreparationOnly = false, string? WorkspaceActivationId = null)
+    string[]? PreparedSetupServices = null, bool PreparationOnly = false, string? WorkspaceActivationId = null,
+    string? BoundWorktreeId = null, bool ConfirmServiceAbsence = false)
 {
     public IReadOnlyList<RuntimeSelectedService> AllServices => GraphServices ?? Manifest.Services;
 }

@@ -232,6 +232,12 @@ function finiteJson(value: unknown, depth = 0, seen = new Set<object>()): boolea
 }
 function contextUsage(value: unknown): boolean { return value === null || object(value) && finiteJson(value); }
 function source(value: unknown): void { if (!object(value) || !opaque(value.agentId) || value.parentAgentId !== undefined && !opaque(value.parentAgentId) || value.parentToolCallId !== undefined && (!opaque(value.parentToolCallId) || !opaque(value.parentAgentId))) responseProblem("Invalid execution source."); }
+function validateChildAgent(agent: unknown): void {
+  source(agent);
+  if (!object(agent) || !["queued", "running", "waiting_for_input", "succeeded", "failed", "cancelled", "unknown"].includes(String(agent.state))
+    || [agent.stopConfirmed, agent.promptTruncated, agent.responseTruncated].some(flag => flag !== undefined && typeof flag !== "boolean")
+    || [agent.prompt, agent.response].some(text => text !== undefined && (typeof text !== "string" || text.length > 65536 && [...text].length > 65536))) responseProblem("Invalid child agent observation.");
+}
 export function validateAgentPendingDecision(value: unknown): asserts value is AgentPendingDecision {
   if (!object(value) || !opaque(value.id) || !decimal(value.revision) || !["approval", "question"].includes(String(value.kind)) || !["continue_run", "next_turn"].includes(String(value.delivery))) responseProblem("Invalid pending decision.");
   if (value.source !== undefined) source(value.source);
@@ -272,7 +278,7 @@ export function validateAgentRunSnapshot(value: unknown): asserts value is Agent
       if (!object(command) || !["completed", "failed", "cancelled", "unknown"].includes(String(command.status)) || command.exitCode !== undefined && !Number.isSafeInteger(command.exitCode) || command.durationMs !== undefined && !integer(command.durationMs, 0) || command.summary !== undefined && !bounded(command.summary, 65536, true)) responseProblem("Invalid retained command result.");
     }
   }
-  if (value.agents !== undefined) { array(value.agents, 1024, "agent inventory"); for (const agent of value.agents) { source(agent); if (!object(agent) || !["queued", "running", "waiting_for_input", "succeeded", "failed", "cancelled", "unknown"].includes(String(agent.state)) || agent.stopConfirmed !== undefined && typeof agent.stopConfirmed !== "boolean") responseProblem("Invalid retained child agent state."); } }
+  if (value.agents !== undefined) { array(value.agents, 1024, "agent inventory"); for (const agent of value.agents) validateChildAgent(agent); }
   if (Buffer.byteLength(JSON.stringify(value)) > AGENT_COMMAND_MAX_BYTES) responseProblem("Snapshot byte allowance exceeded.");
 }
 const eventTypes = ["run.updated", "session.bound", "selection.updated", "message.started", "message.delta", "message.completed", "tool.started", "tool.output", "tool.completed", "decision.requested", "decision.updated", "decision.resolved", "control.updated", "result.available", "usage.updated", "context.updated", "agent.updated", "warning", "extension"];
@@ -292,6 +298,7 @@ export function validateAgentEvent(value: unknown): asserts value is AgentEvent 
   else if (value.type === "session.bound" && !opaque(data.sessionId)) responseProblem("Session events require a public session ID.");
   else if (value.type === "context.updated" && (!Object.hasOwn(data, "usage") || !contextUsage(data.usage))) responseProblem("Context events require nullable JSON observation data.");
   else if (value.type === "extension" && (!bounded(data.namespace, 256) || data.required === true)) responseProblem("Extensions cannot carry required protocol semantics.");
+  if (value.type === "agent.updated" && data.agent !== undefined) validateChildAgent(data.agent);
   if (data.decision !== undefined) validateAgentPendingDecision(data.decision);
   if (data.response !== undefined) { try { decisionResponse(data.response); } catch { responseProblem("Invalid event decision response."); } }
   if (value.type === "usage.updated" && data.execution !== undefined && (!object(data.execution) || !decimal(data.execution.sequence, true) || !integer(data.execution.activeMs, 0) || typeof data.execution.unknown !== "boolean")) responseProblem("Invalid event execution usage.");

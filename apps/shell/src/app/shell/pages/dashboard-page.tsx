@@ -143,7 +143,7 @@ export function DashboardPage({
   onRefresh: () => void;
   onInstall: () => void;
   onAction: (app: CoreApp, action: AppAction) => void;
-  onSwitchRuntime: (app: CoreApp, targetRuntime: string | AppExecutionSelection) => void;
+  onSwitchRuntime: (app: CoreApp, targetRuntime: string | AppExecutionSelection, workspaceName?: string) => void;
   onUpdateApp: (app: CoreApp) => void;
   onCheckUpdates: () => void;
   onUpdateAll: () => void;
@@ -468,7 +468,7 @@ function InstalledAppsTable({
   pendingAppActions: Record<string, AppAction>;
   checkingApps: Set<string>;
   onAction: (app: CoreApp, action: AppAction) => void;
-  onSwitchRuntime: (app: CoreApp, targetRuntime: string | AppExecutionSelection) => void;
+  onSwitchRuntime: (app: CoreApp, targetRuntime: string | AppExecutionSelection, workspaceName?: string) => void;
   onUpdateApp: (app: CoreApp) => void;
   onCheckUpdate: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
@@ -488,7 +488,7 @@ function InstalledAppsTable({
                   app={app}
                   workspace={execution?.current.kind === "workspace"
                     ? { id: execution.current.workspaceId!, label: execution.current.name || "Workspace" }
-                    : workspaceSource(app, workspaces)}
+                    : execution?.current.kind === "package" ? undefined : workspaceSource(app, workspaces)}
                   executionTargets={execution}
                   coreOrigin={coreOrigin}
                   isShell={app.id === shellAppId}
@@ -536,13 +536,15 @@ function InstalledAppRow({
   pendingAction?: AppAction;
   checkingUpdate: boolean;
   onAction: (app: CoreApp, action: AppAction) => void;
-  onSwitchRuntime: (app: CoreApp, targetRuntime: string | AppExecutionSelection) => void;
+  onSwitchRuntime: (app: CoreApp, targetRuntime: string | AppExecutionSelection, workspaceName?: string) => void;
   onUpdateApp: (app: CoreApp) => void;
   onCheckUpdate: (app: CoreApp) => void;
   onOpenPanel: OpenAppPanel;
 }) {
   const selectedProfile = app.runtimeProfiles?.find(profile => profile.key === app.selectedRuntime);
-  const runtimeLabel = workspace || selectedProfile?.development ? null : app.selectedRuntime || "none";
+  const packageSelected = executionTargets?.current.kind === "package";
+  const showSource = Boolean(workspace || (!packageSelected && selectedProfile?.development));
+  const runtimeLabel = showSource ? null : executionTargets?.current.runtime || app.selectedRuntime || "none";
   const running = isAppUp(app.runtimeState);
   // A verb is mid-flight on the server. Distinct from `busyAction`, which is only true in the tab
   // that clicked: this one is true for every admin, in every tab, and survives a page reload.
@@ -559,10 +561,6 @@ function InstalledAppRow({
   // restarting the Shell itself takes this UI down with it, so the action handler confirms that case.
   const canControl = canManageApps;
   const canSwitchRuntime = canManageApps;
-  // `backup` and `logs` are the only genuine capability gates left: unlike the lifecycle verbs, they
-  // are optional *features* that depend on the app itself (does it have data worth snapshotting?),
-  // which is why Core's canonical vocabulary is now just those two. Restore lives inside this panel.
-  const canBackup = canControl && app.capabilities.includes("backup");
   // Console logs (docker logs) are served on-demand by Core, so the action shows for any app that
   // declares the `logs` capability — independent of the telemetry backend.
   const canViewLogs = app.capabilities.includes("logs");
@@ -625,7 +623,7 @@ function InstalledAppRow({
             </div>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs text-muted-foreground">
               <div className="dashboard-version contents">
-                <AppVersionCell app={app} workspace={workspace} verdict={verdict} updateVisible={updateVisible} />
+                <AppVersionCell app={app} showSource={showSource} workspace={workspace} verdict={verdict} updateVisible={updateVisible} />
               </div>
               {runtimeLabel && <><span aria-hidden="true">·</span><span className="dashboard-runtime" title="Runtime">{runtimeLabel}</span></>}
             </div>
@@ -679,7 +677,6 @@ function InstalledAppRow({
             restartBusy={isBusy("restart")}
             autostartBusy={isBusy("autostart")}
             canViewLogs={canViewLogs}
-            canBackup={canBackup}
             canConfigure={canConfigure}
             canRemove={canRemove}
             canCheckUpdate={canUpdate}
@@ -746,12 +743,11 @@ function CoreVersionBlock({ status, coreUpdate }: { status: CoreStatus | null; c
 }
 
 // Release versions share the identity block; update feedback belongs beneath the runtime status.
-function AppVersionCell({ app, workspace, verdict, updateVisible }: {
-  app: CoreApp; workspace?: WorkspaceSource; verdict: AppUpdateAvailability | null | undefined;
+function AppVersionCell({ app, showSource, workspace, verdict, updateVisible }: {
+  app: CoreApp; showSource: boolean; workspace?: WorkspaceSource; verdict: AppUpdateAvailability | null | undefined;
   updateVisible: boolean;
 }) {
-  const profile = app.runtimeProfiles?.find(profile => profile.key === app.selectedRuntime);
-  if (workspace || profile?.development) return <SourceVersionCell key={`${app.id}:${app.sourceLivePath}:${app.sourceOverridePath}:${app.sourceManagedPath}`} app={app} workspace={workspace} compact />;
+  if (showSource) return <SourceVersionCell key={`${app.id}:${app.sourceLivePath}:${app.sourceOverridePath}:${app.sourceManagedPath}`} app={app} workspace={workspace} compact />;
   const available = updateVisible ? resolveAvailableVersionLabel(verdict) : null;
   return <TooltipProvider delayDuration={150}>
     <div className="min-w-0 text-xs">
@@ -867,18 +863,18 @@ function RuntimeSwitcher({ app, workspace, canSwitch, busyAction, onSwitchRuntim
   canSwitch: boolean;
   busyAction: string | null;
   targets?: AppExecutionTargets;
-  onSwitchRuntime: (app: CoreApp, target: string | AppExecutionSelection) => void;
+  onSwitchRuntime: (app: CoreApp, target: string | AppExecutionSelection, workspaceName?: string) => void;
 }) {
   const choices: AppExecutionChoice[] = targets?.choices ?? (app.runtimeProfiles ?? []).filter(profile => !profile.development)
     .map(profile => ({ kind: "package" as const, runtime: profile.key, name: profile.key, available: true }));
   const current = targets?.current;
-  const profile = app.runtimeProfiles?.find(profile => profile.key === app.selectedRuntime);
-  const fromWorkspace = current?.kind === "workspace" || workspace !== undefined;
-  const development = profile?.development === true || fromWorkspace;
+  const currentPackageRuntime = current
+    ? current.kind === "package" ? current.runtime : undefined
+    : !workspace && !app.runtimeProfiles?.find(profile => profile.key === app.selectedRuntime)?.development ? app.selectedRuntime : undefined;
   const switching = busyAction?.startsWith(`${app.id}:switch-runtime:`) ?? false;
   const selected = (choice: (typeof choices)[number]) => choice.kind === "workspace"
     ? current?.kind === "workspace" && choice.workspaceId === current.workspaceId && choice.worktreeId === current.worktreeId
-    : !development && current?.kind !== "workspace" && choice.runtime === app.selectedRuntime;
+    : choice.runtime === currentPackageRuntime;
   if (!canSwitch || !choices.some(choice => choice.available && !selected(choice))) return null;
   return <DropdownMenuSub>
     <DropdownMenuSubTrigger disabled={switching || isAppBusy(app.runtimeState) || app.operationStatus === "updating"}
@@ -891,7 +887,7 @@ function RuntimeSwitcher({ app, workspace, canSwitch, busyAction, onSwitchRuntim
         {choices.map(choice => <DropdownMenuItem key={choice.kind === "workspace" ? `workspace:${choice.workspaceId}:${choice.worktreeId}` : `package:${choice.runtime}`}
           disabled={switching || !choice.available} title={choice.unavailable} aria-current={selected(choice) ? true : undefined}
           onSelect={() => { if (!selected(choice)) onSwitchRuntime(app, { kind: choice.kind as "workspace" | "package", runtime: choice.runtime,
-            workspaceId: choice.workspaceId, worktreeId: choice.worktreeId }); }}>
+            workspaceId: choice.workspaceId, worktreeId: choice.worktreeId }, choice.kind === "workspace" ? choice.name : workspace?.label); }}>
           <Check className={cn("size-4 shrink-0", selected(choice) ? "opacity-100" : "opacity-0")} />
           {choice.kind === "workspace" ? <Boxes className="size-4 shrink-0" /> : <Package className="size-4 shrink-0" />}
           <span className="min-w-0 flex-1 truncate">{choice.kind === "workspace" ? choice.name || "Workspace" : choice.runtime}</span>
@@ -912,7 +908,6 @@ function InstalledAppActionsMenu({
   restartBusy,
   autostartBusy,
   canViewLogs,
-  canBackup,
   canConfigure,
   canRemove,
   canCheckUpdate,
@@ -936,7 +931,6 @@ function InstalledAppActionsMenu({
   autostartBusy: boolean;
   onLifecycleAction: (action: AppAction) => void;
   canViewLogs: boolean;
-  canBackup: boolean;
   canConfigure: boolean;
   canRemove: boolean;
   // Same gate as the row's Update affordance: an admin, and an app with a reviewed-update path.
@@ -956,7 +950,6 @@ function InstalledAppActionsMenu({
     canReviewUpdate ||
     permissionReviewUrl ||
     canViewLogs ||
-    canBackup ||
     canConfigure ||
     canRemove;
 
@@ -1024,14 +1017,14 @@ function InstalledAppActionsMenu({
           </DropdownMenuItem>
         )}
         {(canCheckUpdate || canReviewUpdate || permissionReviewUrl) &&
-          (canViewLogs || canBackup || canConfigure || canRemove) && <DropdownMenuSeparator />}
+          (canViewLogs || canControl || canConfigure || canRemove) && <DropdownMenuSeparator />}
         {canViewLogs && (
           <DropdownMenuItem onClick={() => onOpenPanel(app, "logs")}>
             <Terminal className="h-4 w-4" />
             Console logs
           </DropdownMenuItem>
         )}
-        {canBackup && (
+        {canControl && (
           <DropdownMenuItem onClick={() => onOpenPanel(app, "backups")}>
             <Database className="h-4 w-4" />
             Backups

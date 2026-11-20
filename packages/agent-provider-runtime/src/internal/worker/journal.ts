@@ -216,6 +216,16 @@ export class WorkerJournal {
       if (!normalized) return null;
       event = { ...normalized, ...(source ? { source } : {}) };
     }
+    if (event.type === "agent_status") {
+      event = { ...event };
+      for (const field of ["prompt", "response"] as const) {
+        const text = event[field];
+        if (typeof text === "string" && Buffer.byteLength(text) > 64 * 1024) {
+          event[field] = new TextDecoder().decode(Buffer.from(text).subarray(0, 64 * 1024), { stream: true });
+          event[field === "prompt" ? "promptTruncated" : "responseTruncated"] = true;
+        }
+      }
+    }
     // Match coordinator transcript privacy before any durable Worker copy is written.
     if ((event.type === "approval_request" || event.type === "tool_use")
       && ["hosty:development: environment_setup", "mcp__hosty-workspaces__environment_setup"].includes(event.toolName)

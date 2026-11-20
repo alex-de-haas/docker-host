@@ -60,6 +60,8 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
     object({ ...baseControl, command: { const: "predictions" }, enabled: boolean }),
   ] },
   Source: object({ agentId: id, parentAgentId: id, parentToolCallId: id }, ["agentId"]),
+  ChildAgent: object({ agentId: id, parentAgentId: id, parentToolCallId: id, state: { enum: terminalStates }, stopConfirmed: boolean,
+      prompt: { type: "string", maxLength: 65536 }, response: { type: "string", maxLength: 65536 }, promptTruncated: boolean, responseTruncated: boolean }, ["agentId", "state"], true),
   PendingDecision: object({ id, revision, kind: { enum: ["approval", "question"] }, delivery: { enum: ["continue_run", "next_turn"] }, source: ref("Source"), title: text(65536), toolCallId: id, toolName: text(), input: {},
     questions: list(object({ id, text: text(65536), header: text(1024), allowText: boolean, multiple: boolean, required: boolean,
       options: list(object({ id, label: text(8192), description: text(8192), preview: text(65536) }, ["id", "label"]), 128) }, ["id", "text"]), 128) }, ["id", "revision", "kind", "delivery"], true),
@@ -71,7 +73,7 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
     state: { enum: terminalStates }, phase: { enum: phases }, stopConfirmed: boolean, freshness: { enum: ["current", "last_known", "unavailable"] }, observedAt: { type: "string", format: "date-time" },
     configurationRevision: revision, lastSequence: sequence, cursor: text(8192), pending: list(ref("PendingDecision"), 256),
     effects: object({ certainty: { enum: ["known", "unknown"] }, unresolvedCallIds: unique(id, 1024) }), result: ref("Result"), messages: list(ref("Message"), 4096), tools: list(ref("Tool"), 4096),
-    agents: list(object({ agentId: id, parentAgentId: id, parentToolCallId: id, state: { enum: terminalStates }, stopConfirmed: boolean }, ["agentId", "state"], true), 1024),
+    agents: list(ref("ChildAgent"), 1024),
     selection: object({ requested: ref("Selection"), effective: ref("Selection") }), admissionRef: text(),
     coverage: object({ messages: { enum: ["complete", "truncated"] }, tools: { enum: ["complete", "truncated"] }, decisions: { enum: ["complete", "truncated"] } }, ["messages", "tools"]),
     executionUsage: object({ sequence, activeMs: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }, unknown: boolean }),
@@ -115,6 +117,7 @@ AGENT_SCHEMAS.Event = { ...object({ schemaVersion: { const: "agent-event.1" }, r
       : name.startsWith("decision.") ? object({ decisionId: id, decision: ref("PendingDecision") }, ["decisionId"], true)
       : name === "control.updated" ? object({ requestId: uuid, receipt: ref("ControlReceipt") }, ["requestId"], true)
       : name === "session.bound" ? object({ sessionId: id }, ["sessionId"], true)
+      : name === "agent.updated" ? object({ agent: ref("ChildAgent") }, [], true)
       : name === "context.updated" ? object({ usage: { type: ["object", "null"], additionalProperties: true } }, ["usage"], true)
       : name === "extension" ? object({ namespace: text(), required: { const: false }, payload: {} }, ["namespace"], true)
       : { type: "object", additionalProperties: true } } } })),
