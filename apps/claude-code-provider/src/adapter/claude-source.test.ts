@@ -3,10 +3,10 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { HarnessEvent, HarnessRun } from "@hosty/agent-provider-runtime/harness/adapter";
 
-const sdk = vi.hoisted(() => ({ messages: [] as Record<string, unknown>[], finish: () => {}, options: undefined as Record<string, unknown> | undefined }));
+const sdk = vi.hoisted(() => ({ messages: [] as (Record<string, unknown> | (() => void | Promise<void>))[], finish: () => {}, options: undefined as Record<string, unknown> | undefined }));
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({ query: ({ options }: { options: Record<string, unknown> }) => {
   sdk.options = options;
-  return { async *[Symbol.asyncIterator]() { for (const message of sdk.messages) yield message; await new Promise<void>(resolve => { sdk.finish = resolve; }); },
+  return { async *[Symbol.asyncIterator]() { for (const message of sdk.messages) { if (typeof message === "function") await message(); else yield message; } await new Promise<void>(resolve => { sdk.finish = resolve; }); },
     interrupt: async () => { sdk.finish(); }, close: () => { sdk.finish(); }, applyFlagSettings: async () => {} };
 } }));
 import { ClaudeHarnessAdapter } from "./claude.js";
@@ -73,6 +73,35 @@ describe("Claude SDK child provenance", () => {
       { agentId: "claude-child:two", response: "Background answer" },
     ]);
     expect(JSON.stringify(statuses)).not.toContain("/private/path");
+  });
+  it("joins an early stop hook to the exact background launch in the same turn", async () => {
+    const use = (id: string) => ({ type: "tool_use", id, name: "Agent", input: { prompt: id } });
+    const ack = (id: string) => ({ type: "user", session_id: "native", message: { content: [
+      { type: "tool_result", tool_use_id: id, content: "Launch acknowledged" },
+    ] }, tool_use_result: { agentId: "native-" + id, status: "async_launched" } });
+    const stop = (id: string, response: string, session = "native") => async () => {
+      const hooks = sdk.options!.hooks as { SubagentStop: Array<{ hooks: Array<(input: Record<string, unknown>) => Promise<unknown>> }> };
+      await hooks.SubagentStop[0]!.hooks[0]!({ hook_event_name: "SubagentStop", session_id: session, agent_id: "native-" + id, last_assistant_message: response });
+    };
+    const task = (id: string, terminal = false) => terminal
+      ? { type: "system", subtype: "task_notification", session_id: "native", task_id: "task-" + id, status: "completed" }
+      : { type: "system", subtype: "task_started", session_id: "native", task_id: "task-" + id, task_type: "local_agent", tool_use_id: id, is_backgrounded: true };
+    sdk.messages = [
+      { type: "system", subtype: "init", session_id: "native" },
+      { type: "assistant", session_id: "native", message: { content: [use("one"), use("two")] } },
+      stop("two", "Answer two"), stop("one", "Foreign answer", "foreign"), stop("next", "Previous turn answer"),
+      ack("one"), ack("two"), task("one"), task("two"), task("one", true), task("two", true),
+      () => run!.send("Next turn"),
+      { type: "assistant", session_id: "native", message: { content: [use("next")] } },
+      ack("next"), task("next"), task("next", true),
+    ];
+    const events: HarnessEvent[] = [];
+    run = new ClaudeHarnessAdapter({ ANTHROPIC_API_KEY: "isolated-test-placeholder" }).start({ sessionId: "logical-session", cwd: "/private/tmp", onEvent: event => events.push(event) });
+    run.send("Start");
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "agent_status", agentId: "claude-child:next", state: "succeeded" })));
+    expect(events.filter(event => event.type === "agent_status" && event.response)).toMatchObject([
+      { agentId: "claude-child:two", state: "succeeded", response: "Answer two" },
+    ]);
   });
   it("forwards the pinned SDK executable and graceful-close signal to the managed process transport", async () => {
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => true), killed: false, exitCode: null, signalCode: null }), spawn = vi.fn(() => child as never);
