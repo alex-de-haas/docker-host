@@ -1,5 +1,7 @@
 namespace Haas.Hosty.Core;
 
+internal sealed record CoreAppPermissionSource(string AppId, DateTimeOffset Installation);
+
 // A current caller, never a caller-supplied user ID or a synthetic application. This value is only
 // request-local. Persist PrincipalId for attribution, not its grants as reusable authority.
 internal sealed record CoreCapabilityCaller(HostUserRecord User, string PrincipalId, AppRecord? App,
@@ -8,6 +10,7 @@ internal sealed record CoreCapabilityCaller(HostUserRecord User, string Principa
     internal CoreCallerAuthority? Authority { get; init; }
     internal string? AgentExecution { get; init; }
     internal bool RetainedAgentObservation { get; init; }
+    internal CoreAppPermissionSource? PermissionSource { get; init; }
     internal IReadOnlyList<string>? EffectivePermissions { get; init; }
 
     internal void Require(string scope, string permission)
@@ -56,7 +59,7 @@ internal sealed partial class CoreCapabilityAuthorization(UserDirectoryStore use
                 var user = (await users.ReadAsync(ct)).Users.SingleOrDefault(u => u.Id == actor.UserId && !u.Disabled)
                     ?? throw new AppIdentityException("user_disabled", "The acting user is unavailable.");
                 caller = new(user, AppPrincipal(actor.Caller), actor.Caller, null)
-                { Authority = new("assistant", AppId: actor.Caller.Id, Installation: actor.Caller.InstalledAt, PermissionRevision: actor.Caller.PermissionRevision, Mcp: assistants.ReadVerifiedClaims(bearer), InvokedTool: CoreMcpCatalog.InvokedTool), EffectivePermissions = actor.EffectivePermissions, AgentExecution = actor.AgentExecution };
+                { Authority = new("assistant", AppId: actor.Caller.Id, Installation: actor.Caller.InstalledAt, PermissionRevision: actor.Caller.PermissionRevision, Mcp: assistants.ReadVerifiedClaims(bearer), InvokedTool: CoreMcpCatalog.InvokedTool), EffectivePermissions = actor.EffectivePermissions, PermissionSource = actor.PermissionSource, AgentExecution = actor.AgentExecution };
             }
             else if (bearer is not null && ScopedCredentials.Resolve(await users.ReadAsync(ct), bearer,
                          clock.UtcNow, settings.AuthLifetimes, AccessTokenScopes.CoreAudience) is { } credential)

@@ -29,7 +29,7 @@ internal sealed partial class PublicationService
         }
         else
         {
-            await RequireOwner(tree.Owner, ct);
+            await RequireOwner(tree.Owner, ct, saved?.PermissionSource);
             record = saved ?? throw new PublicationException("pr_required", "Publish or link a PR before reviewing it.");
             selected = (await users.ReadAsync(ct)).ProviderConnections?.SingleOrDefault(c => c.Id == record.ConnectionId && c.UserId == userId)
                 ?? throw new PublicationException("connection_required", "Reconnect the workspace owner's source account.");

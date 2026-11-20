@@ -6,12 +6,12 @@ namespace Haas.Hosty.Core.Tests;
 public sealed partial class CoreLifecycleServiceTests
 {
     private static async Task<(LifecycleFixture F, DevelopmentWorkspaceService Workspaces, PublicationService Service,
-        PublicationProviderFixture Provider, DevelopmentWorkspace W, UserDirectoryStore Users)> ExternalPublicationFixture()
+        PublicationProviderFixture Provider, DevelopmentWorkspace W, UserDirectoryStore Users)> ExternalPublicationFixture(WorkspaceOwner? workspaceOwner = null)
     {
         var (f, _) = await SourceFixtureAsync();
-        var owner = WorkspaceOwner.ForExternal("admin", "oauth:external", "external-pr", "Codex");
+        var owner = workspaceOwner ?? WorkspaceOwner.ForExternal("admin", "oauth:external", "external-pr", "Codex");
         var workspaces = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
-        var w = await workspaces.PrepareAsync(owner, WorkspaceRequest("external-pr") with { SessionPath = null, LeaseId = Guid.NewGuid().ToString() }, default);
+        var w = await workspaces.PrepareAsync(owner, WorkspaceRequest(owner.SessionId) with { SessionPath = null, LeaseId = Guid.NewGuid().ToString() }, default);
         const string repository = "https://github.com/owner/repo.git";
         // Keep the disposable Git ownership valid when projecting its provider URL. Explicit
         // lifecycle evidence now observes this real worktree even while background work is off.

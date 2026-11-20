@@ -53,6 +53,9 @@ internal sealed record PublicationRecord
     public string Provider { get; init; } = "github";
     public required string WorkspaceId { get; init; }
     public required WorkspaceOwner Owner { get; init; }
+    // The native provider owns the session. Its consumer granted the source access used to configure publication.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CoreAppPermissionSource? PermissionSource { get; init; }
     public required string Repository { get; init; }
     public required string ConnectionId { get; init; }
     public required string HeadRepository { get; init; }

@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-11-09
+updated: 2026-11-20
 summary: GitHub pull request publication, review, merge and completion for assistant session workspaces.
 components: [apps/core, apps/harness]
 ---
@@ -20,11 +20,16 @@ check does not schedule a merge. Core does not own the conversation or decide it
 
 ## Authority And Storage
 
-The internal API extends the workspace owner tuple: assistant app ID and installation, administrator
-user ID and session ID. Every request needs both the app service token and a current user credential
-addressed to that app, the existing `apps.workspaces.manage` grant and the new
-`apps.publications.manage` installation grant. Install Core 0.114.1 before updating Harness 0.37.1;
-review the new permission during the app update. Editing a manifest alone does not grant it.
+The internal session API authenticates the assistant installation and the administrator's current
+app credential. Workspace ownership includes the installation, user and session.
+
+For Core MCP calls made through an agent provider, Core checks the initiating consumer's current
+`apps.sources.full` grant. Remote publication commands such as configure, publish and merge also
+require `core.publications.write`. Listing connections and local commits require only source access
+from the consumer. Core attributes the workspace and commands to the executing provider session.
+A newly configured publication records which consumer installation supplied the grant. Background
+observation rechecks both installations, the administrator and the consumer's reviewed access. A
+worktree with no publication or PR references contributes nothing to a grouped workspace's PR scope.
 
 Each publication explicitly selects one of the user's GitHub connections. Core uses the existing
 per-user connection lock and refresh path; another user's connection cannot substitute for it.
@@ -260,6 +265,8 @@ original request clears stale diagnostics after success and still reconciles exi
 ## Testing Expectations
 
 - Verify ownership, installation/permission revocation, connection ownership and credential exclusion.
+- Exercise publication through an independently installed agent provider. Cover connection reads,
+  the separate remote write permission, provider-session attribution and revoked consumer access.
 - Verify classified push rejections, timeout/transport uncertainty, credential-free diagnostics and persisted receipt recovery using the same request ID after connection renewal, without duplicate PRs.
 - Exercise explicit policy correction after source-workspace completion, stale prior-policy/head
   rejection, authority revocation, native-edit and pause races, retained bindings and separate

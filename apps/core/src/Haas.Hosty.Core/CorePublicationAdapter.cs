@@ -17,14 +17,18 @@ internal sealed class CorePublicationAdapter(CoreCapabilityAuthorization authori
         if (operation != "commit") scopes.Add(AccessTokenScopes.McpPublicationRead);
         if (RemoteWrite(operation)) { scopes.Add(AccessTokenScopes.McpPublicationWrite); permissions.Add(CoreAppPermissions.PublicationWrite); }
         var caller = await authorization.RequireAsync(request, scopes, permissions, ct);
-        return new(caller.User.Id, caller.PrincipalId, caller.App?.DisplayName ?? "Core publication client", caller.App, caller.Authority);
+        return new(caller.User.Id, caller.PrincipalId, caller.App?.DisplayName ?? "Core publication client", caller.App, caller.Authority)
+        { PermissionSource = caller.PermissionSource };
     }
-    internal async Task<PublicationConnections> Connections(HttpRequest request, CancellationToken ct) =>
-        await publications.ConnectionsAsync((await Caller(request, "connections", ct)).Owner("publication-directory"), ct);
+    internal async Task<PublicationConnections> Connections(HttpRequest request, CancellationToken ct)
+    {
+        var caller = await Caller(request, "connections", ct);
+        return await publications.ConnectionsAsync(caller.Owner("publication-directory"), ct, caller.PermissionSource);
+    }
     internal async Task<PublicationList> List(HttpRequest request, CorePublicationQuery input, CancellationToken ct)
     {
         var caller = await Caller(request, "list", ct);
-        var result = await publications.ListAsync(caller.Owner("publication-directory"), ct, canonical: true);
+        var result = await publications.ListAsync(caller.Owner("publication-directory"), ct, canonical: true, permissionSource: caller.PermissionSource);
         await Caller(request, "list", ct);
         if (input.WorkspaceId is null) return result;
         var trees = (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(w => w.WorkspaceId == input.WorkspaceId).Select(w => w.Id).ToHashSet();
@@ -32,7 +36,9 @@ internal sealed class CorePublicationAdapter(CoreCapabilityAuthorization authori
     }
     internal async Task<PublicationRecord> Get(HttpRequest request, string worktreeId, CancellationToken ct)
     {
-        var result = await publications.ObserveAsync(worktreeId, await CoreSourceApi.Actor(await Caller(request, "get", ct), worktreeId, workspaces, ct), ct, canonical: true);
+        var caller = await Caller(request, "get", ct);
+        var actor = await CoreSourceApi.Actor(caller, worktreeId, workspaces, ct);
+        var result = await publications.ObserveAsync(worktreeId, actor, ct, canonical: true, permissionSource: caller.PermissionSource);
         await Caller(request, "get", ct);
         return result;
     }
@@ -41,7 +47,9 @@ internal sealed class CorePublicationAdapter(CoreCapabilityAuthorization authori
         var caller = await Caller(request, kind, ct);
         if (kind is not ("resolve-review" or "commit" or "configure" or "push" or "publish" or "link" or "ready" or "merge" or "complete" or "corrective"))
             throw new PublicationException("request_invalid", "Select a supported publication operation.");
-        return await publications.CommandAsync(input.WorktreeId, await CoreSourceApi.Actor(caller, input.WorktreeId, workspaces, ct), kind, input.Input, ct, canonical: true, validateCaller: async token => { await Caller(request, kind, token); });
+        var actor = await CoreSourceApi.Actor(caller, input.WorktreeId, workspaces, ct);
+        return await publications.CommandAsync(input.WorktreeId, actor, kind, input.Input, ct, canonical: true,
+            validateCaller: async token => { await Caller(request, kind, token); }, permissionSource: caller.PermissionSource);
     }
     internal async Task<LocalRemoteStatus> RemoteStatus(HttpRequest request, CoreRemoteQuery input, CancellationToken ct) =>
         await workspaces.RemoteStatusAsync(input.WorktreeId, await CoreSourceApi.Actor(await Caller(request, "remote-status", ct), input.WorktreeId, workspaces, ct), input.AppId, ct);

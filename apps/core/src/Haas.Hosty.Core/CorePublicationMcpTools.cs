@@ -63,7 +63,7 @@ internal sealed class CorePublicationMcpTools(IHttpContextAccessor accessor, Cor
     [Description("Prepare a corrective publication after explicitly resuming retained workspace source. Requires publication-write and preserved prior publication history. Preserve the original requestId and exact input after uncertainty.")]
     public Task<CallToolResult> Command9(CorePublicationMutation input, CancellationToken cancellationToken) => CorePublicationResults.Run(() => service.Command(Request, "corrective", input, cancellationToken));
     [McpServerTool(Name = "remote_status", ReadOnly = true, Destructive = false)]
-    [Description("Read the reviewed remote of a local-source application in a registered worktree. Requires workspace and publication-read authority.")]
+    [Description("Read the optional remote for an app created with local-git source. For an app installed from a Git repository, use pr_connections and pr_list for pull requests. Requires workspace and publication-read authority.")]
     public Task<CallToolResult> RemoteStatus(CoreRemoteQuery input, CancellationToken cancellationToken) => CorePublicationResults.Run(() => service.RemoteStatus(Request, input, cancellationToken));
     [McpServerTool(Name = "remote_connect", ReadOnly = false, Destructive = false, Idempotent = true)]
     [Description("Perform the explicit connect operation for the selected local-source app and worktree. Retain requestId, expectedHead and the reviewed connection. Push additionally requires publication-write; connecting or fetching never grants push authority.")]
