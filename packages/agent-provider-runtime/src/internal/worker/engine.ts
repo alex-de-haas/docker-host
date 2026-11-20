@@ -46,6 +46,7 @@ export class WorkerEngine {
   }
 
   get occupied(): number { return this.admitted.size; }
+  ownsExecution(id: string): boolean { return this.active.has(id) || this.admitted.has(id); }
   get available(): boolean { return !this.closing; }
   async submit(id: string, input: unknown): Promise<WorkerReceipt> {
     validateRun(input);
@@ -437,7 +438,7 @@ export class WorkerEngine {
   }
   async recover(id: string, input: WorkerRecovery): Promise<WorkerReceipt> {
     return this.journal.exclusive(async () => {
-      if (this.active.has(id) || this.admitted.has(id))
+      if (this.ownsExecution(id))
         throw new WorkerApiError(409, "recovery_active", "The worker still owns this execution. Retry Stop to verify native exit.");
       return this.journal.recover(id, input);
     });

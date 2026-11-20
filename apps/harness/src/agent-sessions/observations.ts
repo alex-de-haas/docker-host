@@ -7,7 +7,7 @@ import type { SessionRecord, SessionStore } from "../sessions/store.js";
 
 export type ObservedNativeSession = { id: string; owner: string; conversation: string | null; binding: string; revision: string };
 export type ObservedRun = { id: string; owner: string; conversation: string | null; nativeSession: string | null;
-  revision: string; state: AgentRun["state"]; observedAt: string; stopConfirmed: boolean; generation: string | null };
+  revision: string; state: AgentRun["state"]; observedAt: string; stopConfirmed: boolean; generation: string | null; retired?: true };
 export type CancellationReceipt = { key: string; fingerprint: string; runId: string; state: "pending" | "completed" | "rejected"; error?: { code: string; message: string; status: number } };
 type Observations = { sessions: ObservedNativeSession[]; runs: ObservedRun[]; cancellations: CancellationReceipt[] };
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -80,7 +80,7 @@ export class AgentObservations {
         return;
       }
       const native = this.binding(state, record), run = state.runs.find(r => r.id === record.agentRunId && r.owner === record.createdBy);
-      if (!run) return;
+      if (!run || run.retired) return;
       const status: AgentRun["state"] = record.status === "running" || record.status === "suggesting" ? "running"
         : record.status === "idle" ? run.stopConfirmed ? "succeeded" : "waiting_for_input"
         : record.status === "awaiting_approval" || record.status === "awaiting_question" ? "waiting_for_input"
@@ -99,7 +99,7 @@ export class AgentObservations {
   private async stopped(id: string, confirmed: boolean): Promise<void> {
     if (this.closed) return; // Shutdown must not wait on a new metadata write; the next generation observes uncertainty.
     await this.change(state => {
-      const run = state.runs.find(r => r.id === id); if (!run || run.stopConfirmed) return;
+      const run = state.runs.find(r => r.id === id); if (!run || run.retired || run.stopConfirmed) return;
       run.stopConfirmed = confirmed; run.generation = confirmed ? this.generation : null;
       if (run.state === "running" || run.state === "waiting_for_input" || run.state === "queued") run.state = "unknown";
       run.revision = next(run.revision); run.observedAt = new Date().toISOString();
@@ -109,7 +109,7 @@ export class AgentObservations {
   async markCurrent(id: string): Promise<void> {
     await this.change(state => {
       const observation = state.runs.find(r => r.id === id);
-      if (observation && !observation.stopConfirmed && observation.generation !== this.generation) {
+      if (observation && !observation.retired && !observation.stopConfirmed && observation.generation !== this.generation) {
         observation.generation = this.generation; observation.revision = next(observation.revision); observation.observedAt = new Date().toISOString();
       }
     });
@@ -125,5 +125,17 @@ export class AgentObservations {
   }
   /** The public provider's authoritative stop receipt supplies proof on natural completion. */
   confirmStopped(id: string): Promise<void> { return this.stopped(id, true); }
+  /** Owner deletion retires one projection without inventing a reconciled completion. */
+  async retire(id: string, owner: string, conversation: string): Promise<void> {
+    await this.change(state => {
+      const run = state.runs.find(value => value.id === id && value.owner === owner && value.conversation === conversation);
+      if (!run || run.retired) return;
+      run.retired = true; run.state = "unknown"; run.generation = null;
+      run.revision = next(run.revision); run.observedAt = new Date().toISOString();
+      const native = state.sessions.find(value => value.id === run.nativeSession);
+      if (native) native.revision = next(native.revision);
+    });
+  }
+
   async synchronize(): Promise<void> { for (const record of await this.conversations.listRecords()) await this.observe(record.id); }
 }

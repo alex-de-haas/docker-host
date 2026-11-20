@@ -929,7 +929,9 @@ async function route(
   }
 
   if (rest === "" && method === "DELETE") {
-    const deleted = await manager.deleteSession(sessionId, actor.userId, (actor.via === "app-session" ? readAppCredential(request) : await delegationCredential(request, false)) ?? undefined);
+    const interactiveOwner = actor.via === "app-session";
+    const credential = interactiveOwner ? readAppCredential(request) : await delegationCredential(request, false);
+    const deleted = await manager.deleteSession(sessionId, actor.userId, credential ?? undefined, interactiveOwner);
     if (!deleted) {
       sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
       return;

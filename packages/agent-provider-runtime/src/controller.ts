@@ -15,6 +15,8 @@ export interface ExecutionDriver {
   respond(runId: string, input: AgentResponseInput): Promise<void>;
   control(runId: string, input: AgentRunControlInput): Promise<void>;
   synchronize(runId: string): Promise<void>;
+  retirementEvidence?(run: RunRecord): Promise<{ nativeGeneration: string; nativeRevision: number }>;
+  releaseRetired?(runId: string): Promise<void>;
   close(): Promise<void>;
 }
 const conflict = (message: string, code = "stale_revision"): never => { throw new AgentApiError(code, message, 409); };
@@ -55,6 +57,7 @@ export class ProviderController {
     this.requireCapabilities(input.requiredCapabilities);
     const hash = bytesHash(body), current = await this.store.load(id, actor), previous = current.configurationRequests[input.requestId];
     if (previous) { if (previous.hash !== hash) conflict("Configuration request has different input.", "request_conflict"); return current.session; }
+    if (current.retirement) conflict("This native session has been retired.", "session_retired");
     if (current.session.activeRun) conflict("The previous execution must stop before configuring this session.", "session_busy");
     if (current.session.revision !== input.expectedSessionRevision) conflict("The session changed.");
     if (current.nativeId && valueHash(current.session.configuration?.connection) !== valueHash(input.configuration.connection)) conflict("The native session is bound to its original connection revision.", "connection_fixed");
@@ -62,6 +65,7 @@ export class ProviderController {
     return this.store.exclusive(async () => {
       const fresh = await this.store.load(id, actor), receipt = fresh.configurationRequests[input.requestId];
       if (receipt) { if (receipt.hash !== hash) conflict("Configuration request has different input.", "request_conflict"); return fresh.session; }
+      if (fresh.retirement) conflict("This native session has been retired.", "session_retired");
       if (fresh.session.activeRun) conflict("The previous execution must stop before configuring this session.", "session_busy");
       if (fresh.session.revision !== input.expectedSessionRevision) conflict("The session changed.");
       const revision = increment(fresh.session.configurationRevision);
@@ -75,6 +79,7 @@ export class ProviderController {
     const accepted = await this.store.exclusive(async () => {
       const session = await this.store.load(sessionId, actor), old = session.runs[runId], hash = bytesHash(body);
       if (old && !old.reservedFor) { if (old.hash !== hash) conflict("Run identity has different exact input bytes.", "request_conflict"); return { snapshot: old.snapshot, fresh: false }; }
+      if (session.retirement) conflict("This native session has been retired.", "session_retired");
       if (this.closing) throw new AgentApiError("provider_stopping", "Provider is stopping; this new run was not admitted.", 503, true);
       this.requireCapabilities(input.requiredCapabilities);
       if (session.session.activeRun) conflict("The previous execution still owns this session.", "session_busy");
@@ -127,13 +132,17 @@ export class ProviderController {
       let existing = await this.store.run(runId, actor).catch(error => { if (error instanceof AgentApiError && error.status === 404) return null; throw error; });
       const hash = bytesHash(body);
       if (!existing && input.fenceIfNotAdmitted) {
-        const session = await this.store.load(input.fenceIfNotAdmitted.sessionId, actor), run = this.store.makeRun(session, runId, actor, body);
+        const session = await this.store.load(input.fenceIfNotAdmitted.sessionId, actor);
+        if (session.retirement) conflict("This native session has been retired.", "session_retired");
+        const run = this.store.makeRun(session, runId, actor, body);
         run.hash = input.fenceIfNotAdmitted.startDigest; run.cancelFence = true;
         run.snapshot.state = "cancelled"; run.snapshot.phase = "terminal"; run.snapshot.stopConfirmed = true; run.completedAt = new Date().toISOString();
         this.store.lifecycle(run); session.runs[runId] = run; existing = { session, record: run };
       }
       if (!existing) throw new AgentApiError("run_not_found", "Run not found.", 404);
-      const { session, record: run } = existing, old = this.oldControl(run, input.requestId, hash); if (old) return { receipt: old, execute: !run.snapshot.stopConfirmed };
+      const { session, record: run } = existing, old = this.oldControl(run, input.requestId, hash);
+      if (old) return { receipt: old, execute: !session.retirement && !run.snapshot.stopConfirmed };
+      if (session.retirement) conflict("This native session has been retired.", "session_retired");
       if (input.fenceIfNotAdmitted) { if (session.id !== input.fenceIfNotAdmitted.sessionId || run.hash !== input.fenceIfNotAdmitted.startDigest) conflict("Cancellation fence names different admission bytes.", "request_conflict"); }
       else this.checkControl(run, input);
       const receipt = this.receipt(run, input.requestId);
@@ -154,7 +163,7 @@ export class ProviderController {
   async respond(runId: string, input: AgentResponseInput, body: string, actor: VerifiedOperation): Promise<AgentControlReceipt> {
     const result = await this.store.exclusive(async () => {
       const { session, record: run } = await this.store.run(runId, actor), hash = bytesHash(body), old = this.oldControl(run, input.requestId, hash); if (old) return { receipt: old, execute: false };
-      if (run.decisionsFenced) conflict("This run no longer accepts decision responses.", "run_fenced");
+      if (session.retirement || run.decisionsFenced) conflict("This run no longer accepts decision responses.", "run_fenced");
       this.checkControl(run, input);
       const decision = run.snapshot.pending.find(value => value.id === input.decisionId && value.revision === input.decisionRevision);
       if (!decision || decision.kind !== input.response.kind) conflict("Decision is no longer pending.", "stale_decision");
@@ -178,9 +187,11 @@ export class ProviderController {
     return result.receipt;
   }
   async control(runId: string, input: AgentRunControlInput, body: string, actor: VerifiedOperation): Promise<AgentControlReceipt> {
+    if (input.command === "retire") return this.retire(runId, input, body, actor);
     this.requireCapabilities([{ park: "runs.park", barrier: "runs.barrier", reconcile: "runs.reconcile", mcpPolicy: "mcp.policy-update", liveConfigure: "runs.live-configure", predictions: "predictions" }[input.command]]);
     const result = await this.store.exclusive(async () => {
       const { session, record: run } = await this.store.run(runId, actor), hash = bytesHash(body), old = this.oldControl(run, input.requestId, hash); if (old) return { receipt: old, execute: false };
+      if (session.retirement) conflict("This native session has been retired.", "session_retired");
       this.checkControl(run, input);
       if (Object.keys(run.controls).length >= this.capabilities.limits.maxControls) throw new AgentApiError("control_limit", "Ordinary control limit exceeded; cancellation remains available.", 413);
       const receipt = this.receipt(run, input.requestId); run.controls[input.requestId] = { hash, receipt };
@@ -190,6 +201,63 @@ export class ProviderController {
     if (result.execute) this.background(this.applyControl(runId, input.requestId, () => this.driver.control(runId, input)));
     return result.receipt;
   }
+
+  private async retire(runId: string, input: Extract<AgentRunControlInput, { command: "retire" }>, body: string, actor: VerifiedOperation): Promise<AgentControlReceipt> {
+    this.requireCapabilities(["runs.retire"]);
+    const receipt = await this.store.exclusive(async () => {
+      const { session, record } = await this.store.run(runId, actor), hash = bytesHash(body);
+      const old = this.oldControl(record, input.requestId, hash);
+      if (old) return old;
+      if (session.retirement) conflict("Reuse the original retirement request.", "session_retired");
+      if (this.closing) throw new AgentApiError("provider_stopping", "The provider is stopping; retirement was not admitted.", 503, true);
+      this.checkControl(record, input);
+      if (session.session.activeRun?.id !== runId)
+        conflict("The reviewed run no longer owns this native session.", "retirement_stale");
+      if (!this.driver.retirementEvidence || !this.driver.releaseRetired)
+        throw new AgentApiError("unsupported_capability", "The provider cannot retire this execution.", 422);
+      const evidence = await this.driver.retirementEvidence(record);
+      session.retirement = { runId, requestId: input.requestId, ...evidence };
+      this.supersedeReservations(session);
+      for (const retained of Object.values(session.runs)) {
+        retained.decisionsFenced = true;
+        if (!retained.snapshot.pending.length) continue;
+        for (const decision of retained.snapshot.pending)
+          this.store.emit(retained, "decision.resolved", { decisionId: decision.id, decision, state: "superseded" });
+        retained.snapshot.pending = [];
+        if (retained !== record) this.store.lifecycle(retained);
+      }
+      this.store.lifecycle(record);
+      const accepted = this.receipt(record, input.requestId);
+      record.controls[input.requestId] = { hash, receipt: accepted };
+      this.store.emit(record, "control.updated", { requestId: input.requestId, receipt: accepted });
+      await this.store.save(session);
+      return accepted;
+    });
+    if (receipt.state === "applied") return receipt;
+    return this.finishRetirement(runId, input.requestId);
+  }
+
+  /** A pending retirement survives a lost reply or provider restart and can only finish its own run. */
+  async finishRetirement(runId: string, requestId: string): Promise<AgentControlReceipt> {
+    await this.driver.releaseRetired?.(runId);
+    return this.store.exclusive(async () => {
+      const { session, record } = await this.store.run(runId);
+      const receipt = record.controls[requestId]?.receipt;
+      if (session.retirement?.runId !== runId || session.retirement.requestId !== requestId || !receipt)
+        throw new AgentApiError("retirement_stale", "The retained retirement request is unavailable.", 409);
+      if (receipt.state === "applied") return receipt;
+      if (record.workspaceRelease?.state !== "released")
+        throw new AgentApiError("retirement_cleanup_pending", "The provider is still releasing the retired execution's workspace leases.", 503, true);
+      session.session.activeRun = null;
+      session.session.revision = increment(session.session.revision);
+      this.store.lifecycle(record);
+      receipt.state = "applied"; receipt.revision = record.snapshot.revision;
+      this.store.emit(record, "control.updated", { requestId, receipt });
+      await this.store.save(session);
+      return receipt;
+    });
+  }
+
   private supersedeReservations(session: SessionRecord, except?: string): void {
     for (const record of Object.values(session.runs)) {
       const reserved = record.reservedFor; if (!reserved || record.snapshot.ref.id === except) continue;

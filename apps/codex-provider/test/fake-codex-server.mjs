@@ -369,6 +369,14 @@ function handle(msg) {
       if (currentTurnText === "question-nonblocking") send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "independent", text: "Independent work continued." } } });
       return;
     }
+    if (currentTurnText === "completed-with-unknown-search") {
+      const turnId = "unknown-search-turn";
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: turnId } } });
+      send({ method: "item/started", params: { threadId: activeThreadId, turnId, item: { type: "webSearch", id: "unknown-search" } } });
+      // This peer makes no network call; it deliberately omits the tool terminal.
+      send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: turnId, status: "completed" } } });
+      return;
+    }
     if (currentTurnText.startsWith("async-question")) {
       // request_user_input_async returns {"accepted":true}; its questions ride on the agent message.
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "async-turn" } } });

@@ -162,7 +162,8 @@
           "predictions",
           "decisions.auto-allow",
           "mcp.policy-update",
-          "runs.reconcile"
+          "runs.reconcile",
+          "runs.retire"
         ]
       }
     ],

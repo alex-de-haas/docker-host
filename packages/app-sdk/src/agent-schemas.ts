@@ -55,6 +55,7 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
     object({ ...baseControl, command: { const: "park" }, decisionId: id, decisionRevision: revision, reason: text(8192) }, [...Object.keys(baseControl), "command", "decisionId", "decisionRevision"]),
     object({ ...baseControl, command: { const: "barrier" }, barrierId: id, kind: { enum: ["task_adoption", "child_wait", "source_rebind", "limits", "human_input"] }, generation: revision, acknowledgedSequence: sequence, snapshot: text(8192) }, [...Object.keys(baseControl), "command", "barrierId", "kind", "generation", "acknowledgedSequence"]),
     object({ ...baseControl, command: { const: "reconcile" }, stopped: { const: true }, evidence: text(8192) }, [...Object.keys(baseControl), "command", "stopped"]),
+    object({ ...baseControl, command: { const: "retire" } }),
     object({ ...baseControl, command: { const: "liveConfigure" }, mcp: ref("McpSelection") }),
     object({ ...baseControl, command: { const: "mcpPolicy" }, mcp: ref("McpSelection") }),
     object({ ...baseControl, command: { const: "predictions" }, enabled: boolean }),
@@ -171,7 +172,7 @@ export const AGENT_OPENAPI: Schema = {
       responses: { ...errors, "200": { description: "Persisted agent event stream.", content: { "text/event-stream": { schema: { type: "string" }, "x-event-schema": ref("Event") } } } } } },
     "/runs/{runId}/responses": { post: operation("runs.respond", "ControlReceipt", "ResponseInput", ["runId"], [200, 202]) },
     "/runs/{runId}/cancel": { post: operation("runs.cancel", "ControlReceipt", "CancelInput", ["runId"], [200, 202]) },
-    "/runs/{runId}/controls": { post: { ...operation("runs.control", "ControlReceipt", "ControlInput", ["runId"], [200, 202]), description: "Optional controls require their advertised capabilities. Reconcile input is an attestation, never proof of actual native exit." } },
+    "/runs/{runId}/controls": { post: { ...operation("runs.control", "ControlReceipt", "ControlInput", ["runId"], [200, 202]), description: "Optional controls require their advertised capabilities. Reconcile input is an attestation, never proof of actual native exit. Retirement requires provider-owned evidence of native process exit. Its applied receipt records retirement of the exact run and preserves unresolved tool outcomes." } },
     "/runs/{runId}/controls/{requestId}": { get: operation("runs.controls.read", "ControlReceipt", undefined, ["runId", "requestId"]) },
   }, components: { securitySchemes: { installationHistory: { type: "http", scheme: "bearer", description: "Core-issued installation history credential." }, coreOperation: { type: "http", scheme: "bearer", description: "Fresh Core exact-operation credential, never the caller's service/user token." } }, schemas: AGENT_SCHEMAS },
 };

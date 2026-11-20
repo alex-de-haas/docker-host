@@ -146,7 +146,7 @@ the corresponding task/executor routes.
 
 ## SDKs
 
-TypeScript SDK 0.52.0 and .NET SDK 0.19.0 support named discovery, snapshot publication, speech
+TypeScript SDK 0.53.0 and .NET SDK 0.19.0 support named discovery, snapshot publication, speech
 capabilities and streamed synthesis. A TypeScript consumer can resolve a saved dictation choice as follows.
 
 ```ts

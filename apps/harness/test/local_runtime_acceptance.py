@@ -133,7 +133,8 @@ def check(context):
     runtime = 'docker' if docker_consumer else 'dev'
     assert not any(profile['key'] == 'local' for profile in manifest['runtimeProfiles'])
     if docker_consumer:
-        manifest['services'][0]['runtimes']['docker']['image'] = 'hosty-harness-api-acceptance:local'
+        manifest['services'][0]['runtimes']['docker']['image'] = os.environ.get(
+            'HOSTY_AGENT_PROVIDERS_API_IMAGE', 'hosty-harness-api-acceptance:local')
     target = install_manifest(context, manifest)
     run([cli, '--data-root', root, 'apps', 'install', target, '--runtime', runtime, '--no-autostart'])
     def timed(action):

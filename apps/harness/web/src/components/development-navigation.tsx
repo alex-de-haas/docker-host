@@ -121,7 +121,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         (deleteTrigger.current?.isConnected ? deleteTrigger.current : newButton.current)?.focus();
       }}>
         <DialogHeader><DialogTitle>Delete session?</DialogTitle>
-          <DialogDescription>Delete the session “{deleting ? sessionLabel(deleting) : "Untitled session"}” and its conversation history? This cannot be undone. The session is stopped and detached. Shared source and other conversations are retained; unresolved session resources must be reconciled first.</DialogDescription>
+          <DialogDescription>Delete the session “{deleting ? sessionLabel(deleting) : "Untitled session"}” and its conversation history? This cannot be undone. The session is stopped and detached. Shared source and other conversations are retained. Any unreported tool outcomes stay unknown.</DialogDescription>
         </DialogHeader>
       <DialogBody>
           {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}

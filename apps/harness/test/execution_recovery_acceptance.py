@@ -6,7 +6,9 @@ no journal is seeded and no client assertion replaces provider-owned stop proof.
 """
 import collections
 import json
+from pathlib import Path
 import urllib.error
+import urllib.request
 import uuid
 
 from agent_provider_acceptance import execution_stopped
@@ -67,7 +69,7 @@ def check(context, app, app_origin, call, timed, link, client):
     connection = providers.configure_for_harness(app_origin, call, 'codex',
         'Scripted public session recovery', secret='synthetic-public-session-fixture-only')
     assert connection['available'] and connection['kind'] == 'agent'
-    assert 'session.resume' in connection['capabilities']
+    assert {'session.resume', 'runs.retire'} <= set(connection['capabilities'])
     session = call(app_origin, '/api/sessions', {'title': 'Independent provider continuity', 'connectionId': connection['id']})
     route = '/api/sessions/'+session['id']
     def current(): return call(app_origin, route)
@@ -299,5 +301,66 @@ def check(context, app, app_origin, call, timed, link, client):
     assert sum(event.get('type') == 'user_message' and event.get('text') == 'write' for event in events) == 2
     assert not (data/'worker-service').exists(), 'The consumer must not create a private native execution journal'
     say('PASS: public Cancel proves SDK/tree/effect stop before provider update, and the same public/native session resumes afterward')
+    # Reproduce the retained terminal shape using a real child process and provider
+    # journal, including the missing tool outcome. Restart before using owner Delete.
+    disposable = call(app_origin, '/api/sessions', {'title': 'Stopped turn with an unknown search outcome',
+        'connectionId': connection['id'], 'profileId': None})
+    delete_route = '/api/sessions/'+disposable['id']
+    tree = call(app_origin, delete_route+'/workspaces', {'action': 'prepare', 'requestId': str(uuid.uuid4()),
+        'appId': app, 'targetBranch': 'main', 'name': 'Retain source during stopped session deletion'})
+    workspace_route = '/api/development-workspaces/'+tree['workspaceId']
+    participants = call(app_origin, workspace_route+'/participants')
+    call(app_origin, delete_route+'/workspaces', {'action': 'attach', 'requestId': str(uuid.uuid4()),
+        'workspaceId': tree['workspaceId'], 'expectedRevision': participants['revision']})
+    worktree_route = workspace_route+'/worktrees/'+tree['id']
+    original_leases = set(call(app_origin, worktree_route)['leases'])
+    tree_path = Path(tree['path']).resolve()
+    assert tree_path.is_relative_to(context['root'].resolve())
+    dirty_file = tree_path/'retirement-fixture.txt'
+    dirty_file.write_text('Preserve this uncommitted work.')
+    call(app_origin, delete_route+'/messages', {'text': 'completed-with-unknown-search', 'clientRequestId': str(uuid.uuid4())})
+
+    def unresolved_search():
+        value = (call(app_origin, delete_route).get('providerExecution') or {}).get('run') or {}
+        if value.get('state') == 'unknown' and len(value.get('effects', {}).get('unresolvedCallIds', [])) == 1:
+            return value
+        return None
+
+    stopped = wait(unresolved_search, 90)
+    assert stopped['stopConfirmed'] is False
+    retained = native_proof('unknown-outcome-before-retirement', stopped)
+    assert _owns_exit(retained) and retained['receipt']['state'] == 'completed'
+    assert retained['receipt']['exitConfirmed'] is True and len(retained['receipt']['effectIds']) == 1
+    assert retained['providerSession']['activeRun'] == stopped['ref']['id']
+    retained_leases = set(call(app_origin, worktree_route)['leases'])
+    assert original_leases < retained_leases, 'The unresolved run must still have its own workspace lease'
+    providers.restart('codex')
+    no_replay(retained, native_proof('unknown-outcome-after-restart', stopped))
+
+    delete_request = urllib.request.Request(app_origin + delete_route, headers={'Origin': app_origin}, method='DELETE')
+    try:
+        with client.open(delete_request, timeout=60) as response:
+            assert json.load(response) == {'deleted': True}, 'One owner Delete request must retire a proven-stopped run with incomplete results'
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+        code = payload.get('code') or (payload.get('error') or {}).get('code')
+        raise AssertionError(f'Owner Delete failed for the proven-stopped fixture: HTTP {error.code} {code}') from error
+    try:
+        call(app_origin, delete_route)
+    except urllib.error.HTTPError as error:
+        assert error.code == 404
+    else:
+        raise AssertionError('The selected conversation still exists after Delete')
+    retired = native_proof('unknown-outcome-after-retirement', stopped)
+    no_replay(retained, retired)
+    assert retired['receipt'] == retained['receipt'], 'Retirement must preserve the exact native receipt and unresolved outcome'
+    assert retired['providerSession']['activeRun'] is None
+    settled_tree = call(app_origin, worktree_route)
+    assert settled_tree['branch'] == tree['branch'] and set(settled_tree['leases']) == original_leases
+    assert dirty_file.read_text() == 'Preserve this uncommitted work.'
+    assert not any(entry['sessionId'] == disposable['id'] and entry['attached']
+        for entry in call(app_origin, workspace_route+'/participants')['sessions'])
+    assert fresh_current()['id'] == fresh['id'], 'Deleting the stopped session must keep other conversations'
+    say('PASS: one authenticated Delete retires a previously retained proven-stopped run, preserves unknown evidence and deletes only its Harness conversation')
     return {'before': before_crash, 'after': after_crash, 'afterConsumer': after_consumer,
-        'quiescentStopped': cancelled_proof, 'quiescentResumed': resumed_proof}
+        'quiescentStopped': cancelled_proof, 'quiescentResumed': resumed_proof, 'retired': retired}
