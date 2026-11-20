@@ -160,11 +160,33 @@ def check(context):
         # must not be subtracted as if it still belonged to that old workspace execution.
         approve_page('/install/permissions/'+app_id, optional=['apps.logs'])
         permissions(['apps.read', 'apps.logs'])
-        for target in (first, prepare('Verify permission continuity in another workspace')):
-            selected({'requestId': str(uuid.uuid4()), **target})
-            permissions(['apps.read', 'apps.logs'])
-            package(['apps.read', 'apps.logs'])
-        say('PASS: permanent approval survives same/different workspace selection without another review and remains after Return')
+        api = '/api/apps/'+app_id
+        data = pathlib.Path(context['root'])/'apps'/app_id/'data'
+        data.mkdir(parents=True, exist_ok=True)
+        sentinel = data/'release-data.txt'
+        sentinel.write_text('installed package', encoding='utf-8')
+        selected({'requestId': str(uuid.uuid4()), **first})
+        permissions(['apps.read', 'apps.logs'])
+        def release_backup_id():
+            records = request(api+'/backups')['backups']
+            backup_id, = [row['backupId'] for row in records if row.get('isWorkspaceReturnBackup')]
+            return backup_id
+        original = release_backup_id()
+        sentinel.write_text('written in workspace A', encoding='utf-8')
+        second = prepare('Verify permission continuity in another workspace')
+        selected({'requestId': str(uuid.uuid4()), **second})
+        permissions(['apps.read', 'apps.logs'])
+        assert sentinel.read_text(encoding='utf-8') == 'written in workspace A'
+        assert release_backup_id() == original
+        sentinel.write_text('written in workspace B', encoding='utf-8')
+        package(['apps.read', 'apps.logs'])
+        assert sentinel.read_text(encoding='utf-8') == 'written in workspace B'
+        assert release_backup_id() == original
+        request(api+'/stop', {})
+        wait_for(lambda: next(app for app in request('/api/apps')['apps'] if app['id'] == app_id)['runtimeState'] == 'stopped', 30)
+        request(api+'/backups/'+original+'/restore', {'createPreRestoreBackup': True})
+        assert sentinel.read_text(encoding='utf-8') == 'installed package'
+        say('PASS: package to A to B preserves permanent permissions and live data; explicit Restore recovers the package baseline')
         check_native_bootstrap(context, approve)
     finally:
         stopped = not installed
@@ -207,11 +229,13 @@ def check_native_bootstrap(context, approve):
 
     installation = app()['installationId']
 
-    def settled(input):
+    def settled(input, *, expect_failure=False):
         request(path+'/execution-target', input)
         def ready():
             value = request(path+'/execution-target/'+input['requestId'])
-            assert value['state'] != 'failed', value
+            if value['state'] == 'failed':
+                assert expect_failure, value
+                return value
             return value if value['state'] in ('completed', 'review-required') else None
         return wait_for(ready, 180)
 
@@ -230,15 +254,18 @@ def check_native_bootstrap(context, approve):
         candidate['runtimeProfiles'] = [{'key': 'dev', 'type': 'localCommand', 'development': True, 'default': True}]
         command = [sys.executable, 'native-idle.py']
         command = subprocess.list2cmdline(command) if context['windows'] else shlex.join(command)
+        build = [sys.executable, '-m', 'py_compile', 'native-idle.py']
         candidate['services'] = [{'key': 'native', 'runtimes': {'dev': {
             'type': 'localCommand', 'workingDirectory': '.', 'command': command,
+            'setup': subprocess.list2cmdline(build) if context['windows'] else shlex.join(build),
         }}}]
         candidate['data'] = {'enabled': True, 'targets': [{'runtime': 'dev', 'environment': 'HOSTY_APP_DATA_DIR'}]}
         candidate['provides'] = ['speech-to-text']
         candidate.pop('endpoints', None)
         candidate.pop('ui', None)
         (worktree/'manifest.json').write_text(json.dumps(candidate), encoding='utf-8')
-        (worktree/'native-idle.py').write_text(
+        program = worktree/'native-idle.py'
+        program.write_text(
             'import os, pathlib, time\n'
             'data = pathlib.Path(os.environ["HOSTY_APP_DATA_DIR"])\n'
             'data.mkdir(parents=True, exist_ok=True)\n'
@@ -256,15 +283,26 @@ def check_native_bootstrap(context, approve):
         assert app()['runtimeState'] == 'stopped', 'Access review must precede native execution'
         assert not (data/'native.pid').exists(), 'Native code ran before approval'
         approve(review['review'])
-        selected = settled(selection)
-        assert selected['state'] == 'completed', selected
-        assert selected['app']['devMode']['phase'] == 'active', selected
-        assert 'speech-to-text' in selected['app']['confirmedRoles'], selected
+        valid_program = program.read_text(encoding='utf-8')
+        program.write_text('def broken(:', encoding='utf-8')
+        failed = settled(selection, expect_failure=True)
+        assert failed['state'] == 'failed' and failed['code'] == 'dev_workspace_start_failed', failed
+        current = request(path+'/execution-targets')['current']
+        assert current['kind'] == 'workspace' and current['worktreeId'] == tree['id'], current
+        assert not (data/'native.pid').exists(), 'Failed build started workspace code'
+        backups = request(path+'/backups')['backups']
+        restore_id, = [row['backupId'] for row in backups if row.get('isWorkspaceReturnBackup')]
+        backup_ids = {row['backupId'] for row in backups}
+        program.write_text(valid_program, encoding='utf-8')
+        request(path+'/start', {})
         wait_for(lambda: request(path+'/health')['status'] == 'healthy', 30)
+        assert 'speech-to-text' in app()['confirmedRoles']
         first_pid = wait_for(lambda: (data/'native.pid').read_text() if (data/'native.pid').exists() else None, 30)
-        # Completion replay and ordinary restart both retain the exact admitted access.
-        assert settled(selection)['state'] == 'completed'
-        assert (data/'native.pid').read_text() == first_pid, 'Completed selection replay restarted native code'
+        assert {row['backupId'] for row in request(path+'/backups')['backups']} == backup_ids
+        sentinel.write_text('edited during the workspace trial', encoding='utf-8')
+        # Retrying the original failed receipt after an ordinary repair cannot restart the app.
+        assert settled(selection, expect_failure=True)['code'] == 'dev_workspace_start_failed'
+        assert (data/'native.pid').read_text() == first_pid
         request(path+'/restart', {})
         wait_for(lambda: app()['runtimeState'] == 'running' and request(path+'/health')['status'] == 'healthy', 30)
         wait_for(lambda: (data/'native.pid').read_text() != first_pid, 30)
@@ -278,12 +316,20 @@ def check_native_bootstrap(context, approve):
         assert returned['app']['runtimeState'] == 'running', returned
         assert returned['app']['devMode'] is None and not returned['app']['confirmedRoles'], returned
         assert request(path+'/execution-targets')['current']['kind'] == 'package'
+        assert sentinel.read_text(encoding='utf-8') == 'edited during the workspace trial'
+        request(path+'/stop', {})
+        wait_for(lambda: app()['runtimeState'] == 'stopped', 30)
+        assert any(row['backupId'] == restore_id and row.get('isWorkspaceReturnBackup')
+                   for row in request(path+'/backups')['backups'])
+        request(path+'/backups/'+restore_id+'/restore', {'createPreRestoreBackup': True})
         assert sentinel.read_text(encoding='utf-8') == 'current fixture data'
+        assert not (data/'native.pid').exists(), 'Restore left workspace-only data behind'
         assert unfinished.read_text(encoding='utf-8') == 'preserve uncommitted source'
         assert (source/'manifest.json').read_text(encoding='utf-8') == baseline
         assert json.loads((worktree/'manifest.json').read_text(encoding='utf-8')) == candidate
+        request(path+'/start', {})
         wait_for(lambda: request(path+'/health')['status'] == 'healthy', 90)
-        say('PASS: approved native/provider workspace starts and restarts; dev-only bootstrap Return preserves source/data')
+        say('PASS: failed workspace build retains its target; ordinary Start repairs it, Return keeps edits, and explicit Restore recovers pre-switch data')
     finally:
         request(path+'/stop', {})
         wait_for(lambda: app()['runtimeState'] == 'stopped', 30)

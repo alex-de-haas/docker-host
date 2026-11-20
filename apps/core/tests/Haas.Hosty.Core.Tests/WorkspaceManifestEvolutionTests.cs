@@ -40,6 +40,130 @@ public sealed partial class CoreLifecycleServiceTests
             app.InstalledAt, AppExecutionStore.Binding(app), "manifest-test:" + request.RequestId), default);
     }
 
+    private static void AddWorkspaceWorker(JsonObject manifest)
+    {
+        var worker = manifest["services"]![0]!.DeepClone();
+        worker["key"] = "worker";
+        foreach (var profile in worker["runtimes"]!.AsObject())
+        {
+            var runtime = profile.Value!.AsObject();
+            runtime["ports"] = new JsonArray();
+            runtime.Remove("healthcheck");
+        }
+        manifest["services"]!.AsArray().Add(worker);
+    }
+
+    [Theory]
+    [InlineData("runtime")]
+    [InlineData("docker-unavailable")]
+    [InlineData("spawn")]
+    [InlineData("cleanup")]
+    public async Task ExecutionTargets_PartialWorkspaceStartupRetainsSurvivingServiceAndOriginalError(string failure)
+    {
+        var (f, owner, workspaces, tree, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, tree);
+        await EditDevManifest(tree.Path, AddWorkspaceWorker);
+        await f.Service.StartAsync("test.created");
+        const string diagnostic = "Worker failed to start.";
+        Exception error = failure switch
+        {
+            "docker-unavailable" => new DockerUnavailableException(diagnostic),
+            "spawn" => new System.ComponentModel.Win32Exception(diagnostic),
+            "cleanup" => new AggregateException(diagnostic, new IOException("Worker cleanup failed.")),
+            _ => new AppLifecycleException("worker_start_failed", diagnostic),
+        };
+        f.Adapter.StartContextProbe = (context, _) =>
+        {
+            Assert.Equal(tree.Id, context.BoundWorktreeId);
+            throw error;
+        };
+        f.Adapter.Health = _ => new("unhealthy", [ServiceHealth("app"), ServiceHealth("worker", "exited", exitCode: 1)]);
+        var request = await ExecutionRequest(f, owner, "workspace", tree);
+        var operation = await f.Service.ExecuteTargetAsync(request, default);
+        Assert.Equal("failed", operation.State);
+        Assert.Equal("dev_workspace_start_failed", operation.Code);
+        var app = (await f.Apps.GetAppAsync("test.created"))!;
+        Assert.Equal(tree.Path, app.SourceState?.LocalOverridePath);
+        Assert.Contains(diagnostic, app.LastError);
+        Assert.Equal("unknown", app.RuntimeState);
+        Assert.Equal("unhealthy", app.Health?.Status);
+        Assert.Equal("running", app.Health!.Services.Single(service => service.Service == "app").Status);
+        Assert.Equal("exited", app.Health.Services.Single(service => service.Service == "worker").Status);
+
+        var starts = f.Adapter.StartCount;
+        var service = f.RecreateService();
+        Assert.Equal(operation.Error, (await service.ExecuteTargetAsync(request, default)).Error);
+        Assert.Equal(starts, f.Adapter.StartCount);
+        var leaseId = Guid.NewGuid().ToString("D");
+        var leased = await workspaces.CommandAsync(tree.Id, owner, "lease", new(Guid.NewGuid().ToString(), LeaseId: leaseId), default);
+        Assert.Contains(leaseId, leased.Leases);
+        await File.WriteAllTextAsync(Path.Combine(tree.Path, "repair"), "fixed");
+        await workspaces.CommandAsync(tree.Id, owner, "release-lease", new(Guid.NewGuid().ToString(), LeaseId: leaseId), default);
+
+        f.Adapter.StartContextProbe = null;
+        f.Adapter.Health = context => new("healthy", context.Manifest.Services.Select(s => ServiceHealth(s.Key)).ToArray());
+        await service.StartAsync(app.Id);
+        Assert.Equal(starts + 1, f.Adapter.StartCount);
+        Assert.Single(await f.Backups.ListBackupsAsync(app.Id));
+    }
+
+    [Fact]
+    public async Task ExecutionTargets_StartWithSurvivingServiceHoldingItsPort()
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, tree);
+        await EditDevManifest(tree.Path, AddWorkspaceWorker);
+        Assert.Equal("completed", (await SelectManifestTarget(f, owner, tree)).State);
+
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        await f.Apps.UpdateAppAsync("test.created", app => app with
+        {
+            RuntimeState = "unknown",
+            Health = new("unhealthy", [new("app", "running", null), new("worker", "exited", null)], f.Clock.UtcNow),
+            PortAssignments = [new("app", "http", port, "tcp", "loopback", "automatic", true, f.Clock.UtcNow)]
+        });
+
+        var starts = f.Adapter.StartCount;
+        await f.Service.StartAsync("test.created");
+        Assert.Equal(starts + 1, f.Adapter.StartCount);
+        Assert.Equal("running", (await f.Apps.GetAppAsync("test.created"))!.RuntimeState);
+    }
+
+    [Fact]
+    public async Task ExecutionTargets_PartialPackageStopRecordsObservedServicesBeforeWorkspaceSelection()
+    {
+        var (f, owner, _, tree, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, tree);
+        var before = (await f.Apps.GetAppAsync("test.created"))!;
+        var package = JsonNode.Parse(await File.ReadAllTextAsync(before.ManifestPath!))!.AsObject();
+        AddWorkspaceWorker(package);
+        await File.WriteAllTextAsync(before.ManifestPath!, package.ToJsonString());
+        f.Adapter.Health = context => new("healthy", context.Manifest.Services.Select(s => ServiceHealth(s.Key)).ToArray());
+        await f.Service.StartAsync(before.Id);
+        var starts = f.Adapter.StartCount;
+        f.Adapter.StopProbe = () => throw new AppLifecycleException("partial_stop", "Worker refused to stop.");
+        f.Adapter.Health = context =>
+        {
+            Assert.Equal("docker", context.App.SelectedRuntime);
+            Assert.True(context.ConfirmServiceAbsence);
+            return new("unhealthy", [ServiceHealth("app", "stopped"), ServiceHealth("worker")]);
+        };
+        var request = await ExecutionRequest(f, owner, "workspace", tree);
+        Assert.Equal("partial_stop", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            f.Service.ExecuteTargetAsync(request, default))).Code);
+        var after = (await f.Apps.GetAppAsync(before.Id))!;
+        Assert.Equal(before.DevModeId, after.DevModeId);
+        Assert.Equal(before.SelectedRuntime, after.SelectedRuntime);
+        Assert.Equal("unknown", after.RuntimeState);
+        Assert.Contains("Worker refused to stop.", after.LastError);
+        Assert.Equal("stopped", after.Health!.Services.Single(s => s.Service == "app").Status);
+        Assert.Equal("running", after.Health.Services.Single(s => s.Service == "worker").Status);
+        Assert.Equal(starts, f.Adapter.StartCount);
+        Assert.Empty(await f.Backups.ListBackupsAsync(after.Id));
+    }
+
     [Theory]
     [InlineData("app.0.2", "app.0.1", false)]
     [InlineData("app.0.1", "app.0.2", false)]
@@ -223,33 +347,37 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
-    public async Task WorkspaceManifest_NativeProviderConsentRecoversStartingWithOriginalRequestAfterServiceRecreation()
+    public async Task WorkspaceManifest_FailedNativeStartRetainsReviewedBindingAndOriginalReceiptAcrossServiceRecreation()
     {
         var (f, _, tree, native, selection) = await NativeProviderManifestFixture();
         var draft = Path.Combine(tree.Path, "uncommitted-draft.txt");
         await File.WriteAllTextAsync(draft, "preserve source edits");
         native.FailOnStartCount = native.StartCount + 1;
-        Assert.Equal("runtime_start_failed", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
-            f.Service.ExecuteTargetAsync(selection, default))).Code);
+        native.Health = context => new("unhealthy", context.Manifest.Services.Select(s => ServiceHealth(s.Key, "exited", exitCode: 1)).ToArray());
+        var failed = await f.Service.ExecuteTargetAsync(selection, default);
+        Assert.Equal("failed", failed.State);
+        Assert.Equal("dev_workspace_start_failed", failed.Code);
         var app = (await f.Apps.GetAppAsync("test.created"))!;
-        var interrupted = (await AppDevStore.ReadAsync(f.Paths, app, default))!;
-        Assert.Equal("starting", interrupted.Phase);
+        var bound = (await AppDevStore.ReadAsync(f.Paths, app, default))!;
         Assert.Equal(tree.Path, app.SourceState!.LocalOverridePath);
         Assert.Equal("dev", app.SelectedRuntime);
-        Assert.NotNull(interrupted.ExecutionAccessPlan);
-        Assert.Equal("pending", Assert.Single(interrupted.Receipts!, receipt => receipt.RequestId == selection.Request.RequestId).State);
+        Assert.Equal("stopped", app.RuntimeState);
+        Assert.NotNull(bound.ExecutionAccessPlan);
         native.FailOnStartCount = null;
+        native.Health = null;
         var recovered = f.RecreateService(localRuntimeAdapter: native);
         var starts = native.StartCount;
-        var resumed = await recovered.ExecuteTargetAsync(selection, default);
-        Assert.Equal(selection.Request.RequestId, resumed.Request.RequestId);
-        Assert.Equal("completed", resumed.State);
+        var replay = await recovered.ExecuteTargetAsync(selection, default);
+        Assert.Equal(selection.Request.RequestId, replay.Request.RequestId);
+        Assert.Equal("failed", replay.State);
+        Assert.Equal(starts, native.StartCount);
+
+        await recovered.StartAsync(app.Id);
         app = (await f.Apps.GetAppAsync(app.Id))!;
         var active = (await AppDevStore.ReadAsync(f.Paths, app, default))!;
-        Assert.Equal(interrupted.Id, active.Id);
-        Assert.Equal(interrupted.BackupId, active.BackupId);
+        Assert.Equal(bound.Id, active.Id);
+        Assert.Equal(bound.BackupId, active.BackupId);
         Assert.Equal("active", active.Phase);
-        Assert.Equal("succeeded", Assert.Single(active.Receipts!, receipt => receipt.RequestId == selection.Request.RequestId).State);
         Assert.Equal("running", app.RuntimeState);
         Assert.Equal(tree.Path, app.SourceState!.LocalOverridePath);
         Assert.Contains(PlatformCapabilities.SpeechToText, app.ConfirmedRoles!);
@@ -257,7 +385,7 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Contains("apps.logs", app.GrantedCorePermissions!);
         Assert.Equal("preserve source edits", await File.ReadAllTextAsync(draft));
         Assert.Equal(starts + 1, native.StartCount);
-        Assert.Equal("completed", (await recovered.ExecuteTargetAsync(selection, default)).State);
+        Assert.Equal("failed", (await recovered.ExecuteTargetAsync(selection, default)).State);
         Assert.Equal(starts + 1, native.StartCount);
     }
 
@@ -564,6 +692,7 @@ public sealed partial class CoreLifecycleServiceTests
         public RuntimeLifecycleContext? LastContext => inner.LastContext;
         public int StartCount => inner.StartCount;
         public int? FailOnStartCount { set => inner.FailOnStartCount = value; }
+        public Func<RuntimeLifecycleContext, AppRuntimeHealthResult>? Health { set => inner.Health = value; }
         public Task<RuntimePreparation> PrepareAsync(RuntimeLifecycleContext context, CancellationToken ct) => inner.PrepareAsync(context, ct);
         public async Task<AppRuntimeStartResult> StartAsync(RuntimeLifecycleContext context, CancellationToken ct = default)
             => (await inner.StartAsync(context, ct)) with { Endpoints = [] };

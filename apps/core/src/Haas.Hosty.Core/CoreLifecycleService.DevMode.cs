@@ -146,7 +146,7 @@ internal sealed partial class CoreLifecycleService
                 }
                 await ValidateDevBindingAsync(app, op, ct);
                 if (input.Action != "return")
-                    await ValidateDevSourceAuthorityAsync(app, await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct), actor, ct);
+                    await ValidateDevSourceAuthorityAsync(app, await LoadDevelopmentBaselineAsync(app, app.SelectedRuntime, ct), actor, ct);
             }
             else
             {
@@ -203,7 +203,9 @@ internal sealed partial class CoreLifecycleService
             if (outcome == "failed" && op is not null)
             {
                 var saved = await AppDevStore.ReadAsync(paths, appId, op.Id, CancellationToken.None);
-                if (saved?.Receipts?.Any(r => r.RequestId == input.RequestId && r.State == "pending") == true)
+                if (saved is { WorkspaceStartAfterBinding: true, Phase: "restarting" } && input.Action == "restart" && IsRecordableLifecycleFailure(ex))
+                    await SettleWorkspaceLaunchFailureAsync(saved, input.RequestId, ex.Message, CancellationToken.None);
+                else if (saved?.Receipts?.Any(r => r.RequestId == input.RequestId && r.State == "pending") == true)
                     await AppDevStore.SaveAsync(paths, saved with { Error = "Operation did not complete. Inspect app status/logs, retry the original request or explicitly return." }, CancellationToken.None);
             }
             throw;
@@ -271,20 +273,7 @@ internal sealed partial class CoreLifecycleService
         }
         if (op.Phase == "stopped")
         {
-            Directory.CreateDirectory(GetAppDataPath(op.AppId));
-            var dataHash = await DevDataHashAsync(GetAppDataPath(op.AppId), ct);
-            if (op.DataHash is not null && op.DataHash != dataHash)
-                throw DevError("backup_data_changed", "Managed data changed since this backup attempt. Return and enter again to create a new pre-development backup; no development code was started.");
-            // Persist the data identity BEFORE creating the stable archive. A crash after archive
-            // metadata but before backed-up cannot pair an old archive with a newer data baseline.
-            op = op with { DataHash = dataHash };
-            await AppDevStore.SaveAsync(paths, op, ct);
-            var backup = await backups.CreateBackupAsync(op.AppId, "pre-development-mode", "development:" + op.Id,
-                ct, operationId: op.Id) ?? throw DevError("backup_required", "A verified managed-data backup is required before entry.");
-            if (dataHash != await DevDataHashAsync(GetAppDataPath(op.AppId), ct))
-                throw DevError("backup_data_changed", "Managed data changed while creating its backup. Return and enter again; no development code was started.");
-            op = op with { BackupId = backup.BackupId };
-            op = await DevPhaseAsync(op, "backed-up", ct);
+            op = await BackupStoppedDevDataAsync(op, ct);
         }
         if (backupOnly) return op;
         if (op.Phase == "backed-up")
@@ -318,6 +307,24 @@ internal sealed partial class CoreLifecycleService
             op = await DevPhaseAsync(op, "active", ct, completedRequestId: requestId);
         }
         return op;
+    }
+
+    private async Task<AppDevOperation> BackupStoppedDevDataAsync(AppDevOperation op, CancellationToken ct)
+    {
+        Directory.CreateDirectory(GetAppDataPath(op.AppId));
+        var dataHash = await DevDataHashAsync(GetAppDataPath(op.AppId), ct);
+        if (op.DataHash is not null && op.DataHash != dataHash)
+            throw DevError("backup_data_changed", "Managed data changed since this backup attempt. Start a new workspace selection to take a fresh backup before running its code.");
+        // Persist the data identity BEFORE creating the stable archive. A crash after archive
+        // metadata but before backed-up cannot pair an old archive with a newer data baseline.
+        op = op with { DataHash = dataHash };
+        await AppDevStore.SaveAsync(paths, op, ct);
+        var backup = await backups.CreateBackupAsync(op.AppId, "pre-development-mode", "development:" + op.Id,
+            ct, operationId: op.Id) ?? throw DevError("backup_required", "A verified managed-data backup is required before entry.");
+        if (dataHash != await DevDataHashAsync(GetAppDataPath(op.AppId), ct))
+            throw DevError("backup_data_changed", "Managed data changed while creating its backup. Return and enter again; no development code was started.");
+        op = op with { BackupId = backup.BackupId };
+        return await DevPhaseAsync(op, "backed-up", ct);
     }
 
     private async Task<RuntimeAppManifestSelection> LoadDevReturnSelectionAsync(
@@ -405,21 +412,48 @@ internal sealed partial class CoreLifecycleService
 
     private async Task StopDevRuntimeAsync(AppRecord app, CancellationToken ct)
     {
-        // Stop uses the last launched admitted contract, even when live source is invalid or
-        // an execution refresh changed its service topology before an interrupted restart.
         var operation = await AppDevStore.ReadAsync(paths, app, ct);
-        // An entry journal can own the app before its source and manifest are bound. Its
-        // candidate mounts cannot describe the previous runtime being stopped at that point.
-        var selection = operation is { Active: true } && app.SelectedRuntime == operation.TargetRuntime &&
-            app.SourceState?.LocalOverridePath == operation.SourcePath &&
-            !operation.Phase.StartsWith("return-", StringComparison.Ordinal)
-            ? await LoadDevExecutionSelectionAsync(operation, ct, running: true)
-            : await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
-        var result = await ResolveAdapter(selection.RuntimeProfile.Type).StopAsync(await CreateRuntimeContextAsync(app, selection, ct), ct);
-        if (result.RuntimeState != "stopped") throw DevError("stop_unverified", "The old runtime did not confirm a stop; no new writer was started.");
+        var selection = await LoadDevStopSelectionAsync(app, operation, ct);
+        var adapter = ResolveAdapter(selection.RuntimeProfile.Type);
+        var context = await CreateRuntimeContextAsync(app, selection, ct);
+        var unobservedState = AppRuntimeStates.Unknown;
+        try
+        {
+            var result = await adapter.StopAsync(context, ct);
+            if (result.RuntimeState != AppRuntimeStates.Stopped)
+            {
+                if (result.RuntimeState == AppRuntimeStates.Running) unobservedState = AppRuntimeStates.Running;
+                throw DevError("stop_unverified", "The old runtime did not confirm a stop; no new writer was started.");
+            }
+        }
+        catch (Exception ex) when (IsRecordableLifecycleFailure(ex))
+        {
+            var (state, health) = await ObserveFailedRuntimeAsync(adapter, context, unobservedState, ct);
+            await RecordForegroundLifecycleFailureAsync(app.Id, "stop", state, ex.Message, ct, health);
+            throw;
+        }
         await apps.UpdateAppAsync(app.Id, a => a with { RuntimeState = "stopped", ActiveSourcePaths = null,
             ActiveMountPaths = null, Health = null }, ct);
         await ReconcileIngressAsync(ct);
+    }
+
+    private async Task<RuntimeAppManifestSelection> LoadDevStopSelectionAsync(AppRecord app, AppDevOperation? operation, CancellationToken ct)
+    {
+        if (operation is { Active: true } && app.SelectedRuntime == operation.TargetRuntime &&
+            app.SourceState?.LocalOverridePath == operation.SourcePath &&
+            !operation.Phase.StartsWith("return-", StringComparison.Ordinal))
+            return await LoadDevExecutionSelectionAsync(operation, ct, running: true);
+
+        // After ownership passes to the new journal, the outgoing workspace may still be
+        // bound. Its launched recipe can exist only in the snapshot captured at preparation.
+        if (operation is { PackageReturn: true, ExecutionManifest: not null, Phase: "prepared" or "stopped" or "backed-up" })
+        {
+            var previous = await manifests.LoadAsync(operation.PreviousManifest, app.SelectedRuntime, ct, allowRetiredContracts: true);
+            if (previous.ManifestDigest != operation.ManifestDigest)
+                throw DevError("previous_contract_changed", "The retained runtime contract changed; restore the operation record before stopping it.");
+            return previous;
+        }
+        return await manifests.LoadAsync(app.ManifestPath!, app.SelectedRuntime, ct);
     }
 
     private async Task ValidateDevSourceAuthorityAsync(AppRecord app, RuntimeAppManifestSelection installed, AppDevActor actor, CancellationToken ct)
@@ -465,7 +499,7 @@ internal sealed partial class CoreLifecycleService
         {
             var candidate = await PrepareExecutionCandidateAsync(app, op.SourcePath, op.TargetRuntime, op.Actor, ct);
             await EnsureExecutionCandidateApprovedAsync(candidate, app, ct);
-            if (op.PreparedRuntime is not null && op.Phase is "prepared" or "stopped" or "backed-up" or "bound" or "starting" &&
+            if ((op.PreparedRuntime is not null || op.WorkspaceStartAfterBinding) && op.Phase is "prepared" or "stopped" or "backed-up" or "bound" or "starting" &&
                 candidate.Selection.ManifestDigest != op.ExecutionManifestDigest)
                 throw DevError("plan_changed", "The workspace manifest changed after preparation. Prepare the current candidate before replacing the running app.");
             return candidate.Selection;

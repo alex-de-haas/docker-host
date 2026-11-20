@@ -451,6 +451,7 @@ internal static class CoreJson
 [JsonSerializable(typeof(AppAuthCodeState))]
 [JsonSerializable(typeof(AppSessionGrantState))]
 [JsonSerializable(typeof(AppBackupRecord))]
+[JsonSerializable(typeof(WorkspaceReturnBackup))]
 [JsonSerializable(typeof(AuthBootstrapTokenState))]
 [JsonSerializable(typeof(ControlDiscoveryDocument))]
 [JsonSerializable(typeof(AppBackupRetentionDigestPayload))]

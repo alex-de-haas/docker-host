@@ -1,6 +1,6 @@
 ---
 created: 2026-06-03
-updated: 2026-08-26
+updated: 2026-11-20
 summary: Retention and cleanup of app data backups, which cover only each app's primary data directory.
 components: [apps/core, apps/shell]
 ---
@@ -24,7 +24,11 @@ flowchart LR
 The default retention policy is conservative:
 
 - `manual` backups are kept until explicit deletion.
-- `pre-update`, `pre-restore`, `pre-runtime-switch`, and `scheduled` backups keep the latest 5 backups per app.
+- `pre-update`, `pre-restore`, `pre-runtime-switch`, `pre-development-mode` and `scheduled` backups
+  use a count limit of five per reason and application. The identified backup from leaving the
+  installed package is protected separately from automatic cleanup. Switching from one workspace
+  to another and returning to the package preserve that recovery point. The next verified
+  departure from the package establishes a new one. The operator can explicitly delete a backup.
 - No age-based deletion is enabled by default.
 - Retention cleanup does not delete the only known backup candidate unless policy support is explicitly expanded later.
 - Per-app retention overrides are not part of the current implementation. Future retention policy extensions are tracked in [Backup Retention Extensions](plan.md).
@@ -68,7 +72,7 @@ Hosty Core runs a background retention cleanup pass after startup and then perio
 Shell backup details can:
 
 - create manual backups;
-- list backups with retention status;
+- list backups with retention status and identify the backup from before the package-to-workspace switch;
 - restore stopped apps from a backup;
 - delete one backup with confirmation;
 - preview retention cleanup;

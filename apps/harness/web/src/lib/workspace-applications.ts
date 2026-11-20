@@ -12,6 +12,7 @@ export type WorkspaceApplication = {
   appId: string; name: string; version?: string | null; runtimeState?: string | null; operationStatus?: string | null;
   health?: string | null; current?: WorkspaceApplicationChoice | null; target?: WorkspaceApplicationChoice | null;
   source?: { path?: string | null; branch?: string | null; state?: string | null } | null;
+  startError?: string; canReadLogs?: boolean;
   canSwitch: boolean; unavailable?: string | null;
 };
 export type WorkspaceApplicationStatus = {
@@ -98,10 +99,11 @@ export function useWorkspaceApplications(workspaceId: string, enabled: boolean) 
         : { scope, applications: empty, loading: true, error: "" });
       try {
         const value = await developmentRequest<{ apps: WorkspaceApplication[] }>(`/${scope.workspaceId}/applications`, undefined, request.signal);
-        if (!Array.isArray(value?.apps) || value.apps.some(app => !app || typeof app.appId !== "string" || !app.appId || typeof app.name !== "string" || typeof app.canSwitch !== "boolean")) {
-          throw new Error("Core returned an invalid application snapshot.");
-        }
-        if (active && current === generation && !request.signal.aborted) setSnapshot({ scope, applications: value.apps, loading: false, error: "" });
+        if (!Array.isArray(value?.apps)) throw new Error("Core returned an invalid application snapshot.");
+        const applications = value.apps.filter(app => app && typeof app.appId === "string" && app.appId &&
+          typeof app.name === "string" && typeof app.canSwitch === "boolean");
+        if (value.apps.length && !applications.length) throw new Error("Core returned an invalid application snapshot.");
+        if (active && current === generation && !request.signal.aborted) setSnapshot({ scope, applications, loading: false, error: "" });
         return true;
       } catch (cause) {
         if (!active || current !== generation || request.signal.aborted) return true;

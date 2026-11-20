@@ -55,7 +55,7 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
             if (existing is not null)
             {
                 if (existing.Fingerprint != fingerprint) throw new AppLifecycleException("execution_request_conflict", "This requestId belongs to a different selection or authority.");
-                if (existing.State == "completed") return await StatusAsync(appId, input.RequestId, actor.UserId, ct);
+                if (IsSettled(existing.State, existing.Code)) return await StatusAsync(appId, input.RequestId, actor.UserId, ct);
                 await AppExecutionStore.SaveAsync(paths, existing with { State = "running", Code = null, Error = null, Review = null }, ct);
             }
             else
@@ -103,7 +103,11 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
             var prior = await JsonStorage.ReadAsync<WorkspaceExecutionOperation>(path, ct);
             if (prior is not null && prior.Fingerprint != fingerprint)
                 throw new AppLifecycleException("execution_request_conflict", "Keep the original workspace selection and requestId.");
-            if (prior?.State == "completed") return await WorkspaceStatusAsync(workspaceId, input.RequestId, actor.UserId, ct);
+            if (prior?.State is "completed" or "failed")
+            {
+                var status = await WorkspaceStatusAsync(workspaceId, input.RequestId, actor.UserId, ct);
+                if (status.Apps.All(a => IsSettled(a.State, a.Code))) return status;
+            }
             var trees = recorded ?? (await workspaces.ListAsync(null, false, ct)).Workspaces.Where(t => t.WorkspaceId == workspaceId).ToArray();
             var installed = await apps.ListAppRecordsAsync(ct);
             var bound = trees.SelectMany(t => t.Apps)
@@ -131,6 +135,9 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
         }
         return new(requestId, group.State, results.ToArray());
     }
+
+    private static bool IsSettled(string state, string? code) =>
+        state == "completed" || state == "failed" && code == "dev_workspace_start_failed";
 
     private Task ValidateAsync(WorkspaceActivationActor actor, CancellationToken ct, bool source = true) =>
         actor is { Via: "local-control", Principal: "local-control" } ? Task.CompletedTask : access.ValidateAsync(actor, false, ct, source);
@@ -179,7 +186,8 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
             if (operation is null || operation.State != "running") return;
             try
             {
-                await ValidateAsync(operation.Actor, ct, operation.Request.Kind == "workspace");
+                // The lifecycle rechecks this authority under the app lock before effects.
+                // It can also settle an already durable launch without executing more code.
                 operation = await lifecycle.ExecuteTargetAsync(operation, ct, token => ValidateAsync(operation.Actor, token, operation.Request.Kind == "workspace"));
                 await AppExecutionStore.SaveAsync(paths, operation, ct);
             }
@@ -204,12 +212,13 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
         {
             var child = WorkspaceRuntimeFiles.ChildId(requestId, id);
             var current = await AppExecutionStore.ReadAsync(paths, id, child, ct);
-            if (current?.State == "completed") continue;
+            if (current is not null && IsSettled(current.State, current.Code)) continue;
             try
             {
-                await SubmitAsync(id, new(child, group.Request.Kind, group.Request.Runtime,
-                    group.Request.Kind == "workspace" ? workspaceId : null), group.Actor, ct,
-                    group.Request.Kind == "package" ? workspaceId : null);
+                if (current?.State != "running")
+                    await SubmitAsync(id, new(child, group.Request.Kind, group.Request.Runtime,
+                        group.Request.Kind == "workspace" ? workspaceId : null), group.Actor, ct,
+                        group.Request.Kind == "package" ? workspaceId : null);
                 await RunAsync(id, child, ct);
             }
             catch (Exception ex) when (ex is AppLifecycleException or AppIdentityException)
