@@ -1,6 +1,6 @@
 ---
 created: 2026-09-29
-updated: 2026-11-20
+updated: 2026-11-21
 summary: Apps publish named interface implementations under scoped Core authority so Harness users can choose where to send dictation and text for read-aloud.
 components: [apps/core, packages/app-sdk, packages/app-sdk-dotnet, apps/codex-provider, apps/harness]
 ---
@@ -229,10 +229,11 @@ an unavailable provider and a message being sent. Discovery failures do not impl
 
 ### Read aloud
 
-A user can read an assistant response or a rendered Markdown section, including its subsections
-up to the next sibling or higher heading. Harness sends the chosen plain text in its displayed
-language and plays the stream with an AI-voice disclosure and a Stop control. Long selections
-use successive bounded requests. Stopping or switching chats cancels playback and synthesis.
+The speaker button in the reply footer reads the assistant's response aloud. A Markdown heading
+also offers playback of its section, including subsections up to the next sibling or higher
+heading. Harness sends the chosen plain text in its displayed language and streams the audio.
+The footer shows a Stop control during playback. Long selections use successive bounded requests.
+Stopping or switching chats cancels playback and synthesis.
 
 ## Assistant Activity Authority
 

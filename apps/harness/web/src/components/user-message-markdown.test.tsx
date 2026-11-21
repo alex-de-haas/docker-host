@@ -38,6 +38,42 @@ it.each(["user_message", "assistant_text"])("renders %s prose as Markdown with h
   expect(link.textContent).toBe("Documentation"); expect(link.target).toBe("_blank"); expect(link.rel).toBe("noopener noreferrer");
 });
 
+it.each(["user_message", "assistant_text"])("copies only the original %s Markdown from its footer", async type => {
+  const text = "# Review\n\nUse **bold** and `literal`.\n\n[Details](https://example.test/docs)";
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  await render([message(text, type)]);
+  const copy = container.querySelector<HTMLButtonElement>('[data-slot="message-footer"] button[aria-label="Copy message"]')!;
+  await act(async () => copy.click());
+  expect(writeText).toHaveBeenCalledExactlyOnceWith(text);
+});
+
+it.each([true, false])("copies through the document when the Clipboard API is missing (copy allowed: %s)", async allowed => {
+  const text = "Copy **this** Markdown.";
+  await render([message(text)]);
+  const copy = container.querySelector<HTMLButtonElement>('button[aria-label="Copy message"]')!;
+  copy.focus();
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+  const setData = vi.fn();
+  const event = new Event("copy", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", { value: { setData } });
+  const execCommand = vi.fn(() => allowed && !copy.dispatchEvent(event));
+  Object.defineProperty(document, "execCommand", { configurable: true, value: execCommand });
+  try {
+    await act(async () => copy.click());
+    expect(execCommand).toHaveBeenCalledExactlyOnceWith("copy");
+    expect(setData.mock.calls).toEqual(allowed ? [["text/plain", text]] : []);
+    expect(event.defaultPrevented).toBe(allowed);
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(allowed ? "Message copied" : "Could not copy message.");
+    expect(document.activeElement).toBe(copy);
+    setData.mockClear();
+    copy.dispatchEvent(event);
+    expect(setData).not.toHaveBeenCalled();
+  } finally {
+    Reflect.deleteProperty(document, "execCommand");
+  }
+});
+
 it("keeps fenced and inline code literal, copies the exact source and leaves the recorded message unchanged", async () => {
   const code = 'const value = "<script>";\n\n\tconst template = `literal *text*`;\n// [!code ++]';
   const text = 'Use `file_name.ts`:\n\n```typescript\n' + code + '\n```\n\nAfter the example.';
@@ -85,7 +121,8 @@ it.each(["", " \n\t ", "Review **this** with `notes.md`."])("retains claimed att
   expect(rows).toHaveLength(1); expect(rows[0].querySelectorAll('[data-slot="attachment"]')).toHaveLength(2);
   expect(rows[0].textContent).toContain("stored-report.txt"); expect(rows[0].textContent).toContain("1.0 KB");
   expect(rows[0].textContent).toContain("missing-size.png"); expect(rows[0].textContent).not.toContain("null");
-  expect(container.querySelector("img, button")).toBeNull();
+  expect(rows[0].querySelector("img, button")).toBeNull();
+  expect(Boolean(container.querySelector('button[aria-label="Copy message"]'))).toBe(Boolean(text.trim()));
   if (text.trim()) {
     expect(container.querySelector("strong")?.textContent).toBe("this");
     expect(container.querySelector("p > code")?.textContent).toBe("notes.md");

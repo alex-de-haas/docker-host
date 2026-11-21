@@ -9,24 +9,31 @@ let root: Root, container: HTMLDivElement;
 beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} }); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 const ts = "2026-11-17T11:25:01Z", date = new Date(ts);
-const full = () => new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "long" }).format(date);
+const full = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "long" }).format(date);
+const localDateTime = new Intl.DateTimeFormat(undefined, {
+  year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+}).format(date);
 
-it("shows a prompt's local HH:mm with a full accessible timestamp and tap details", async () => {
-  await act(async () => root.render(<TranscriptEvent event={{ seq: 1, ts, type: "user_message", text: "My prompt" }}
+it.each(["user_message", "assistant_text"])("shows the %s date and time as text alongside its actions", async type => {
+  await act(async () => root.render(<TranscriptEvent event={{ seq: 1, ts, type, text: "A message" }}
     decision={null} answers={null} denyReason={false} onDecide={async () => {}} onAnswer={async () => {}} />));
-  expect(container.querySelector("time")?.textContent).toBe(new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date));
-  const button = container.querySelector<HTMLButtonElement>('button[aria-label^="Message time:"]')!;
-  expect(button.getAttribute("aria-label")).toBe(`Message time: ${full()}`);
-  await act(async () => button.click());
-  expect(document.querySelector('[data-slot="popover-content"] time')?.textContent).toBe(full());
-  expect(document.querySelector('[data-slot="popover-content"] time')?.getAttribute("datetime")).toBe(date.toISOString());
+  const footer = container.querySelector('[data-slot="message-footer"]');
+  const time = footer?.querySelector("time");
+  expect(time?.textContent).toBe(localDateTime);
+  expect(time?.dateTime).toBe(date.toISOString());
+  expect(time?.closest("button")?.getAttribute("aria-label")).toBe(`Message time: ${full}`);
+  expect(footer?.querySelector('button[aria-label="Copy message"]')).toBeTruthy();
 });
 
-it("reveals the full timestamp to keyboard focus without adding a clock label to assistant prose", async () => {
-  await act(async () => root.render(<MessageTimestamp ts={ts} compact />));
-  expect(container.querySelector("time")).toBeNull();
-  await act(async () => { container.querySelector("button")!.focus(); });
-  expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(full());
+it("opens full timestamp details on focus or tap", async () => {
+  await act(async () => root.render(<MessageTimestamp ts={ts} />));
+  const button = container.querySelector<HTMLButtonElement>('button[aria-label^="Message time:"]')!;
+  await act(async () => button.focus());
+  expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(full);
+  await act(async () => button.click());
+  const time = document.querySelector<HTMLTimeElement>('[data-slot="popover-content"] time');
+  expect(time?.textContent).toBe(full);
+  expect(time?.dateTime).toBe(date.toISOString());
 });
 
 it("omits invalid or missing historical timestamps", async () => {
