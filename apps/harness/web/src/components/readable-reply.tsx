@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Square, Volume2 } from "lucide-react";
 import { call } from "@/lib/api";
 import { Markdown } from "./markdown";
+import { MessageFooter } from "./message-footer";
 import { Button } from "./ui/button";
 import { playPcm, readableReplyText, speechChunks } from "@/lib/reply-audio";
 import { currentSpeechOption, type SpeechRoster } from "../../../shared/speech-selection";
@@ -10,7 +11,9 @@ import { currentSpeechOption, type SpeechRoster } from "../../../shared/speech-s
 type Playback = { controller: AbortController; audio: AudioContext };
 let stopCurrent: (() => void) | undefined;
 
-export function ReadableReply({ text, sessionId }: { text: string; sessionId: string }) {
+export function ReadableReply({ text, sessionId, ts, recovered, incomplete }: {
+  text: string; sessionId?: string; ts?: string; recovered?: boolean; incomplete?: boolean;
+}) {
   const body = useRef<HTMLDivElement>(null), active = useRef<Playback | null>(null);
   const [playing, setPlaying] = useState(false), [error, setError] = useState("");
   const stop = useCallback(function stopPlayback() {
@@ -25,7 +28,7 @@ export function ReadableReply({ text, sessionId }: { text: string; sessionId: st
   }, [sessionId, text, stop]);
   async function read(section?: HTMLElement) {
     const chosen = body.current ? readableReplyText(body.current, section) : "";
-    if (!chosen) return;
+    if (!sessionId || !chosen) return;
     stopCurrent?.(); setError("");
     let op: Playback | undefined;
     try {
@@ -50,13 +53,19 @@ export function ReadableReply({ text, sessionId }: { text: string; sessionId: st
       if (!op?.controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Audio playback failed.");
     } finally { if (op && active.current === op) stop(); }
   }
-  return <>
-    <div ref={body}><Markdown text={text} onReadSection={section => void read(section)} /></div>
-    <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-muted-foreground">
-      {playing ? <Button size="sm" variant="ghost" onClick={stop}><Square />Stop reading</Button>
-        : <Button size="sm" variant="ghost" onClick={() => void read()}><Volume2 />Read aloud</Button>}
-      <span>AI-generated voice</span>
-      {error && <span role="alert">{error} <a href="/settings/speech" className="underline">Speech settings</a></span>}
+  const label = playing ? "Stop reading" : "Read aloud";
+  return <div className="group/message flex flex-col gap-1">
+    <div className="rounded-lg bg-muted/60 px-3 py-2">
+      {recovered && <p className="mb-1 text-xs text-muted-foreground">Recovered from an earlier run</p>}
+      <div ref={body}><Markdown text={text} onReadSection={sessionId ? section => void read(section) : undefined} /></div>
+      {incomplete && <p className="mt-2 text-xs text-muted-foreground">Interrupted message</p>}
     </div>
-  </>;
+    <MessageFooter text={text} ts={ts} active={playing}>
+      {sessionId && text.trim() && <Button type="button" size="icon-sm" variant="ghost" aria-label={label} title={label}
+        onClick={playing ? stop : () => void read()}>
+        {playing ? <Square aria-hidden /> : <Volume2 aria-hidden />}
+      </Button>}
+    </MessageFooter>
+    {error && <p role="alert" className="px-2 text-xs text-muted-foreground">{error} <a href="/settings/speech" className="underline">Speech settings</a></p>}
+  </div>;
 }

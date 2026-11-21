@@ -41,7 +41,14 @@ export function Markdown({ text, className, streaming = false, rehypePlugins, on
   onReadSection?: (heading: HTMLElement) => void;
 }) {
   function heading(level: number, Heading: "h4" | "h5" | "h6", children: ReactNode) {
-    return <Heading data-speech-level={onReadSection ? level : undefined}>{children}{onReadSection && <button type="button" aria-label="Read section aloud" title="Read section aloud with AI-generated voice" className="ml-1 inline-flex align-middle text-muted-foreground hover:text-foreground" onClick={e => onReadSection(e.currentTarget.parentElement!)}><Volume2 className="size-3.5" /></button>}</Heading>;
+    return <Heading className="group/heading" data-speech-level={onReadSection ? level : undefined}>
+      {children}
+      {onReadSection && <button type="button" aria-label="Read section aloud" title="Read section aloud"
+        className="ml-1 inline-flex size-6 items-center justify-center rounded align-middle text-muted-foreground hover:text-foreground [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/heading:opacity-100 [@media(hover:hover)]:group-focus-within/heading:opacity-100"
+        onClick={e => onReadSection(e.currentTarget.parentElement!)}>
+        <Volume2 aria-hidden className="size-3.5" />
+      </button>}
+    </Heading>;
   }
   return (
     <div className={cn(PROSE_CLASS, className)}>
