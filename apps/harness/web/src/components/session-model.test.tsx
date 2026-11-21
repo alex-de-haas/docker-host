@@ -5,7 +5,9 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { SessionModel } from "./session-model";
 import * as api from "@/lib/assistant-api";
 import { readBrowserAgentDefaults, rememberManualModel } from "@/lib/browser-agent-preferences";
-vi.mock("@/lib/assistant-api", () => ({ getSessionModels: vi.fn(), setSessionModel: vi.fn() }));
+vi.mock("@/lib/assistant-api", async original => ({
+  ...await original<typeof api>(), getSessionModels: vi.fn(), setSessionModel: vi.fn(),
+}));
 let root: Root, container: HTMLDivElement;
 const record: api.AssistantSession = { id: "chat", title: "Chat", createdAt: "", status: "idle", connectionId: "account", selectionRevision: 7, executionSelection: { model: "first", reasoningEffort: "high" } };
 const changed = vi.fn(), saving = vi.fn();
@@ -61,6 +63,18 @@ it("recovers an unavailable model catalog explicitly without changing the select
   expect(container.querySelector('[aria-label="Selected reasoning effort"]')?.textContent).toBe("High");
   expect(api.setSessionModel).not.toHaveBeenCalled();
   expect(changed).not.toHaveBeenCalled();
+});
+
+it.each([
+  [{ providerLocked: true }, "Use Change session context in Agent settings to select a current connection and model."],
+  [{ providerLocked: false }, "Select it again explicitly."],
+  [{ taskExecutionId: "attempt" }, "Select a current connection for a new task attempt."],
+] as const)("explains a changed provider connection for the current chat binding %o", async (binding, guidance) => {
+  const error = new api.AssistantApiError("provider_connection_changed", "The selected provider installation or account changed. Select it again explicitly.", 409);
+  vi.mocked(api.getSessionModels).mockRejectedValueOnce(error);
+  await act(async () => root.render(<SessionModel session={{ ...record, ...binding }} busy={false} onChange={changed} onSavingChange={saving} />));
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain(guidance);
+  expect(api.setSessionModel).not.toHaveBeenCalled();
 });
 
 it("scopes catalog labels and errors to the current session and connection, including no connection", async () => {

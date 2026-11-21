@@ -27,7 +27,7 @@ export type RunRecord = {
 export type SessionRecord = {
   version: 1; id: string; hash: string; owner: Actor; session: AgentSession; configurations: Record<string, ConfigurationRecord>;
   configurationRequests: Record<string, { hash: string; revision: string }>;
-  runs: Record<string, RunRecord>; nativeId?: string; deleted?: boolean; createdAt: string;
+  priorRunIds?: string[]; runs: Record<string, RunRecord>; nativeId?: string; deleted?: boolean; createdAt: string;
   retirement?: { runId: string; requestId: string; nativeGeneration: string; nativeRevision: number };
 };
 export const bytesHash = (body: string | Uint8Array) => createHash("sha256").update(body).digest("hex");
@@ -42,6 +42,7 @@ export class ProviderStore {
   private initialized = false;
   private tail: Promise<unknown> = Promise.resolve();
   private runs = new Map<string, string>();
+  readonly historicalRunIds = new Set<string>();
   private uncertain = new Set<string>();
   private listeners = new Map<string, Set<() => void>>();
   constructor(readonly directory: string, readonly provider: AgentProviderRef, readonly maxReplayBytes = 64 * 1024 * 1024, readonly replayRetentionMs = 7 * 24 * 60 * 60 * 1000) {}
@@ -51,10 +52,15 @@ export class ProviderStore {
     for (const file of await readdir(this.directory)) {
       if (!file.endsWith(".json") || !safe(file.slice(0, -5))) continue;
       const record = await this.load(file.slice(0, -5));
-      for (const id of Object.keys(record.runs)) {
+      const retained = Object.keys(record.runs), historical = record.priorRunIds ?? [];
+      for (const id of historical) this.historicalRunIds.add(id);
+      const current = sameProvider(record.session.ref.provider, this.provider);
+      if (!current) for (const id of retained) this.historicalRunIds.add(id);
+      for (const id of [...historical, ...retained]) {
         if (this.runs.has(id)) throw new Error("Duplicate retained provider run identity.");
         this.runs.set(id, record.id);
       }
+      if (!current) continue;
       let changed = false;
       for (const run of Object.values(record.runs)) {
         // Adopt the available detailed replay before its independent TTL can expire.
@@ -105,8 +111,14 @@ export class ProviderStore {
     if (actor && (!sameActor(record.owner, actor) || !sameProvider(record.session.ref.provider, this.provider))) throw new AgentApiError("session_not_found", "Session not found.", 404);
     // After startup, committed outboxes have been published before the writer advances. A new
     // loaded aggregate starts with an empty outbox. The on-disk copy remains a crash receipt.
-    if (this.initialized) for (const run of Object.values(record.runs)) this.history.acknowledge(run);
+    if (this.initialized && sameProvider(record.session.ref.provider, this.provider)) for (const run of Object.values(record.runs)) this.history.acknowledge(run);
     return record;
+  }
+  /** Preserve the previous installation's commands, receipts and qualified runs before rebinding the public session. */
+  async archiveInstallation(record: SessionRecord): Promise<void> {
+    const directory = path.join(this.directory, "prior-installations", bytesHash(record.session.ref.provider.installationId));
+    await durableMkdir(directory);
+    await durableWriteFile(path.join(directory, path.basename(this.file(record.id))), await readFile(this.file(record.id)));
   }
   async save(record: SessionRecord): Promise<void> {
     if (this.uncertain.has(record.id)) throw new AgentApiError("storage_uncertain", "Retained provider state requires recovery.", 503);
@@ -144,9 +156,12 @@ export class ProviderStore {
     if (!record) throw new AgentApiError("run_not_found", "Run not found.", 404);
     return { session, record };
   }
-  async records(): Promise<SessionRecord[]> {
+  async records(currentInstallationOnly = false): Promise<SessionRecord[]> {
     const result: SessionRecord[] = [];
-    for (const file of await readdir(this.directory)) if (file.endsWith(".json") && safe(file.slice(0, -5))) result.push(await this.load(file.slice(0, -5)));
+    for (const file of await readdir(this.directory)) if (file.endsWith(".json") && safe(file.slice(0, -5))) {
+      const record = await this.load(file.slice(0, -5));
+      if (!currentInstallationOnly || sameProvider(record.session.ref.provider, this.provider)) result.push(record);
+    }
     return result;
   }
   async list(actor: Actor): Promise<AgentSession[]> {

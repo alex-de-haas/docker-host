@@ -141,6 +141,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [status, setStatus] = useState("idle");
   const [contextUsage, setContextUsage] = useState(() => emptyContextUsage(""));
   const [contextDetailsOpen, setContextDetailsOpen] = useState(false);
+  const [contextNotice, setContextNotice] = useState<{ sessionId: string; seq: number } | null>(null);
   const [agentNotice, setAgentNotice] = useState<AgentSettingsNotice | null>(null);
   const [autonomyNotice, setAutonomyNotice] = useState<AgentSettingsNotice | null>(null);
   const [activity, setActivity] = useState<SessionActivity | null>(null);
@@ -319,8 +320,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     suggestionInteracted();
   }, [suggestionInteracted]);
   const editLocked = editSaving || editOwnershipLost || editTransition === session?.id || !!queueOperation && ["reserve_edit", "recover_edit", "save_edit", "cancel_edit"].includes(queueOperation.input.command.type);
+  const contextBoundary = useMemo(() => events.reduce((seq, event) =>
+    event.type === "notice" && event.contextChanged === true ? Math.max(seq, event.seq) : seq, 0), [events]);
   const visibleSuggestion = !running && !sending && !pendingSend && !contextSaving && !mentionSaving && !providerSaving
-    && !composerBlocked && queueSnapshot && connection === "connected" ? suggestions.suggestion : null;
+    && !composerBlocked && queueSnapshot && connection === "connected"
+    && (!contextBoundary || (suggestions.suggestion?.answerSeq ?? 0) > contextBoundary) ? suggestions.suggestion : null;
   const acceptSuggestion = () => { if (visibleSuggestion) void suggestions.select(visibleSuggestion.suggestionId); };
   const fileSnapshots = useCallback((files: File[]) => files.map(file => {
     let stored = editFiles.current.get(file);
@@ -566,6 +570,18 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           const update = event as unknown as SessionActivity;
           setActivity(current => current?.epoch === update.epoch && current.revision >= update.revision ? current : update);
           return;
+        }
+        if (event.type === "notice" && event.contextChanged === true) {
+          // Replayed context boundaries also fence transient output left by the preceding run.
+          setContextUsage(current => applyContextUsage(current, record.id, { ...event, type: "context_usage", usage: null }));
+          setStreams(emptyTranscriptStreams());
+          setActivity(null);
+          if (event.seq > (record.lastEventSeq ?? 0)) {
+            setHistoryGaps([]);
+            setContextNotice({ sessionId: record.id, seq: event.seq });
+            refreshSettings();
+            void getHealth(record.id).then(value => { if (!abort.signal.aborted) setHealth(value); }).catch(() => {});
+          }
         }
         if (event.type === "session_profile_changed" || event.type === "session_provider_changed" || event.type === "session_autonomy_changed") {
           const settings: Partial<AssistantSession> = event.type === "session_autonomy_changed"
@@ -1234,7 +1250,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
   const mcpActivity = useMemo(() => contextDetailsOpen ? observedMcpActivity(events) : EMPTY_MCP_ACTIVITY, [events, contextDetailsOpen]);
 
-  const pendingDecision = events.find(event => status === "awaiting_approval" && event.type === "approval_request" && !decidedApprovals.has(transcriptDecisionId(event)) || status === "awaiting_question" && event.type === "question_request" && !cancelledQuestionIds.has(transcriptDecisionId(event)) && !answeredQuestions.has(transcriptDecisionId(event)));
+  const pendingDecision = events.find(event => event.seq >= contextBoundary && event.providerHistoryEarlier !== true && (status === "awaiting_approval" && event.type === "approval_request" && !decidedApprovals.has(transcriptDecisionId(event)) || status === "awaiting_question" && event.type === "question_request" && !cancelledQuestionIds.has(transcriptDecisionId(event)) && !answeredQuestions.has(transcriptDecisionId(event))));
 
   const createAppAction = fullPage ? session ? (
     <CreateApp key={`creation-${session.id}`} session={session} openOnMount={openAppCreation}
@@ -1414,7 +1430,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     <div ref={item.event === pendingDecision ? decisionCard : undefined} tabIndex={item.event === pendingDecision ? -1 : undefined}>
                     {nativeSource(item.event) && <p className="mb-1 text-xs text-muted-foreground">From {nativeTranscript.agents.get(nativeAgentKey(nativeSource(item.event)!))?.label ?? "subagent"}</p>}
                     <TranscriptEvent
-                      event={item.event}
+                      event={item.event.seq < contextBoundary && ["approval_request", "question_request"].includes(item.event.type)
+                        ? { ...item.event, providerHistoryEarlier: true } : item.event}
                       appNames={appNames}
                       attachments={attachmentIndex}
                       feedbackCard={feedbackCardForEvent(item.event, feedbackTranscript.cards)}
@@ -1429,7 +1446,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                       onDecide={decide}
                       onAnswer={answer}
                       suggestions={{ cards: suggestions.cards, canInsert: !!queueSnapshot && !input && !pending.length && !uploaded.length && !editing,
-                        actionable: !!queueSnapshot && connection === "connected" && !composerBlocked, busy: suggestions.acting,
+                        actionable: !!queueSnapshot && connection === "connected" && !composerBlocked && item.event.seq >= contextBoundary && item.event.providerHistoryEarlier !== true, busy: suggestions.acting,
                         tabHint: !!visibleSuggestion, onSelect: id => void suggestions.select(id), onDismiss: id => void suggestions.dismiss(id) }}
                     />
                     </div>
@@ -1627,6 +1644,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     </DropdownMenu>
                     <div className="contents @max-[640px]/composer:[&_button]:size-6 @max-[640px]/composer:[&_button]:min-w-6 @max-[640px]/composer:[&_button]:p-0 @max-[640px]/composer:[&_button>span:not(.sr-only)]:hidden">
                     {session && <SessionAgentSettings key={`agent:${session.id}`}
+                      catalogRefresh={contextNotice?.sessionId === session.id ? contextNotice.seq : 0}
                       session={{ ...session, status }} busy={sending || stopping || !!pendingSend || sendRecoveryBlocked || mentionSaving || contextSaving || providerSaving || storageBlocked}
                       onSavingChange={onProviderSaving} onNoticeChange={setAgentNotice} onChange={record => {
                         onSessionChange(record);

@@ -587,8 +587,8 @@ class CodexRun implements HarnessRun {
         ...(this.selectedEffort ? { config: { model_reasoning_effort: this.selectedEffort } } : {}),
         sandbox: this.options.autonomy === "autonomous" ? "danger-full-access" : "read-only",
         approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
-      }).catch((error) => { if (this.auth.isolated || this.strictResume) throw new Error("The native session could not be resumed. Start a new chat; existing history is preserved."); return null; })) as { thread?: { id?: string } } | null;
-      if (resumed && resumed.thread?.id !== this.options.resumeHarnessSessionId)
+      }).catch((error) => { if (this.auth.isolated || this.strictResume) throw new Error("The original native thread could not be resumed."); return null; })) as { thread?: { id?: string } } | null;
+      if ((this.strictResume || this.auth.isolated || resumed) && resumed?.thread?.id !== this.options.resumeHarnessSessionId)
         throw new Error("Codex did not resume the requested thread.");
       if (resumed) {
         this.reportSelection(resumed);

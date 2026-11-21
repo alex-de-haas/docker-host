@@ -1,13 +1,15 @@
 import path from "node:path";
+import { sameProvider } from "./provider-ref.js";
+import { ConnectionError } from "./internal/connections/errors.js";
 import { mkdir, readdir } from "node:fs/promises";
 import { questionAnswers } from "./decision-answers.js";
 import { projectAppliedDecisionControls } from "./projection.js";
 import { randomUUID } from "node:crypto";
 import type { AgentCapabilities, AgentConfiguration, AgentConfigurationCreate, AgentSessionCreate, AgentRunInput, AgentRunSnapshot, AgentResponseInput, AgentCancelInput, AgentRunControlInput, AgentControlReceipt } from "@hosty-sdk/app/agent";
 import { AgentApiError } from "@hosty-sdk/app/agent";
-import { ProviderStore, bytesHash, valueHash, increment, type VerifiedOperation, type Actor, type ConfigurationRecord, type SessionRecord, type RunRecord } from "./store.js";
+import { ProviderStore, sameActor, bytesHash, valueHash, increment, type VerifiedOperation, type Actor, type ConfigurationRecord, type SessionRecord, type RunRecord } from "./store.js";
 import type { ProviderAuthority } from "./core.js";
-import type { ProviderConnections } from "./internal/connections/registry.js";
+import type { ConnectionBinding, ProviderConnections } from "./internal/connections/registry.js";
 
 export interface ExecutionDriver {
   start(sessionId: string, runId: string): Promise<void>;
@@ -20,6 +22,25 @@ export interface ExecutionDriver {
   close(): Promise<void>;
 }
 const conflict = (message: string, code = "stale_revision"): never => { throw new AgentApiError(code, message, 409); };
+function sameRetainedAccount(previous: ConnectionBinding, current?: ConnectionBinding | null): current is ConnectionBinding {
+  return !!current && previous.connectionId === current.connectionId && previous.harnessKind === current.harnessKind
+    && previous.connectionIdentity === current.connectionIdentity
+    && (previous.connectionRevision === current.connectionRevision || Boolean(previous.connectionIdentity));
+}
+
+function assertContinuityIdle(record: SessionRecord): void {
+  if (record.retirement) conflict("This native session has been retired.", "session_retired");
+  const pendingContinuation = (value?: { state: string }) => value?.state === "pending" || value?.state === "awaiting_authorization";
+  const busy = Object.values(record.runs).some(run =>
+    run.reservedFor || run.snapshot.phase !== "terminal" || !run.snapshot.stopConfirmed || run.snapshot.effects.certainty !== "known"
+    || run.snapshot.effects.unresolvedCallIds.length || run.snapshot.pending.length
+    || run.snapshot.pendingContinuations?.some(pendingContinuation)
+    || Object.values(run.controls).some(({ receipt }) => receipt.state === "accepted" || receipt.state === "unknown" || pendingContinuation(receipt.continuation))
+    || run.snapshot.agents?.some(child => child.stopConfirmed === false || ["queued", "running", "waiting_for_input", "unknown"].includes(child.state))
+    || (run.input || run.startIntent || run.workspaces?.length) && run.workspaceRelease?.state !== "released");
+  if (record.session.activeRun || busy) conflict("The previous execution still has outstanding work.", "session_busy");
+}
+
 /** Public concurrency and idempotency never depend on an SDK's mutable thread state. */
 export class ProviderController {
   readonly capabilities: AgentCapabilities;
@@ -53,8 +74,99 @@ export class ProviderController {
     const config = await this.configuration(input.configuration, actor, id);
     return this.store.create(id, actor, body, input, config, onFresh);
   }
+  private async continuityRecord(id: string, actor: VerifiedOperation) {
+    const record = await this.store.load(id), original = record.session.ref.provider;
+    if (record.deleted || !sameActor(record.owner, actor) || !sameProvider(actor.provider, this.store.provider)
+      || !sameProvider({ ...original, installationId: this.store.provider.installationId }, this.store.provider))
+      throw new AgentApiError("session_not_found", "Session not found.", 404);
+    return record;
+  }
+
+  private async inspectContinuity(record: SessionRecord, selectedId?: string) {
+    assertContinuityIdle(record);
+    const previous = record.configurations[record.session.configurationRevision]?.binding;
+    if (!previous || selectedId !== undefined && selectedId !== previous.connectionId)
+      throw new AgentApiError("connection_fixed", "The original account binding cannot be confirmed.", 409);
+    const current = await this.connections.binding(previous.connectionId).catch(error => {
+      if (error instanceof ConnectionError && error.code === "provider_not_found") return null;
+      throw new AgentApiError("continuity_unavailable", "The original account cannot be checked now.", 503, true);
+    });
+    if (!sameRetainedAccount(previous, current))
+      throw new AgentApiError("connection_fixed", "The original account binding has changed.", 409);
+    const directory = await this.connections.list().catch(() => {
+      throw new AgentApiError("continuity_unavailable", "The current account is unavailable.", 503, true);
+    });
+    const account = directory.connections.find(value => value.id === previous.connectionId);
+    if (!account || account.revision !== current.connectionRevision)
+      throw new AgentApiError("connection_fixed", "The original account binding has changed.", 409);
+    if (!account.available) throw new AgentApiError("continuity_unavailable", "The current account is unavailable.", 503, true);
+    if (!record.nativeId) return "missing";
+    if (!this.connections.inspectNativeContext) throw new AgentApiError("unsupported_capability", "The provider cannot inspect the original context.", 422);
+    try { return await this.connections.inspectNativeContext(record.id, record.nativeId); }
+    catch (error) {
+      if (error instanceof ConnectionError && error.code === "unsupported_capability")
+        throw new AgentApiError("unsupported_capability", "This native runtime cannot inspect the original thread.", 422);
+      throw new AgentApiError("continuity_unavailable", "The original native thread cannot be checked now.", 503, true);
+    }
+  }
+
+  async readSession(id: string, actor: VerifiedOperation) {
+    if (!this.capabilities.capabilities.includes("session.reconnect")) return (await this.store.load(id, actor)).session;
+    const record = await this.continuityRecord(id, actor);
+    if (sameProvider(record.session.ref.provider, this.store.provider)) return record.session;
+    const nativeState = await this.inspectContinuity(record);
+    return { ...record.session, ref: { provider: this.store.provider, id }, nativeState };
+  }
+
+  private async reconnectSession(id: string, input: AgentConfigurationCreate, body: string, actor: VerifiedOperation, onFresh?: () => void) {
+    const hash = bytesHash(body);
+    const initial = await this.continuityRecord(id, actor);
+    const replay = (record: SessionRecord) => {
+      const receipt = record.configurationRequests[input.requestId];
+      if (!receipt) return false;
+      if (!sameProvider(record.session.ref.provider, this.store.provider) || receipt.hash !== hash)
+        conflict("Configuration request has different input.", "request_conflict");
+      return true;
+    };
+    if (replay(initial)) return initial.session;
+    if (initial.session.revision !== input.expectedSessionRevision) conflict("The session changed.");
+    if (await this.inspectContinuity(initial, input.configuration.connection.id) !== "available")
+      conflict("The original native thread is missing.", "native_session_missing");
+    const configuration = await this.configuration(input.configuration, actor, input.requestId);
+    const previous = initial.configurations[initial.session.configurationRevision]!.binding!;
+    if (!sameRetainedAccount(previous, configuration.binding))
+      conflict("The original account binding has changed.", "connection_fixed");
+    return this.store.exclusive(async () => {
+      const record = await this.continuityRecord(id, actor);
+      const moved = !sameProvider(record.session.ref.provider, this.store.provider);
+      if (replay(record)) return record.session;
+      if (record.session.revision !== input.expectedSessionRevision || record.nativeId !== initial.nativeId) conflict("The session changed.");
+      assertContinuityIdle(record);
+      const revision = increment(record.session.configurationRevision);
+      if (moved) {
+        await this.store.archiveInstallation(record);
+        record.priorRunIds = [...record.priorRunIds ?? [], ...Object.keys(record.runs)];
+        record.runs = {};
+        record.configurations = {};
+        record.configurationRequests = {};
+        // A create from the old installation must never replay as a newly authorized creation.
+        record.hash = hash;
+        record.owner = { userId: actor.userId, principalId: actor.principalId, callerAppId: actor.callerAppId, callerInstallation: actor.callerInstallation };
+      }
+      record.configurations[revision] = configuration;
+      record.configurationRequests[input.requestId] = { hash, revision };
+      record.session = { ...record.session, ref: { provider: this.store.provider, id }, nativeState: "available",
+        revision: increment(record.session.revision), configurationRevision: revision, configurationDigest: configuration.digest,
+        configuration: configuration.configuration, resolvedSkills: configuration.resolvedSkills };
+      await this.store.save(record);
+      onFresh?.();
+      return record.session;
+    });
+  }
+
   async configureSession(id: string, input: AgentConfigurationCreate, body: string, actor: VerifiedOperation, onFresh?: () => void) {
     this.requireCapabilities(input.requiredCapabilities);
+    if (input.requiredCapabilities?.includes("session.reconnect")) return this.reconnectSession(id, input, body, actor, onFresh);
     const hash = bytesHash(body), current = await this.store.load(id, actor), previous = current.configurationRequests[input.requestId];
     if (previous) { if (previous.hash !== hash) conflict("Configuration request has different input.", "request_conflict"); return current.session; }
     if (current.retirement) conflict("This native session has been retired.", "session_retired");

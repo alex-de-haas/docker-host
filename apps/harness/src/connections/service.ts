@@ -8,6 +8,7 @@ export interface ConnectionService {
   list(): Promise<ConnectionDirectory>;
   get(id: string): Promise<AgentConnection>;
   binding(id?: unknown): Promise<ConnectionBinding | null>;
+  resolveCurrentBinding?(saved: ConnectionBinding): Promise<ConnectionBinding | null>;
   reserve(binding: ConnectionBinding): Promise<() => void>;
   setDefault(id: unknown): Promise<void>;
   adapter(binding: ConnectionBinding, docker?: boolean): Promise<HarnessAdapter>;

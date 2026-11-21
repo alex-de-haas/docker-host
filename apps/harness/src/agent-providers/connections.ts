@@ -5,7 +5,7 @@ import { ConnectionError } from "../connections/errors.js";
 import type { HarnessAdapter, HarnessCapabilities } from "../harness/adapter.js";
 import { absentUsage, type ProviderUsage } from "../harness/provider-usage.js";
 import type { CoreAgentBackend } from "./core.js";
-import { AgentConnectionDirectory, agentSelectionId, validAgentSelection } from "./directory.js";
+import { AgentConnectionDirectory, agentConnectionId, agentSelectionId, validAgentSelection } from "./directory.js";
 import type { AgentConnectionSelection, AgentConsumerAuthority, DiscoveredAgentConnection } from "./types.js";
 
 export type AgentConsumerConnectionsOptions = {
@@ -28,12 +28,13 @@ function consumerCapabilities(value: AgentCapabilities, entry: DiscoveredAgentCo
   };
 }
 function view(entry: DiscoveredAgentConnection): AgentConnection & { available: boolean; reason?: string } {
-  return { id: entry.id, name: entry.name, kind: "agent", revision: entry.revision, available: entry.available,
+  return { id: entry.id, name: entry.name, kind: "agent", revision: entry.revision, bindingRevision: agentSelectionId(entry.selection), available: entry.available,
     ...(entry.reason ? { reason: entry.reason } : {}), ...(entry.capabilities ? { capabilities: [...entry.capabilities] } : {}),
     provider: { ...entry.selection.provider, name: entry.providerName } };
 }
-function binding(entry: DiscoveredAgentConnection): ConnectionBinding {
-  return { connectionId: entry.id, connectionRevision: entry.selection.connection.revision, harnessKind: "agent", selection: structuredClone(entry.selection) };
+function binding(selection: AgentConnectionSelection): ConnectionBinding {
+  return { connectionId: agentConnectionId(selection), connectionRevision: selection.connection.revision,
+    connectionIdentity: agentSelectionId(selection), harnessKind: "agent", selection: structuredClone(selection) };
 }
 function providerOwned(): never {
   throw new ConnectionError(409, "provider_owned", "Manage this connection in its provider application's Settings entry in Shell.");
@@ -65,21 +66,30 @@ export class AgentConsumerConnections implements ConnectionService {
     if (id !== undefined && id !== null && typeof id !== "string") throw new ConnectionError(400, "provider_invalid", "Choose a current provider connection.");
     const selected = await this.options.directory.binding(id, this.options.authority);
     if (!selected) return null;
-    return { connectionId: agentSelectionId(selected), connectionRevision: selected.connection.revision, harnessKind: "agent", selection: selected };
+    return binding(selected);
+  }
+  async resolveCurrentBinding(saved: ConnectionBinding): Promise<ConnectionBinding | null> {
+    const entry = await this.options.directory.currentSelection(this.qualified(saved), this.options.authority);
+    return entry ? binding(entry.selection) : null;
+  }
+  migratePreferences(ids: string[]): Promise<Map<string, string>> {
+    return this.options.directory.migratePreferences(ids, this.options.authority);
   }
   async setDefault(id: unknown): Promise<void> {
     if (id !== null && typeof id !== "string") throw new ConnectionError(400, "provider_invalid", "Choose a current provider connection.");
     await this.options.directory.setDefault(id, this.options.authority);
   }
   private qualified(value: ConnectionBinding): AgentConnectionSelection {
-    if (!validAgentSelection(value.selection) || agentSelectionId(value.selection) !== value.connectionId
+    if (!validAgentSelection(value.selection)
+      || ![agentSelectionId(value.selection), agentConnectionId(value.selection)].includes(value.connectionId)
+      || (value.connectionIdentity !== undefined && value.connectionIdentity !== agentSelectionId(value.selection))
       || value.connectionRevision !== value.selection.connection.revision || value.harnessKind !== "agent")
       throw new ConnectionError(409, "provider_cutover_required", "This legacy conversation cannot run. Complete the documented clean cutover and create a new conversation with a current provider connection.");
     return value.selection;
   }
   private async current(value: ConnectionBinding): Promise<DiscoveredAgentConnection> {
     const selected = this.qualified(value);
-    const entry = await this.options.directory.get(value.connectionId, this.options.authority);
+    const entry = await this.options.directory.get(agentConnectionId(selected), this.options.authority);
     if (agentSelectionId(entry.selection) !== agentSelectionId(selected))
       throw new ConnectionError(409, "provider_connection_changed", "Select the current provider installation and account revision.");
     if (!entry.available) throw new ConnectionError(503, "provider_unavailable", entry.reason ?? "Provider connection is unavailable.");
@@ -111,7 +121,7 @@ export class AgentConsumerConnections implements ConnectionService {
     if (selected.available) return selected;
     for (const entry of (await this.options.directory.list(this.options.authority)).connections) {
       if (!entry.available) continue;
-      const candidate = await this.health(binding(entry));
+      const candidate = await this.health(binding(entry.selection));
       if (candidate.available) return { ...candidate, name: "Agent providers" };
     }
     return selected;

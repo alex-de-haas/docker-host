@@ -1,6 +1,6 @@
 ---
 created: 2026-09-17
-updated: 2026-11-20
+updated: 2026-11-21
 summary: Harness discovers independent local agent providers and pins qualified accounts while provider applications own credentials, native execution and history.
 components: [apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime]
 ---
@@ -95,11 +95,11 @@ and [speech generation](https://developers.openai.com/api/docs/guides/text-to-sp
 
 ## Chats And Capabilities
 
-Harness connection entries expose a neutral `agent` kind, an opaque selection ID, display name,
-readiness and declared capabilities. A binding contains the provider app ID, installation ID and
-interface key together with the provider account ID and decimal-string revision. Neither names,
-vendor-looking IDs nor native paths select a provider or confer authority. Reinstalling a provider
-or replacing an account requires a current qualified selection.
+Harness connection entries expose a neutral `agent` kind, an opaque logical connection ID,
+display name, readiness and declared capabilities. Harness derives the logical ID from the
+provider application, interface key, optional implementation ID and provider-owned account
+ID. Each execution binds the exact installation and decimal-string account revision. Older
+selection hashes resolve only with matching qualified evidence and a unique current account.
 
 A new chat takes the explicitly configured Harness default unless its creation request or profile
 selects another connection. The composer applies an empty chat's dropdown selection immediately
@@ -113,7 +113,10 @@ qualified account binding and public provider session/run references. Native SDK
 processes and discovery homes remain provider-owned. Model and reasoning changes between turns
 use the selected provider's current catalog and declared capabilities. Missing providers, changed
 accounts and unavailable models fail explicitly; aggregate readiness never authorizes substituting
-another connection.
+another connection. After a reinstall, ordinary owner Send can resume an exact context verified
+by the current provider. Agent settings also offers explicit recovery or a fresh context with
+a reviewed connection and model for this provider in the existing chat.
+[Recovery after provider reinstallation](../provider-reinstallation-recovery/feature.md)
 
 Harness explicitly captures Core-provenanced platform introduction text and adds the platform
 package before its first provider configuration, alongside the operator's optional profile skills.

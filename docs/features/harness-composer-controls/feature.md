@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-20
+updated: 2026-11-21
 summary: Responsive composer controls with a durable message stack, transcript suggestions, shared agent settings and capability-aware dictation.
 components: [apps/harness]
 ---
@@ -39,6 +39,12 @@ and exact provider/account appear as read-only rows with a lock and explanation.
 profile also fixes its provider before start. Accepted tasks retain immutable selection controls.
 The panel remains readable while editing is unavailable. Choosing a different provider keeps the
 common panel open and replaces the model catalog for that binding.
+In a started chat, **Change session context…** opens the current connections for that provider.
+The owner can inspect models, resume a verified native context after reinstallation, or review
+and explicitly confirm a new context. Earlier messages remain visible. Cancel preserves the
+selection and draft. When a connection is unavailable, the dialog offers refresh and account
+setup guidance. A managed task directs the owner to start a new attempt.
+[Recovery after provider reinstallation](../provider-reinstallation-recovery/feature.md)
 
 Model choices use a bounded scrolling picker. Reasoning levels come from the selected model's
 catalog, in catalog order; they are not promises about price, latency or token budget. Multiple
@@ -177,6 +183,9 @@ recording available.
 
 - Preserve provider default adoption, legacy account confirmation, credential revision recovery,
   profile/task locks and concurrent configuration revision ordering.
+- Open the context dialog from a failed chat, preview candidate-specific models, cancel a fresh
+  start and preserve the draft. Test verified resume, a lost confirmation response, replay of the
+  exact reviewed request and a visible context boundary with earlier unanswered decisions.
 - Verify slider keyboard focus, pointer preview versus commit, explicit Default, binary thinking,
   single-level and unsupported catalogs, unavailable values, retries and save failure.
 - Verify remembered manual pairs and autonomy across new-chat entry points, per-user and per-provider

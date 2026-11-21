@@ -196,6 +196,7 @@ Plans: 14 In Progress · 2 Blocked · 45 Draft · 9 On Hold.
 - [Private Distribution Access](features/private-distribution-access/plan.md) — Authenticate private feeds, release assets and container registries independently of source access. · Draft, 0/4, updated 2026-09-28
 - [Profile-Based Task Delegation](features/profile-task-delegation/feature.md) — Harness task trees select saved profiles or scoped configurations, retain execution history and coordinate optional source access through Core.
 - [Provider Consumption And Speech](features/provider-consumption/feature.md) — Apps publish named interface implementations under scoped Core authority so Harness users can choose where to send dictation and text for read-aloud.
+- [Recover a Harness chat after provider reinstallation](features/provider-reinstallation-recovery/feature.md) — Harness restores a verified provider context after reinstallation or lets the owner explicitly start a fresh context in the same chat.
 - [Feature: Public Origins](features/public-origins/feature.md) — An endpoint's public origin is a durable property of the endpoint that exists before the app first starts.
 - [Raw L4 Port Publishing](features/raw-ports/feature.md) — A docker service port can opt into publishing on all interfaces over TCP and UDP with expose and transport.
 - [Recorded MCP Call Diagnostics](features/recorded-mcp-calls/feature.md) — Transcript-derived MCP call counts and conservative outcomes separated from context and definition estimates.

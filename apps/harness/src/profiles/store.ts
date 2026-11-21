@@ -28,7 +28,8 @@ export class ProfileStore {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly file: string;
   constructor(directory: string, private readonly initial: () => Promise<AgentProfileConfig>,
-    private readonly catalog: () => Promise<string[] | null> = async () => null) { this.file = path.join(directory, "agent-profiles.json"); }
+    private readonly catalog: () => Promise<string[] | null> = async () => null,
+    private readonly migrateConnections?: (ids: string[]) => Promise<Map<string, string>>) { this.file = path.join(directory, "agent-profiles.json"); }
   private serial<T>(action: () => Promise<T>): Promise<T> {
     const task = this.queue.then(action); this.queue = task.catch(() => {}); return task;
   }
@@ -55,16 +56,24 @@ export class ProfileStore {
   }
   private async current(): Promise<ProfileDirectory> {
     const state = await this.load();
-    const ids = await this.catalog().catch(() => null);
-    if (ids === null) return { ...state, catalogUnavailable: true };
-    if (!validSkillIds(ids)) throw new Error("Invalid skill catalog; existing profile selections were retained.");
-    const available = new Set(ids); let changed = false;
+    const [ids, migrated] = await Promise.all([
+      this.catalog().catch(() => null),
+      this.migrateConnections?.(state.profiles.flatMap(profile => profile.connectionId ? [profile.connectionId] : [])).catch(() => undefined),
+    ]);
+    if (ids !== null && !validSkillIds(ids)) throw new Error("Invalid skill catalog; existing profile selections were retained.");
+    const available = ids && new Set(ids);
+    let changed = false;
     for (const profile of state.profiles) {
-      const selected = profile.skillIds.filter(id => available.has(id));
-      if (selected.length !== profile.skillIds.length) { profile.skillIds = selected; profile.revision++; changed = true; }
+      const selected = available ? profile.skillIds.filter(id => available.has(id)) : profile.skillIds;
+      const connectionId = migrated?.get(profile.connectionId ?? "") ?? profile.connectionId;
+      if (selected.length === profile.skillIds.length && connectionId === profile.connectionId) continue;
+      profile.skillIds = selected;
+      profile.connectionId = connectionId;
+      profile.revision++;
+      changed = true;
     }
     if (changed) { state.revision++; await this.write(state); }
-    return state;
+    return ids === null ? { ...state, catalogUnavailable: true } : state;
   }
   read(): Promise<ProfileDirectory> { return this.serial(() => this.current()); }
   select(id?: unknown, revision?: unknown): Promise<AgentProfile | null> {
