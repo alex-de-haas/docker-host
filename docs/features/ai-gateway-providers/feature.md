@@ -1,6 +1,6 @@
 ---
 created: 2026-09-17
-updated: 2026-11-20
+updated: 2026-11-21
 summary: Harness discovers independent local agent providers and pins qualified accounts while provider applications own credentials, native execution and history.
 components: [apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime]
 ---
@@ -79,7 +79,8 @@ it does not install/start Ollama, download model weights or change the server's 
 ### Speech on Codex API connections
 
 Codex Provider 0.5.0 gives each managed OpenAI API-key connection independent **Provide speech to text** and
-**Provide text to speech** switches, initially off. Enabling a switch publishes one named
+**Provide text to speech** switches, initially off. The API-key connection row shows the saved On or Off state
+of each switch. Enabling a switch publishes one named
 implementation under that speech interface. The connection name supplies the user-facing label.
 Renaming preserves the selection. Rotating its API key changes its published identity. Removing
 the connection or disabling a switch withdraws the corresponding choice. Users of ChatGPT
