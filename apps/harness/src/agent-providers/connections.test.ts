@@ -5,7 +5,7 @@ import path from "node:path";
 import type { AgentCapabilities, AgentConnectionUsage, AgentModelCatalog } from "@hosty-sdk/app/agent";
 import type { HarnessAdapter, HarnessCapabilities } from "../harness/adapter.js";
 import { AgentConsumerConnections } from "./connections.js";
-import { AgentConnectionDirectory } from "./directory.js";
+import { AgentConnectionDirectory, agentSelectionId } from "./directory.js";
 import type { AgentConnectionEntry, AgentConnectionSelection, AgentDirectoryBackend } from "./types.js";
 
 const roots: string[] = [];
@@ -60,7 +60,7 @@ describe("independent provider connection facade", () => {
     const id = (await f.connections.list()).connections[0]!.id;
     await f.connections.setDefault(id);
     const selected = (await f.connections.binding())!;
-    expect(selected).toEqual({ connectionId: id, connectionRevision: "9007199254740994", harnessKind: "agent",
+    expect(selected).toEqual({ connectionId: id, connectionIdentity: agentSelectionId(selected.selection!), connectionRevision: "9007199254740994", harnessKind: "agent",
       selection: { provider: f.provider, connection: { id: "real-account", revision: "9007199254740994" } } });
     expect(typeof await f.connections.reserve(selected)).toBe("function");
     const adapter = await f.connections.adapter(selected);
@@ -71,6 +71,27 @@ describe("independent provider connection facade", () => {
     await expect(f.connections.reserve(selected)).rejects.toMatchObject({ code: "provider_connection_changed" });
     await expect(f.connections.adapter({ ...selected, harnessKind: "codex" })).rejects.toMatchObject({ code: "provider_cutover_required" });
     expect(f.adapter).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves new catalog bindings while old executions still require the original installation", async () => {
+    const f = await fixture();
+    const row = (await f.connections.list()).connections[0]!;
+    const original = (await f.connections.binding(row.id))!;
+    const legacy = { ...original, connectionId: original.connectionIdentity!, connectionIdentity: undefined };
+    expect(typeof await f.connections.reserve(legacy)).toBe("function");
+    f.provider.installationId = "replacement";
+    const current = (await f.connections.resolveCurrentBinding(legacy))!;
+    expect(current.connectionId).toBe(row.id);
+    expect(current.connectionIdentity).not.toBe(original.connectionIdentity);
+    await f.connections.models(current.connectionId);
+    expect(f.backend.models).toHaveBeenCalledWith(f.provider, original.selection!.connection.id, f.authority);
+    for (const old of [legacy, original]) {
+      await expect(f.connections.reserve(old)).rejects.toMatchObject({ code: "provider_connection_changed" });
+      await expect(f.connections.adapter(old)).rejects.toMatchObject({ code: "provider_connection_changed" });
+    }
+    f.setAccounts([{ id: "real-account", revision: "2", name: "Account", available: false }]);
+    expect(await f.connections.resolveCurrentBinding(original)).toBeNull();
+    await expect(f.connections.binding(row.id)).rejects.toMatchObject({ code: "provider_unavailable" });
   });
 
   it("maps public models and treats undeclared usage as optional without a diagnostic request", async () => {

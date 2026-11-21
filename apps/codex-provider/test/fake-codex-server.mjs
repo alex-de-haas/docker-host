@@ -16,6 +16,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 // The adapter also drives `login status` / `login --with-api-key` for the API-key auth mode, and
 // both must respect CODEX_HOME — the whole point of that mode is that it never writes into the
@@ -63,6 +64,7 @@ let pendingApprovalId = null;
 let pendingQuestion = false;
 let pendingApprovalScope = { itemId: "exec-1", turnId: "turn-1" };
 let currentTurnText = "";
+const uniqueThreads = process.env.TEST_UNIQUE_THREAD_IDS === "1" || process.env.HOSTY_TEST_UNIQUE_THREAD_IDS === "1";
 let activeThreadId = "thread-fake-1";
 let proposalTurn = 0;
 let initialized = false;
@@ -221,7 +223,9 @@ function handle(msg) {
     if (typeof msg.params?.sandbox !== "string") {
       fail("thread/start sandbox must be a plain string");
     }
-    send({ jsonrpc: "2.0", id: msg.id, result: { threadId: "thread-fake-1" } });
+    if (uniqueThreads) activeThreadId = randomUUID();
+    if (uniqueThreads && codexHome && existsSync(codexHome)) writeFileSync(path.join(codexHome, "fixture-thread"), activeThreadId);
+    send({ jsonrpc: "2.0", id: msg.id, result: { threadId: activeThreadId } });
     return;
   }
 
@@ -248,8 +252,20 @@ function handle(msg) {
     return;
   }
 
+  if (msg.method === "thread/read") {
+    const file = codexHome && path.join(codexHome, "fixture-thread");
+    if (file && existsSync(file) && readFileSync(file, "utf8") === msg.params.threadId)
+      send({ id: msg.id, result: { thread: { id: msg.params.threadId } } });
+    else send({ id: msg.id, error: { code: -32600, message: `thread not loaded: ${msg.params.threadId}` } });
+    return;
+  }
   if (msg.method === "thread/resume") {
+    if (process.env.HOSTY_FAKE_CODEX_REJECT_RESUME === "null") { send({ id: msg.id, result: null }); return; }
     if (process.env.HOSTY_FAKE_CODEX_REJECT_RESUME === "1") { send({ id: msg.id, error: { code: -32000, message: "fixture resume refused" } }); return; }
+    if (uniqueThreads && (!codexHome || !existsSync(path.join(codexHome, "fixture-thread")) || readFileSync(path.join(codexHome, "fixture-thread"), "utf8") !== msg.params?.threadId)) {
+      send({ id: msg.id, error: { code: -32600, message: "No retained fixture thread." } });
+      return;
+    }
     activeThreadId = msg.params?.threadId ?? "thread-fake-1";
     send({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: activeThreadId } } });
     return;
@@ -364,7 +380,12 @@ function handle(msg) {
       }).catch(error => fail(error.message));
       return;
     }
-    if (currentTurnText.startsWith("[Hosty operator instructions]")) currentTurnText = currentTurnText.slice(currentTurnText.lastIndexOf("\n\n") + 2);
+    if (currentTurnText.startsWith("[Hosty operator instructions]")) {
+      // File references follow the user message, each after another blank line.
+      const attachment = currentTurnText.indexOf('\n\nUser attachment "');
+      const boundary = currentTurnText.lastIndexOf("\n\n", attachment < 0 ? currentTurnText.length : attachment - 1);
+      currentTurnText = currentTurnText.slice(boundary + 2);
+    }
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
 
     if (currentTurnText.startsWith("question-")) {
@@ -549,6 +570,9 @@ function handle(msg) {
 
     if (currentTurnText.includes("mcp")) {
       // Shape verified with `app-server generate-ts` on Codex 0.153.4 (2026-09-16).
+      const marker = currentTurnText.match(/MCP_OUTPUT_MARKER_([a-f0-9]{32})/);
+      const scope = marker ? { threadId: activeThreadId, turnId: "turn-1" } : {};
+      if (marker) send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: "turn-1" } } });
       const failed = currentTurnText.includes("failed");
       const underscores = currentTurnText.includes("underscores");
       for (const [tool, args] of [[underscores ? "get__item" : "list_apps", {}], ["get_app", { app_id: "com.haas.demo-app" }]]) {
@@ -557,12 +581,12 @@ function handle(msg) {
           arguments: args, status: "inProgress", result: null, error: null, durationMs: null,
           appContext: null, pluginId: null, readOnlyHint: true,
         };
-        send({ jsonrpc: "2.0", method: "item/started", params: { item } });
+        send({ jsonrpc: "2.0", method: "item/started", params: { ...scope, item } });
         send({
           jsonrpc: "2.0", method: "item/completed",
-          params: { item: {
+          params: { ...scope, item: {
             ...item, status: failed ? "failed" : "completed", durationMs: 10,
-            result: failed ? null : { content: [{ type: "text", text: "app data" }] },
+            result: failed ? null : { content: [{ type: "text", text: marker ? `tool-result-${marker[1]}` : "app data" }] },
             error: failed ? { message: "MCP server unavailable" } : null,
           } },
         });

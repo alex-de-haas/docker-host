@@ -1,6 +1,6 @@
 ---
 created: 2026-10-25
-updated: 2026-11-20
+updated: 2026-11-21
 summary: Core workspaces support concurrent private sessions, permission-based source access, attributable activity and independent conversation lifetimes.
 components: [apps/core, apps/harness]
 ---
@@ -152,7 +152,12 @@ update participation without duplicating source subscriptions per session.
 
 Deleting a chat stops and detaches only that chat and removes its private history and cache. For an
 owner-confirmed Delete, a provider that verifies native exit can retire the execution even when
-some tool outcomes remain unknown. Delete waits for the original execution claims to release.
+some tool outcomes remain unknown. When Harness has already recorded a terminal run with
+confirmed Stop and all tool outcomes accounted for, the owner can delete its history after
+reinstalling the provider. Pending commands, continuations and outstanding execution claims
+still require reconciliation. Delete waits for the original execution claims to release.
+If Stop leaves unresolved tool outcomes and the provider lacks retirement support, the deletion
+dialog identifies the original provider to update. The owner can retry Delete after the update.
 An unverified execution requires a confirmed Stop. Dirty shared source and other sessions survive,
 including deletion of the original creator's chat. The [provider retirement contract](../agent-provider-interface/feature.md)
 covers retained evidence and retry behavior.
@@ -177,6 +182,8 @@ fresh consumer checks.
   Confirm Delete targets the chosen own chat, preserves source, and retains errors in its dialog.
   Verify that retained terminal runs with unresolved outcomes use the same confirmation and that an
   unverified execution continues to hold its resource claims.
+- The `agent-providers` integration suite reinstalls the provider after a successful turn, confirms
+  its installation ID changed and checks that the owner can delete the old chat and read a sibling chat.
 - Verify direct creation from the plus and attachment from its adjacent icon, excluding bound/active chats;
   preserve private chat boundaries, retry identity, dialog focus return and workspace-switch isolation.
 

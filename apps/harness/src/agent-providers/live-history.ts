@@ -12,7 +12,7 @@ type Ancestry = { generation: string; cursor?: string };
 type Delivery = {
   match(sessionId: string, userId: string): string | undefined;
   bindings(): { id: string; sessionId: string; userId: string }[];
-  invalid(id: string): Promise<void>;
+  invalid(id: string, sessionId: string): Promise<void>;
   ready(): Promise<void>;
   receive(id: string, fact: HistoryReceipt): Promise<void>;
   state(id: string, state: AgentHistorySessionState): Promise<void>;
@@ -56,14 +56,14 @@ async function backfill(connection: Connection, provider: AgentProviderRef, thro
       signal.throwIfAborted();
       const { sessionId, epoch, head, userId } = state, id = delivery.match(sessionId, userId);
       if (!id) continue;
-      listed.add(id);
+      listed.add(sessionId);
       try { await delivery.state(id, state); }
-      catch (error) { signal.throwIfAborted(); await delivery.invalid(id); }
+      catch (error) { signal.throwIfAborted(); await delivery.invalid(id, sessionId); }
       // If the local transcript or its receipts need recovery, preserve this session's facts
       // through the destination inbox while the other sessions continue independently.
       const gaps = await coverage.observeHead(id, provider, { sessionId, epoch, generation }, head, through).catch(async () => {
         signal.throwIfAborted();
-        await delivery.invalid(id);
+        await delivery.invalid(id, sessionId);
         return head ? [{ from: 1, to: head, unavailable: false }] : [];
       });
       for (const gap of gaps) {
@@ -73,7 +73,7 @@ async function backfill(connection: Connection, provider: AgentProviderRef, thro
     afterSession = page.nextSession ?? undefined;
   } while (afterSession);
   for (const { id, sessionId, userId } of delivery.bindings()) {
-    if (listed.has(id) || delivery.match(sessionId, userId) !== id) continue;
+    if (listed.has(sessionId) || delivery.match(sessionId, userId) !== id) continue;
     signal.throwIfAborted();
     for (const gap of await coverage.unlisted(id, provider, sessionId, generation))
       jobs.push({ id, userId, sessionId, epoch: gap.epoch, from: gap.from, to: gap.to, through: gap.through ?? through });

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-11-12
+updated: 2026-11-21
 summary: Shared Harness agent configurations with connection, model, reasoning, role instructions and explicit skills, selectable before a conversation starts.
 components: [apps/harness]
 ---
@@ -36,12 +36,13 @@ Unavailable connections/models produce errors rather than substitutions. Failed 
 saved selections. Profile-list loading is independent of connection discovery.
 
 Connection choices come from the [agent provider directory](../agent-provider-interface/feature.md).
-The selected ID represents an installation-qualified provider interface, provider account ID and
-decimal-string account revision. It is an opaque Harness selection, not a native engine name or
-credential path. Configure accounts and sign-in in the provider application's Settings entry in
-Shell. Harness profiles keep the selected reference and obtain models/efforts through that
-provider's public interface. A provider reinstall or account revision change requires a current
-selection; a matching display name does not restore an old binding.
+A profile stores the logical connection ID for the provider app, interface, optional named
+implementation and account. Configure accounts and sign-in in the provider application's Settings
+entry in Shell. Models and efforts come from its public interface. Harness resolves supported
+older profile references using exact retained selections and a unique current match. Each
+execution binds the current installation and account revision. If an old preference cannot be
+resolved, the operator selects the account explicitly.
+[Provider reinstallation recovery](../provider-reinstallation-recovery/feature.md)
 
 Common instructions remain under Instructions and retention. Role instructions are additional
 standing guidance. Before its first provider configuration, Harness reads and validates
@@ -112,8 +113,9 @@ deleted. Session ownership, workspace associations and retention keep their exis
 Harness persists the qualified provider selection, public session/run references and replay
 watermark; native continuation and immutable skill snapshots belong to the selected provider.
 Restarting Harness reattaches to the same public run without replaying accepted input. Missing
-native state or an unresolved prior execution blocks a new turn. Legacy pre-extraction
-conversations are rejected by the clean-cutover guard and are not imported or rebound through a
+native state blocks resuming that context. The owner can explicitly choose a fresh context
+when pending execution and resource checks permit it. The stored role and instructions carry
+over to the new context. Legacy pre-extraction conversations are rejected by the clean-cutover guard and are not imported or rebound through a
 profile. Planner-to-developer work uses separate conversations and existing workspace association.
 
 ## Administrator API
@@ -207,7 +209,7 @@ Verified on macOS, 2026-10-26, for Harness 0.71.0 → 0.72.0:
   profile changes after admission, including concurrent send/switch requests.
 - Verify instruction snapshots, native resume and creation replay after profile deletion/restart;
   manual no-profile sessions must not inherit old global skill defaults.
-- Keep provider/account references installation-qualified and account revisions as decimal strings;
+- Keep execution bindings installation-qualified and account revisions as decimal strings;
   reject stale installations and credentials without choosing a provider by name or vendor kind.
 - Verify immutable skill snapshots per public provider configuration: library changes do not
   rewrite an existing pin, and missing/deleted selections or changed snapshot bytes fail closed.

@@ -15,6 +15,7 @@ export type AgentConnection = {
   name: string;
   kind: AgentKind;
   revision: string | number;
+  bindingRevision?: string;
   capabilities?: string[];
   provider?: AgentConnectionSelection["provider"] & { name?: string };
 };

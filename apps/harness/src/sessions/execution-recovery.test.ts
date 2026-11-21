@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { AgentApiError } from "@hosty-sdk/app/agent";
+import { AgentClient, prepareAgentControl } from "@hosty-sdk/app/agent/client";
 import { publicProviderFixture, type PublicProviderFixture } from "../agent-providers/test-fixture.js";
 import { DevelopmentClient } from "./development.js";
 import { AgentSessionService } from "../agent-sessions/service.js";
@@ -100,6 +102,93 @@ it("rejects another actor before reading or controlling the provider execution",
   await expect(f.manager.executionRecovery(f.session.id, "another-user")).rejects.toMatchObject({ code: "session_not_found" });
   await expect(f.manager.recoverExecution(f.session.id, "another-user", { requestId: randomUUID(), consumerExitConfirmed: true })).rejects.toMatchObject({ code: "session_not_found" });
   expect(f.requests).toHaveLength(reads);
+  expect(f.controls).toEqual([]);
+});
+
+it.each(["succeeded", "failed", "cancelled"] as const)("deletes a %s conversation after provider reinstall without contacting its replacement", async outcome => {
+  const f = await fixture();
+  if (outcome === "succeeded") f.complete(f.runId);
+  else if (outcome === "failed") f.update(f.runId, { state: "failed", phase: "terminal", stopConfirmed: true, result: { status: "failed" } });
+  else await f.manager.cancelSession(f.session.id);
+  await vi.waitFor(async () => expect(await f.store.readRecord(f.session.id)).toMatchObject({
+    status: outcome === "succeeded" ? "idle" : outcome, providerStopProof: { runId: f.runId },
+  }));
+  await f.manager.shutdown();
+  f.provider.installationId = "replacement-installation";
+  const { manager, store } = f.makeManager();
+  const authorizations = f.authorizations.length, controls = f.controls.length;
+  await expect(manager.deleteSession(f.session.id, "another-owner", f.credential, true)).rejects.toMatchObject({ code: "session_not_found" });
+  await expect(manager.deleteSession(f.session.id, f.owner, f.credential, true)).resolves.toBe(true);
+  expect(await store.readRecord(f.session.id)).toBeNull();
+  expect(f.authorizations).toHaveLength(authorizations);
+  expect(f.controls).toHaveLength(controls);
+});
+
+it("can delete a settled chat on the same Harness instance after Stop fails to reach its original provider", async () => {
+  const f = await fixture();
+  f.complete(f.runId);
+  await vi.waitFor(async () => expect((await f.store.readRecord(f.session.id))?.providerStopProof?.runId).toBe(f.runId));
+  await f.manager.shutdown();
+  const { manager, store } = f.makeManager();
+  await manager.refreshSessionCredentials(f.session.id, f.owner, f.credential);
+  const before = await store.readProviderExecution(f.session.id);
+  const reads = vi.spyOn(AgentClient.prototype, "run").mockRejectedValue(
+    new AgentApiError("provider_unavailable", "The provider installation changed.", 503));
+  await expect(manager.cancelSession(f.session.id)).rejects.toMatchObject({ code: "provider_unavailable" });
+  expect(await store.readProviderExecution(f.session.id)).toEqual(before);
+  const calls = reads.mock.calls.length;
+  await expect(manager.deleteSession(f.session.id, f.owner, f.credential, true)).resolves.toBe(true);
+  expect(reads).toHaveBeenCalledTimes(calls);
+  expect(f.controls).toEqual([]);
+  expect(await store.readRecord(f.session.id)).toBeNull();
+});
+
+it("deletes after owner sign-in when a cold retention sweep could not verify an already stopped conversation", async () => {
+  const f = await fixture();
+  f.complete(f.runId);
+  await vi.waitFor(async () => expect((await f.store.readRecord(f.session.id))?.providerStopProof?.runId).toBe(f.runId));
+  await f.manager.shutdown();
+  f.provider.installationId = "replacement-installation";
+  const { manager, store } = f.makeManager();
+  const before = await store.readProviderExecution(f.session.id);
+  expect(await manager.sweepRetention(new Date("2100-01-01T00:00:00Z"), f.session.id)).toEqual([]);
+  expect((await store.readRecord(f.session.id))?.retention).toMatchObject({ state: "blocked", message: expect.stringContaining("Refresh Hosty sign-in") });
+  expect(await store.readProviderExecution(f.session.id)).toEqual(before);
+  await manager.refreshSessionCredentials(f.session.id, f.owner, f.credential);
+  const authorizations = f.authorizations.length;
+  expect(await manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
+  expect(f.authorizations).toHaveLength(authorizations);
+  expect(f.controls).toEqual([]);
+  expect(await store.readRecord(f.session.id)).toBeNull();
+});
+
+it.each(["control", "continuation", "snapshot reservation", "admission"] as const)("retains a completed conversation with a pending %s after provider reinstall", async pending => {
+  const f = await fixture();
+  f.complete(f.runId);
+  await vi.waitFor(async () => expect((await f.store.readRecord(f.session.id))?.providerStopProof?.runId).toBe(f.runId));
+  await f.manager.shutdown();
+  const state = (await f.store.readProviderExecution(f.session.id))!;
+  const snapshot = state.run!, requestId = randomUUID();
+  if (pending === "control") {
+    const request = prepareAgentControl(f.runId, { command: "predictions", enabled: false, requestId,
+      expectedGeneration: snapshot.generation, expectedRevision: snapshot.revision });
+    state.mutations = { [request.bodyHash]: request };
+  } else if (pending === "continuation") {
+    state.continuations = { [requestId]: { requestId, sourceRunId: f.runId, state: "awaiting_authorization",
+      run: { provider: snapshot.ref.provider, id: randomUUID() }, input: state.lastRunInput!.input } };
+  } else if (pending === "snapshot reservation") {
+    snapshot.pendingContinuations = [{ requestId, state: "pending", run: { provider: snapshot.ref.provider, id: randomUUID() } }];
+  } else {
+    const record = (await f.store.readRecord(f.session.id))!;
+    record.sourceAdmission = { clientRequestId: requestId, previousProviderRunId: f.runId, runId: randomUUID(), state: "dispatching" };
+    await f.store.saveRecord(record);
+  }
+  await f.store.saveProviderExecution(f.session.id, state);
+  f.provider.installationId = "replacement-installation";
+  const { manager, store } = f.makeManager();
+  await expect(manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toMatchObject({ code: "provider_changed" });
+  expect(await store.readRecord(f.session.id)).toBeTruthy();
+  expect(await store.readProviderExecution(f.session.id)).toMatchObject(state);
   expect(f.controls).toEqual([]);
 });
 
@@ -245,6 +334,31 @@ it("uses the same Delete confirmation when Stop leaves unresolved effects", asyn
   expect(f.controls.map(control => control.input.command ?? "cancel")).toEqual(["cancel", "retire"]);
   expect(await f.store.readRecord(f.session.id)).toBeNull();
   expect(f.starts).toHaveLength(1);
+});
+
+it("identifies the original provider to update after Stop leaves unresolved tool outcomes", async () => {
+  const f = await fixture();
+  f.capabilities.capabilities = f.capabilities.capabilities.filter(value => value !== "runs.retire");
+  f.behavior.cancel = "unresolved";
+  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toMatchObject({
+    code: "retirement_unsupported", status: 409, message: expect.stringContaining(f.provider.appId),
+  });
+  expect(f.controls.map(control => control.input.command ?? "cancel")).toEqual(["cancel"]);
+  expect((await f.store.readEvents(f.session.id)).some(event => event.text === "Original immutable input")).toBe(true);
+  expect(f.snapshot(f.runId)).toMatchObject({ stopConfirmed: false, effects: { unresolvedCallIds: ["command"] } });
+
+  f.capabilities.capabilities.push("runs.retire");
+  f.behavior.retire = "confirmed";
+  expect(await f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
+  expect(f.controls.map(control => control.input.command ?? "cancel")).toEqual(["cancel", "retire"]);
+  expect(f.starts).toHaveLength(1);
+});
+
+it("deletes through confirmed Stop when the original provider lacks retirement support", async () => {
+  const f = await fixture(); await f.interrupt();
+  f.capabilities.capabilities = f.capabilities.capabilities.filter(value => value !== "runs.retire");
+  expect(await f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
+  expect(f.controls.map(control => control.input.command ?? "cancel")).toEqual(["cancel"]);
 });
 
 it.each([true, false])("keeps a run with unverified exit when Stop fails (interactive owner %s)", async interactive => {

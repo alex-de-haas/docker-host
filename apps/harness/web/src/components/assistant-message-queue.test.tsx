@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AssistantConversation } from "./assistant-conversation";
 import * as api from "@/lib/assistant-api";
+import { connectionModels } from "@/lib/profiles-api";
 import { clearEditDraft, listPreservedDrafts, preserveDraft, readEditDraft, saveEditDraft, type EditDraft, type OutboxEntry, type PreservedDraft } from "@/lib/message-outbox";
 import type { MessageQueue, QueueCommand, QueueCommandReply, QueueEntry } from "@/lib/message-queue-api";
 
@@ -16,7 +17,9 @@ vi.mock("@/lib/use-message-queue", async () => {
 });
 vi.mock("@/lib/prompt-suggestions", () => ({ usePromptSuggestions: () => controls.suggestionHook }));
 vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(),
-  listAppNames: vi.fn(), listAgentConnections: vi.fn(), streamEvents: vi.fn(), postMessage: vi.fn(), getMessageReceipt: vi.fn(), uploadAttachment: vi.fn() }));
+  listAppNames: vi.fn(), listAgentConnections: vi.fn(), streamEvents: vi.fn(), postMessage: vi.fn(), getMessageReceipt: vi.fn(), uploadAttachment: vi.fn(),
+  getSessionModels: vi.fn(), getSessionContextOptions: vi.fn(), changeSessionContext: vi.fn() }));
+vi.mock("@/lib/profiles-api", async original => ({ ...await original<object>(), connectionModels: vi.fn() }));
 vi.mock("@/lib/message-outbox", async original => ({ ...await original<object>(),
   readEditDraft: vi.fn(async () => controls.stored), saveEditDraft: vi.fn(async value => {
     const previous = controls.stored as EditDraft | undefined;
@@ -97,6 +100,66 @@ beforeEach(() => {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it("uses the normal composer Send with a reinstalled account's current model catalog", async () => {
+  const restored = { ...session, status: "idle", providerLocked: true, connectionId: "legacy-selection",
+    connectionRevision: "1", executionSelection: { model: "shared-model", reasoningEffort: null } };
+  vi.mocked(api.listSessions).mockResolvedValue([restored]); vi.mocked(api.getSession).mockResolvedValue(restored);
+  vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "current", models: [{ id: "shared-model", label: "Restored model", efforts: [] }] });
+  update({ ...blank(), paused: false });
+  await mount(); await write("Continue the thread");
+  expect(button("Agent settings: Restored model · Default effort")).toBeDefined();
+  expect(button("Send").disabled).toBe(false);
+  await click("Send");
+  expect(enqueue).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ text: "Continue the thread", files: [], attachments: [] }));
+  expect(api.changeSessionContext).not.toHaveBeenCalled();
+  expect(api.getSessionContextOptions).not.toHaveBeenCalled();
+});
+
+it("keeps context settings reachable when the original model disappeared and the provider is offline", async () => {
+  const old = { ...session, status: "failed", providerLocked: true, connectionId: "retained-selection", connectionRevision: "1",
+    executionSelection: { model: "retired-model", reasoningEffort: null } };
+  vi.mocked(api.listSessions).mockResolvedValue([old]); vi.mocked(api.getSession).mockResolvedValue(old);
+  vi.mocked(api.getHealth).mockResolvedValue({ name: "Agent", available: false, reason: "Provider offline" });
+  vi.mocked(api.getSessionModels).mockRejectedValueOnce(new api.AssistantApiError("provider_unavailable", "Provider offline", 503));
+  vi.mocked(api.getSessionContextOptions).mockRejectedValueOnce(new api.AssistantApiError("provider_unavailable", "Provider offline", 503))
+    .mockResolvedValueOnce({ currentConnectionId: "current", selectionRevision: 3,
+      connections: [{ id: "current", name: "Original account", bindingRevision: "current-binding", canResume: true }] });
+  vi.mocked(connectionModels).mockResolvedValueOnce({ revision: "current", models: [{ id: "new-model", label: "New model", efforts: [] }] });
+  await mount(); await write("My draft");
+  await click("Agent settings: retired-model (unavailable) · Default effort");
+  const dialogButton = (label: string) => [...document.querySelectorAll("button")].find(b => b.textContent === label)!;
+  await act(async () => dialogButton("Change session context…").click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Provider offline");
+  expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("Configure an account");
+  await act(async () => dialogButton("Refresh connections").click());
+  const model = [...document.querySelectorAll("label")].find(node => node.firstChild?.textContent === "Model")!.querySelector("select")!;
+  expect([...model.options].find(o => o.value === "retired-model")?.disabled).toBe(true);
+  expect(dialogButton("Review verified resume").disabled).toBe(true);
+  await act(async () => { model.value = "new-model"; model.dispatchEvent(new Event("change", { bubbles: true })); });
+  expect(dialogButton("Review verified resume").disabled).toBe(false);
+  await act(async () => dialogButton("Cancel").click());
+  expect(input().value).toBe("My draft"); expect(enqueue).not.toHaveBeenCalled(); expect(api.changeSessionContext).not.toHaveBeenCalled();
+});
+
+it("keeps an old prompt suggestion in the transcript without inserting it into the new context", async () => {
+  const idle = { ...session, status: "idle" };
+  vi.mocked(api.listSessions).mockResolvedValue([idle]); vi.mocked(api.getSession).mockResolvedValue(idle);
+  const suggestion = { suggestionId: "previous", sessionId: session.id, userId: session.createdBy, text: "Earlier suggested action",
+    state: "available", answerSeq: 1 };
+  controls.suggestionHook.suggestion = suggestion;
+  controls.suggestionHook.cards = new Map([[suggestion.suggestionId, suggestion]]);
+  await mount();
+  await act(async () => {
+    emit({ ...suggestion, seq: 2, ts: "", type: "prompt_suggestion_created" });
+    emit({ seq: 3, ts: "", type: "notice", contextChanged: true, message: "Fresh context" });
+  });
+  expect(container.textContent).toContain(suggestion.text);
+  expect(input().placeholder).not.toContain(suggestion.text);
+  expect(container.querySelector('[data-slot="prompt-suggestion"] button')).toBeNull();
+  await act(async () => input().dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+  expect(controls.suggestionHook.select).not.toHaveBeenCalled();
+});
 
 it("accepts another message during a run and preserves a new draft while local staging finishes", async () => {
   let staged!: () => void; enqueue.mockImplementationOnce(() => new Promise<void>(resolve => { staged = resolve; }));

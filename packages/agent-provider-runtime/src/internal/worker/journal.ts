@@ -84,11 +84,13 @@ export class WorkerJournal {
       throw error;
     }
   }
-  async initialize(): Promise<void> {
+  private historicalRuns: ReadonlySet<string> = new Set();
+  async initialize(historicalRuns: ReadonlySet<string> = new Set()): Promise<void> {
+    this.historicalRuns = historicalRuns;
     await durableMkdir(this.directory);
     for (const file of await readdir(this.directory)) {
       if (!file.endsWith(".json")) continue;
-      if (!safeIdentity(file.slice(0, -5))) continue;
+      if (!safeIdentity(file.slice(0, -5)) || this.historicalRuns.has(file.slice(0, -5))) continue;
       let record: StoredRun;
       try { record = await this.load(file.slice(0, -5)); }
       catch (error) {
@@ -131,7 +133,7 @@ export class WorkerJournal {
     await this.exclusive(async () => {
       for (const file of await readdir(this.directory)) {
         if (!file.endsWith(".json")) continue;
-        if (!safeIdentity(file.slice(0, -5))) continue;
+        if (!safeIdentity(file.slice(0, -5)) || this.historicalRuns.has(file.slice(0, -5))) continue;
         let record: StoredRun;
         try { record = await this.load(file.slice(0, -5), false); }
         catch (error) {

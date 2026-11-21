@@ -32,14 +32,15 @@ export function nativeSource(event: AssistantEvent): ProviderTranscriptSource | 
   return source && (source.parentAgentId || source.parentToolCallId) ? source : undefined;
 }
 export const nativeRunKey = (source: ProviderTranscriptSource): string => JSON.stringify([
-  ...providerIdentityParts(source.provider), source.runId, source.generation,
+  ...providerIdentityParts(source.provider), source.transcriptRunId ?? source.runId, source.generation,
 ]);
 export const nativeAgentKey = (source: ProviderTranscriptSource): string => JSON.stringify([nativeRunKey(source), source.agentId]);
 export const isNativeDecision = (event: AssistantEvent): boolean => ["approval_request", "approval_decision", "question_request", "question_answered"].includes(event.type);
 
 /** A child's final message clears only its own partial text, including interleaved children. */
 export function receiveTranscriptText(current: TranscriptStreams, event: AssistantEvent): TranscriptStreams {
-  if (!["assistant_delta", "assistant_text"].includes(event.type)) return current;
+  // Late history remains visible in its original turn and cannot end a current stream.
+  if (event.providerHistoryEarlier === true || !["assistant_delta", "assistant_text"].includes(event.type)) return current;
   const source = nativeSource(event);
   if (!source) return { ...current, root: event.type === "assistant_text" ? "" : current.root + String(event.text ?? "") };
   const key = nativeAgentKey(source), children = { ...current.children };
@@ -84,7 +85,7 @@ function applyAgentDetails(agent: NativeAgent, details: AssistantEvent[]) {
     }
     const id = typeof update.resultMessageId === "string" ? update.resultMessageId : undefined;
     if (!id && typeof update.result !== "string") continue;
-    const message = id ? messagesById.get(`${source.runId}:message:${source.agentId}:${id}`) : undefined;
+    const message = id ? messagesById.get(`${source.transcriptRunId ?? source.runId}:message:${source.agentId}:${id}`) : undefined;
     const text = typeof update.result === "string" ? update.result : typeof message?.text === "string" ? message.text : undefined;
     const keepFull = !agent.resultTruncated && update.resultTruncated === true && text && agent.result?.startsWith(text)
       && (!id || !messageId || id === messageId);
@@ -99,7 +100,7 @@ function applyAgentDetails(agent: NativeAgent, details: AssistantEvent[]) {
     }
   }
   if (messageId) {
-    const matched = messagesById.get(`${source.runId}:message:${source.agentId}:${messageId}`);
+    const matched = messagesById.get(`${source.transcriptRunId ?? source.runId}:message:${source.agentId}:${messageId}`);
     if (matched && matched.text === agent.result) agent.resultMessageSeq = matched.seq;
     return;
   }

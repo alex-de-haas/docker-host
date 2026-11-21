@@ -1,9 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { isNodeEntry, resolveCodexCommand } from "../adapter/codex-binary.js";
 
-const codes = ["launch_failed", "native_exit", "timeout", "network", "rejected", "unsupported", "rpc_failed", "invalid_response", "output_limit", "closed", "failed"] as const;
+const codes = ["launch_failed", "native_exit", "timeout", "network", "rejected", "unsupported", "rpc_failed", "invalid_response", "thread_missing", "output_limit", "closed", "failed"] as const;
 const phases = ["startup", "initialize", "device-code", "cancel", "account-read", "usage-read", "model-read", "request", "shutdown"] as const;
-const methods = ["initialize", "account/login/start", "account/login/cancel", "account/read", "account/rateLimits/read", "model/list", "other"] as const;
+const methods = ["initialize", "account/login/start", "account/login/cancel", "account/read", "account/rateLimits/read", "model/list", "thread/read", "other"] as const;
 const errnos = new Set(["ENOENT", "EACCES", "EPERM", "ENOEXEC", "EAGAIN", "EMFILE", "ENFILE", "ENOMEM", "EPIPE", "EINVAL"]);
 const signals = new Set(["SIGABRT", "SIGALRM", "SIGBUS", "SIGFPE", "SIGHUP", "SIGILL", "SIGINT", "SIGKILL", "SIGPIPE", "SIGQUIT", "SIGSEGV", "SIGTERM", "SIGTRAP", "SIGUSR1", "SIGUSR2"]);
 export type CodexLoginFailureCode = typeof codes[number];
@@ -22,6 +22,7 @@ const descriptions: Record<CodexLoginFailureCode, string> = {
   unsupported: "This Codex authentication method is unavailable.",
   rpc_failed: "Codex could not complete the authentication request.",
   invalid_response: "Codex returned an invalid authentication response.",
+  thread_missing: "Codex has no retained thread with the requested identity.",
   output_limit: "The Codex authentication process exceeded its protocol output limit.",
   closed: "The Codex authentication process was closed.",
   failed: "Codex authentication could not be completed.",
@@ -71,10 +72,11 @@ function launchFailure(error: unknown): CodexLoginDiagnostic {
   const errno = error && typeof error === "object" && "code" in error ? error.code : undefined;
   return safeDiagnostic({ code: "launch_failed", phase: "startup", ...(typeof errno === "string" ? { errno } : {}) });
 }
-function rpcFailure(method: string, error: unknown): CodexLoginError {
+function rpcFailure(method: string, error: unknown, expectedThread?: string): CodexLoginError {
   const value = error && typeof error === "object" ? error as Record<string, unknown> : {};
   const rpcCode = integer(value.code, -2147483648, 2147483647) ? value.code : undefined;
   let code: CodexLoginFailureCode = rpcCode === -32601 ? "unsupported" : rpcCode === -32602 ? "rejected" : "rpc_failed", httpStatus: number | undefined;
+  if (method === "thread/read" && expectedThread && rpcCode === -32600 && value.message === `thread not loaded: ${expectedThread}`) code = "thread_missing";
   // Pinned upstream request_user_code errors; inspect no URLs, arbitrary nested data or raw causes.
   if (method === "account/login/start" && typeof value.message === "string" && value.message.length <= 256) {
     const message = value.message.replace(/^failed to request device code: /, "");
@@ -111,7 +113,7 @@ export class CodexLogin {
   private completionSent = false;
   private stopped: Promise<void>;
   private resolveStopped!: () => void;
-  private pending = new Map<number, { method: string; resolve(value: Record<string, unknown>): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
+  private pending = new Map<number, { method: string; expectedThread?: string; resolve(value: Record<string, unknown>): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
   onComplete: (success: boolean) => void = () => {};
   constructor(home: string, fileStorage = true) {
     this.stopped = new Promise(resolve => { this.resolveStopped = resolve; });
@@ -141,7 +143,7 @@ export class CodexLogin {
         const pending = typeof message.id === "number" ? this.pending.get(message.id) : undefined;
         if (pending) {
           clearTimeout(pending.timer); this.pending.delete(message.id as number);
-          if (message.error) pending.reject(rpcFailure(pending.method, message.error));
+          if (message.error) pending.reject(rpcFailure(pending.method, message.error, pending.expectedThread));
           else if (message.result && typeof message.result === "object" && !Array.isArray(message.result)) pending.resolve(message.result as Record<string, unknown>);
           else pending.reject(new CodexLoginError({ code: "invalid_response", ...context(pending.method) }));
         } else if (message.method === "account/login/completed") {
@@ -172,7 +174,8 @@ export class CodexLogin {
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.fail({ code: "timeout", ...context(method) }); this.close(); }, 30_000);
-      this.pending.set(id, { method, resolve, reject, timer });
+      const thread = method === "thread/read" && params && typeof params === "object" && "threadId" in params ? params.threadId : undefined;
+      this.pending.set(id, { method, expectedThread: typeof thread === "string" ? thread : undefined, resolve, reject, timer });
       try { child.stdin.write(`${JSON.stringify({ id, method, params })}\n`); }
       catch (error) { this.fail(launchFailure(error)); this.close(); }
     });

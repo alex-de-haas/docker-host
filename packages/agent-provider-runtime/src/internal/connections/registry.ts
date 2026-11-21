@@ -577,4 +577,6 @@ export abstract class AgentConnections {
   }
 }
 /** The execution runtime depends only on this structural application-owned connection surface. */
-export type ProviderConnections = Pick<AgentConnections, "list" | "binding" | "reserve" | "adapter" | "prepareAdapter" | "models" | "usage" | "shutdown">;
+export type ProviderConnections = Pick<AgentConnections, "list" | "binding" | "reserve" | "adapter" | "prepareAdapter" | "models" | "usage" | "shutdown"> & {
+  inspectNativeContext?(sessionId: string, nativeId: string): Promise<"available" | "missing">;
+};
