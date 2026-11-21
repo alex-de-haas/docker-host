@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-29
-updated: 2026-11-07
+updated: 2026-11-18
 summary: Bind application activities and delegated results to assistant conversations with authorized events, observable continuation and recoverable context.
 components: [apps/core, apps/harness, apps/desktop, apps/shell, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -32,9 +32,9 @@ a bounded domain fixture; shipping a standalone chess application is no longer a
 task-child result producer, parent wait, local outbox/inbox and bound continuation from D3/D5, with
 early/duplicate/late-result and restart acceptance. It reuses current session command/parking/resume
 primitives. This local consumer does not need the general cross-application notification transport
-and does not build a second session engine. Its Ready C4/C6 contracts specify transactional
-result delivery and typed task barriers, including busy/parked parents and coordinator replacement;
-the owner has requested documentation readiness only, not implementation.
+and does not build a second session engine. The shipped feature records transactional result
+delivery and typed task barriers, including busy/parked parents and coordinator replacement.
+Its verified local delivery does not complete the remaining public event contract here.
 
 D3/D5 here retain the public event-to-session adapter and independently provided delegated results
 over the negotiated durable transport. Notifications D6 and broader session recovery remain
@@ -67,13 +67,15 @@ it does not require importing a child's entire transcript or implementing a full
 | [Durable Agent Jobs D7](../durable-agent-jobs/plan.md#deliverables) | Idempotent Harness session commands, provider/account-bound continuation and bounded recoverable context, including ordinary chats. | Map an eligible inbound event to that common session command, once, with visible provenance. |
 | [Durable Agent Jobs D1-D5](../durable-agent-jobs/plan.md#deliverables) | General jobs, scheduling, retry policy and parked waits. | An interactive activity can use a session without acquiring a job or schedule; durable job waits consume the same event contract. |
 | [Action Summary D4](../assistant-action-summary/plan.md#deliverables) | Correlated native invocation evidence in the existing Harness journal. | Link external receipt/causation IDs to existing run evidence without a second transcript. |
-| [Agent Providers D2-D5](../agent-provider-interface/plan.md#deliverables) | Public engine invocation, native capability mapping and independent provider applications. | Assistant capability negotiation above that engine boundary; public engine extraction is not required for the first internal Harness adapter. |
+| [Agent Providers D2-D5](../agent-provider-interface/plan.md#deliverables) | Public engine invocation, native capability mapping and independent provider applications. | Assistant capability negotiation above the implemented public provider boundary; Harness consumes providers rather than owning a native adapter. |
 | [Profile-Based Task Delegation](../profile-task-delegation/feature.md) and [Harness Work Orchestration D7](../harness-work-orchestration/plan.md#deliverables) | Flat task decomposition/routing and the first local wait consumer; richer selected material access stays with D7. | Cross-application result-to-parent exchange over the negotiated transport, preserving the existing local correlation contract. |
 | [Shared Decisions](../shared-decisions/feature.md#durable-native-waiting) | Addressed question/response records and consistent publication of their resolution. | A resolved-decision event can satisfy its correlated wait; event delivery is not approval or proof of resumed execution. |
 | [Panel System](../sdk-panel-system/feature.md) and [UI Composition](../sdk-ui-composition/feature.md) | Verified provider presentation, retained frames and navigation. | Connect a selected activity to its assistant presentation; browser view/presentation IDs are not domain identity. |
 
-Cross-links do not approve or complete another owner's deliverables. Notifications D6 and Durable
-Agent Jobs D7 remain prerequisites, not work silently absorbed here. Agree their delivery sequence
+Cross-links do not approve or complete another owner's deliverables. Notifications D6 remains the
+general cross-app transport prerequisite, while Durable Agent Jobs D7 owns remaining common context
+and admission. A bounded local assistant-watch consumer is separately proposed below and needs an
+explicit delivery/scope decision before implementation. Agree the shared delivery sequence
 or an explicit scope transfer before Ready; do not split their features into partial PRs to bypass
 the repository's one-feature/one-PR rule. Full scheduling, hierarchy, shared profiles, learned memory,
 cross-provider session migration and a generic agent chat network are outside this plan.
@@ -184,7 +186,7 @@ do not promise exactly-once model execution across a provider with uncertain sta
 | Recipient state | Proposed default |
 | --- | --- |
 | Idle with an active matching authorization | Admit one bounded turn after revision/correlation and budget checks. |
-| Running | Queue for the next safe turn boundary; do not silently interrupt or start a competing run. Native steering is an optional later capability, outside initial acceptance. |
+| Running | Queue for the next safe turn boundary; do not silently interrupt or start a competing run. This policy applies to domain events. Direct user follow-ups use the separate [active-input contract](../active-run-input/plan.md). |
 | Waiting for this delegated result | Durably satisfy that wait and enqueue its continuation. A wait is registered before dispatch so a fast child cannot win the registration race. |
 | Waiting for human approval or a different answer | Retain unrelated input without treating it as an answer or bypassing the wait. |
 | Paused, cancelled, detached or ended | Record/suppress according to policy; no automatic revival. Late results remain attributable. |
@@ -203,8 +205,11 @@ every turn fits the model window. Native resume is bound to the same provider/ac
 resume uses an explicitly supported same-provider reconstruction path or reports unsupported.
 Recovered text must not replay old tool effects, permissions or previously consumed results.
 
-Use one admitted turn at a time per conversation and bounded input/output, elapsed time, tool actions,
-inference and automatic wake counts. Preserve causation across apps to prevent event feedback loops:
+For an ordinary conversation/native-session target, admit one turn at a time. An assistant-address
+target may receive a passive result or admit a separate bounded summary. The foreground dialogue
+can continue on its compatible run while these event actions preserve per-resource ordering. Apply bounded
+input/output, elapsed time, supported tool limits, inference and automatic wake counts to both.
+Preserve causation across apps to prevent event feedback loops:
 an agent's own domain action is not a new user-action trigger. Define aggregate delegation budgets and
 failure escalation with the orchestration owner. Manual resume reuses the pending receipt where safe;
 a new attempt requires settled evidence or explicit reconciliation of unknown effects.
@@ -332,13 +337,59 @@ negotiation, routing, budget, busy-session and delegated-result semantics. Notif
 their durable-subscription prerequisite. This bounded delivery neither completes these deliverables nor
 changes the two initial runtime examples or grants event-triggered execution authority.
 
+## Independent Assistant Watches (2026-11-16)
+
+[Personal Assistant](../personal-assistant/plan.md) adds a consumer that remains available while
+independent roots execute. The owner permits adapting these contracts instead of forcing that
+assistant into the task parent or one permanent busy native conversation. D1/D3/D5 here own this
+binding/observation extension; Personal Assistant owns the interaction and notification preferences.
+
+Specify an assistant-addressed target alongside existing conversation/routine targets. Resolve the
+authenticated owner and selected assistant address, not an arbitrary caller-supplied conversation.
+An eligible event can request a fresh bounded interaction through Durable Agent Jobs D7; it does
+not create competing runs inside a native session or alter existing single-conversation ordering.
+The common invocation owner controls actual capacity and supported restrictions.
+
+A retained watch includes its qualified task and optional attempt/result, condition/review policy,
+subject revision, recipient/channel binding, current authority, cancellation generation and stable
+delivery identity. Specify one-attempt versus logical-task/retry/reopening behavior. Persist watch
+registration before dispatch or atomically correlate and reconcile retained task outcomes, covering
+an immediately completing root. A watch is neither task ancestry nor permission to accept its result.
+
+Reuse and, where necessary, generalize the shipped local task outbox/inbox mechanism for independent
+observers. Do not fabricate a parent wait. A bounded same-Harness path can reconcile retained task
+outcomes without a general bus, but requires an explicit scope/sequence decision before Ready.
+Cross-app subscriptions remain Notifications D6. Both routes preserve one event/obligation identity;
+transition completeness cannot be claimed from current-state reconciliation or ephemeral SSE.
+
+Separate event receipt, condition satisfaction, pending summary, pending delivery, confirmed
+delivery, suppression/cancellation and unknown delivery. Keep source results retained when a model
+summary or channel fails, allow an evidence-based fallback, and never rerun work to retry a notice.
+Late output cannot revive a cancelled watch/task. Bound wakeups and deduplicate/coalesce only where
+meaning allows; human answers and distinct task outcomes are not generic refresh hints.
+
+Extend the existing consumer recovery path to inspect unresolved watches on startup/reconnect and
+in a bounded pass over due pending records, without waiting for another user message or model turn.
+Re-read retained task outcomes after a missed wakeup. A local report append uses the stable delivery
+identity in the existing timeline; confirm delivery only after durable append, and replay that same
+append if its receipt was lost. A notification pointer is not the report or evidence that it was read.
+Exhausted retries or unavailable sources leave a visible needs-attention state and the references
+needed for later recovery. Ordinary idle cleanup must not drop unresolved obligations; explicit
+cancellation, deletion and abandonment remain subject to the owning authorization/retention policy.
+Keep this within D3/D5 and the existing outbox/inbox consumer, without a second scheduler or bus.
+
+Direct authenticated user messages use the assistant input contract, not domain-event impersonation.
+Channel ingress and outbound delivery share current actor/audience checks with their owners. This
+extension selects design work only; general transport, scheduling and external deployment stay
+independently tracked and retain their statuses.
+
 ## Deliverables
 
-- [ ] D1. Specify and approve the versioned assistant capability, activity/binding/wait references, authorized operations, lifecycle, event vocabulary and receipt states; reconcile ownership with Notifications D6, Durable Agent Jobs D7 and public provider invocation, including direct-message versus domain-event boundaries and event targets for both existing-session continuation and application-owned routine activation before a conversation exists. Review the Dependabot and a minimal non-PR example against domain-neutral source/schema/filter contracts without absorbing PR discovery/UI or runner implementation, and leave implementation priority explicit.
+- [ ] D1. Specify and approve the versioned assistant capability, activity/binding/wait references, authorized operations, lifecycle, event vocabulary and receipt states; reconcile ownership with Notifications D6, Durable Agent Jobs D7 and public provider invocation, including direct-message versus domain-event boundaries and event targets for both existing-session continuation and application-owned routine activation before a conversation exists. Review the Dependabot, independent assistant-watch and a minimal non-PR example against domain-neutral source/schema/filter contracts without absorbing PR discovery/UI or runner implementation; specify watch/attempt/reopening and delivery-obligation lifetimes, and leave implementation priority explicit.
 - [ ] D2. After Ready approval and the delivery prerequisite, implement assistant-specific routing and durable inbox consumption over Notifications D6, including authorized subscriptions, source/outbox recovery, deduplication, cursor gaps and observable delivery/continuation receipts; do not reimplement the shared transport.
-- [ ] D3. Implement the remaining cross-application Harness event-to-session adapter over common session primitives, the transferred local child-result consumer and existing journal, with idle/busy/waiting/paused/cancelled policy, trusted turn purpose, current authority, budgets, same-provider recovery and uncertain-start reconciliation; do not duplicate the session engine.
+- [ ] D3. Implement the remaining cross-application Harness event-to-session adapter over common session primitives, the transferred local child-result consumer and existing journal, with idle/busy/waiting/paused/cancelled policy, trusted turn purpose, current authority, budgets, same-provider recovery and uncertain-start reconciliation; support the independent assistant target through common fresh execution segments, keeping existing conversation ordering and avoiding a second session engine.
 - [ ] D4. Add the versioned public SDK/provider contract and optional discovery capability, plus activity attach/reopen/pause/stop presentation in existing assistant panels; retain draft-only v1 handoffs and inference-free opening, support unsupported-provider outcomes and installation changes, and verify an unrelated third-party assistant fixture.
-- [ ] D5. Integrate independently provided delegated-task results and parent waits over the public event contract, reusing the transferred same-Harness consumer correlation; verify early completion, failure/cancellation, required-review distinctions and selected-result visibility without duplicate delivery. Task decomposition remains with its owner.
+- [ ] D5. Integrate independently provided delegated-task results and parent waits over the public event contract, reusing the transferred same-Harness consumer correlation; verify early completion, failure/cancellation, required-review distinctions and selected-result visibility without duplicate delivery. Include independent root-task observers through the same correlation/delivery primitives, with early-result and restart reconciliation without new input, idempotent durable report append, visible exhausted/unresolved delivery, watch cancellation and separate task/review/delivery outcomes. Task decomposition remains with its owner.
 - [ ] D6. Verify the two end-to-end examples with the interactive-activity fixture and one real assistant configuration, plus contract fixtures for a separately implemented assistant; cover attribution, turn-only mutation authority, restart, lost/duplicate/out-of-order input, busy sessions, revoked access and late results without duplicate domain effects.
 - [ ] D7. Document verified capabilities, compatibility limits, retention and operator recovery in feature.md; reconcile linked owners without completing their outstanding scope, remove this plan only after all deliverables pass and regenerate the documentation index.
 
@@ -391,6 +442,9 @@ Implementation acceptance must cover:
   is not injected twice, and required business review is not inferred from execution completion.
 - Interrupt source persistence/publication, inbox append/ack and session command acceptance. Recover
   original IDs after lost replies; never equate transport retries with a new inference attempt.
+- Complete a watched task while Harness is stopped; restart without a new user message and recover
+  its report. Interrupt between durable timeline append and delivery receipt, then replay without a
+  duplicate report. Exhaust retries and run idle cleanup; the unresolved obligation remains visible.
 - Busy-parent input, fast-child/wait registration, concurrent browser views, cancelled or paused
   sessions, late results, stale activity revisions, retention gaps, provider restart and unknown stop state.
 - Current-user and destination-session denial, forged source/user IDs, cross-installation replay,

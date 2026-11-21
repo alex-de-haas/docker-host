@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-25
-updated: 2026-11-07
+updated: 2026-11-16
 summary: Compose app-owned task providers and executors through Core contracts, with Harness profiles, optional resources, decisions and artifact handoffs.
 components: [apps/core, apps/harness, apps/documents, packages/app-sdk]
 ---
@@ -51,7 +51,9 @@ existing humans or apps with optional opaque executor choices. Task trees descri
 the 2026-11-04 selected scope uses a flat executor pool without an agent reporting hierarchy.
 No per-profile rights or hard role restrictions are selected. Existing
 app/user/MCP authority applies. Basic artifacts and explicit context handoffs are in scope; learned
-long-term memory is excluded and remains an [idea](../../ideas.md#i1-memory-as-a-replaceable-provider).
+long-term memory is excluded from this composition. The separately requested
+[Persistent Memory Draft](../persistent-memory/plan.md) serves
+[Personal Assistant](../personal-assistant/plan.md); it is not a prerequisite or deliverable here.
 
 ## Profile-First Delegation Direction (2026-11-04)
 
@@ -86,9 +88,9 @@ The plan owns local delegation, shared root source binding, parent-result contin
 aggregate limits and observable task/session history through explicit transfers recorded by the
 existing owners. Shared artifact storage, independent engine extraction, general event transport
 and scheduling are not prerequisites of this local slice. Their remaining deliverables stay open;
-the owner subsequently requests completing the technical contracts and making the delegation
-plan ready, without starting development. That plan is Ready with D1 documentation complete and
-C1-C9 specified; D2-D8 remain unimplemented. This umbrella and the other broader plans remain Draft.
+the owner subsequently approved and implemented the bounded delegation scope, now recorded in
+its feature.md and verification. This does not complete the umbrella or the remaining broader
+artifact, event and scheduler work; their current owning documents retain authoritative status.
 
 ## Capability And Ownership Map
 
@@ -250,8 +252,9 @@ An agent or configured workflow selects useful outputs to save; no blanket captu
 log or conversation is selected. Saving or finding a script does not authorize executing it.
 
 Long-term learned memory is outside this plan and is not a prerequisite for artifacts, context or
-skills. [Memory I1](../../ideas.md#i1-memory-as-a-replaceable-provider) retains the later possibility
-of remembering preferences or recurring decisions. No automatic extraction, preference learning or
+skills. [Memory I1](../../ideas.md#i1-memory-as-a-replaceable-provider) links the separately requested
+[Persistent Memory Draft](../persistent-memory/plan.md) for preferences and recurring decisions.
+No automatic extraction, preference learning or
 silent reuse of earlier permission decisions is included. Standing instructions and explicit skills
 remain available without a memory service.
 
@@ -428,13 +431,26 @@ later compositions. This bounded delivery does not implement the autonomous comp
 create a competing scheduler. Real-provider and managed task acceptance verify continued work,
 not merely an inbox row or a saved answer.
 
+## Separate Personal Assistant And Memory Planning (2026-11-16)
+
+The owner requests [Personal Assistant](../personal-assistant/plan.md), with permanent personal
+memory, historical recall and quick interaction while independent tasks run. The assistant consumes
+the implemented profile-delegation feature. It may motivate compatible extensions to common
+admission, context and event mechanisms; reuse must not require an unsuitable busy task session.
+
+[Persistent Memory](../persistent-memory/plan.md), [history recall](../conversation-history/plan.md)
+and [invocation admission](../agent-invocation-admission/plan.md) own their shared proposals.
+Existing context/event/notification owners are linked from the assistant plan. The memory exclusion
+in this umbrella remains local to its examples/deliverables, not a global platform ban. These new
+Drafts neither complete this plan nor add memory dependencies to ordinary tasks or Core.
+
 ## Deliverables
 
 - [ ] D1. Review the capability map against the three example compositions and their variations, including an independent consumer/provider example; agree the minimum shared boundaries and optional app-owned behavior without requiring new implementation for this investigation.
 - [ ] D2. Review the assigned owners and cross-feature boundaries for app-owned task providers/executor bindings, human assignments, internal Harness profiles/shared skills, artifacts/context and decisions. Compare compatible composition alternatives; detailed contracts and implementation remain in the linked owner plans.
 - [ ] D3. Produce integration-level request/result and handoff examples covering actor authority, revisions, observable child tasks, inherited versus explicit workspace bindings, artifact preservation, quick versus parked decision waits, duplicate/lost delivery and restart recovery.
 - [ ] D4. Define acceptance evidence for the three compositions and their variations, including concurrent workspace requests, an independent bugfix/PR, overnight decisions, post-cleanup artifact reuse, stale input/approval handling, cancellation, failure/budget reporting and the app-neutral Core baseline; distinguish verified primitives from assumptions.
-- [ ] D5. Reconcile investigation order and dependency/ownership with existing plans, keep learned memory outside this scope, present a bounded proposal for explicit owner approval and route selected implementation work to its owning plan without implicit status changes.
+- [ ] D5. Reconcile investigation order and dependency/ownership with existing plans, keep learned memory outside this scope while linking its separately planned owner, present a bounded proposal for explicit owner approval and route selected implementation work to its owning plan without implicit status changes.
 
 ## Open Questions
 
