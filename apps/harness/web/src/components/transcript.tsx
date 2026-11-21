@@ -5,7 +5,7 @@ import { transcriptDecisionId, type QuestionAnswers } from "../../../src/agent-p
 export { transcriptDecisionId };
 import { ReadableReply } from "./readable-reply";
 import { UserMessage } from "./user-message";
-import { MessageTimestamp } from "./message-timestamp";
+import { MessageFooter } from "./message-footer";
 import { PromptSuggestionCard } from "./prompt-suggestion";
 import { parseSuggestion, type PromptSuggestion } from "@/lib/prompt-suggestions";
 import { Fragment, useId, useMemo, useRef, useState } from "react";
@@ -151,12 +151,14 @@ export function TranscriptEvent({
       const ids = Array.isArray(event.appIds) ? event.appIds.map(String) : [];
       return <div className="px-3 py-1 text-xs text-muted-foreground">{event.origin === "agent" ? "Assistant updated app context" : "App context"}: {ids.length ? ids.join(", ") : "General context"}</div>;
     }
-    case "subagent_assignment":
-      return <section aria-label="Assignment from parent chat" className="flex min-w-0 flex-col gap-1">
+    case "subagent_assignment": {
+      const text = String(event.text ?? "");
+      return <section aria-label="Assignment from parent chat" className="group/message flex min-w-0 flex-col gap-1">
         <h2 className="flex items-center gap-1 text-xs font-medium text-muted-foreground"><Bot className="size-3.5" aria-hidden />Assignment from parent chat</h2>
-        <div className="min-w-0 wrap-anywhere rounded-lg bg-muted/60 px-3 py-2"><Markdown text={String(event.text ?? "")} /></div>
-        <MessageTimestamp ts={event.ts} />
+        <div className="min-w-0 wrap-anywhere rounded-lg bg-muted/60 px-3 py-2"><Markdown text={text} /></div>
+        <MessageFooter text={text} ts={event.ts} />
       </section>;
+    }
     case "user_message": {
       // The files this turn carried are named here, under the message that carried them, because
       // this event is the only one that knows which message they belong to. Their upload rows draw
@@ -165,14 +167,15 @@ export function TranscriptEvent({
       const displayNames = event.attachmentDisplayNames && typeof event.attachmentDisplayNames === "object" && !Array.isArray(event.attachmentDisplayNames)
         ? event.attachmentDisplayNames as Record<string, unknown> : {};
       const card = feedbackCardForEvent(event, feedbackCard ? [feedbackCard] : []);
+      const text = String(event.text ?? "");
       return (
-        <div className="flex flex-col gap-1">
-          {card || feedbackReferenceForEvent(event) ? <FeedbackMessageCard card={card} originalText={String(event.text ?? "")} loading={feedbackLoading} />
-            : String(event.text ?? "").trim() && <UserMessage text={String(event.text ?? "")} />}
-          <MessageTimestamp ts={event.ts} />
+        <div className="group/message flex flex-col gap-1">
+          {card || feedbackReferenceForEvent(event) ? <FeedbackMessageCard card={card} originalText={text} loading={feedbackLoading} />
+            : text.trim() && <UserMessage text={text} />}
           {names.length > 0 && (
             <AttachmentRow files={names.map((name) => ({ name, displayName: attachmentLabel(name, displayNames[name]), size: attachments?.sizes.get(name) ?? null }))} />
           )}
+          <MessageFooter className="ml-3 sm:ml-8" text={text} ts={event.ts} />
         </div>
       );
     }
@@ -186,16 +189,9 @@ export function TranscriptEvent({
       );
     }
     case "assistant_text":
-      return (
-        <div className="group/message flex flex-col gap-1">
-          <div className="rounded-lg bg-muted/60 px-3 py-2">
-            {event.providerHistoryEarlier === true && <p className="mb-1 text-xs text-muted-foreground">Recovered from an earlier run</p>}
-            {reviewContext && event.text ? <ReadableReply key={reviewContext.sessionId + ":" + event.seq} sessionId={reviewContext.sessionId} text={String(event.text)} /> : <Markdown text={String(event.text ?? "")} />}
-            {event.incomplete === true && <p className="mt-2 text-xs text-muted-foreground">Interrupted message</p>}
-          </div>
-          <MessageTimestamp ts={event.ts} compact className="sm:opacity-0 sm:group-hover/message:opacity-100 sm:focus-within:opacity-100" />
-        </div>
-      );
+      return <ReadableReply key={`${reviewContext?.sessionId}:${event.seq}`} text={String(event.text ?? "")}
+        sessionId={reviewContext?.sessionId} ts={event.ts} recovered={event.providerHistoryEarlier === true}
+        incomplete={event.incomplete === true} />;
     case "tool_use": {
       const toolName = String(event.toolName ?? "tool");
       return isListedToolUse(toolName) ? <><ToolRow toolName={toolName} input={event.input} appNames={appNames} mcp={event.mcp} /><TranscriptChanges events={[event]} reviewContext={reviewContext} /></> : null;

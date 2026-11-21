@@ -95,6 +95,19 @@ function render(){
     const card=document.createElement('article');card.className='connection';const summary=document.createElement('div');summary.className='connection-summary';const title=document.createElement('div');title.className='connection-title';const name=document.createElement('h3');name.textContent=connection.name;title.append(name);
     if(inventory.defaultId===connection.id){const badge=document.createElement('span');badge.className='badge';badge.textContent='Default';title.append(badge);}
     const state=document.createElement('p');state.className='connection-description';state.textContent=`${providerName} · ${authLabels[connection.auth]??connection.auth} · ${connection.available?'Configured':connection.reason??'Reconnect required'}`;summary.append(title,state);
+    const choices = authDefinition(connection.auth)?.interfaceChoices;
+    if (choices?.length) {
+      const statuses = document.createElement('ul');
+      statuses.className = 'connection-interfaces connection-description';
+      for (const choice of choices) {
+        const item = document.createElement('li');
+        const value = document.createElement('strong');
+        value.textContent = connection.publishedInterfaces?.includes(choice.kind) ? 'On' : 'Off';
+        item.append((choice.statusLabel ?? choice.label) + ': ', value);
+        statuses.append(item);
+      }
+      summary.append(statuses);
+    }
     const actions=document.createElement('div');actions.className='connection-actions';const trigger=document.createElement('button');trigger.type='button';trigger.className='button button-ghost button-icon';trigger.setAttribute('aria-label',`Actions for ${connection.name}`);trigger.setAttribute('aria-haspopup','menu');trigger.setAttribute('aria-expanded','false');trigger.append(icon('ellipsis'));
     const menu=document.createElement('div');menu.className='menu';menu.hidden=true;menu.setAttribute('role','menu');menu.setAttribute('aria-label',`Actions for ${connection.name}`);
     if(inventory.defaultId!==connection.id){const item=menuItem('Set default','star',async()=>{await request('/api/settings/default','PUT',{id:connection.id});await load('Default saved. Existing chats keep their provider.');});item.dataset.unavailable=String(!connection.available);item.disabled=!connection.available;menu.append(item);}

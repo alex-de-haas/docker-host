@@ -299,9 +299,24 @@ it('updates renamed account labels while retaining same-revision quota observati
 });
 
 it('shows initially unchecked provider roles only for eligible authentication and preserves their independent selection', async () => {
-  const interfaceChoices = [{kind:'dictation', label:'Provide dictation'}, {kind:'narration', label:'Provide narration'}];
-  const f = await page({ interfaceChoices, connections: [connection({ publishedInterfaces:['dictation'], settingsRevision:'9' })],
-    handle: request => request.method === 'PUT' ? response({saved:{id:'account-1',revision:'7'}}) : undefined });
+  const interfaceChoices = [
+    {kind:'dictation', label:'Provide dictation', statusLabel:'Dictation'},
+    {kind:'narration', label:'Narration'},
+  ];
+  const accounts = [
+    connection({publishedInterfaces:['dictation'], settingsRevision:'9'}),
+    connection({id:'legacy'}),
+    connection({id:'browser-account', auth:'browser'}),
+  ];
+  const f = await page({interfaceChoices, connections:accounts, handle:request => {
+    if (request.method === 'PUT') {
+      accounts[0] = connection({publishedInterfaces:request.body.publishedInterfaces, settingsRevision:'10'});
+      return response({saved:{id:'account-1',revision:'7'}});
+    }
+  }});
+  const rowStatuses = () => [...element('connections').querySelectorAll('article')].map(row =>
+    [...row.querySelectorAll('li')].map(item => item.textContent));
+  expect(rowStatuses()).toEqual([['Dictation: On', 'Narration: Off'], ['Dictation: Off', 'Narration: Off'], []]);
   element('add-provider').click();
   expect(element('interface-choices').hidden).toBe(true);
   element('auth').value = 'credential';
@@ -315,4 +330,5 @@ it('shows initially unchecked provider roles only for eligible authentication an
   expect(f.requests.find(request => request.method === 'PUT').body).toMatchObject({
     publishedInterfaces:['narration'], expectedRevision:'7', expectedSettingsRevision:'9',
   });
+  expect(rowStatuses()[0]).toEqual(['Dictation: Off', 'Narration: On']);
 });

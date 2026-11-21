@@ -13,7 +13,7 @@ const browser = await chromium.launch({ headless: true, channel: process.env.HOS
 let activePage;
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
-  await context.grantPermissions(["microphone"], { origin: config.harness });
+  await context.grantPermissions(["microphone", "clipboard-write"], { origin: config.harness });
   const page = await context.newPage();
   activePage = page;
   page.setDefaultTimeout(60_000);
@@ -41,6 +41,7 @@ try {
   await loginApp(config.appId, config.link);
   console.log("PASS: Chromium signed in to Core and exchanged both Shell and Harness launch codes");
   const shell = new URL(config.shellLink).origin;
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: shell });
   const embeddedUrl = path => shell + "/workspace?" + new URLSearchParams({ app: config.appId, path });
   const frame = page.frameLocator('iframe[title^="Hosty Harness:"]');
   await page.goto(embeddedUrl("/settings/speech"));
@@ -81,16 +82,40 @@ try {
     headers, data: { text: "SPEECH_SECTION_ACCEPTANCE", clientRequestId: randomUUID() },
   }));
   const deadline = Date.now() + 45_000;
-  const voice = frame.getByText("AI-generated voice", { exact: true }).first();
-  while (!(await voice.isVisible()) && Date.now() < deadline) {
+  const heading = frame.getByRole("heading", { name: /Алтай/ });
+  while (!(await heading.isVisible()) && Date.now() < deadline) {
     const result = await json(await page.request.get(config.harness + "/api/sessions/" + first.id));
     assert.ok(!["failed", "cancelled"].includes(result.status), "Fixture agent response ended with status " + result.status);
     await wait(300);
   }
-  await voice.waitFor();
-  const h = frame.getByRole("heading", { name: /Алтай/ });
+  await heading.waitFor();
+  const footer = frame.locator('[data-slot="message-footer"]:has(button[aria-label="Read aloud"], button[aria-label="Stop reading"])');
+  async function expectFooterVisibility(visible) {
+    const matches = await footer.evaluate(async (el, visible) => {
+      const deadline = performance.now() + 3000;
+      do {
+        if (el.checkVisibility({ opacityProperty: true, visibilityProperty: true }) === visible) return true;
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      } while (performance.now() < deadline);
+      return false;
+    }, visible);
+    assert.ok(matches, "Expected the reply footer to be " + (visible ? "visible" : "hidden"));
+  }
+  await textbox.focus();
+  await textbox.hover();
+  await expectFooterVisibility(false);
+  await heading.hover();
+  await expectFooterVisibility(true);
+  assert.ok((await footer.locator("time").innerText()).trim());
+  const copy = footer.getByRole("button", { name: "Copy message", exact: true });
+  await copy.focus();
+  await textbox.hover();
+  await expectFooterVisibility(true);
+  await textbox.focus();
+  await expectFooterVisibility(false);
+  await heading.hover();
   const prior = await readFile(config.evidence, "utf8").catch(e => { if (e.code === "ENOENT") return ""; throw e; });
-  await h.getByRole("button", { name: "Read section aloud" }).click();
+  await heading.getByRole("button", { name: "Read section aloud" }).click();
   async function receipt(match) {
     const deadline = Date.now() + 20000;
     do {
@@ -103,9 +128,40 @@ try {
   }
   const expected = createHash("sha256").update("Алтай\nВремя — 12:30.\nИмена\nАнна и Лев.").digest("hex");
   await receipt(row => row.textHash === expected);
-  await frame.getByRole("button", { name: "Stop reading", exact: true }).click();
+  await textbox.focus();
+  await textbox.hover();
+  await expectFooterVisibility(true);
+  await footer.getByRole("button", { name: "Stop reading", exact: true }).click();
   await receipt(row => row.cancelled === true);
-  console.log("PASS: Shell-embedded chat dictation, exact section text and upstream playback cancellation");
+  await heading.hover();
+  await copy.click();
+  const status = footer.getByRole("status");
+  await status.filter({ hasText: /Message copied|Could not copy message/ }).waitFor({ state: "attached" });
+  assert.equal(await status.textContent(), "Message copied", await footer.evaluate(() => JSON.stringify({
+    secureContext: isSecureContext, focused: document.hasFocus(), clipboard: Boolean(navigator.clipboard),
+    clipboardWriteAllowed: document.featurePolicy?.allowsFeature("clipboard-write"),
+  })));
+  const markdown = ["## Алтай", "Время — 12:30.", "### Имена", "Анна и Лев.", "## Байкал", "Другой раздел."].join("\n\n");
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), markdown);
+  console.log("PASS: Shell-embedded message hover, focus, copy, section playback and cancellation");
+
+  const touchContext = await browser.newContext({ storageState: await context.storageState(), viewport: { width: 1024, height: 768 },
+    hasTouch: true, isMobile: true });
+  try {
+    const touchPage = await touchContext.newPage();
+    await touchPage.goto(chat(first.id));
+    const touchFrame = touchPage.frameLocator('iframe[title^="Hosty Harness:"]');
+    await touchFrame.getByRole("heading", { name: /Алтай/ }).waitFor();
+    const touchFooter = touchFrame.locator('[data-slot="message-footer"]:has(button[aria-label="Read aloud"])');
+    const visibleAtRest = await touchFooter.evaluate(el => window.matchMedia("(hover: none)").matches
+      && el.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+    assert.ok(visibleAtRest, "Touch users can see the message actions without hovering");
+    await touchFooter.getByRole("button", { name: /Message time:/ }).tap();
+    await touchFrame.locator('[data-slot="popover-content"] time').waitFor();
+    console.log("PASS: touch message actions and timestamp details");
+  } finally {
+    await touchContext.close();
+  }
 
   // Keep the chat open and dictate into one particular feedback field. A sibling field and the
   // chat draft must retain their original values while the microphone operates in the tool frame.

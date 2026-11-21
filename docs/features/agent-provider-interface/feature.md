@@ -394,9 +394,11 @@ status rather than continuing a stale running badge. Interrupted partial message
 old source-less history keeps its existing presentation. Confirmed whole-run containment also
 confirms observed child stops; it does not invent a successful child result.
 
-User prompts show their stored message time as local HH:mm. Message timestamp controls expose the
-full local date, time and timezone on hover, keyboard focus or tap. Missing or invalid historical
-timestamps do not produce a fabricated date; individual tool events do not acquire time badges.
+The [message footer](../ai-gateway-chat-ui/feature.md#message-formatting) shows the stored date
+and time for user prompts, assistant replies and assignments from a parent chat. Hovering,
+focusing or tapping the timestamp reveals the full local date, time and timezone. Harness omits
+the timestamp when the stored value is missing or invalid. Individual tool events keep their own
+compact presentation.
 
 Claude correlates an Agent or Task launch with its prompt and the child result, including text
 from a matched foreground tool result or background stop. A progress message or launch

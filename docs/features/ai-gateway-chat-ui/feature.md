@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-11-11
+updated: 2026-11-21
 summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 components: [apps/harness]
 ---
@@ -48,6 +48,11 @@ Submitted user prompts and assistant replies use the same Markdown renderer. Use
 their visual alignment while rendering headings, emphasis, lists, block quotes, tables, inline code
 and fenced code. Single line breaks remain visible. The composer and stored/sent message text retain
 the original Markdown source; formatting also applies to messages restored from history.
+
+Hovering over a message or focusing a control inside it reveals a footer. Touch users can
+access the same controls directly. The left side holds the copy button and, for replies that
+support [read-aloud playback](../provider-consumption/feature.md#read-aloud), the speaker button.
+The right side shows the message date and time in the reader's locale and timezone.
 
 Long submitted user prompts initially show a five-line prose-height preview. **Show more** reveals
 the complete Markdown message and **Show less** restores the preview. Short prompts have no toggle.
@@ -242,6 +247,8 @@ installation has only a Codex connection.
 
 - User prompt rendering covers Markdown structure, literal code and preserved line breaks, allowed
   links and inert HTML/image references, plus attachment-only turns and unchanged source text.
+- Verify that copying a message preserves its Markdown source and that the footer is accessible
+  with a pointer, a keyboard and a touchscreen.
 - Compact prompt coverage checks rendered overflow, width changes, independent expansion, keyboard
   focus recovery and attachments outside the preview without changing the stored prompt.
 - Feedback-card coverage checks exact message identity, historical/live loading, session and focus

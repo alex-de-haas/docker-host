@@ -22,15 +22,17 @@ beforeEach(() => {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
-const render = (sessionId: string) => act(async () => root.render(<ReadableReply sessionId={sessionId} text={markdown} />));
+const render = (sessionId: string) => act(async () => root.render(<ReadableReply sessionId={sessionId} text={markdown} ts="2026-11-17T11:25:01Z" />));
 it.each(["stop", "close chat"])("reads just the nested section and aborts the upstream stream on %s", async action => {
   await render("chat");
-  expect(container.textContent).toContain("AI-generated voice"); expect(call).not.toHaveBeenCalled();
+  expect(container.textContent).not.toContain("AI-generated voice");
+  expect(container.querySelector('[title*="AI-generated voice"]')).toBeNull();
+  expect(call).not.toHaveBeenCalled();
   await act(async () => container.querySelector<HTMLButtonElement>('[data-speech-level="2"] button')!.click());
   const invocation = vi.mocked(call).mock.calls.find(([path]) => path.startsWith("/speech/synthesis"));
   expect(invocation?.[0]).toBe("/speech/synthesis?binding=exact");
   expect(JSON.parse(invocation![1]!.body as string)).toEqual({ text: "Счёт\nАнна: 42.\nДетали\nИлья.", sessionId: "chat" });
-  const stop = Array.from(container.querySelectorAll("button")).find(button => button.textContent === "Stop reading")!;
+  const stop = container.querySelector<HTMLButtonElement>('[data-slot="message-footer"] button[aria-label="Stop reading"]')!;
   if (action === "stop") await act(async () => stop.click());
   else await render("another-chat");
   expect(invocation![1]!.signal!.aborted).toBe(true);
@@ -39,7 +41,7 @@ it.each(["stop", "close chat"])("reads just the nested section and aborts the up
 it("requires an explicit read-aloud provider before sending text", async () => {
   vi.mocked(call).mockResolvedValue(Response.json({ providers: [selected], selected: null, binding: null }));
   await render("chat");
-  await act(async () => Array.from(container.querySelectorAll("button")).find(b => b.textContent === "Read aloud")!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-slot="message-footer"] button[aria-label="Read aloud"]')!.click());
   expect(call).toHaveBeenCalledTimes(1);
   expect(container.querySelector('[href="/settings/speech"]')).toBeTruthy(); expect(close).toHaveBeenCalledOnce();
 });

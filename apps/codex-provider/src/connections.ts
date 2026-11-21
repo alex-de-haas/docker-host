@@ -657,8 +657,8 @@ export const codexSettings: ProviderSettingsDefinition = {
   kind: "codex", name: "Codex", authentication: [
     { id: "chatgpt", label: "ChatGPT sign-in", browserLogin: true },
     { id: "api-key", label: "API key", credential: true, interfaceChoices: [
-      { kind: "speech-to-text", label: "Provide speech to text" },
-      { kind: "text-to-speech", label: "Provide text to speech" },
+      { kind: "speech-to-text", label: "Provide speech to text", statusLabel: "Speech to text" },
+      { kind: "text-to-speech", label: "Provide text to speech", statusLabel: "Text to speech" },
     ] },
     { id: "host-login", label: "Existing Codex login on this host", hostDirectory: true }],
   hostDirectory: { label: "Codex home on the Hosty server", placeholder: "/home/hosty/.codex", description: "Use an existing signed-in Codex directory accessible to this provider. Removing the connection leaves that directory and its session files in place." },
