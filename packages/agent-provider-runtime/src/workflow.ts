@@ -70,7 +70,8 @@ export class ProviderWorkflow {
     await this.policy.catalog(key, identity, tools);
     const registration: Registration = { admissionRef, binding: structuredClone(binding), identity, key, clients: new Map(),
       target: { appId: "hosty-workflow", url: "local:hosty-workflow",
-        ...(binding.tools?.some(name => name === "skill_install" || name === "skill_discover") ? { nativeToolTimeoutMs: 240_000 } : {}),
+        gitSkillTools: binding.tools?.some(name => (name === "skill_install" || name === "skill_discover")
+          && binding.policy?.tools?.[name]?.mode !== "disabled"),
         local: request => this.handle(runId, registration, request) } };
     this.registrations.set(runId, registration);
   }

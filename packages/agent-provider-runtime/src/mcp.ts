@@ -18,7 +18,8 @@ export class ProviderMcp {
   private preferences: AssistantSettings = { systemPrompt: "", mcpProviders: {}, mcpAutoAllow: {}, mcpSkillDigests: {} };
   constructor(private readonly authority: ProviderAuthority, private readonly origin: () => string,
     notify: (runId: string, event: { type: "approval_request"; approvalId: string; toolName: string; input: unknown }) => Promise<void>,
-    settled: (runId: string, id: string, tool: string, allowed: boolean, automatic: boolean) => Promise<void>) {
+    settled: (runId: string, id: string, tool: string, allowed: boolean, automatic: boolean) => Promise<void>,
+    private readonly gitSkillWorkflowTimeoutMs?: number) {
     this.policy = new McpToolPolicy({ read: async () => structuredClone(this.preferences), transform: async change => {
       for (;;) {
         const previous = this.preferences, patch = await change(structuredClone(previous));
@@ -72,7 +73,7 @@ export class ProviderMcp {
     const workflow = this.workflow.target(runId); if (workflow) targets.push(workflow);
     const token = this.proxy.register(runId, targets);
     return { servers: Object.fromEntries(targets.map(target => [target.appId, { type: "http", url: `${this.origin()}/internal/mcp/${encodeURIComponent(runId)}/${target.appId}`,
-      ...(target.nativeToolTimeoutMs ? { timeout: target.nativeToolTimeoutMs } : {}), headers: { Authorization: `Bearer ${token}` } }])),
+      ...(target.gitSkillTools && this.gitSkillWorkflowTimeoutMs ? { timeout: this.gitSkillWorkflowTimeoutMs } : {}), headers: { Authorization: `Bearer ${token}` } }])),
       prefixes: targets.map(target => `mcp__${target.appId}__`) };
   }
   resolve(runId: string, decisionId: string, allowed: boolean) { return this.policy.resolve(runId, decisionId, allowed) || this.workflow.resolve(runId, decisionId, allowed); }

@@ -11,11 +11,11 @@ import { workflowTools } from "@hosty-sdk/app/agent/workflow-tools";
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const binding = (): AgentSessionWorkflowBinding => ({ executor: { appId: "independent.consumer", installationId: "consumer-installation", key: "workflow" }, sessionId: randomUUID() });
-async function fixture(value?: AgentSessionWorkflowBinding, autonomous = false) {
+async function fixture(value?: AgentSessionWorkflowBinding, autonomous = false, gitSkillWorkflowTimeoutMs?: number) {
   const notify = vi.fn(async (_run: string, _event: { approvalId: string }) => {}), settled = vi.fn(async () => {});
   const authority = { renew: vi.fn(async () => ({})), mcp: vi.fn(async () => { throw new Error("A workflow must never request a Core MCP token."); }), workflow: vi.fn(async () => ({ state: "received" })) } as unknown as ProviderAuthority;
   let origin = "";
-  const runId = randomUUID(), mcp = new ProviderMcp(authority, () => origin, notify, settled);
+  const runId = randomUUID(), mcp = new ProviderMcp(authority, () => origin, notify, settled, gitSkillWorkflowTimeoutMs);
   const server = createServer((request, response) => { void mcp.proxy.handle(request, response, new URL(request.url!, "http://fixture.invalid").pathname).then(handled => { if (!handled) { response.writeHead(404); response.end(); } }); });
   cleanups.push(async () => { mcp.close(runId); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); const address = server.address(); if (!address || typeof address === "string") throw new Error("No fixture listener."); origin = `http://127.0.0.1:${address.port}`;
@@ -65,7 +65,7 @@ it("exposes profile and skill management only on a selected workflow and checks 
   const f = await fixture({ ...binding(), tools: [...AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS],
     policy: { default: "run", tools: { skill_install: { mode: "disabled" } } } });
   const tools = (await f.rpc("tools/list")).body.result as { tools: { name: string; annotations: { readOnlyHint: boolean } }[] };
-  expect(f.configured.servers["hosty-workflow"]).toHaveProperty("timeout", 240_000);
+  expect(f.configured.servers["hosty-workflow"]).not.toHaveProperty("timeout");
   expect(tools.tools.map(tool => tool.name)).toEqual(AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS.filter(name => name !== "skill_install"));
   expect(tools.tools.filter(tool => tool.annotations.readOnlyHint).map(tool => tool.name)).toEqual(["profile_list", "profile_options", "skill_list", "skill_discover"]);
   const input = { expectedRevision: 0, profile: { name: "Reviewer", skillIds: ["a".repeat(64)] } };
@@ -78,6 +78,16 @@ it("exposes profile and skill management only on a selected workflow and checks 
   expect((await f.rpc("tools/call", { name: "profile_create", arguments: { input } })).body.error).toBeUndefined();
   expect(f.authority.workflow).toHaveBeenCalledWith("original-admission", "profile-create", input, undefined);
   expect(f.authority.mcp).not.toHaveBeenCalled();
+});
+it("extends short native deadlines only for engines that require it and can use Git tools", async () => {
+  const git: AgentSessionWorkflowBinding = { ...binding(), tools: ["profile_list", "skill_install"] };
+  const ordinary = await fixture(git);
+  const shortClient = await fixture(git, false, 240_000);
+  const gitDisabled = await fixture({ ...git, policy: { default: "ask", tools: { skill_install: { mode: "disabled" } } } }, false, 240_000);
+  const unrelated = await fixture({ ...binding(), tools: ["subagent_status"] }, false, 240_000);
+  expect(shortClient.configured.servers["hosty-workflow"]).toHaveProperty("timeout", 240_000);
+  for (const target of [ordinary, gitDisabled, unrelated])
+    expect(target.configured.servers["hosty-workflow"]).not.toHaveProperty("timeout");
 });
 it("keeps Disabled and selected tools authoritative for discovery and calls", async () => {
   const f = await fixture({ ...binding(), tools: ["task_get"], policy: { default: "run", tools: { task_get: { mode: "disabled" } } } });

@@ -89,7 +89,7 @@ tool's approval policy for the next turn.
 
 | Tool | Result |
 | --- | --- |
-| `profile_list` | Lists names, descriptions and revisions. Pass a profile ID to read its full configuration. |
+| `profile_list` | Lists names, description previews of up to 240 characters, and revisions. Pass a profile ID to read its full configuration. |
 | `profile_options` | Lists available provider connections. Pass a connection ID to read its model and reasoning options. |
 | `profile_create` | Saves a new profile with the current directory revision and returns the stored profile. |
 | `profile_edit` | Updates only the supplied fields of an existing profile at the expected directory revision. |

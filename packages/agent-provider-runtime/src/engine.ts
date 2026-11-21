@@ -29,4 +29,6 @@ export type ProviderEngine<C extends EngineConnections = EngineConnections> = {
   };
   settings: ProviderSettingsDefinition;
   prepareInput?: NativeInputPreparer;
+  /** Set only for native clients whose default MCP timeout cannot accommodate Git skill operations. */
+  gitSkillWorkflowTimeoutMs?: number;
 };

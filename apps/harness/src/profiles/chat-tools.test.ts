@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ConnectionService } from "../connections/service.js";
 import { callProfileChatTool } from "./chat-tools.js";
@@ -42,6 +43,18 @@ it("reads summaries, full profiles and model/effort choices without changing any
   expect(await call("profile_options", { connectionId: "account" })).toEqual({ connectionId: "account", ...modelCatalog });
   expect(await readFile(file, "utf8")).toBe(before);
   expect(guard).not.toHaveBeenCalled();
+});
+
+it("fits a full directory of long Unicode descriptions within the workflow budget and retains detail by ID", async () => {
+  const description = "審".repeat(237) + "🧪" + "査".repeat(1761);
+  const entries = Array.from({ length: 200 }, (_, index) => ({
+    ...initial, id: randomUUID(), revision: 1, name: "役".repeat(97) + index, description,
+  }));
+  vi.spyOn(profiles, "read").mockResolvedValue({ revision: 2, defaultId: null, profiles: entries });
+  const summary = await call("profile_list", {});
+  expect(Buffer.byteLength(JSON.stringify(summary))).toBeLessThan(1024 * 1024);
+  expect(summary).toMatchObject({ profiles: entries.map(({ id }) => ({ id, description: "審".repeat(237) + "🧪査…" })) });
+  expect(await call("profile_list", { profileId: entries[0]!.id })).toMatchObject({ profile: { description } });
 });
 
 it("creates a shared profile and patches only the requested fields, returning persisted revisions and skill IDs", async () => {

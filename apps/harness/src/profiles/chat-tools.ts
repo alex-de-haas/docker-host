@@ -21,6 +21,12 @@ function readId(value: unknown): string {
   return value;
 }
 
+// The complete directory crosses a 1 MiB workflow channel. The single-profile read retains the full description.
+function descriptionPreview(description: string): string {
+  const characters = Array.from(description);
+  return characters.length > 240 ? characters.slice(0, 239).join("") + "…" : description;
+}
+
 export async function callProfileChatTool(name: string, input: Record<string, unknown>, deps: ProfileChatDependencies) {
   if (name === "profile_options") {
     requireFields(input, ["connectionId"]);
@@ -40,7 +46,8 @@ export async function callProfileChatTool(name: string, input: Record<string, un
     const id = input.profileId === undefined ? undefined : readId(input.profileId);
     const directory = await deps.profiles.read();
     const state = { directoryRevision: directory.revision, defaultId: directory.defaultId, ...(directory.catalogUnavailable ? { catalogUnavailable: true } : {}) };
-    if (!id) return { ...state, profiles: directory.profiles.map(({ id, name, description, revision }) => ({ id, name, description, revision })) };
+    if (!id) return { ...state, profiles: directory.profiles.map(({ id, name, description, revision }) =>
+      ({ id, name, description: descriptionPreview(description), revision })) };
     const profile = directory.profiles.find(profile => profile.id === id);
     if (!profile) throw new AppContextError(404, "profile_not_found", "This profile was deleted. Read the directory again.");
     return { ...state, profile };
