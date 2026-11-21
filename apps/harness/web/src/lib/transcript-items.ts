@@ -20,7 +20,7 @@ function failedObservation(event: AssistantEvent): FailedObservation | undefined
   const observation = value as Record<string, unknown>;
   if (observation.stopConfirmed === false && typeof observation.runId === "string" && uuid.test(observation.runId)
     && typeof observation.generation === "string" && uuid.test(observation.generation))
-    return { runId: observation.runId, generation: observation.generation, seq: event.seq };
+    return { runId: (event.providerSource as { transcriptRunId?: string } | undefined)?.transcriptRunId ?? observation.runId, generation: observation.generation, seq: event.seq };
 }
 function observedCalls(calls: Map<string, AssistantEvent[]>, observation?: FailedObservation): Map<string, AssistantEvent[]> {
   return observation ? new Map([...calls].filter(([, candidates]) => candidates.every(call => call.providerGeneration === observation.generation
@@ -35,7 +35,7 @@ function qualifiedOutcome(call: AssistantEvent, result: AssistantEvent, kind: "c
   const id = call.providerEventId, generation = call.providerGeneration;
   if (typeof id !== "string" || typeof generation !== "string" || !uuid.test(generation)) return false;
   const runId = id.split(":", 1)[0];
-  return uuid.test(runId) && id.startsWith(runId + ":tool:") && sameObservedCall(call, result, { runId, generation, seq: call.seq }, kind);
+  return runId.split("@").length <= 2 && runId.split("@").every(part => uuid.test(part)) && id.startsWith(runId + ":tool:") && sameObservedCall(call, result, { runId, generation, seq: call.seq }, kind);
 }
 /** Pair an approval with the one listed call of its recorded turn that carries the same identity. */
 function approvalCalls(events: readonly AssistantEvent[]) {
@@ -122,9 +122,9 @@ export function toolResults(events: readonly AssistantEvent[]) {
 function originalTurnOrder(events: AssistantEvent[]): AssistantEvent[] {
   if (!events.some(event => event.providerHistoryEarlier === true)) return events;
   const runKey = (event: AssistantEvent) => {
-    const source = event.providerSource as { runId?: string; generation?: string; provider?: { appId?: string; installationId?: string; key?: string; implementationId?: string | null } } | undefined;
+    const source = event.providerSource as { runId?: string; transcriptRunId?: string; generation?: string; provider?: { appId?: string; installationId?: string; key?: string; implementationId?: string | null } } | undefined;
     return source?.runId && source.generation && source.provider?.installationId
-      ? JSON.stringify([source.provider.appId, source.provider.installationId, source.provider.key, ...(source.provider.implementationId != null ? [source.provider.implementationId] : []), source.runId, source.generation]) : undefined;
+      ? JSON.stringify([source.provider.appId, source.provider.installationId, source.provider.key, ...(source.provider.implementationId != null ? [source.provider.implementationId] : []), source.transcriptRunId ?? source.runId, source.generation]) : undefined;
   };
   const base = events.filter(event => event.providerHistoryEarlier !== true);
   const anchors = new Map<string, number>();

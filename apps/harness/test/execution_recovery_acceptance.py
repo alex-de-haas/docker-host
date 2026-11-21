@@ -363,4 +363,5 @@ def check(context, app, app_origin, call, timed, link, client):
     assert fresh_current()['id'] == fresh['id'], 'Deleting the stopped session must keep other conversations'
     say('PASS: one authenticated Delete retires a previously retained proven-stopped run, preserves unknown evidence and deletes only its Harness conversation')
     return {'before': before_crash, 'after': after_crash, 'afterConsumer': after_consumer,
-        'quiescentStopped': cancelled_proof, 'quiescentResumed': resumed_proof, 'retired': retired}
+        'quiescentStopped': cancelled_proof, 'quiescentResumed': resumed_proof, 'retired': retired,
+        'completedChatId': fresh['id'], 'otherChatId': session['id'], 'retainedTree': tree}

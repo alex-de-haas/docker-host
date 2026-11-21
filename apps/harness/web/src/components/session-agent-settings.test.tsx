@@ -5,8 +5,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SessionAgentSettings, type AgentSettingsNotice } from "./session-agent-settings";
 import * as api from "@/lib/assistant-api";
 import * as profiles from "@/lib/profiles-api";
-vi.mock("@/lib/assistant-api", () => ({ getSessionModels: vi.fn(), setSessionModel: vi.fn(), listAgentConnections: vi.fn(), setSessionProvider: vi.fn() }));
-vi.mock("@/lib/profiles-api", () => ({ listProfiles: vi.fn(), selectSessionProfile: vi.fn() }));
+vi.mock("@/lib/assistant-api", async original => ({
+  ...await original<typeof api>(), getSessionModels: vi.fn(), setSessionModel: vi.fn(), listAgentConnections: vi.fn(), setSessionProvider: vi.fn(), getSessionContextOptions: vi.fn(), changeSessionContext: vi.fn(),
+}));
+vi.mock("@/lib/profiles-api", () => ({ listProfiles: vi.fn(), selectSessionProfile: vi.fn(), connectionModels: vi.fn() }));
 const record: api.AssistantSession = { id: "chat", title: "Chat", createdAt: "", status: "idle", connectionId: "account", connectionRevision: 1,
   providerLocked: true, profileLocked: true, selectionRevision: 7, executionSelection: { model: "first", reasoningEffort: "medium" } };
 const catalog: api.ModelCatalog = { revision: "one", models: [{ id: "first", label: "First", efforts: [
@@ -42,6 +44,7 @@ it("has one trigger and read-only provider/profile rows after start, with curren
   expect(document.querySelector('[aria-label="Current provider"]')?.textContent).toBe("My account");
   expect(document.querySelector('[aria-label="Current agent profile"]')?.textContent).toBe("No profile");
   expect(document.querySelector('button[aria-label^="Provider:"]')).toBeNull();
+  expect([...document.querySelectorAll("button")].find(b => b.textContent === "Change session context…")?.disabled).toBe(false);
   expect(document.querySelector('[role="slider"]')?.getAttribute("aria-valuetext")).toBe("Medium");
   await key(document.activeElement!, "Escape");
   expect(document.querySelector('textarea')!.value).toBe("Keep my draft");
@@ -77,6 +80,13 @@ it("keeps the controller alive when the panel closes during a failed save and ex
   expect(document.querySelector('[role="slider"]')?.getAttribute("aria-valuetext")).toBe("Medium");
   expect(changed).not.toHaveBeenCalled();
 });
+it("shows the original model catalog error for a temporary provider outage", async () => {
+  const message = "The provider is temporarily unavailable.";
+  vi.mocked(api.getSessionModels).mockRejectedValueOnce(new api.AssistantApiError("provider_unavailable", message, 503));
+  await render();
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(message);
+  expect(api.setSessionModel).not.toHaveBeenCalled();
+});
 it("uses binary thinking and a distinct default instead of an ordinal slider", async () => {
   vi.mocked(api.getSessionModels).mockResolvedValue({ revision: "binary", models: [{ id: "first", label: "First", defaultEffort: "true", efforts: [{ id: "false", label: "Off" }, { id: "true", label: "On" }] }] });
   await render({ ...record, executionSelection: { model: "first", reasoningEffort: null } }); await open();
@@ -102,6 +112,7 @@ it("locks model and effort for accepted tasks but keeps the settings panel reada
   expect(document.querySelector('[role="slider"]')?.getAttribute("data-disabled")).not.toBeNull();
   expect(document.body.textContent).toContain("fixed for this task");
   expect(trigger().disabled).toBe(false);
+  expect([...document.querySelectorAll("button")].some(b => b.textContent === "Change session context…")).toBe(false);
 });
 it("adopts an empty chat's default provider without opening settings", async () => {
   vi.mocked(api.setSessionProvider).mockResolvedValue({ ...record, providerLocked: false, profileLocked: false });
@@ -121,4 +132,17 @@ it("keeps the common panel open when provider selection replaces the connection 
   expect(trigger().getAttribute("aria-expanded")).toBe("true");
   expect(document.querySelector('button[aria-label="Model"]')).not.toBeNull();
   expect(document.querySelector('button[aria-label^="Provider:"]')?.textContent).toContain("Other account");
+});
+
+it("reaches the recovery dialog from a failed chat with a missing connection and retains its draft on cancel", async () => {
+  vi.mocked(api.listAgentConnections).mockResolvedValue({ connections: [], defaultId: null });
+  vi.mocked(api.getSessionModels).mockRejectedValue(new api.AssistantApiError("provider_connection_changed", "Gone", 409));
+  vi.mocked(api.getSessionContextOptions).mockResolvedValue({ connections: [], currentConnectionId: null, selectionRevision: 7 });
+  await render({ ...record, status: "failed" }); await open();
+  await act(async () => [...document.querySelectorAll("button")].find(b => b.textContent === "Change session context…")!.click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Configure an account");
+  await act(async () => [...document.querySelectorAll("button")].find(b => b.textContent === "Cancel")!.click());
+  expect(document.querySelector('textarea')!.value).toBe("Keep my draft");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(api.changeSessionContext).not.toHaveBeenCalled();
 });

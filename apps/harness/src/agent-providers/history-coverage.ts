@@ -70,7 +70,8 @@ export class ProviderHistoryCoverage {
   private readonly active = new Map<string, string>();
   private readonly reported = new Map<string, string>();
 
-  constructor(private readonly store: SessionStore, private readonly report: (id: string, gaps: ProviderHistoryGap[]) => Promise<void>) {}
+  constructor(private readonly store: SessionStore, private readonly report: (id: string, gaps: ProviderHistoryGap[]) => Promise<void>,
+    private readonly isCurrent: (id: string, provider: AgentProviderRef, sessionId: string) => boolean = () => true) {}
 
   private key(provider: AgentProviderRef, scope: Scope): string {
     return createHash("sha256").update(JSON.stringify([...providerIdentityParts(provider),
@@ -78,7 +79,7 @@ export class ProviderHistoryCoverage {
   }
 
   activate(id: string, provider: AgentProviderRef, scope: Scope): void {
-    this.active.set(id, this.key(provider, scope));
+    if (this.isCurrent(id, provider, scope.sessionId)) this.active.set(id, this.key(provider, scope));
   }
 
   forget(id: string): void {

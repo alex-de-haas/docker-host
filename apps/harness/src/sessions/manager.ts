@@ -31,6 +31,7 @@ import { McpToolPolicy } from "../mcp/policy.js";
 import { type CoreEnvironmentAction, type CoreEnvironment } from "@hosty-sdk/app/sandbox/server";
 import { DevelopmentClient, DevelopmentMcp, developmentTools, workspaceInstructions, type DevelopmentAction, type DevelopmentWorkspace } from "./development.js";
 import { ConnectionError } from "../connections/errors.js";
+import { contextChangeInput, contextChangeBlocked, sameProviderInterface } from "./context-change.js";
 import type { ConnectionBinding } from "../connections/types.js";
 import { AppContextError, parseAppIds, validateSelection, captureContext, withAppContext } from "./app-context.js";
 import { mkdir, stat } from "node:fs/promises";
@@ -64,7 +65,7 @@ import { agentSelectionId } from "../agent-providers/directory.js";
 import type { AgentConnectionSelection } from "../agent-providers/types.js";
 import { withAgentAuthority } from "../agent-providers/context.js";
 import { ProviderHarnessRun, type ProviderRunContext } from "../agent-providers/run.js";
-import { providerDecisionCard, providerDecisionCardId, type QuestionAnswers } from "../agent-providers/decision-identity.js";
+import { providerDecisionCard, providerDecisionCardId, transcriptRunId, type QuestionAnswers } from "../agent-providers/decision-identity.js";
 import { reconcileHistoryProjection, type HistoryProjectionClock } from "../agent-providers/history-projection.js";
 import { createAgentRunProjection, historyMessages, projectHistoryFact, reduceAgentRunProjection, type AgentRunProjection } from "../agent-providers/projection.js";
 import { nativeAgentDetails, nativeAgentStatus, nativeAgentStatusIdentity, providerAgentKey, providerTranscriptSource, transcriptToolId, type NativeAgentStatusEvent } from "../agent-providers/transcript-source.js";
@@ -119,6 +120,12 @@ export interface SessionListener {
 }
 
 type HistoryPosition = { sessionId: string; epoch: string; archiveGeneration?: string; position: number };
+function historyTranscriptRunId(record: SessionRecord, provider: AgentProviderRef, sessionId: string, runId: string): string {
+  const changes = record.contextChanges ?? [];
+  const index = changes.findIndex(change => change.previousSessionId === sessionId && sameProviderRef(change.previousProvider, provider));
+  const contextId = index === -1 ? changes.at(-1)?.requestId : changes[index - 1]?.requestId;
+  return transcriptRunId(runId, contextId);
+}
 function positionKey(identity: string, value: HistoryPosition): string {
   return JSON.stringify([identity, value.sessionId, value.epoch, value.archiveGeneration, value.position]);
 }
@@ -176,6 +183,26 @@ interface LiveSession {
    * which is the only safe default — an unknown tool asks.
    */
   autoAllowed: Set<string>;
+}
+
+/** An owner can delete completed history after its original provider installation is gone. */
+function hasSettledProviderRun(session: LiveSession): boolean {
+  const record = session.record, execution = record.providerExecution, run = execution?.run;
+  if (!execution || !run?.stopConfirmed || run.phase !== "terminal" || !["succeeded", "failed", "cancelled"].includes(run.state)
+    || run.ref.id !== execution.runId || run.sessionId !== execution.sessionId || !sameProviderRef(run.ref.provider, execution.selection.provider)
+    || (record.agentRunId && record.providerObservedRunId !== run.ref.id)
+    || (record.providerStopProof?.runId === run.ref.id && record.providerStopProof.generation !== run.generation)
+    || run.effects.certainty !== "known" || run.effects.unresolvedCallIds.length || run.pending.length
+    || run.pendingContinuations?.some(item => item.state !== "superseded")) return false;
+
+  // A terminal snapshot proves only this attempt. A later admission, reserved continuation
+  // or unacknowledged command still needs the original provider's Stop protocol.
+  return !session.run && !record.sourceAdmission && !record.workerRun && !record.taskExecutionId && !record.taskDispatch
+    && (!record.developmentLease || record.developmentLeaseState === "stopped")
+    && record.providerRecovery?.state !== "pending" && !record.subagentStartPending && !record.decisionWaitIds?.length
+    && ["idle", "failed", "cancelled"].includes(record.status) && !Object.keys(execution.mutations ?? {}).length
+    && !Object.values(execution.continuations ?? {}).some(item => item.state === "pending" || item.state === "awaiting_authorization"
+      || (item.sourceRunId === run.ref.id && item.state === "admitted"));
 }
 
 function workspaceConversation(record: Pick<SessionRecord, "id" | "title">) {
@@ -309,7 +336,8 @@ export class SessionManager {
   private suggestionSignature(session: LiveSession): string {
     const record = session.record;
     return JSON.stringify([record.connectionId, record.connectionRevision, record.selectionRevision, record.appContextRevision,
-      record.workspaceAssociation, record.developmentWorkspaces?.map(tree => [tree.id, tree.state, tree.observation?.head])]);
+      record.workspaceAssociation, record.developmentWorkspaces?.map(tree => [tree.id, tree.state, tree.observation?.head]),
+      ...(record.contextChanges?.length ? [record.contextChanges.at(-1)!.requestId] : [])]);
   }
   private suggestionEvent(session: LiveSession): StoredEvent {
     const stale = session.suggestionContext !== undefined && session.suggestionContext !== this.suggestionSignature(session);
@@ -543,6 +571,7 @@ export class SessionManager {
       persistence: {
         save: async value => {
           await this.store.saveProviderExecution(options.sessionId, value);
+          if (this.providerStates.get(options.sessionId) !== state) return;
           session.record.providerExecution = structuredClone(value);
           session.record.harnessSessionId = value.sessionId;
         },
@@ -569,7 +598,7 @@ export class SessionManager {
           mcp: currentMcp, limits: { maxDurationMs: 24 * 60 * 60 * 1000 } };
       },
       unavailable: error => this.serialize(options.sessionId, async () => {
-        if (session.record.providerRetirement || this.live.get(options.sessionId) !== session) return;
+        if (session.record.providerRetirement || this.live.get(options.sessionId) !== session || this.providerStates.get(options.sessionId) !== state) return;
         await this.append(options.sessionId, { type: "notice", message: error instanceof Error ? error.message : "Provider observation is unavailable. Reconnect to reconcile this run." });
         // Losing observation is not execution failure, cancellation or permission to release a lease.
       }),
@@ -886,10 +915,10 @@ export class SessionManager {
     if (fact.item.kind === "event" && fact.item.event.type === "message.delta") {
       const state = this.providerStates.get(id);
       if (live?.record.createdBy === fact.userId && !live.record.providerRetirement && live.record.sourceAdmission?.previousProviderRunId !== fact.runId
-        && state?.sessionId === fact.sessionId && state.runId === fact.runId && state.run && state.run.generation === fact.generation && !state.run.stopConfirmed) {
+        && state && sameProviderRef(state.selection.provider, provider) && state.sessionId === fact.sessionId && state.runId === fact.runId && state.run && state.run.generation === fact.generation && !state.run.stopConfirmed) {
         const event = fact.item.event;
         this.fanOut(live, { seq: live.record.lastEventSeq, ts: event.occurredAt, type: "assistant_delta",
-          text: String(event.data.text ?? ""), providerSource: providerTranscriptSource(state.run, event.source) });
+          text: String(event.data.text ?? ""), providerSource: providerTranscriptSource(state.run, event.source, transcriptRunId(fact.runId, state.contextId)) });
       }
       return;
     }
@@ -899,28 +928,31 @@ export class SessionManager {
     const state = this.providerStates.get(id);
     this.store.assertWritable(id);
     if (!state) throw new Error("The local provider execution binding needs recovery.");
-    if (session.record.createdBy !== fact.userId || state.sessionId !== fact.sessionId
-      || !sameProviderRef(state.selection.provider, provider)) return;
+    if (record.createdBy !== fact.userId) return;
+    const archived = state.sessionId !== fact.sessionId || !sameProviderRef(state.selection.provider, provider);
+    if (archived && !record.contextChanges?.some(change => change.previousSessionId === fact.sessionId
+      && change.previousProvider && sameProviderRef(change.previousProvider, provider))) return;
     // Retiring seals execution and decisions. Its owner can still read transcript evidence until deletion commits.
     const fenced = !!record.providerRetirement;
     // A new turn owns the chat while the provider still knows the previous run UUID.
-    const historical = () => fenced || state.runId !== fact.runId || session.record.sourceAdmission?.previousProviderRunId === fact.runId;
+    const historical = () => archived || fenced || state.runId !== fact.runId || session.record.sourceAdmission?.previousProviderRunId === fact.runId;
     if (fenced && fact.item.kind === "event" && fact.item.event.type === "tool.output") return;
-    if (fenced && state.runId === fact.runId && state.run && state.run.generation !== fact.generation)
+    if (!archived && state.runId === fact.runId && state.run && state.run.generation !== fact.generation)
       throw new Error("The provider changed the recorded execution generation.");
-    const retained = await this.store.readHistoryRun(id, fact.runId);
-    if (retained && (retained.principalId !== fact.principalId || retained.snapshot.generation !== fact.generation))
+    const displayRunId = historyTranscriptRunId(record, provider, fact.sessionId, fact.runId);
+    const retained = await this.store.readHistoryRun(id, fact.runId, { provider, sessionId: fact.sessionId });
+    if (retained && (!sameProviderRef(retained.snapshot.ref.provider, provider) || retained.principalId !== fact.principalId || retained.snapshot.generation !== fact.generation))
       throw new Error("The provider changed the recorded history owner or execution generation.");
     if ((position || fenced) && fact.item.kind === "event" && fact.item.event.type === "tool.completed"
       && (!fact.item.event.data.name || fact.item.event.data.name === "unknown")) {
       const event = fact.item.event, toolId = String(event.data.toolCallId);
       const previous = retained?.snapshot.tools?.find(tool => tool.id === toolId && tool.source?.agentId === event.source.agentId);
-      const name = previous?.name ?? (await this.outputCalls(session)).get(transcriptToolId(fact.runId, event.source, toolId)) ?? "unknown";
+      const name = previous?.name ?? (await this.outputCalls(session)).get(transcriptToolId(displayRunId, event.source, toolId)) ?? "unknown";
       fact = { ...fact, item: { ...fact.item, event: { ...event, data: { ...event.data, name } } } };
     }
     const { item } = fact;
     if (fact.sourceHistoryIncomplete) {
-      const key = fact.runId + ":source-history-incomplete";
+      const key = displayRunId + ":source-history-incomplete";
       const seen = this.providerProjectedIds.get(id) ?? projectedIds(await this.store.readEvents(id));
       this.providerProjectedIds.set(id, seen);
       if (!seen.has(key)) {
@@ -957,7 +989,7 @@ export class SessionManager {
           await this.projectProviderItem(session, applied, state, true, projection, fact.replayed || !advances, partial, clock);
           if (!fact.replayed && advances && handle instanceof ProviderHarnessRun) handle.onHistoryObserved(item);
         }
-        if (!fenced && historical() && session.record.parentSessionId && session.record.subagentAssignmentRunId === fact.runId && projection.snapshot.stopConfirmed)
+        if (!archived && !fenced && historical() && session.record.parentSessionId && session.record.subagentAssignmentRunId === fact.runId && projection.snapshot.stopConfirmed)
           this.trackSubagents(this.subagents.observe(session.record.parentSessionId, id, projection.snapshot, stateOnly || clock.details !== clock.lifecycle));
         await renderFact();
         return this.store.saveHistoryRun(id, fact.principalId, projection.snapshot, clock);
@@ -982,14 +1014,15 @@ export class SessionManager {
       // Older turns may gain evidence after a newer turn starts. Preserve the origin in the
       // journal and leave the current turn's controls, status, usage and pending questions alone.
       await this.importHistoricalTranscript(session, projection, item, historical());
-      if (!fenced && session.record.parentSessionId && session.record.subagentAssignmentRunId === fact.runId && projection.snapshot.stopConfirmed)
+      if (!archived && !fenced && session.record.parentSessionId && session.record.subagentAssignmentRunId === fact.runId && projection.snapshot.stopConfirmed)
         this.trackSubagents(this.subagents.observe(session.record.parentSessionId, id, projection.snapshot, false));
     }
     await this.store.saveHistoryRun(id, fact.principalId, projection.snapshot);
   }
 
   private async importHistoricalTranscript(session: LiveSession, projection: AgentRunProjection, item: AgentWatchItem, earlier: boolean, position?: HistoryPosition): Promise<void> {
-    const id = session.record.id, snapshot = projection.snapshot, runId = snapshot.ref.id;
+    const id = session.record.id, snapshot = projection.snapshot;
+    const runId = historyTranscriptRunId(session.record, snapshot.ref.provider, snapshot.sessionId, snapshot.ref.id);
     const seen = this.providerProjectedIds.get(id) ?? projectedIds(await this.store.readEvents(id));
     const specific = (position || session.record.providerRetirement) && item.kind === "event" && item.event.type !== "run.updated" ? item.event : undefined;
     this.providerProjectedIds.set(id, seen);
@@ -1014,7 +1047,7 @@ export class SessionManager {
         return;
       }
       await this.append(id, { ...event, ts: item.kind === "event" ? item.event.occurredAt : snapshot.observedAt,
-        providerSource: providerTranscriptSource(snapshot, source), providerHistoryEarlier: earlier,
+        providerSource: providerTranscriptSource(snapshot, source, runId), providerHistoryEarlier: earlier,
         providerEventId: identity, providerGeneration: snapshot.generation });
       seen.add(identity);
     };
@@ -1022,7 +1055,7 @@ export class SessionManager {
     if (item.kind === "snapshot" || item.event.type === "run.updated" || item.event.type === "agent.updated") {
       for (const agent of snapshot.agents ?? []) if (agent.parentAgentId !== undefined
         && (item.kind === "snapshot" || item.event.type !== "agent.updated" || item.event.source.agentId === agent.agentId)) {
-        const status = nativeAgentStatus(snapshot, agent);
+        const status = nativeAgentStatus(snapshot, agent, runId);
         const known = this.providerAgentStatuses.get(id)?.get(providerAgentKey(status.providerSource));
         if (!earlier && known?.sourceSequence && BigInt(known.sourceSequence) >= BigInt(snapshot.lastSequence)) continue;
         await append(`archived-agent:${agent.agentId}:${snapshot.lastSequence}`, status, agent);
@@ -1076,7 +1109,8 @@ export class SessionManager {
     const handled = this.serialize(session.record.id, async () => {
       // A slow read may finish behind admission of the next turn on this chat's lane.
       const runId = item.kind === "snapshot" ? item.snapshot.ref.id : item.event.runId;
-      if (runId !== value.runId || this.providerStates.get(session.record.id)?.runId !== runId) return;
+      const active = this.providerStates.get(session.record.id);
+      if (runId !== value.runId || active?.runId !== runId || active.contextId !== value.contextId) return;
       // A legacy observer can already be waiting here when Delete detaches it. Rejecting
       // the callback also prevents its caller from advancing its cursor or replaying a control.
       this.assertNotRetiring(session.record);
@@ -1106,6 +1140,7 @@ export class SessionManager {
       if (!projection) throw new AppContextError(409, "resync_required", "Read the provider run snapshot before following its events.");
       if (projectStatus && session.record.sourceAdmission?.previousProviderRunId === projection.snapshot.ref.id)
         return this.importHistoricalTranscript(session, projection, item, true);
+      const displayRunId = transcriptRunId(projection.snapshot.ref.id, value.contextId);
       const retainedRun = session.record.providerExecution?.run;
       const next = { ...value, run: projection.snapshot, cursor: projection.cursor, historyClock };
       session.record.providerExecution = next;
@@ -1132,7 +1167,7 @@ export class SessionManager {
       const stoppedSnapshotOutputs = stoppedSnapshot && sameSelectedRun || !!history && projection.snapshot.stopConfirmed;
       const priorCommandTools = suggesting && sameSelectedRun && projection.snapshot.freshness === "current"
         && retainedRun?.ref.id === projection.snapshot.ref.id && retainedRun.generation === projection.snapshot.generation
-        ? new Map((previous?.tools ?? retainedRun.tools ?? []).map(tool => [transcriptToolId(retainedRun.ref.id, tool.source, tool.id), tool]))
+        ? new Map((previous?.tools ?? retainedRun.tools ?? []).map(tool => [transcriptToolId(displayRunId, tool.source, tool.id), tool]))
         : undefined;
       const setObservedStatus = async (status: SessionStatus) => {
         if (!replayed) return this.setStatus(id, status, false, !!history && status === "cancelled");
@@ -1150,8 +1185,8 @@ export class SessionManager {
       const append = async (key: string, event: HarnessEvent, snapshotToolName?: string, source?: AgentSource, lateCommand = false) => {
         // The state endpoint can confirm exit before its detailed terminal evidence arrives by range.
         if (stateOnly && key === "terminal") return;
-        event = { ...event, providerSource: providerTranscriptSource(projection.snapshot, source) };
-        const identity = `${projection.snapshot.ref.id}:${key}`;
+        event = { ...event, providerSource: providerTranscriptSource(projection.snapshot, source, displayRunId) };
+        const identity = `${displayRunId}:${key}`;
         if (seen.has(identity)) return;
         const output = event.type === "tool_result" || event.type === "command_result";
         if (output && !stoppedSnapshotOutputs && !lateCommand && !["running", "awaiting_approval", "awaiting_question"].includes(session.record.status)) return;
@@ -1171,7 +1206,7 @@ export class SessionManager {
         // may already be at a later watermark and cannot date an older child's reply.
         if (!historyClock) for (const { source, key, event } of nativeAgentDetails(item)) await append(key, event, undefined, source);
         const statuses = (projection.snapshot.agents ?? []).filter(agent => agent.parentAgentId !== undefined)
-          .map(agent => nativeAgentStatus(projection.snapshot, agent));
+          .map(agent => nativeAgentStatus(projection.snapshot, agent, displayRunId));
         const currentAgents = new Set(statuses.map(status => providerAgentKey(status.providerSource)));
         for (const [key, previous] of agentStatuses) {
           const source = previous.providerSource;
@@ -1199,33 +1234,33 @@ export class SessionManager {
           if (barrier?.state === "armed" && barrier.runId === projection.snapshot.ref.id && tool.state === "completed"
             && tool.output?.includes(`hosty_task_barrier:${barrier.id}:${barrier.generation}`))
             barrier.acknowledgedSequence ??= item.kind === "event" ? item.event.sequence : projection.snapshot.lastSequence;
-          const toolUseId = transcriptToolId(projection.snapshot.ref.id, tool.source, tool.id);
+          const toolUseId = transcriptToolId(displayRunId, tool.source, tool.id);
           const toolKey = `${tool.source?.agentId ?? "root"}:${tool.id}`;
-          if (suggesting && !seen.has(`${projection.snapshot.ref.id}:tool:${toolKey}`)) continue;
+          if (suggesting && !seen.has(`${displayRunId}:tool:${toolKey}`)) continue;
           if (tool.name !== "unknown" && !(this.importingPosition.getStore() && item.kind === "event" && item.event.type === "tool.completed"))
             await append(`tool:${toolKey}`, { type: "tool_use", toolUseId, toolName: tool.name, input: tool.input }, undefined, tool.source);
           const outcome = history && tool.state === "running" && (projection.snapshot.stopConfirmed || projection.snapshot.phase === "interrupted") ? "unknown" : tool.state;
           if (outcome !== "running" && tool.name !== "unknown" && (history || tool.output !== undefined) && (outcome !== "unknown"
-            || !["completed", "failed", "cancelled"].some(status => seen.has(`${projection.snapshot.ref.id}:output:${toolKey}:${status}`)))) await append(`output:${toolKey}:${outcome}`,
+            || !["completed", "failed", "cancelled"].some(status => seen.has(`${displayRunId}:output:${toolKey}:${status}`)))) await append(`output:${toolKey}:${outcome}`,
             { type: "tool_result", toolUseId, status: outcome, output: tool.output ?? "", ...(tool.truncated ? { truncated: true as const } : {}) }, tool.name, tool.source);
           if (tool.command) {
             const prior = priorCommandTools?.get(toolUseId);
             const lateCommand = tool.command.status !== "unknown" && prior?.name === tool.name
               && prior.source?.parentAgentId === tool.source?.parentAgentId && prior.source?.parentToolCallId === tool.source?.parentToolCallId
               && (await this.outputCalls(session)).get(toolUseId) === tool.name
-              && !["unknown", "completed", "failed", "cancelled"].some(status => seen.has(`${projection.snapshot.ref.id}:command:${toolKey}:${status}`));
+              && !["unknown", "completed", "failed", "cancelled"].some(status => seen.has(`${displayRunId}:command:${toolKey}:${status}`));
             await append(`command:${toolKey}:${tool.command.status}`,
               { type: "command_result", toolUseId, ...tool.command }, tool.name, tool.source, lateCommand);
           }
         }
         session.pendingApprovals.clear(); session.pendingQuestions.clear();
         for (const decision of projection.pending) {
-          const cardId = providerDecisionCardId(projection.snapshot.ref.id, decision.id);
+          const cardId = providerDecisionCardId(displayRunId, decision.id);
           if (decision.kind === "approval") {
             session.pendingApprovals.set(cardId, decision.toolName ?? "Agent action");
             await append(`decision:${decision.id}:${decision.revision}`, { type: "approval_request", approvalId: cardId,
               toolName: decision.toolName ?? "Agent action", input: decision.input, ...(decision.title ? { title: decision.title } : {}),
-              ...(decision.toolCallId ? { toolUseId: transcriptToolId(projection.snapshot.ref.id, decision.source, decision.toolCallId) } : {}) }, undefined, decision.source);
+              ...(decision.toolCallId ? { toolUseId: transcriptToolId(displayRunId, decision.source, decision.toolCallId) } : {}) }, undefined, decision.source);
           } else {
             const questions = this.providerQuestions(decision);
             session.pendingQuestions.set(cardId, questions.map(question => question.id!));
@@ -1239,26 +1274,26 @@ export class SessionManager {
         }
         for (const entry of projection.snapshot.decisions ?? []) {
           const decision = entry.decision;
-          const cardId = providerDecisionCardId(projection.snapshot.ref.id, decision.id);
+          const cardId = providerDecisionCardId(displayRunId, decision.id);
           if (entry.state !== "resolved" || !entry.response) continue;
           if (decision.kind === "approval" && entry.response.kind === "approval") {
             await append(`decision:${decision.id}:${decision.revision}`, { type: "approval_request", approvalId: cardId,
               toolName: decision.toolName ?? "Agent action", input: decision.input, ...(decision.title ? { title: decision.title } : {}) }, undefined, decision.source);
-            const key = `${projection.snapshot.ref.id}:resolved:${decision.id}`;
+            const key = `${displayRunId}:resolved:${decision.id}`;
             if (!seen.has(key)) { await this.append(id, { type: "approval_decision", approvalId: cardId,
               toolName: decision.toolName ?? "Agent action", decision: entry.response.decision,
-              ...(entry.response.message ? { message: entry.response.message } : {}), providerSource: providerTranscriptSource(projection.snapshot, decision.source), providerEventId: key }); seen.add(key); }
+              ...(entry.response.message ? { message: entry.response.message } : {}), providerSource: providerTranscriptSource(projection.snapshot, decision.source, displayRunId), providerEventId: key }); seen.add(key); }
           } else if (decision.kind === "question" && entry.response.kind === "question") {
             await append(`decision:${decision.id}:${decision.revision}`, { type: "question_request", questionId: cardId, questions: this.providerQuestions(decision),
               ...(decision.delivery === "next_turn" ? { blocking: false, delivery: "message" as const } : {}) }, undefined, decision.source);
-            const key = `${projection.snapshot.ref.id}:resolved:${decision.id}`;
+            const key = `${displayRunId}:resolved:${decision.id}`;
             if (!seen.has(key)) { await this.append(id, { type: "question_answered", questionId: cardId,
-              answers: structuredClone(entry.response.answers), providerSource: providerTranscriptSource(projection.snapshot, decision.source), providerEventId: key }); seen.add(key); }
+              answers: structuredClone(entry.response.answers), providerSource: providerTranscriptSource(projection.snapshot, decision.source, displayRunId), providerEventId: key }); seen.add(key); }
           }
         }
         if (item.kind === "event" && item.event.type === "message.delta") this.fanOut(session,
           { seq: session.record.lastEventSeq, ts: item.event.occurredAt, type: "assistant_delta", text: String(item.event.data.text ?? ""),
-            providerSource: providerTranscriptSource(projection.snapshot, item.event.source) });
+            providerSource: providerTranscriptSource(projection.snapshot, item.event.source, displayRunId) });
         if (item.kind === "event") {
           const event = item.event, data = event.data;
           if (event.type === "warning" && data.code !== "snapshot_truncated" && typeof data.message === "string") await append(`warning:${event.sequence}`, { type: "notice", message: data.message }, undefined, event.source);
@@ -1270,7 +1305,7 @@ export class SessionManager {
           if (!replayed && event.type === "extension" && event.source.parentAgentId === undefined && data.namespace === "hosty.agent.activity" && data.name === "activity" && data.activity && typeof data.activity === "object") {
             const activity = data.activity as import("../harness/activity.js").HarnessActivity;
             if (["working", "thinking", "responding"].includes(activity.phase) && Number.isSafeInteger(activity.toolCount) && activity.toolCount >= 0)
-              await this.applyHarnessEvent(id, { type: "activity", activity, providerSource: providerTranscriptSource(projection.snapshot, event.source) });
+              await this.applyHarnessEvent(id, { type: "activity", activity, providerSource: providerTranscriptSource(projection.snapshot, event.source, displayRunId) });
           }
         }
         const context = projection.snapshot.latestContext;
@@ -1287,16 +1322,16 @@ export class SessionManager {
         if (projectStatus && !projection.snapshot.stopConfirmed && ["queued", "running"].includes(projection.snapshot.state)
           && projection.snapshot.freshness === "current" && !projection.pending.length && session.record.status !== "suggesting") await setObservedStatus("running");
         if (projectStatus && !projection.snapshot.stopConfirmed && (projection.snapshot.state === "unknown" || projection.snapshot.freshness !== "current")) {
-          const key = `${projection.snapshot.ref.id}:observation-unavailable`;
+          const key = `${displayRunId}:observation-unavailable`;
           session.record.status = "failed";
           if (!seen.has(key)) {
             const unresolved = projection.snapshot.effects.unresolvedCallIds.length;
             const message = unresolved > 0
               ? `The provider's completion cannot be reconciled because ${unresolved} native tool outcome${unresolved === 1 ? " is" : "s are"} unresolved. Inspect the original provider execution before continuing.`
               : "The provider's execution state is unavailable or interrupted. Native exit is unconfirmed; reconnect or inspect the original provider execution before continuing.";
-            await this.append(id, { type: "notice", message, providerSource: providerTranscriptSource(projection.snapshot), providerEventId: key });
+            await this.append(id, { type: "notice", message, providerSource: providerTranscriptSource(projection.snapshot, undefined, displayRunId), providerEventId: key });
             await this.append(id, { type: "session_status", status: "failed", providerState: projection.snapshot.state,
-              providerSource: providerTranscriptSource(projection.snapshot),
+              providerSource: providerTranscriptSource(projection.snapshot, undefined, displayRunId),
               providerObservation: { runId: projection.snapshot.ref.id, generation: projection.snapshot.generation, stopConfirmed: false } });
             seen.add(key);
           }
@@ -1565,6 +1600,10 @@ export class SessionManager {
           if (!state.sessionId || !record.createdBy || agentSelectionId(state.selection) !== agentSelectionId(record.selection)) {
             unavailableIds.push(record.id); continue;
           }
+          for (const change of record.contextChanges ?? []) {
+            if (change.previousSessionId && change.previousProvider && sameProviderRef(change.previousProvider, state.selection.provider))
+              this.historyFeeds!.bind(change.previousProvider, change.previousSessionId, record.id, record.createdBy, true);
+          }
           this.historyFeeds!.bind(state.selection.provider, state.sessionId, record.id, record.createdBy);
           providers.set(JSON.stringify(state.selection.provider), state.selection.provider);
         } catch { unavailableIds.push(record.id); }
@@ -1798,6 +1837,10 @@ export class SessionManager {
       record.executionMode, record.autonomyRevision, record.autonomy, record.agentProfile?.id, record.agentProfile?.revision, record.skillIds,
       record.workspaceAssociation, record.developmentWorkspaces?.map(tree => [tree.id, tree.state, tree.observation?.head])])).digest("hex");
   }
+  private queueAttemptFingerprint(attempt: QueueAttempt): string {
+    const { payloadFingerprint: _stored, ...payload } = attempt;
+    return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+  }
   private publishMessageQueue(session: LiveSession): void { this.fanOut(session, this.queueEvent(session)); }
   async messageQueue(id: string, owner: string): Promise<QueueSnapshot> {
     return this.serialize(id, async () => {
@@ -1944,8 +1987,8 @@ export class SessionManager {
         }
         if (head.attempt?.bindingKey && head.attempt.bindingKey !== this.queueBinding(session.record))
           throw new AppContextError(409, "queue_settings_conflict", "Agent settings or workspace changed after this send was claimed. Review it before retrying.");
-        const { payloadFingerprint: previousFingerprint, ...payload } = head.attempt;
-        const payloadFingerprint = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+        const previousFingerprint = head.attempt.payloadFingerprint;
+        const payloadFingerprint = this.queueAttemptFingerprint(head.attempt);
         if (previousFingerprint && previousFingerprint !== payloadFingerprint)
           throw new AppContextError(409, "queue_claim_conflict", "The frozen send details changed. Preserve this attempt for recovery.");
         head.attempt.payloadFingerprint = payloadFingerprint;
@@ -2789,17 +2832,19 @@ export class SessionManager {
       let rememberedBinding: ConnectionBinding | null = null;
       if (!selectedProfile && input.connectionId === undefined && browserDefaults.connectionId && this.connections) {
         try {
-          // The opaque ID pins installation/account revision. A stale hint never selects its
-          // replacement, and current discovery still applies the caller's Core authority.
-          const current = (await this.connections.list()).connections.find(connection => connection.id === browserDefaults.connectionId && connection.available);
-          if (current) rememberedBinding = await this.connections.binding(current.id);
+          const current = this.connections.resolveCurrentBinding
+            ? await this.connections.get(browserDefaults.connectionId)
+            : (await this.connections.list()).connections.find(connection => connection.id === browserDefaults.connectionId && connection.available);
+          if (current && (!("available" in current) || current.available)) rememberedBinding = await this.connections.binding(current.id);
         } catch { /* Optional browser convenience cannot prevent ordinary profile/default resolution. */ }
       }
       const binding = rememberedBinding ?? await this.connections?.binding(selectedProfile?.connectionId ?? input.connectionId);
       if (input.taskConfiguration) {
         const expected = input.taskConfiguration.binding;
-        if (binding?.connectionId !== expected.connectionId || binding?.connectionRevision !== expected.connectionRevision
-          || binding?.connectionIdentity !== expected.connectionIdentity || binding?.harnessKind !== expected.harnessKind)
+        const currentIdentity = binding?.connectionIdentity;
+        const legacyMatch = expected.harnessKind === "agent" && !expected.connectionIdentity && currentIdentity === expected.connectionId;
+        if ((!legacyMatch && (binding?.connectionId !== expected.connectionId || currentIdentity !== expected.connectionIdentity))
+          || binding?.connectionRevision !== expected.connectionRevision || binding?.harnessKind !== expected.harnessKind)
           throw new AppContextError(409, "configuration_connection_changed", "The inherited provider binding changed. Prepare a new task role from the current parent.");
       }
       await this.validateProfileSelection(selectedProfile, binding?.connectionId);
@@ -2811,7 +2856,8 @@ export class SessionManager {
       // Resolve the profile and exact provider before model hints. Changed browser/server
       // defaults never rewrite an accepted creation on replay.
       if (!selectedProfile && executionSelection === undefined && binding?.connectionId && this.connections) {
-        const remembered = browserModelDefault(browserDefaults.models, binding.connectionId);
+        const remembered = browserModelDefault(browserDefaults.models, binding.connectionId)
+          ?? (rememberedBinding && browserDefaults.connectionId ? browserModelDefault(browserDefaults.models, browserDefaults.connectionId) : undefined);
         if (remembered) {
           try {
             const { validateSelection } = await import("../agent-providers/models.js");
@@ -3049,7 +3095,142 @@ export class SessionManager {
   async modelCatalog(id: string) {
     const session = await this.requireLive(id);
     if (!this.connections || !session.record.connectionId) throw new ConnectionError(409, "provider_required", "Select a provider first.");
-    return this.connections.models(session.record.connectionId);
+    const saved = this.bindingFor(session.record);
+    const binding = saved && this.connections.resolveCurrentBinding ? await this.connections.resolveCurrentBinding(saved) : saved;
+    if (!binding) throw new ConnectionError(409, "provider_connection_changed", "Choose an available connection for this chat.");
+    return this.connections.models(binding.connectionId);
+  }
+
+  private async inspectReinstalledContext(record: SessionRecord, selected: AgentConnectionSelection, credential: string) {
+    const old = record.providerExecution, previous = record.selection;
+    if (!old?.sessionId || !previous || !this.agentBackend || !credential
+      || previous.provider.installationId === selected.provider.installationId
+      || !sameProviderInterface(previous.provider, selected.provider)
+      || (previous.provider.implementationId ?? null) !== (selected.provider.implementationId ?? null)
+      || previous.connection.id !== selected.connection.id) return null;
+    const client = this.agentBackend.client(selected.provider, async () => credential);
+    if (!(await client.capabilities()).capabilities.includes("session.reconnect")) return null;
+    try {
+      const retained = await client.session(old.sessionId);
+      if (!sameProviderRef(retained.ref.provider, selected.provider) || retained.ref.id !== old.sessionId)
+        throw new AppContextError(502, "context_identity_invalid", "The provider returned a different session.");
+      return retained.nativeState === "available" && !retained.activeRun && retained.configuration?.connection.id === selected.connection.id ? retained : null;
+    } catch (error) {
+      if (error instanceof AgentApiError && ["session_not_found", "session_retired", "unsupported_capability", "connection_fixed", "native_session_missing", "native_context_missing"].includes(error.code)) return null;
+      throw error;
+    }
+  }
+
+  async contextOptions(id: string, owner: string, credential: string) {
+    const live = await this.requireLive(id), record = live.record;
+    if (record.createdBy !== owner) throw new SessionNotFoundError(id);
+    const previous = record.selection;
+    if (!this.connections?.remote || !previous) throw new AppContextError(409, "provider_required", "This chat has no qualified provider connection.");
+    const directory = await this.connections.list();
+    const installations = directory.providers?.filter(item => sameProviderInterface(previous.provider, item)) ?? [];
+    if (installations.length && installations.every(item => !item.available))
+      throw new AppContextError(503, "provider_unavailable", installations[0]!.reason || "The provider is temporarily unavailable. Refresh to try again.");
+    const matching = directory.connections.filter(item => item.provider && sameProviderInterface(previous.provider, item.provider));
+    const originalInstalled = installations.length ? installations.some(item => item.installationId === previous.provider.installationId)
+      : !matching.some(item => item.provider!.installationId !== previous.provider.installationId);
+    const blockedReason = contextChangeBlocked(record, originalInstalled);
+    const saved = this.bindingFor(record);
+    const current = saved && this.connections.resolveCurrentBinding && matching.some(item => item.available)
+      ? await this.connections.resolveCurrentBinding(saved) : null;
+    const connections = await Promise.all(matching.map(async item => {
+      const selection = current?.connectionId === item.id ? current.selection : undefined;
+      let canResume = false;
+      let reason = item.reason;
+      if (!blockedReason && selection && item.bindingRevision === agentSelectionId(selection) && !originalInstalled) {
+        try { canResume = Boolean(await this.inspectReinstalledContext(record, selection, credential)); }
+        catch (error) { reason = error instanceof Error ? error.message : "Retry checking the previous context."; }
+      }
+      return { id: item.id, name: item.name, available: item.available, reason, canResume,
+        bindingRevision: item.available ? item.bindingRevision : undefined };
+    }));
+    return { connections, currentConnectionId: current?.connectionId ?? null, selectionRevision: record.selectionRevision ?? 0, blockedReason };
+  }
+
+  async changeContext(id: string, owner: string, credential: string, body: Record<string, unknown>) {
+    const input = contextChangeInput(body);
+    return this.serialize(id, async () => {
+      const live = await this.requireLive(id);
+      if (live.record.createdBy !== owner) throw new SessionNotFoundError(id);
+      return this.changeContextLocked(live, input, credential);
+    });
+  }
+
+  private async changeContextLocked(live: LiveSession, input: ReturnType<typeof contextChangeInput>, credential: string, automaticResume = false) {
+    await this.flushAppContextEvent(live);
+    const record = live.record, previous = record.selection, id = record.id;
+    const fingerprint = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+    const receipt = record.contextChanges?.find(change => change.requestId === input.requestId);
+    if (receipt) {
+      if (receipt.fingerprint !== fingerprint) throw new AppContextError(409, "context_request_conflict", "This request already selected a different context.");
+      return record;
+    }
+    if (!credential) throw new AppContextError(401, "reauth_required", "Sign in through Core to change context.");
+    if (!this.connections?.remote || !previous || !record.providerExecution) throw new AppContextError(409, "provider_required", "Use the provider selector before starting this chat.");
+    if (input.expectedRevision !== (record.selectionRevision ?? 0)) throw new AppContextError(409, "selection_conflict", "Review the current chat settings and try again.");
+    const binding = await this.connections.binding(input.connectionId);
+    const selected = binding?.selection;
+    if (!binding || !selected || !sameProviderInterface(previous.provider, selected.provider) || agentSelectionId(selected) !== input.expectedBinding)
+      throw new AppContextError(409, "provider_connection_changed", "The selected provider or account changed. Review its current connection.");
+    const sameInstallation = selected.provider.installationId === previous.provider.installationId;
+    const blocked = contextChangeBlocked(record, sameInstallation, automaticResume ? input.requestId : undefined);
+    if (blocked) throw new AppContextError(409, "context_change_blocked", blocked);
+    const model = { model: input.model, reasoningEffort: input.reasoningEffort };
+    const { validateSelection: validateModel } = await import("../agent-providers/models.js");
+    validateModel(model, await this.connections.models(binding.connectionId));
+    const resumed = input.mode === "resume" ? await this.inspectReinstalledContext(record, selected, credential) : null;
+    if (input.mode === "resume" && !resumed)
+      throw new AppContextError(409, "native_context_missing", "The previous context could not be verified. Confirm a fresh context to continue.");
+    const state: ProviderExecutionState = { version: 1, contextId: input.requestId, selection: selected, sessionId: resumed?.ref.id ?? randomUUID(),
+      ...(resumed ? { session: resumed, reconnect: { requestId: input.requestId, expectedSessionRevision: resumed.revision } } : {}) };
+    const next = structuredClone(record), ts = new Date().toISOString();
+    next.contextChanges = [...record.contextChanges ?? [], { requestId: input.requestId, fingerprint,
+      previousProvider: previous.provider, previousConnection: previous.connection, previousSessionId: record.providerExecution.sessionId, previousRunId: record.providerExecution.runId }];
+    Object.assign(next, binding, { providerLocked: true, executionSelection: model, selectionRevision: automaticResume ? input.expectedRevision : input.expectedRevision + 1,
+      updatedAt: ts, status: "idle", providerExecution: state, harnessSessionId: state.sessionId });
+    delete next.agentRunId; delete next.providerObservedRunId; delete next.providerStopProof; delete next.providerRecovery;
+    delete next.providerHistoryGaps; delete next.providerHistoryContact; delete next.parkedQuestionRun; delete next.decisionRunIds;
+    delete next.mcpPendingApprovals; delete next.providerUploads;
+    next.decisionGeneration = (record.decisionGeneration ?? 0) + 1;
+    const head = next.messageQueue?.entries[0];
+    if (automaticResume && head?.state === "sending" && head.attempt?.clientRequestId === input.requestId) {
+      // The already-validated owner send retains its payload and verified native thread across the reinstall.
+      head.attempt.bindingKey = this.queueBinding(next);
+      head.attempt.payloadFingerprint = this.queueAttemptFingerprint(head.attempt);
+    } else if (!automaticResume && next.messageQueue?.entries.length) {
+      next.messageQueue.paused = true; next.messageQueue.reason = "Review queued messages before sending them to the new context.";
+      next.messageQueue.revision++; next.messageQueue.updatedAt = ts;
+    }
+    next.lastEventSeq++;
+    next.appContextEvent = { seq: next.lastEventSeq, ts, type: "notice", contextChanged: true, contextMode: input.mode,
+      contextRequestId: input.requestId, message: resumed ? "The provider verified the previous native context. The next message will resume it."
+        : "New native context. Previous messages and attachments stay in this chat and are not sent to the model." };
+    // Stage the outbox first. The record and its pending transcript boundary publish one atomic decision.
+    if (!(await this.store.readProviderExecution(id))) await this.store.saveProviderExecution(id, record.providerExecution);
+    await this.store.saveProviderExecution(id, state);
+    try { await this.store.saveRecord(next); }
+    catch (error) {
+      const saved = await this.store.readRecord(id);
+      if (saved?.contextChanges?.at(-1)?.requestId !== input.requestId) throw error;
+      Object.assign(next, saved);
+    }
+    const handle = live.run;
+    live.run = null; live.runEpoch = undefined; live.record = next; this.providerStates.set(id, state);
+    live.credential = live.workspaceCredential = credential;
+    this.clearRefresh(live); this.clearSuggestion(live); live.pendingApprovals.clear(); live.pendingQuestions.clear();
+    this.providerProjections.delete(id); this.providerAgentStatuses.delete(id); this.providerFiles.delete(id);
+    this.historyFeeds?.bind(selected.provider, state.sessionId, id, record.createdBy);
+    this.disconnectNativeMcp(id, false);
+    // A provider observer may be waiting for this same session lane. Epoch checks fence its callbacks immediately.
+    if (handle?.detach) this.trackSubagents(handle.detach());
+    await this.flushAppContextEvent(live);
+    this.fanOut(live, { type: "session_status", status: "idle", seq: live.record.lastEventSeq, ts, providerHistoryContact: null });
+    if (next.messageQueue?.entries.length) this.fanOut(live, this.queueEvent(live));
+    return live.record;
   }
 
   private async validateProfileSelection(config: AgentProfileConfig | null, connectionId?: string): Promise<void> {
@@ -3232,6 +3413,8 @@ export class SessionManager {
     await this.store.saveRecord(next);
     session.record = next;
     this.fanOut(session, event);
+    if (event.contextChanged && next.suggestionHistoryVersion)
+      await this.suggestionHistory.reconcile(next, this.suggestionSignature(session));
   }
 
   private checkRevision(record: SessionRecord, revision: unknown): void {
@@ -3346,7 +3529,7 @@ export class SessionManager {
   }
 
   /** Retire a stopped provider run for explicit Delete while keeping its unresolved results unknown. */
-  private async retireProviderForDeletion(session: LiveSession): Promise<boolean> {
+  private async retireProviderForDeletion(session: LiveSession, stop: "pending" | "unconfirmed"): Promise<boolean> {
     const record = session.record, active = record.providerExecution;
     // Idle workspace preparation can leave a stopped Harness lease identity. Only a provider
     // run with no separate active or unverified native lease can use the retirement path.
@@ -3364,8 +3547,13 @@ export class SessionManager {
     const { context, execution } = await this.publicExecution(session);
     if (!retirement) {
       const snapshot = await execution.read(false);
-      if (snapshot.state !== "unknown" || snapshot.stopConfirmed || !snapshot.effects.unresolvedCallIds.length
-        || !(await context.client.capabilities()).capabilities.includes(AGENT_CAPABILITIES.retire)) return false;
+      if (snapshot.state !== "unknown" || snapshot.stopConfirmed || !snapshot.effects.unresolvedCallIds.length) return false;
+      if (!(await context.client.capabilities()).capabilities.includes(AGENT_CAPABILITIES.retire)) {
+        if (stop === "unconfirmed")
+          throw new AppContextError(409, "retirement_unsupported",
+            `Some tool outcomes are still unknown. Update the original provider (${snapshot.ref.provider.appId}) to a version that supports runs.retire, then retry Delete session.`);
+        return false;
+      }
       const request = prepareAgentControl(snapshot.ref.id, { command: "retire", requestId: randomUUID(),
         expectedGeneration: snapshot.generation, expectedRevision: snapshot.revision });
       retirement = record.providerRetirement = { runId: snapshot.ref.id, request, state: "pending" };
@@ -3428,15 +3616,15 @@ export class SessionManager {
       if (credential) live.workspaceCredential = credential;
       const canRetire = interactiveOwner && !!credential;
       if (!canRetire) this.assertNotRetiring(record);
-      let retired = canRetire && await this.retireProviderForDeletion(live);
+      let retired = canRetire && await this.retireProviderForDeletion(live, "pending");
       if (!retired) {
         this.assertNotRetiring(record);
-        try { await this.cancelSessionLocked(id); }
+        try { await this.cancelSessionLocked(id, canRetire ? "delete" : "stop"); }
         catch (error) {
           // Stop can close native execution before it discovers that tool results are missing.
           // Use the same confirmation to retire that newly stopped run.
           if (!canRetire || !(error instanceof AgentApiError && error.code === "stop_unconfirmed")
-            || !await this.retireProviderForDeletion(live)) throw error;
+            || !await this.retireProviderForDeletion(live, "unconfirmed")) throw error;
           retired = true;
         }
       }
@@ -3480,7 +3668,7 @@ export class SessionManager {
           && !(snapshot.independentEnvironments && snapshot.workspaceAbsent && !hasWorkspaceHistory(record)))
         throw new AppContextError(409, "resource_retained", "Reconcile retained resource history before deleting the conversation.");
       if (retiredObservation) await this.observations.retire(retiredObservation, deletedBy, id);
-      return this.removeSessionRecord(record, deletedBy, retired);
+      return this.removeSessionRecord(record, deletedBy, { providerRetired: retired, ownerConfirmed: canRetire });
     });
   }
 
@@ -3507,10 +3695,13 @@ export class SessionManager {
     return result;
   }
 
-  private async removeSessionRecord(record: SessionRecord, deletedBy: string, providerRetired = false): Promise<boolean> {
+  private async removeSessionRecord(record: SessionRecord, deletedBy: string, { providerRetired = false, ownerConfirmed = false } = {}): Promise<boolean> {
       const id = record.id;
       const session = this.live.get(id);
-      if (this.connections?.remote && !providerRetired) await this.finishExecution(await this.requireLive(id));
+      if (this.connections?.remote && !providerRetired) {
+        const current = await this.requireLive(id);
+        await this.finishExecution(current, false, false, current.record.status, ownerConfirmed && hasSettledProviderRun(current));
+      }
       if (session) {
         if (session.run) {
           await session.run.stop();
@@ -3684,11 +3875,26 @@ export class SessionManager {
     if (this.connections?.remote) {
       let snapshot = session.record.providerExecution?.run;
       const cancelling = !observedStop && (outcome === "cancelled" || outcome === "abandoned");
-      if ((!snapshot?.stopConfirmed || cancelling) && session.record.providerExecution?.runId && !session.run)
-        await this.ensureProviderRun(session, cancelling);
+      let verificationHandle: ProviderHarnessRun | undefined;
+      if ((!snapshot?.stopConfirmed || cancelling) && session.record.providerExecution?.runId && !session.run) {
+        const verifyingSettledRun = cancelling && hasSettledProviderRun(session);
+        const attached = await this.ensureProviderRun(session, cancelling);
+        if (verifyingSettledRun) verificationHandle = attached;
+      }
       if ((!snapshot?.stopConfirmed || cancelling) && session.run) {
         if (!session.run.stopAndWait) throw new WorkerError("exit_unconfirmed", "The provider cannot confirm native exit.", 503);
-        await session.run.stopAndWait();
+        try { await session.run.stopAndWait(); }
+        catch (error) {
+          // This observer only rechecks existing proof. A retention sweep can lack the owner's
+          // credential after restart, or the original provider installation can be gone.
+          const verificationUnavailable = error instanceof AppContextError && error.code === "provider_credentials_required"
+            || error instanceof AgentApiError && ["provider_unavailable", "provider_changed"].includes(error.code);
+          if (verificationUnavailable && verificationHandle && session.run === verificationHandle && session.record.providerExecution?.run === snapshot) {
+            session.run = null;
+            await verificationHandle.detach();
+          }
+          throw error;
+        }
         if (session.run instanceof ProviderHarnessRun) snapshot = session.run.stopProof ?? snapshot;
       }
       if (session.record.providerExecution?.runId && !snapshot?.stopConfirmed)
@@ -3894,13 +4100,27 @@ export class SessionManager {
         session.subagentRunId = context.subagentRunId;
         let selectedAdapter = this.adapter;
         if (this.connections) {
-          const binding = this.bindingFor(session.record);
+          let binding = this.bindingFor(session.record);
           if (!binding) throw new ConnectionError(409, "provider_required", "Choose the provider for this chat before sending a message.");
           await withAgentAuthority(async () => session.record.taskDispatch && session.record.taskExecutionId
             ? { kind: "task", dispatch: session.record.taskDispatch, executionId: session.record.taskExecutionId }
             : workspaceCredential ?? session.credential ?? "", async () => {
-            release = await this.connections!.reserve(binding);
-            selectedAdapter = await this.connections!.adapter(binding, docker);
+            const saved = binding!;
+            try { release = await this.connections!.reserve(saved); }
+            catch (error) {
+              if (!(error instanceof ConnectionError && error.code === "provider_connection_changed") || !credential
+                || actorUserId !== session.record.createdBy || !clientRequestId || context.subagentInput
+                || context.taskDispatch || context.decisionContinuation || context.dispatchId || !session.record.providerExecution) throw error;
+              const current = await this.connections!.resolveCurrentBinding?.(saved);
+              if (!current?.selection || current.selection.provider.installationId === saved.selection?.provider.installationId) throw error;
+              const model = session.record.executionSelection;
+              await this.changeContextLocked(session, { requestId: clientRequestId, mode: "resume", expectedRevision: session.record.selectionRevision ?? 0,
+                connectionId: current.connectionId, expectedBinding: agentSelectionId(current.selection), model: model?.model ?? null,
+                reasoningEffort: model?.reasoningEffort ?? null }, credential, true);
+              binding = current;
+              release = await this.connections!.reserve(current);
+            }
+            selectedAdapter = await this.connections!.adapter(binding!, docker);
           });
           const health = await selectedAdapter.probe();
           if (!health.available) throw new ConnectionError(503, "provider_unavailable", health.reason ?? "This provider is unavailable.");
@@ -4709,7 +4929,7 @@ export class SessionManager {
       : "Source storage is unavailable and native exit is unconfirmed. Keep this execution fenced and retry Stop after inspection.", 503);
   }
 
-  private async cancelSessionLocked(id: string): Promise<boolean> {
+  private async cancelSessionLocked(id: string, action: "delete" | "stop" = "stop"): Promise<boolean> {
     let session: LiveSession;
     try {
       session = await this.requireLive(id);
@@ -4721,7 +4941,8 @@ export class SessionManager {
     }
     this.decisions?.kick();
     this.clearSuggestion(session);
-    const stopped = await this.finishExecution(session, false, false, "cancelled");
+    const observedStop = action === "delete" && hasSettledProviderRun(session);
+    const stopped = await this.finishExecution(session, false, false, "cancelled", observedStop);
     this.setActivity(session, null);
     if (session.run) {
       if (session.run.stopAndWait) await session.run.stopAndWait();
@@ -5214,7 +5435,7 @@ export class SessionManager {
     await this.flushAppContextEvent(session);
     const importing = this.importingPosition.getStore();
     if (importing?.chatId === id && typeof payload.providerEventId === "string"
-      && payload.providerEventId.startsWith(importing.runId + ":"))
+      && (payload.providerEventId.startsWith(importing.runId + ":") || payload.providerEventId.startsWith(importing.runId + "@")))
       payload = { ...payload, providerHistoryPosition: importing.position, ...(importing.replayed ? { providerHistoryRecovered: true } : {}) };
 
     if (payload.type === "prompt_suggestion_created" && !session.record.suggestionHistoryVersion) {

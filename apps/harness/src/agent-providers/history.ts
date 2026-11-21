@@ -39,6 +39,7 @@ async function readCheckpoint(filename: string): Promise<{ cursor: string; incom
 /** Installation authority imports observations only into previously bound, owner-matching chats. */
 export class ProviderHistoryFeeds {
   private readonly bindings = new Map<string, Map<string, Map<string, string>>>();
+  private readonly current = new Map<string, { key: string; sessionId: string }>();
   private readonly feeds = new Map<string, InstallationFeed>();
   private readonly shutdown = new AbortController();
 
@@ -52,13 +53,14 @@ export class ProviderHistoryFeeds {
     private readonly unsupported: (id: string) => void,
     gaps: (id: string, gaps: ProviderHistoryGap[]) => Promise<void> = async () => {},
     private readonly state: (id: string, provider: AgentProviderRef, state: AgentHistorySessionState) => Promise<void> = async () => {}) {
-    this.coverage = new ProviderHistoryCoverage(store, gaps);
+    this.coverage = new ProviderHistoryCoverage(store, gaps, (id, provider, sessionId) => {
+      const binding = this.current.get(id);
+      return binding?.key === providerKey(provider) && binding.sessionId === sessionId;
+    });
     this.inbox = new ProviderHistoryInbox(store, this.shutdown.signal,
       (id, provider, fact) => this.coverage.accept(id, provider, fact, () => importItem(id, provider, fact)), async (id, failed) => {
-      for (const [key, sessions] of this.bindings) for (const chats of sessions.values()) if (chats.has(id)) {
-        await contact(id, failed ? "invalid" : this.transport.get(key) ?? null);
-        return;
-      }
+      const binding = this.current.get(id);
+      if (binding) await contact(id, failed ? "invalid" : this.transport.get(binding.key) ?? null);
     });
   }
 
@@ -69,8 +71,14 @@ export class ProviderHistoryFeeds {
     if (repaired) for (const feed of this.feeds.values()) feed.retry?.abort();
   }
 
-  bind(provider: AgentProviderRef, sessionId: string, chatId: string, owner: string): void {
+  bind(provider: AgentProviderRef, sessionId: string, chatId: string, owner: string, historical = false): void {
     const key = providerKey(provider);
+    if (!historical) {
+      const previous = this.current.get(chatId);
+      if (previous && previous.key !== key) this.removeBindings(chatId, previous.key);
+      if (previous?.key !== key || previous.sessionId !== sessionId) this.coverage.forget(chatId);
+      this.current.set(chatId, { key, sessionId });
+    }
     let sessions = this.bindings.get(key);
     if (!sessions) this.bindings.set(key, sessions = new Map());
     let chats = sessions.get(sessionId);
@@ -86,7 +94,13 @@ export class ProviderHistoryFeeds {
     this.incomplete.delete(chatId);
     this.inbox.forget(chatId);
     this.coverage.forget(chatId);
+    this.current.delete(chatId);
+    this.removeBindings(chatId);
+  }
+
+  private removeBindings(chatId: string, installation?: string): void {
     for (const [key, sessions] of this.bindings) {
+      if (installation && key !== installation) continue;
       for (const [sessionId, chats] of sessions) if (chats.delete(chatId) && !chats.size) sessions.delete(sessionId);
       if (sessions.size) continue;
       this.bindings.delete(key);
@@ -127,7 +141,8 @@ export class ProviderHistoryFeeds {
 
   private async report(key: string, issue: HistoryContactIssue | null): Promise<void> {
     this.transport.set(key, issue);
-    for (const chats of this.bindings.get(key)?.values() ?? []) for (const id of chats.keys()) {
+    for (const [id, binding] of this.current) {
+      if (binding.key !== key) continue;
       if (!issue && this.inbox.isBlocked(id)) continue;
       await this.contact(id, issue).catch(() => {});
     }
@@ -166,7 +181,10 @@ export class ProviderHistoryFeeds {
             match: (session, owner) => this.match(key, session, owner),
             bindings: () => [...this.bindings.get(key) ?? []].flatMap(([sessionId, chats]) =>
               [...chats].map(([id, userId]) => ({ id, sessionId, userId }))),
-            invalid: id => this.contact(id, "invalid").catch(() => {}),
+            invalid: async (id, sessionId) => {
+              const binding = this.current.get(id);
+              if (binding?.key === key && binding.sessionId === sessionId) await this.contact(id, "invalid").catch(() => {});
+            },
             ready: async () => { feed.liveRanges = true; supported(); failures = 0; await this.report(key, null); },
             receive: (id, observation) => this.inbox.deliver(id, provider, observation),
             state: (id, state) => this.state(id, provider, state),
@@ -195,8 +213,7 @@ export class ProviderHistoryFeeds {
           this.transport.delete(key);
           decide(false);
           if (wasFollowing) {
-            for (const chats of this.bindings.get(key)?.values() ?? [])
-              for (const id of chats.keys()) this.unsupported(id);
+            for (const [id, binding] of this.current) if (binding.key === key) this.unsupported(id);
           }
           return;
         }

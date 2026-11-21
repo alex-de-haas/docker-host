@@ -5,7 +5,7 @@ import { AGENT_CAPABILITIES, AgentApiError, type AgentConfiguration, type AgentM
 import type { AgentClient } from "@hosty-sdk/app/agent/client";
 import type { HarnessRun, HarnessStartOptions } from "../harness/adapter.js";
 import { ProviderExecution, retryableObservation, type ProviderContinuation, type ProviderExecutionPersistence, type ProviderExecutionState } from "./execution.js";
-import { providerDecisionCardId, type QuestionAnswers } from "./decision-identity.js";
+import { providerDecisionCardId, transcriptRunId, type QuestionAnswers } from "./decision-identity.js";
 
 export type ProviderRunContext = {
   client: AgentClient;
@@ -83,7 +83,10 @@ export class ProviderHarnessRun implements HarnessRun {
     } else if (!context.state.session) await execution.create(configuration);
     // Refresh mutable session metadata before preparing a new immutable request; never rewrite an
     // already prepared uncertain start just to acquire a more recent optimistic revision.
+    const hadNativeContext = context.state.session?.nativeState === "available" || Boolean(context.state.reconnect);
     let session = await execution.session();
+    if (hadNativeContext && session.nativeState !== "available")
+      throw new AgentApiError("native_context_missing", "The previous native context is unavailable. Choose a new context before sending again.", 409);
     const configurations = Object.values(context.state.mutations ?? {}).filter(request => request.operation === "sessions.configure");
     if (configurations.length) {
       if (configurations.length !== 1 || configurationKey(JSON.parse(configurations[0]!.body).configuration) !== configurationKey(configuration))
@@ -93,9 +96,11 @@ export class ProviderHarnessRun implements HarnessRun {
     if (session.activeRun) throw new AgentApiError("session_busy", "The provider session still owns an execution. Reconcile its stop before continuing.", 409);
     const known = () => session.configuration ?? (context.state.appliedConfiguration?.revision === session.configurationRevision
       && context.state.appliedConfiguration.digest === session.configurationDigest ? context.state.appliedConfiguration.value : undefined);
-    if (configurationKey(known()) !== configurationKey(configuration)) {
-      const requestId = randomUUID();
-      session = await execution.configure(requestId, { requestId, expectedSessionRevision: session.revision, configuration });
+    const reconnect = context.state.appliedConfiguration ? undefined : context.state.reconnect;
+    if (reconnect || configurationKey(known()) !== configurationKey(configuration)) {
+      const requestId = reconnect?.requestId ?? randomUUID();
+      session = await execution.configure(requestId, { requestId, expectedSessionRevision: reconnect?.expectedSessionRevision ?? session.revision,
+        ...(reconnect ? { requiredCapabilities: ["session.reconnect"] } : {}), configuration });
       if (configurationKey(known()) !== configurationKey(configuration))
         throw new AgentApiError("configuration_unconfirmed", "The provider did not confirm the requested session configuration.", 502);
     }
@@ -341,17 +346,18 @@ export class ProviderHarnessRun implements HarnessRun {
   async respondToCard(cardId: string, response: AgentResponseInput["response"]): Promise<boolean> {
     await this.admission;
     if (!this.execution || !this.context) return false;
+    const card = (runId: string, id: string) => providerDecisionCardId(transcriptRunId(runId, this.context!.state.contextId), id);
     for (const continuation of Object.values(this.context.state.continuations ?? {}))
       if (continuation.state === "awaiting_authorization" && continuation.decisionId
-        && providerDecisionCardId(continuation.sourceRunId, continuation.decisionId) === cardId)
+        && card(continuation.sourceRunId, continuation.decisionId) === cardId)
         return this.respond(continuation.decisionId, response, continuation.sourceRunId);
     for (const request of Object.values(this.context.state.mutations ?? {})) if (request.operation === "runs.respond" && request.runId) {
       const input = JSON.parse(request.body) as AgentResponseInput;
-      if (input.response.kind === response.kind && providerDecisionCardId(request.runId, input.decisionId) === cardId)
+      if (input.response.kind === response.kind && card(request.runId, input.decisionId) === cardId)
         return this.respond(input.decisionId, response, request.runId);
     }
     const snapshot = await this.execution.read(false);
-    const decision = snapshot.pending.find(value => value.kind === response.kind && providerDecisionCardId(snapshot.ref.id, value.id) === cardId);
+    const decision = snapshot.pending.find(value => value.kind === response.kind && card(snapshot.ref.id, value.id) === cardId);
     return decision ? this.respond(decision.id, response, snapshot.ref.id) : false;
   }
 

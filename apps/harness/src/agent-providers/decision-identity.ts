@@ -1,5 +1,10 @@
 export type QuestionAnswers = Record<string, string | string[]>;
 
+/** New contexts have a distinct transcript namespace even if a replacement provider reuses a run UUID. */
+export function transcriptRunId(runId: string, contextId?: string): string {
+  return contextId ? runId + "@" + contextId : runId;
+}
+
 /** A provider's decision ID is scoped to one immutable public run, not a conversation. */
 export function providerDecisionCardId(runId: string, decisionId: string): string {
   const bytes = new TextEncoder().encode(JSON.stringify([runId, decisionId]));

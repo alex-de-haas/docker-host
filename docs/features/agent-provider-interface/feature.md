@@ -141,6 +141,20 @@ The unauthenticated `/healthz` endpoint reports service liveness only.
 | `POST /runs/{uuid}/controls` | Capability-gated park, barrier, reconciliation or configuration control |
 | `GET /runs/{uuid}/controls/{requestId}` | Durable control receipt |
 
+A provider advertising `session.reconnect` can verify a retained native context after
+reinstallation. An authorized `GET /sessions/{uuid}` against the current installation checks
+the original consumer installation, principal and user, the provider implementation, account
+binding, outstanding execution and native session. Codex reads the retained native thread.
+A verified response describes the current provider reference and native availability. Reading
+does not alter the retained session or authorize an old run.
+
+To adopt that context, the consumer submits a configuration with
+`requiredCapabilities: ["session.reconnect"]`, the observed session revision and an exact request
+ID. The provider checks continuity again, archives the previous installation's execution record
+and records a configuration under current authority. Subsequent resume admission targets the
+same native thread. Old run IDs and control receipts stay scoped to their original installation.
+[Harness recovery workflow](../provider-reinstallation-recovery/feature.md)
+
 Connection and session lists use the same ordinal ID ordering for sorting and cursor advancement.
 Pagination preserves opaque IDs and their case; mixed-case IDs remain reachable across pages.
 
@@ -650,6 +664,10 @@ releases and selected lock closures are described in the
 [repository release model](../repository-release-model/feature.md).
 
 ## Testing Expectations
+
+- Cover authenticated inspection and reconfiguration of a retained context across an installation
+  change. Check exact actor/account/thread identity, rejected busy/foreign records, replay of
+  the configuration and preservation of the original run authorities.
 
 - Capture a live boundary while two users generate events. Read state at the boundary, read an
   owned range, and verify that the stream starts after the cut. Check a foreign installation,

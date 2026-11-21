@@ -99,6 +99,38 @@ it("waits for the full replay before mounting the real scroller and initially po
   expect(composer.value).toBe("Draft written while history loads");
 });
 
+it("keeps a context boundary visible, reloads the chat and leaves an earlier open decision read-only", async () => {
+  await mount(); await connect();
+  await act(async () => stream().event({ seq: 1, ts: "", type: "approval_request", approvalId: "old", toolName: "Earlier tool" }));
+  vi.mocked(api.getSession).mockClear();
+  await act(async () => stream().event({ seq: 2, ts: "", type: "notice", contextChanged: true,
+    contextRequestId: "change", message: "New native context. Earlier messages stay in this chat." }));
+  await settle();
+  expect(api.getSession).toHaveBeenCalledWith(sessions[0].id);
+  expect(viewport()?.textContent).toContain("New native context");
+  expect(viewport()?.textContent).toContain("The decision outcome is unconfirmed.");
+  expect([...viewport()!.querySelectorAll("button")].some(b => b.textContent === "Approve")).toBe(false);
+  expect(api.resolveApproval).not.toHaveBeenCalled();
+});
+
+it("keeps a late old reply and question in history without replacing live output or activating a decision", async () => {
+  await mount(); await connect();
+  const old = { providerHistoryEarlier: true, providerSource: { provider: { appId: "agent", installationId: "original", key: "agent" },
+    runId: "old", generation: "one", agentId: "root" } };
+  await act(async () => {
+    stream().event({ seq: 2, ts: "", type: "notice", contextChanged: true, message: "Context changed" });
+    stream().event({ seq: 3, ts: "", type: "assistant_delta", text: "Current streamed reply" });
+    stream().event({ ...old, seq: 4, ts: "", type: "assistant_text", text: "Recovered earlier reply" });
+    stream().event({ ...old, seq: 5, ts: "", type: "question_request", questionId: "old-question", decisionWaitId: "retired-wait" });
+    stream().event({ seq: 6, ts: "", type: "session_status", status: "awaiting_question" });
+  });
+  expect(viewport()?.textContent).toContain("Recovered earlier reply");
+  expect(viewport()?.textContent).toContain("Current streamed reply");
+  expect(viewport()?.textContent).toContain("The response is unconfirmed.");
+  expect(container.textContent).not.toContain("Needs you · Answer requested");
+  expect(api.resolveQuestion).not.toHaveBeenCalled();
+});
+
 it("keeps the loaded viewport and current position mounted during a reconnect", async () => {
   await mount(); await replay("Loaded history", 1); await connect(); await settle();
   const retained = viewport()!;

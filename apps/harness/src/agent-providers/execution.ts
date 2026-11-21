@@ -23,6 +23,9 @@ export type ProviderContinuation = {
 };
 export type ProviderExecutionState = {
   version: 1;
+  /** Selects this conversation segment's durable outbox after an owner-confirmed context change. */
+  contextId?: string;
+  reconnect?: { requestId: string; expectedSessionRevision: string };
   selection: AgentConnectionSelection;
   sessionId: string;
   session?: AgentSession;

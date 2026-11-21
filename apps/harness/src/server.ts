@@ -874,6 +874,14 @@ async function route(
   }
 
 
+  if ((rest === "/context-options" && method === "GET") || (rest === "/context" && method === "POST")) {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Sign in through Core to review this conversation's context.");
+    response.setHeader("Cache-Control", "no-store");
+    const result = method === "GET" ? await manager.contextOptions(sessionId, actor.userId, credential)
+      : await manager.changeContext(sessionId, actor.userId, credential, await readJson(request));
+    sendJson(response, 200, result); return;
+  }
   if (rest === "/models" && method === "GET") { sendJson(response, 200, await manager.modelCatalog(sessionId)); return; }
   if (rest === "/model" && method === "PUT") { sendJson(response, 200, await manager.setModel(sessionId, await readJson(request))); return; }
 

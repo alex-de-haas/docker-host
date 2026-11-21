@@ -419,6 +419,15 @@ describe("codex harness adapter", () => {
     expect(events.some(event => event.type === "error")).toBe(false);
   });
 
+  it("rejects a null response to strict resume without starting a replacement thread", async () => {
+    process.env.HOSTY_FAKE_CODEX_REJECT_RESUME = "null";
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "s1", cwd: process.cwd(),
+      resumeHarnessSessionId: "original", requireNativeResume: true, onEvent: e => events.push(e) });
+    run.send("hello");
+    await waitFor(() => events.find(e => e.type === "error"), "strict resume error");
+    expect(events.some(e => e.type === "harness_session")).toBe(false);
+  });
+
   it("resumes an existing thread instead of starting a new one", async () => {
     start("thread-from-before-restart");
     const event = await waitFor(
@@ -437,6 +446,15 @@ describe("codex harness adapter", () => {
     const deltas = events.filter((event) => event.type === "assistant_delta").map((event) => event.text);
     expect(deltas.join("")).toBe("hello");
     expect(events.some((event) => event.type === "assistant_text" && event.text === "hello")).toBe(true);
+  });
+
+  it("emits the marked tool output when operator instructions and an attached file accompany a message", async () => {
+    const marker = "ab12".repeat(8);
+    run = new CodexHarnessAdapter({ dataDir: authDir }).start({ sessionId: "fixture-output", cwd: authDir,
+      systemPrompt: "Retain workspace instructions.\n\nRespect the selected workspace.", onEvent: event => events.push(event) });
+    run.send(`mcp completed MCP_OUTPUT_MARKER_${marker}\n\nUser attachment "old-file.txt": "/test/old-file.txt"`);
+    await waitFor(() => events.some(event => event.type === "result"), "terminal turn");
+    expect(events.filter(event => event.type === "tool_result" && event.output.includes("tool-result-" + marker))).toHaveLength(2);
   });
 
   it.each(["completed", "failed"])("lists %s MCP calls once, with their arguments, before the answer", async (status) => {

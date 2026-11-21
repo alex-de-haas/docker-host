@@ -88,7 +88,10 @@ class ProviderAcceptance:
             if scripted_codex and kind == 'codex':
                 fixture = self.workspace/'apps/codex-provider/test/fake-codex-server.mjs'
                 assert fixture.is_file()
-                manifest['services'][0]['runtimes']['local'].setdefault('environment', {})['HOSTY_HARNESS_CODEX_COMMAND'] = str(fixture)
+                environment = manifest['services'][0]['runtimes']['local'].setdefault('environment', {})
+                environment['HOSTY_HARNESS_CODEX_COMMAND'] = str(fixture)
+                if self.context.get('scenario') == 'agent-providers':
+                    environment['TEST_UNIQUE_THREAD_IDS'] = '1'
                 if os.environ.get('HOSTY_LIVE_HISTORY_ACCEPTANCE') == '1':
                     runtime = manifest['services'][0]['runtimes']['local']
                     runtime['environment']['HOSTY_RANGE_TEST_POLICY'] = str(self.base / 'range-policy.json')

@@ -216,8 +216,8 @@ export function TranscriptEvent({
         />
       );
     case "question_request":
-      if (event.providerHistoryEarlier === true && !answers) return <p className="p-2 text-xs text-muted-foreground">An earlier run requested an answer. The response is unconfirmed.</p>;
-      if (typeof event.decisionWaitId === "string") return <DecisionQuestion waitId={event.decisionWaitId} />;
+      if (event.providerHistoryEarlier === true && !answers && !questionCancelled) return <p className="p-2 text-xs text-muted-foreground">An earlier run requested an answer. The response is unconfirmed.</p>;
+      if (typeof event.decisionWaitId === "string" && event.providerHistoryEarlier !== true) return <DecisionQuestion waitId={event.decisionWaitId} />;
       return (
         <QuestionCard
           questionId={transcriptDecisionId(event)}

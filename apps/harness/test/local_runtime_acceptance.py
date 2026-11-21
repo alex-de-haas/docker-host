@@ -101,6 +101,229 @@ def check_self_switch(context, app, app_origin, call):
     context['say']('PASS: Harness workspace setup failed after binding. Core served the logs and returned Harness to its healthy package with current data and the pre-switch backup.')
 
 
+def check_provider_reinstallation(context, app, app_origin, link, recovery):
+    from workspace_sessions_acceptance import session_browser
+    browser = session_browser(context, app, app_origin, link)
+    owner = browser('activation-fixture@example.test', 'Fixture operator')
+    visitor = browser('reinstall-visitor@example.test', 'Reinstallation visitor', invited=True)
+    previously_completed = '/sessions/' + recovery['completedChatId']
+    completed = owner.harness(previously_completed)
+    original = completed['selection']
+    provider_id = original['provider']['appId']
+    providers = context['agentProviders']
+    assert providers.entries['codex']['appId'] == provider_id
+    manifest = context['base'] / 'codex-provider-acceptance.json'
+    assert json.loads(manifest.read_text())['id'] == provider_id
+    apps = [context['cli'], '--data-root', context['root'], 'apps']
+    provider_data = context['root']/'apps'/provider_id/'data'
+    native_records = provider_data/'agent-sessions'
+    api = '/api/apps/' + provider_id
+
+    def installed():
+        return next((row for row in context['request']('/api/apps')['apps'] if row['id'] == provider_id), None)
+
+    def reinstall(wipe):
+        previous = installed()['installationId']
+        context['run']([*apps, 'remove', provider_id, *(['--delete-data'] if wipe else [])])
+        assert installed() is None
+        context['run']([*apps, 'install', manifest, '--runtime', 'local', '--no-autostart'])
+        context['run']([*apps, 'start', provider_id])
+        context['wait_for'](lambda: context['request'](api + '/health')['status'] == 'healthy', 240)
+        replacement = installed()
+        assert replacement['installationId'] and replacement['installationId'] != previous
+        assert replacement['runtimeState'] == 'running'
+        providers.entries['codex'].update(providers.authenticate(provider_id))
+        return replacement['installationId']
+
+    connection_id = completed['connectionId']
+    chat = owner.harness('/sessions', {'title': 'Continue a chat through two provider reinstalls',
+        'connectionId': connection_id, 'profileId': None, 'appIds': []})
+    route = '/sessions/' + chat['id']
+    tree = recovery['retainedTree']
+    workspaces = '/development-workspaces/' + tree['workspaceId']
+    tree_route = workspaces + '/worktrees/' + tree['id']
+    original_leases = set(owner.harness(tree_route)['leases'])
+    participant = owner.harness(workspaces + '/participants')
+    owner.harness(route + '/workspaces', {'action': 'attach', 'workspaceId': tree['workspaceId'],
+        'expectedRevision': participant['revision'], 'requestId': str(uuid.uuid4())})
+    sentinel = pathlib.Path(tree['path']).resolve()/'retirement-fixture.txt'
+    assert sentinel.is_relative_to(context['root'].resolve()) and sentinel.read_text() == 'Preserve this uncommitted work.'
+
+    def attachment(name, content):
+        request = urllib.request.Request(app_origin + '/api' + route + '/attachments/' + name, data=content,
+            method='PUT', headers={'Origin': app_origin, 'Content-Type': 'application/octet-stream'})
+        with owner.client.open(request, timeout=30) as response:
+            assert response.status == 201
+            return json.load(response)['attachment']['name']
+
+    def send(record, text, files=(), composer=False):
+        session_route = '/sessions/' + record['id']
+        previous = (record.get('providerExecution') or {}).get('runId')
+        if composer:
+            queue_route = session_route + '/message-queue'
+            queue = owner.harness(queue_route)
+            assert not queue['paused'] and not queue['entries']
+            entry_id = str(uuid.uuid4())
+            accepted = owner.harness(queue_route + '/commands', {'requestId': str(uuid.uuid4()),
+                'expectedRevision': queue['revision'], 'command': {'type': 'enqueue', 'entryId': entry_id,
+                    'text': text, 'attachments': list(files)}})
+            assert accepted['queue']['entries'][0]['id'] == entry_id
+        else:
+            response = owner.harness(session_route + '/messages', {'clientRequestId': str(uuid.uuid4()),
+                'selectionRevision': record.get('selectionRevision', 0), 'text': text, 'attachments': list(files)}, expected=202)
+            assert response['state'] == 'accepted'
+
+        def finished():
+            current = owner.harness(session_route)
+            if composer and (entry := next((entry for entry in owner.harness(queue_route)['entries'] if entry['id'] == entry_id), None)):
+                assert entry['state'] not in ('failed', 'unknown'), ('Composer admission failed', (entry.get('error') or {}).get('code'))
+                return None
+            run = (current.get('providerExecution') or {}).get('run') or {}
+            if run.get('ref', {}).get('id') == previous or not run.get('stopConfirmed'):
+                return None
+            assert run['state'] == 'succeeded', 'The explicit send must complete through the selected provider'
+            return run if current['status'] == 'idle' and not current.get('sourceAdmission') else None
+
+        run = context['wait_for'](finished, 90)
+        stored = json.loads((native_records/(run['sessionId'] + '.json')).read_text())
+        assert stored['session']['ref'] == {'provider': run['ref']['provider'], 'id': run['sessionId']}
+        assert stored['nativeId']
+        received = stored['runs'][run['ref']['id']]['input']
+        assert received['input']['text'] == text
+        if record['id'] == chat['id']:
+            assert any(item['kind'] == 'worktree' and item['id'] == tree['id'] for item in received['resources'])
+        return run, stored, received
+
+    def choice(options, item, mode, model):
+        return {'requestId': str(uuid.uuid4()), 'expectedRevision': options['selectionRevision'],
+            'connectionId': item['id'], 'expectedBinding': item['bindingRevision'],
+            'mode': mode, 'model': model, 'reasoningEffort': None}
+
+    def catalog(connection):
+        return owner.harness('/connections/' + connection + '/models')['models']
+
+    def check_file(ref, name, data, run):
+        assert ref['owner'] == run['ref']['provider'] and ref['name'] == name
+        assert ref['digest'] == hashlib.sha256(data).hexdigest() and ref['sizeBytes'] == len(data)
+        assert (provider_data/'attachments'/ref['id']/'content').read_bytes() == data
+
+    token = uuid.uuid4().hex
+    old_data = ('old-file-content-' + token).encode()
+    old_name = attachment('old-file-' + token + '.txt', old_data)
+    old_text = 'mcp completed MCP_OUTPUT_MARKER_' + token
+    tool_output = 'tool-result-' + token
+    first, first_store, first_input = send(chat, old_text, [old_name])
+    first_file, = first_input['input']['attachments']
+    check_file(first_file, old_name, old_data, first)
+    assert any(tool_output in tool.get('output', '') for tool in first['tools']), 'The scripted tool result must exist before testing for its absence'
+    queued_chat = owner.harness('/sessions', {'title': 'Composer continuation after provider reinstall',
+        'connectionId': connection_id, 'profileId': None, 'appIds': []})
+    queue_before, queue_before_store, _ = send(queued_chat, 'Before composer continuation')
+    queued_route = '/sessions/' + queued_chat['id']
+    initial_models = catalog(connection_id)
+    assert initial_models and installed()['installationId'] == original['provider']['installationId']
+    retained_install = reinstall(wipe=False)
+    assert owner.harness(route + '/models')['models'] == initial_models == catalog(connection_id)
+    options = owner.harness(route + '/context-options')
+    assert options['currentConnectionId'] == connection_id
+    retained, = [item for item in options['connections'] if item['id'] == connection_id]
+    assert retained['available'] and retained['canResume'] and not options.get('blockedReason')
+    visitor.harness(route + '/context-options', expected=404)
+    resume = choice(options, retained, 'resume', initial_models[0]['id'])
+    visitor.harness(route + '/context', resume, expected=404)
+    # A second, previously stopped chat can be deleted without first rebinding it.
+    prior_run = completed['providerExecution']['run']
+    still_stopped = owner.harness(previously_completed)['providerExecution']['run']
+    assert still_stopped['ref'] == prior_run['ref'] and still_stopped['generation'] == prior_run['generation']
+    visitor.harness(previously_completed, method='DELETE', expected=404)
+    assert owner.harness(previously_completed, method='DELETE') == {'deleted': True}
+    owner.harness(previously_completed, expected=404)
+    resumed = owner.harness(route + '/context', resume)
+    assert resumed['id'] == chat['id'] and resumed['selection']['connection'] == original['connection']
+    assert resumed['selection']['provider']['installationId'] == retained_install
+    assert not resumed['providerExecution'].get('runId')
+    assert owner.harness(route + '/context', resume)['selectionRevision'] == resumed['selectionRevision']
+    resumed_text = 'resumed-message-' + token
+    continued, continued_store, continued_input = send(resumed, resumed_text)
+    assert continued['sessionId'] == first['sessionId'] and continued['ref']['id'] != first['ref']['id']
+    assert continued['ref']['provider']['installationId'] == retained_install and continued_input['continuation'] == 'resume'
+    assert continued_store['nativeId'] == first_store['nativeId'] and continued_store['priorRunIds'].count(first['ref']['id']) == 1
+    context['say']('PASS: a retained provider account lists the same models and resumes its verified original native thread under the new installation')
+
+    # Ordinary composer Send verifies continuity and rebinds atomically without a separate context command.
+    fact = owner.harness(queued_route)
+    assert fact['providerExecution']['run']['ref'] == queue_before['ref']
+    queue_after, queue_after_store, queue_after_input = send(fact, 'Continue through the composer queue', composer=True)
+    assert queue_after['sessionId'] == queue_before['sessionId'] and queue_after['ref']['provider']['installationId'] == retained_install
+    assert queue_after_store['nativeId'] == queue_before_store['nativeId'] and queue_after_input['continuation'] == 'resume'
+    queue_record = owner.harness(queued_route)
+    assert queue_record['selectionRevision'] == fact.get('selectionRevision', 0)
+    assert queue_record['selection']['provider']['installationId'] == retained_install
+    assert owner.harness(queued_route, method='DELETE') == {'deleted': True}
+    context['say']('PASS: normal composer Send resumed the same verified public and native session after reinstall')
+
+    new_install = reinstall(wipe=True)
+    assert not (native_records/(first['sessionId'] + '.json')).exists()
+    empty = owner.harness(route + '/context-options')
+    assert empty['currentConnectionId'] is None and not any(item['available'] for item in empty['connections'])
+    # Recreate the original display name, then offer another account with exactly the same models.
+    first_account = providers.configure_for_harness(app_origin, owner.call, 'codex', retained['name'],
+        secret='synthetic-recreated-account-one')
+    second_account = providers.configure_for_harness(app_origin, owner.call, 'codex', 'Second reinstallation fixture account',
+        secret='synthetic-recreated-account-two')
+    assert len({connection_id, first_account['id'], second_account['id']}) == 3
+    assert catalog(first_account['id']) == catalog(second_account['id']) == initial_models
+    options = owner.harness(route + '/context-options')
+    assert options['currentConnectionId'] is None
+    selected, = [item for item in options['connections'] if item['id'] == second_account['id']]
+    assert selected['available'] and not selected['canResume']
+    if os.environ.get('HOSTY_RECOVERY_BROWSER') == '1':
+        import subprocess
+        subprocess.run(['node', str(context['workspace']/'apps/harness/test/provider-reinstallation-browser.mjs')],
+            cwd=context['workspace'], check=True, timeout=150, text=True,
+            input=json.dumps({'core': context['origin'], 'harness': app_origin, 'harnessAppId': app,
+                'link': link, 'password': context['password'], 'chatId': chat['id'],
+                'connectionId': selected['id'], 'model': initial_models[-1]['id']}))
+    refused = owner.harness(route + '/context', choice(options, selected, 'resume', initial_models[-1]['id']), expected=409)
+    assert refused['code'] == 'native_context_missing'
+    # Dismissing the choices sends no mutation to Harness and creates no provider session.
+    assert owner.harness(route)['providerExecution']['run']['ref'] == continued['ref']
+    assert not list(native_records.glob('*.json'))
+    fresh = choice(options, selected, 'fresh', initial_models[-1]['id'])
+    changed = owner.harness(route + '/context', fresh)
+    assert changed['id'] == chat['id'] and changed['selection']['provider']['installationId'] == new_install
+    assert changed['connectionId'] == second_account['id'] and changed['executionSelection']['model'] == fresh['model']
+    assert not changed['providerExecution'].get('runId') and not list(native_records.glob('*.json'))
+    assert changed['providerExecution']['sessionId'] != first['sessionId']
+    assert owner.harness(route + '/context', fresh)['selectionRevision'] == changed['selectionRevision']
+    new_text = 'fresh-message-' + uuid.uuid4().hex
+    new_data = ('new-file-content-' + uuid.uuid4().hex).encode()
+    new_name = attachment('new-file-' + uuid.uuid4().hex + '.txt', new_data)
+    last, last_store, last_input = send(changed, new_text, [new_name])
+    assert last['sessionId'] == changed['providerExecution']['sessionId'] and last['ref']['provider']['installationId'] == new_install
+    assert last_store['nativeId'] != first_store['nativeId'] and set(last_store['runs']) == {last['ref']['id']}
+    assert last_input['continuation'] == 'start' and last_input['selection']['model'] == fresh['model']
+    last_file, = last_input['input']['attachments']
+    check_file(last_file, new_name, new_data, last)
+    for marker in (old_text, old_name, old_data.decode(), first_file['id'], first_file['digest'], resumed_text,
+                   tool_output, 'Apps checked', first['ref']['id'], continued['ref']['id']):
+        assert marker not in json.dumps([last_input, last_store['session']['configuration']]), 'The new public provider payload included an old prompt, tool result, run or attachment'
+    assert {p.name for p in (provider_data/'attachments').iterdir()} == {last_file['id']}
+    with owner.client.open(app_origin + '/api' + route + '/attachments/' + old_name, timeout=30) as response:
+        assert response.read() == old_data
+    events = [json.loads(line) for line in (context['root']/'apps'/app/'data'/'sessions'/chat['id']/'events.ndjson').read_text().splitlines() if line.strip()]
+    assert [e['text'] for e in events if e.get('type') == 'user_message'] == [old_text, resumed_text, new_text]
+    assert [e['contextMode'] for e in events if e.get('contextChanged')] == ['resume', 'fresh']
+    sibling = '/sessions/' + recovery['otherChatId']
+    previous_sibling = owner.harness(sibling)['providerExecution']['run']
+    assert owner.harness(route, method='DELETE') == {'deleted': True}
+    owner.harness(route, expected=404)
+    assert owner.harness(sibling)['providerExecution']['run']['ref'] == previous_sibling['ref']
+    assert set(owner.harness(tree_route)['leases']) == original_leases
+    assert sentinel.read_text() == 'Preserve this uncommitted work.'
+    context['say']('PASS: wiped provider data requires an explicit fresh account choice; the new native thread received only the new message and attachment. Owner Delete preserved the sibling and workspace.')
+
+
 def check(context):
     base, root, workspace = (context[key] for key in ('base', 'root', 'workspace'))
     run, request, say, wait_for = (context[key] for key in ('run', 'request', 'say', 'wait_for'))
@@ -284,7 +507,7 @@ def check(context):
         spec = importlib.util.spec_from_file_location('execution_recovery_acceptance', workspace/'apps/harness/test/execution_recovery_acceptance.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        module.check(context, app, app_origin, call, timed, link, client)
+        recovery = module.check(context, app, app_origin, call, timed, link, client)
 
     if context.get('scenario') == 'agent-providers' or os.environ.get('HOSTY_HISTORY_DURABILITY'):
         import importlib.util
@@ -420,6 +643,7 @@ def check(context):
         call(app_origin, '/api/sessions')
         assert not list(app_root.rglob('.local-runtime/*/bundle.json')), 'Production Docker must use the CI-built image, not build source at startup'
         say(f'PASS: Docker production cold start {cold:.3f}s; warm restart {warm:.3f}s; app identity and durable data retained')
+        check_provider_reinstallation(context, app, app_origin, link, recovery)
         run([cli, '--data-root', root, 'apps', 'stop', app])
         say('PASS: Docker consumer stopped; parent fixture will Finish the child and verify resource removal')
         return
