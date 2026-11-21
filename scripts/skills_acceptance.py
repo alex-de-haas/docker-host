@@ -8,6 +8,47 @@ import threading
 import urllib.parse
 
 
+def start_skill_git_http(base, environment):
+    requests = []
+
+    class GitHandler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def serve_git(self):
+            url = urllib.parse.urlsplit(self.path)
+            length = int(self.headers.get('Content-Length', '0'))
+            body = self.rfile.read(length)
+            env = dict(environment, GIT_PROJECT_ROOT=str(base), GIT_HTTP_EXPORT_ALL='1',
+                       REQUEST_METHOD=self.command, PATH_INFO=url.path, QUERY_STRING=url.query,
+                       CONTENT_TYPE=self.headers.get('Content-Type', ''), CONTENT_LENGTH=str(length),
+                       REMOTE_ADDR='127.0.0.1', HTTP_GIT_PROTOCOL=self.headers.get('Git-Protocol', ''))
+            result = subprocess.run(['git', 'http-backend'], input=body, env=env, capture_output=True, timeout=120)
+            if result.returncode:
+                self.send_error(500, 'Fixture Git backend failed')
+                return
+            headers, separator, payload = result.stdout.partition(b'\r\n\r\n')
+            if not separator:
+                headers, _, payload = result.stdout.partition(b'\n\n')
+            parsed = [line.decode().split(':', 1) for line in headers.splitlines() if b':' in line]
+            status = next((int(value.strip().split()[0]) for key, value in parsed if key.lower() == 'status'), 200)
+            requests.append((self.command, url.path, status))
+            self.send_response(status)
+            for key, value in parsed:
+                if key.lower() not in ('status', 'content-length'):
+                    self.send_header(key, value.strip())
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        do_GET = do_POST = serve_git
+
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), GitHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, requests
+
+
 def check(g):
     base, root, cli, run, request, say = (g[key] for key in ('base', 'root', 'cli', 'run', 'request', 'say'))
     source = base / 'skill-source'
@@ -37,43 +78,7 @@ def check(g):
         return run(['git', 'rev-parse', 'HEAD'], source).strip()
 
     first_commit = commit('Initial isolated skills')
-    requests = []
-
-    class GitHandler(http.server.BaseHTTPRequestHandler):
-        def log_message(self, *_):
-            pass
-
-        def serve_git(self):
-            url = urllib.parse.urlsplit(self.path)
-            length = int(self.headers.get('Content-Length', '0'))
-            body = self.rfile.read(length)
-            env = dict(g['env'], GIT_PROJECT_ROOT=str(base), GIT_HTTP_EXPORT_ALL='1',
-                       REQUEST_METHOD=self.command, PATH_INFO=url.path, QUERY_STRING=url.query,
-                       CONTENT_TYPE=self.headers.get('Content-Type', ''), CONTENT_LENGTH=str(length),
-                       REMOTE_ADDR='127.0.0.1', HTTP_GIT_PROTOCOL=self.headers.get('Git-Protocol', ''))
-            result = subprocess.run(['git', 'http-backend'], input=body, env=env, capture_output=True, timeout=120)
-            if result.returncode:
-                self.send_error(500, 'Fixture Git backend failed')
-                return
-            headers, separator, payload = result.stdout.partition(b'\r\n\r\n')
-            if not separator:
-                headers, _, payload = result.stdout.partition(b'\n\n')
-            parsed = [line.decode().split(':', 1) for line in headers.splitlines() if b':' in line]
-            status = next((int(value.strip().split()[0]) for key, value in parsed if key.lower() == 'status'), 200)
-            requests.append((self.command, url.path, status))
-            self.send_response(status)
-            for key, value in parsed:
-                if key.lower() not in ('status', 'content-length'):
-                    self.send_header(key, value.strip())
-            self.send_header('Content-Length', str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-
-        do_GET = do_POST = serve_git
-
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), GitHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    server, thread, requests = start_skill_git_http(base, g['env'])
     repository = f'http://127.0.0.1:{server.server_port}/skill-source/.git'
 
     def command(*args):

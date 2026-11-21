@@ -1,4 +1,4 @@
-import { AGENT_SESSION_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, type AgentSessionWorkflowTool } from "./agent.js";
+import { AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS, AGENT_SESSION_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, type AgentSessionWorkflowTool } from "./agent.js";
 
 const object = (properties: Record<string, unknown>, required: string[] = []) => ({ type: "object", properties, required, additionalProperties: false });
 const id = { type: "string", format: "uuid" }, revision = { type: "integer", minimum: 1 }, counter = { type: "integer", minimum: 0 };
@@ -20,7 +20,20 @@ const result = object({ markdown: text(32000), resources }, ["markdown", "resour
 const requestId = { ...id, description: "A fresh globally unique UUID for a new operation. Never reuse sample IDs or IDs from another chat or task. Retain this exact UUID and input only when recovering the same operation." };
 const mutation = { requestId, expectedRevision: revision };
 const writeScope = object({ mode: { enum: ["read", "write", "exclusive"] }, paths: { type: "array", items: text(2000), maxItems: 100 } }, ["mode", "paths"]);
+const optionalText = (maxLength: number) => ({ oneOf: [text(maxLength), { type: "null" }] });
+const profileFields = {
+  name: text(100), description: text(2000), instructions: text(8000), connectionId: optionalText(128),
+  model: optionalText(256), reasoningEffort: optionalText(128), skillIds: { type: "array", items: text(64), maxItems: 202 },
+};
+const gitSkillSource = object({ repository: text(2048), ref: text(256), path: text(1024), connectionId: optionalText(200) }, ["repository"]);
 const schemas: Record<string, ReturnType<typeof object>> = {
+  "profile-list": object({ profileId: text(200) }),
+  "profile-options": object({ connectionId: text(128) }),
+  "profile-create": object({ expectedRevision: counter, profile: object(profileFields, ["name"]) }, ["expectedRevision", "profile"]),
+  "profile-edit": object({ profileId: text(200), expectedRevision: counter, changes: object(profileFields) }, ["profileId", "expectedRevision", "changes"]),
+  "skill-list": object({ includeSourceConnections: { type: "boolean" } }),
+  "skill-discover": object({ source: gitSkillSource }, ["source"]),
+  "skill-install": object({ source: gitSkillSource, commit: text(64), paths: { type: "array", items: text(1024), minItems: 1, maxItems: 200 } }, ["source", "commit", "paths"]),
   "subagent-profiles": object({}),
   "subagent-spawn": object({ requestId, profileId: text(200), profileRevision: revision, prompt: text(32000), title: text(200) }, ["requestId", "profileId", "profileRevision", "prompt"]),
   "subagent-status": object({ childSessionId: id }),
@@ -54,6 +67,13 @@ const schemas: Record<string, ReturnType<typeof object>> = {
   "task-execution-get": object({ cursor: text(200), limit: { type: "integer", minimum: 1, maximum: 100 } }),
 };
 const descriptions: Record<string, string> = {
+  "profile-list": "List saved profile summaries and the directory revision. Supply a profile ID to read its configuration.",
+  "profile-options": "List available connections. Supply one connection ID to read its model and reasoning choices.",
+  "profile-create": "Create a reusable profile at the current directory revision. Attach installed skills by their stable IDs.",
+  "profile-edit": "Edit the named fields of a reusable profile at the current directory revision. Read the stored configuration before editing.",
+  "skill-list": "List installed skill packages with stable IDs, descriptions and provenance. Set includeSourceConnections to see the operator's source connection IDs and labels for private Git repositories.",
+  "skill-discover": "Read skill candidates from a Git source. Use their descriptions for recommendations and retain the commit and exact paths for installation.",
+  "skill-install": "Install the selected package paths into the shared skill library at the commit returned by discovery. Use the returned stable IDs to attach them to profiles.",
   "subagent-profiles": "List saved agent profiles and their current revisions for a child chat.",
   "subagent-spawn": "Open a child chat with the selected profile and prompt. Reuse the request UUID only to recover this exact delegation.",
   "subagent-status": "Read the state and available results of this chat’s children. Supply a child session ID to inspect one.",
@@ -77,9 +97,9 @@ const descriptions: Record<string, string> = {
   "task-execution-get": "Read this session's task binding, root plan, limits and bounded child results. Before adoption, read the current session revisions and mode.",
 };
 /** Fixed business tools only. Their schemas grant no native, Core MCP or source authority. */
-const knownTools = [...AGENT_SESSION_WORKFLOW_TOOLS, ...AGENT_SUBAGENT_WORKFLOW_TOOLS];
+const knownTools = [...AGENT_SESSION_WORKFLOW_TOOLS, ...AGENT_SUBAGENT_WORKFLOW_TOOLS, ...AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS];
 export const workflowTools = (selected: readonly AgentSessionWorkflowTool[] = AGENT_SESSION_WORKFLOW_TOOLS) => knownTools.filter(name => selected.includes(name)).map(name => {
   const action = name.replaceAll("_", "-");
-  return { name, description: descriptions[action]!, inputSchema: object(name.startsWith("subagent_") ? { input: schemas[action]! } : { input: schemas[action]!, source: provider }, ["input"]),
-    annotations: { readOnlyHint: ["subagent_profiles", "subagent_status", "task_executor_options", "task_options", "task_list", "task_get", "task_execution_get"].includes(name), destructiveHint: name === "task_action", openWorldHint: false } };
+  return { name, description: descriptions[action]!, inputSchema: object(name.startsWith("task_") ? { input: schemas[action]!, source: provider } : { input: schemas[action]! }, ["input"]),
+    annotations: { readOnlyHint: ["profile_list", "profile_options", "skill_list", "skill_discover", "subagent_profiles", "subagent_status", "task_executor_options", "task_options", "task_list", "task_get", "task_execution_get"].includes(name), destructiveHint: name === "task_action", openWorldHint: name === "skill_discover" || name === "skill_install" } };
 });

@@ -3,7 +3,7 @@
   "id": "hosty.claude-code-provider",
   "name": "Claude Code Provider",
   "description": "Independent local Claude Code agent execution with app-owned connections, native sessions and Hosty-authorized HTTP/SSE.",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",
@@ -151,6 +151,7 @@
           "mcp.apps",
           "workflow.consumer",
           "workflow.subagents",
+          "workflow.profile-management",
           "model.change-on-resume",
           "decisions.questions",
           "connections.usage",

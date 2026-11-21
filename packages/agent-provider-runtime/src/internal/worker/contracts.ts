@@ -80,9 +80,10 @@ export function validateRun(value: unknown): asserts value is WorkerRunRequest {
 export function validateMcpServers(servers: unknown): asserts servers is Record<string, unknown> {
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) throw new WorkerApiError(400, "invalid_configuration", "MCP servers must be an object.");
   for (const [name, value] of Object.entries(servers)) {
-    const server = value as { type?: unknown; url?: unknown; headers?: unknown };
+    const server = value as { type?: unknown; url?: unknown; headers?: unknown; timeout?: unknown };
     if (!/^[A-Za-z0-9_-]+$/.test(name) || !server || typeof server !== "object" || Array.isArray(server)
-      || Object.keys(server).some(key => !["type", "url", "headers", "hostyPolicy"].includes(key))
+      || Object.keys(server).some(key => !["type", "url", "headers", "hostyPolicy", "timeout"].includes(key))
+      || server.timeout !== undefined && (typeof server.timeout !== "number" || !Number.isSafeInteger(server.timeout) || server.timeout < 1000 || server.timeout > 240_000)
       || server.type !== "http" || typeof server.url !== "string") throw new WorkerApiError(400, "invalid_configuration", "Only declared HTTP MCP callbacks are supported.");
     let url: URL; try { url = new URL(server.url); } catch { throw new WorkerApiError(400, "invalid_configuration", "Invalid MCP callback URL."); }
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.hash

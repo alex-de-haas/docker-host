@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-11-12
+updated: 2026-11-21
 summary: A shared library of Core, Git and app skill packages with stable selections, current-file exports and platform context for native agents.
 components: [apps/core, apps/cli, apps/harness]
 ---
@@ -46,6 +46,22 @@ instructions. Imports validate YAML, paths, case collisions, regular files and p
 symlinks, traversal and Git metadata are refused. Limits are 512 files/16 MiB per package,
 256 KiB for `SKILL.md`, and 200 packages/64 MiB for the managed library. Core packages are outside
 that capacity; exports and Harness selections accept all 200 managed packages plus both built-ins.
+
+## Installing Skills from Harness Chat
+
+An administrator can ask a [Harness chat](../agent-profiles/feature.md#managing-profiles-from-chat)
+to recommend skills or install selected packages. `skill_list` reads the installed catalog.
+With `includeSourceConnections`, it also lists the operator's Git connection IDs and labels
+for use with private repositories.
+`skill_discover` takes a Git source and returns package names, descriptions, paths and the
+observed commit. The agent can use those details to explain a recommendation without installing
+anything. On an install request, `skill_install` takes the source, discovered commit and selected
+paths. It returns the confirmed installed packages and their stable IDs, which `profile_create`
+and `profile_edit` accept.
+
+Chat requests use the same Core library operations and acting administrator's source access as
+Settings. Installing a package makes it available to other profiles. The operator can request
+an installation independently of a profile change.
 
 ## Local Git Installation
 
@@ -268,6 +284,8 @@ its dependency set are unchanged from the preceding verified candidate, whose fu
 Harness check passed.
 
 ## Testing Expectations
+
+- Exercise discovery and installation through the signed-in chat workflow using a real Git repository. Verify the returned commit and skill IDs against Settings and the saved profile.
 
 - Register the selected native Codex root before fresh and resumed threads, preserve connection
   state, and surface registration failures before dispatch. Verify discovery with an empty

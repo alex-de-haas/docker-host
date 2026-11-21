@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { AgentApiError } from "@hosty-sdk/app/agent";
+import { ConnectionError } from "../connections/errors.js";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError } from "@hosty-sdk/app/providers";
 import type { AgentSessionQuery, NativeSessionRef, RunRef, RunCancel } from "@hosty-sdk/app/agent-sessions";
@@ -38,7 +40,7 @@ export async function agentSessionRoute(request: IncomingMessage, response: Serv
     sendResult(response, result);
     } finally { response.off("close", disconnected); }
   } catch (error) {
-    if (!(error instanceof ProviderError) && !(error instanceof AppContextError)) throw error;
+    if (!(error instanceof ProviderError || error instanceof AppContextError || error instanceof AgentApiError || error instanceof ConnectionError)) throw error;
     response.writeHead(error.status, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify({ error: { code: error.code, message: error.message, retryable: error.status >= 500 } }));
   }
   return true;

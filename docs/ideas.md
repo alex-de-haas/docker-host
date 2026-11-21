@@ -1,11 +1,11 @@
 ---
 created: 2026-10-23
-updated: 2026-11-12
+updated: 2026-11-21
 ---
 
 # Ideas
 
-<!-- idea-id-high-water: 19 -->
+<!-- idea-id-high-water: 20 -->
 
 This living document collects early possibilities, questions and examples that may expand or
 complement the [vision](vision.md). The vision describes the system the owner wants to build;
@@ -1130,6 +1130,18 @@ and [Durable Agent Jobs](features/durable-agent-jobs/plan.md) plans.
 Former Feedback D6 was retired by this explicit scope revision, not implemented or silently counted
 as complete. These possibilities are not a delivery commitment. The owner keeps feedback and tasks
 independent: no task conversion, attachment or task-domain dependency is selected.
+
+## I20. How External Agents Interact With Hosty
+
+On 2026-11-21 the owner confirmed that Hosty should continue to support external agents and
+wants to revisit how people use Hosty from clients such as Codex. Which operations should an
+operator be able to request from an external chat, and how should they discover and grant access
+to those operations?
+
+Existing examples include [direct Core access to development workspaces](features/external-development-workspaces/feature.md)
+and the [read-only MCP facade](features/mcp-facade/feature.md). Operators can use the
+[profile and skill management tools](features/agent-profiles/feature.md#managing-profiles-from-chat) inside Harness.
+Whether to expose those operations externally is one example for the broader discussion.
 
 ## Platform Precedents
 

@@ -46,9 +46,9 @@ export class NativeExecution implements ExecutionDriver {
   private maintenance?: Promise<void>;
   private closing = false;
   constructor(private readonly controller: ProviderController, private readonly store: ProviderStore, private readonly authority: ProviderAuthority,
-    private readonly connections: ProviderConnections, private readonly attachments: AttachmentStore, private readonly data: string, origin: () => string, private readonly prepareInput: NativeInputPreparer = prepareNativeInput) {
+    private readonly connections: ProviderConnections, private readonly attachments: AttachmentStore, private readonly data: string, origin: () => string, private readonly prepareInput: NativeInputPreparer = prepareNativeInput, gitSkillWorkflowTimeoutMs?: number) {
     this.journal = new WorkerJournal(path.join(data, "execution-journal"));
-    this.mcp = new ProviderMcp(authority, origin, (id, event) => this.proxyDecision(id, event), (id, decisionId, _tool, allowed, automatic) => this.proxySettled(id, decisionId, allowed, automatic));
+    this.mcp = new ProviderMcp(authority, origin, (id, event) => this.proxyDecision(id, event), (id, decisionId, _tool, allowed, automatic) => this.proxySettled(id, decisionId, allowed, automatic), gitSkillWorkflowTimeoutMs);
     this.engine = new WorkerEngine(this.journal, {
       validateSelection: async request => { const binding = await connections.binding(request.binding.connectionId); if (!binding || binding.connectionRevision !== request.binding.connectionRevision) throw new AgentApiError("connection_revision_mismatch", "Provider connection changed.", 409); },
       reserve: request => connections.reserve(request.binding),
