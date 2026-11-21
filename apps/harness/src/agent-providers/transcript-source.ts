@@ -6,6 +6,7 @@ import type { AgentRunSnapshot, AgentRunState, AgentSource, AgentWatchItem, Agen
 export type ProviderTranscriptSource = AgentSource & {
   provider: AgentRunSnapshot["ref"]["provider"];
   runId: string;
+  transcriptRunId?: string;
   generation: string;
   parentTranscriptToolUseId?: string;
 };
@@ -24,7 +25,7 @@ export function transcriptToolId(runId: string, source: AgentSource | undefined,
   // Preserve the identity used by already stored provider tool events, including omitted root source.
   return `provider-${createHash("sha256").update(JSON.stringify([runId, source?.agentId, toolId])).digest("hex")}`;
 }
-export function providerTranscriptSource(snapshot: AgentRunSnapshot, source: AgentSource = { agentId: "root" }): ProviderTranscriptSource {
+export function providerTranscriptSource(snapshot: AgentRunSnapshot, source: AgentSource = { agentId: "root" }, transcriptRun = snapshot.ref.id): ProviderTranscriptSource {
   let parentToolUseId: string | undefined;
   if (source.parentToolCallId) {
     const parentId = source.parentAgentId ?? "root";
@@ -35,19 +36,19 @@ export function providerTranscriptSource(snapshot: AgentRunSnapshot, source: Age
       ?? (knownRoot ? candidates.find(tool => !tool.source) : undefined);
     // Old snapshots omitted root source, and their already stored tool IDs include that omission.
     // Join the retained tool's actual identity instead of assigning it a different root hash.
-    parentToolUseId = transcriptToolId(snapshot.ref.id, parentTool ? parentTool.source : { agentId: parentId }, source.parentToolCallId);
+    parentToolUseId = transcriptToolId(transcriptRun, parentTool ? parentTool.source : { agentId: parentId }, source.parentToolCallId);
   }
   return { agentId: source.agentId, ...(source.parentAgentId ? { parentAgentId: source.parentAgentId } : {}),
-    ...(source.parentToolCallId ? { parentToolCallId: source.parentToolCallId } : {}), provider: { ...snapshot.ref.provider }, runId: snapshot.ref.id, generation: snapshot.generation,
+    ...(source.parentToolCallId ? { parentToolCallId: source.parentToolCallId } : {}), provider: { ...snapshot.ref.provider }, runId: snapshot.ref.id, ...(transcriptRun !== snapshot.ref.id ? { transcriptRunId: transcriptRun } : {}), generation: snapshot.generation,
     ...(parentToolUseId ? { parentTranscriptToolUseId: parentToolUseId } : {}) };
 }
 export function providerAgentKey(source: ProviderTranscriptSource): string {
-  return JSON.stringify([...providerIdentityParts(source.provider), source.runId, source.generation, source.agentId]);
+  return JSON.stringify([...providerIdentityParts(source.provider), source.transcriptRunId ?? source.runId, source.generation, source.agentId]);
 }
-export function nativeAgentStatus(snapshot: AgentRunSnapshot, agent: NonNullable<AgentRunSnapshot["agents"]>[number]): NativeAgentStatusEvent {
+export function nativeAgentStatus(snapshot: AgentRunSnapshot, agent: NonNullable<AgentRunSnapshot["agents"]>[number], transcriptRun = snapshot.ref.id): NativeAgentStatusEvent {
   const active = ["queued", "running", "waiting_for_input"].includes(agent.state);
   const uncertain = active && (snapshot.freshness !== "current" || snapshot.state === "unknown" || snapshot.phase === "interrupted" || snapshot.stopConfirmed);
-  return { type: "native_agent_status", providerSource: providerTranscriptSource(snapshot, agent),
+  return { type: "native_agent_status", providerSource: providerTranscriptSource(snapshot, agent, transcriptRun),
     state: uncertain ? "unknown" : agent.state, stopConfirmed: agent.stopConfirmed === true,
     freshness: uncertain && snapshot.freshness === "current" ? "last_known" : snapshot.freshness,
     observedAt: snapshot.observedAt, sourceSequence: snapshot.lastSequence, ...(uncertain ? { lastKnownState: agent.state } : {}) };

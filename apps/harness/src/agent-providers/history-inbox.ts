@@ -1,3 +1,4 @@
+import { providerIdentityParts } from "../../shared/provider-reference.js";
 import { createHash } from "node:crypto";
 import { readdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
@@ -9,6 +10,7 @@ import type { SessionStore } from "../sessions/store.js";
 
 type Fact = HistoryReceipt;
 type Pending = { files: string[]; next: number; worker?: Promise<void> };
+const factId = (provider: AgentProviderRef, fact: Fact) => createHash("sha256").update(JSON.stringify([providerIdentityParts(provider), fact.sessionId, fact.cursor])).digest("hex");
 const entry = /^([0-9]{16})-([a-f0-9]{64})\.json$/;
 
 /** Durably isolate a failed destination before allowing another chat's cursor to advance. */
@@ -55,7 +57,7 @@ export class ProviderHistoryInbox {
       catch (error) { if (this.signal.aborted) throw error; }
     }
     if (fact.item.kind === "event" && ["message.delta", "tool.output"].includes(fact.item.event.type)) return;
-    const identity = createHash("sha256").update(fact.cursor).digest("hex");
+    const identity = factId(provider, fact);
     if (!pending.files.at(-1)?.endsWith(identity + ".json")) {
       if (!Number.isSafeInteger(pending.next)) throw new Error("Deferred history exceeded its sequence range.");
       const filename = String(pending.next++).padStart(16, "0") + "-" + identity + ".json";
@@ -89,7 +91,8 @@ export class ProviderHistoryInbox {
           const row = await this.store.withHistoryInbox(id, async folder =>
             JSON.parse(await readFile(path.join(folder, filename), "utf8")) as { provider: AgentProviderRef; fact: Fact });
           if (!row) { pending.files.length = 0; break; }
-          if (createHash("sha256").update(row.fact.cursor).digest("hex") !== entry.exec(filename)![2])
+          const retained = entry.exec(filename)![2];
+          if (factId(row.provider, row.fact) !== retained && createHash("sha256").update(row.fact.cursor).digest("hex") !== retained)
             throw new Error("Deferred provider history cursor changed.");
           // Retrying a stored receipt never resumes a control or uses an operator credential.
           await this.apply(id, row.provider, { ...row.fact, replayed: true });

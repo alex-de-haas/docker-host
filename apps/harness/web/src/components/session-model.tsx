@@ -7,18 +7,24 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldTitle, FieldDescription, FieldGroup } from "@/components/ui/field";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { getSessionModels, setSessionModel, type AssistantSession, type ModelCatalog } from "@/lib/assistant-api";
+import { AssistantApiError, getSessionModels, setSessionModel, type AssistantSession, type ModelCatalog } from "@/lib/assistant-api";
 import { rememberManualModel } from "@/lib/browser-agent-preferences";
 
 type ModelProps = {
-  session: AssistantSession; busy: boolean; onChange(record: AssistantSession): void; onSavingChange(saving: boolean): void;
+  catalogRefresh?: number; session: AssistantSession; busy: boolean; onChange(record: AssistantSession): void; onSavingChange(saving: boolean): void;
 };
 
-export function useSessionModel({ session, busy, onChange, onSavingChange }: ModelProps) {
-  const binding = JSON.stringify([session.id, session.connectionId, session.connectionRevision]);
-  const [catalogResult, setCatalogResult] = useState<{ binding: string; value?: ModelCatalog; error?: string } | null>(null);
-  const catalog = session.connectionId && catalogResult?.binding === binding ? catalogResult.value ?? null : null;
-  const catalogError = session.connectionId && catalogResult?.binding === binding ? catalogResult.error ?? "" : "";
+export function useSessionModel({ session, busy, onChange, onSavingChange, catalogRefresh }: ModelProps) {
+  const binding = JSON.stringify([session.id, session.connectionId, session.connectionRevision, catalogRefresh]);
+  const [catalogResult, setCatalogResult] = useState<{ binding: string; value?: ModelCatalog; error?: Error } | null>(null);
+  const currentCatalog = session.connectionId && catalogResult?.binding === binding ? catalogResult : null;
+  const catalog = currentCatalog?.value ?? null;
+  const failure = currentCatalog?.error;
+  let catalogError = failure?.message ?? "";
+  if (failure instanceof AssistantApiError && failure.code === "provider_connection_changed") {
+    if (session.taskExecutionId) catalogError = "This task's saved provider connection is unavailable. Select a current connection for a new task attempt.";
+    else if (session.providerLocked) catalogError = "This chat's saved provider connection is unavailable. Use Change session context in Agent settings to select a current connection and model.";
+  }
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -26,7 +32,7 @@ export function useSessionModel({ session, busy, onChange, onSavingChange }: Mod
   useEffect(() => {
     let disposed = false;
     if (session.connectionId) void getSessionModels(session.id).then(value => { if (!disposed) setCatalogResult({ binding, value }); })
-      .catch(cause => { if (!disposed) setCatalogResult({ binding, error: cause instanceof Error ? cause.message : "Model choices unavailable." }); });
+      .catch(cause => { if (!disposed) setCatalogResult({ binding, error: cause instanceof Error ? cause : new Error("Model choices unavailable.") }); });
     return () => { disposed = true; };
   }, [session.id, session.connectionId, session.connectionRevision, binding, retry]);
   const selected = session.executionSelection ?? { model: null, reasoningEffort: null };

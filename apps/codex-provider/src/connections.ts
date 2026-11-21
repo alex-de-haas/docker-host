@@ -605,6 +605,26 @@ export class CodexConnections extends AgentConnections {
       await rm(legacy, { recursive: true });
     }
   }
+  async inspectNativeContext(sessionId: string, nativeId: string): Promise<"available" | "missing"> {
+    if (!/^[a-zA-Z0-9-]{1,100}$/.test(sessionId) || !/^[a-zA-Z0-9-]{1,100}$/.test(nativeId)) throw new Error("Invalid retained native identity.");
+    const home = path.join(this.dataDir, "native-sessions", sessionId);
+    const info = await lstat(home).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+    if (!info) return "missing";
+    if (!info.isDirectory()) throw new Error("Unexpected native session directory.");
+    const client = new CodexLogin(home);
+    try {
+      await client.initialize();
+      const result = await client.request("thread/read", { threadId: nativeId, includeTurns: false });
+      if ((result.thread as { id?: string } | undefined)?.id !== nativeId) throw new Error("Codex did not return the requested thread.");
+      return "available";
+    } catch (error) {
+      if (error instanceof CodexLoginError && error.diagnostic.method === "thread/read") {
+        if (error.diagnostic.code === "thread_missing") return "missing";
+        if (error.diagnostic.code === "unsupported") throw new ConnectionError(422, "unsupported_capability", "This Codex version cannot inspect the original thread.");
+      }
+      throw error;
+    } finally { await client.closeAndWait(); }
+  }
   override async prepareAdapter(binding: ConnectionBinding, context: AdapterPreparation): Promise<HarnessAdapter> {
     const adapter = await this.adapter(binding), home = await this.executionHome(binding);
     const copyAuthorization = async (source: string, target: string) => {
@@ -626,7 +646,7 @@ export class CodexConnections extends AgentConnections {
 
 export const codexCapabilities: AgentCapabilities = {
   version: 1, eventVersions: ["agent-event.1"],
-  capabilities: ["installation-history", "installation-history.live", "session.resume", "configuration.resume-compatible", "configuration.approval-mode", "skills.catalog", "skills.exclusive-selection", "mcp.core", "mcp.apps", "mcp.policy-update", "workflow.consumer", "workflow.subagents", "model.change-on-resume", "decisions.questions", "decisions.auto-allow", "connections.usage", "runs.park", "runs.barrier", "runs.reconcile", "runs.retire", "decisions.next-turn", "predictions", "subagents.native"],
+  capabilities: ["installation-history", "installation-history.live", "session.resume", "session.reconnect", "configuration.resume-compatible", "configuration.approval-mode", "skills.catalog", "skills.exclusive-selection", "mcp.core", "mcp.apps", "mcp.policy-update", "workflow.consumer", "workflow.subagents", "model.change-on-resume", "decisions.questions", "decisions.auto-allow", "connections.usage", "runs.park", "runs.barrier", "runs.reconcile", "runs.retire", "decisions.next-turn", "predictions", "subagents.native"],
   limits: { maxCommandBytes: 1024 * 1024, maxEventBytes: 1024 * 1024, maxSnapshotBytes: 1024 * 1024, maxReplayBytes: 64 * 1024 * 1024, replayRetentionMs: 7 * 24 * 60 * 60 * 1000, maxControls: 10000, maxPageSize: 100, maxDurationMs: 24 * 60 * 60 * 1000  },
   configuration: { resumeCompatible: ["instructions", "systemPrompt", "skills", "nativeTools", "approvalMode", "predictions"] },
   nativeTools: { default: "provider_default", none: false },

@@ -92,10 +92,13 @@ export function useSessionProvider({ session, busy, onChange, onSavingChange, en
   }, [session.id, session.connectionId, busy, legacy, save, enabled]);
 
   const current = connections.find(c => c.id === session.connectionId);
+  const credentialNotice = session.taskExecutionId ? "This task's saved credentials changed. Select a current connection for a new task attempt."
+    : session.providerLocked ? "These credentials changed. Use Change session context in Agent settings to select a current connection."
+    : "The credentials selected by this profile have changed.";
   const notice = error || readError || (legacy ? "Legacy conversations cannot be resumed. Complete the documented provider cutover and start a new chat." :
-    locked && current && current.revision !== session.connectionRevision ? "Credentials changed; start a new chat." : null);
+    locked && current && current.revision !== session.connectionRevision ? credentialNotice : null);
   return { session, busy, connections, defaultId, selected, setSelected,
-    saving, error, readError, loading, locked, legacy, save, refresh: () => refreshRef.current(), current, notice };
+    saving, error, readError, loading, locked, legacy, save, refresh: () => refreshRef.current(), current, notice, credentialNotice };
 }
 
 export function SessionProvider(props: ProviderProps) {
@@ -104,7 +107,7 @@ export function SessionProvider(props: ProviderProps) {
 
 export function SessionProviderField({ controller }: { controller: ReturnType<typeof useSessionProvider> }) {
   const { session, busy, connections, defaultId, selected,
-    saving, error, readError, loading, locked, legacy, save, refresh, current } = controller;
+    saving, error, readError, loading, locked, legacy, save, refresh, current, credentialNotice } = controller;
   return (
     <Field className="min-w-0 gap-2" aria-label="Chat provider">
       <FieldTitle>Provider</FieldTitle>
@@ -146,7 +149,7 @@ export function SessionProviderField({ controller }: { controller: ReturnType<ty
       {locked && <FieldDescription>{session.taskExecutionId ? "Fixed for this task." : session.providerLocked ? "Fixed after the first message." : "Selected by the agent profile."}</FieldDescription>}
       {saving && <span role="status" className="sr-only">Saving provider…</span>}
       {locked && current && current.revision !== session.connectionRevision &&
-        <p className="text-muted-foreground">Credentials changed; start a new chat.</p>}
+        <p className="text-muted-foreground">{credentialNotice}</p>}
       {legacy && <FieldDescription>Legacy conversations cannot be resumed. Complete the documented provider cutover and start a new chat.</FieldDescription>}
       {readError && <div className="space-y-1"><p role="alert" className="text-destructive-foreground wrap-anywhere">{readError}</p>
         <Button type="button" size="sm" variant="outline" disabled={loading} onClick={refresh}>Retry providers</Button>

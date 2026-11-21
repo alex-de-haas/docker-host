@@ -3,6 +3,10 @@ import { constants, type BigIntStats } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { durableWriteFile, durableAppendFile, durableCreateFile, durableMkdir, syncDirectory, DurableWriteError, isUncertainWrite } from "../persistence.js";
 import path from "node:path";
+import type { AgentProviderRef, AgentRunSnapshot } from "@hosty-sdk/app/agent";
+import type { HistoryProjectionClock } from "../agent-providers/history-projection.js";
+import { providerIdentityParts, sameProviderRef } from "../../shared/provider-reference.js";
+import type { AgentConnectionSelection } from "../agent-providers/types.js";
 import { applyProviderHistoryContent } from "../agent-providers/history-content.js";
 
 // Session records and transcripts live in the gateway's app data directory (decision 2026-08-08):
@@ -81,6 +85,13 @@ export interface SessionRecord {
   skillExportId?: string;
   executionSelection?: import("../agent-providers/compatibility.js").ExecutionSelection;
   selectionRevision?: number;
+  /** The latest receipt selects the active provider outbox. Previous outboxes remain attributed to their original runs. */
+  contextChanges?: Array<{
+    requestId: string; fingerprint: string;
+    previousProvider: AgentConnectionSelection["provider"]; previousConnection: AgentConnectionSelection["connection"];
+    previousSessionId: string; previousRunId?: string;
+  }>;
+
   workerRun?: { id: string; sequence: number; generation?: string };
   workerRecovery?: { runId: string; input: import("../agent-providers/compatibility.js").WorkerRecovery; state: "pending" | "completed" };
   /** Exact owner-confirmed Delete control, retained until the conversation is removed. */
@@ -126,7 +137,7 @@ export interface SessionRecord {
   connectionIdentity?: string;
   harnessKind?: "claude" | "codex" | "ollama" | "agent";
   /** Exact public provider/account binding; no native identity or credentials are stored here. */
-  selection?: import("../agent-providers/types.js").AgentConnectionSelection;
+  selection?: AgentConnectionSelection;
   providerExecution?: import("../agent-providers/execution.js").ProviderExecutionState;
   providerUploads?: Record<string, string>;
   providerStopProof?: { runId: string; generation: string; revision: string; observedAt: string };
@@ -408,13 +419,17 @@ export class SessionStore {
       const journal = await this.journalTail(record.id);
       const target = path.join(this.sessionDir(record.id), "record.json");
       let committedHigh = 0;
+      let staleContext = false;
       try {
         const committed = JSON.parse(await readFile(target, "utf8")) as SessionRecord;
         if (!committed || committed.id !== record.id || typeof committed.createdBy !== "string" || !committed.createdBy
           || !statuses.has(committed.status) || !Number.isSafeInteger(committed.lastEventSeq) || committed.lastEventSeq < 0
           || typeof committed.createdAt !== "string" || typeof committed.updatedAt !== "string") throw new Error("invalid committed record");
+        const lastChange = committed.contextChanges?.at(-1);
+        staleContext = Boolean(lastChange && next.contextChanges?.[committed.contextChanges!.length - 1]?.requestId !== lastChange.requestId);
         committedHigh = committed.lastEventSeq;
       } catch (error) { if (!absent(error)) throw this.problem(record.id, error); }
+      if (staleContext) throw new Error("A newer conversation context has already been committed.");
       const journalHigh = journal.high;
       if (committedHigh > journalHigh && !(committedHigh === journalHigh + 1 && next.appContextEvent?.seq === committedHigh))
         throw this.problem(record.id, new Error("checkpoint exceeds retained transcript"), "The checkpoint references missing transcript input. Preserve this conversation for recovery.");
@@ -447,20 +462,30 @@ export class SessionStore {
     }, true);
   }
 
+  private executionFile(id: string, contextId?: string): string {
+    return path.join(this.sessionDir(id), contextId ? `provider-execution-${messageRequestId(contextId)}.json` : "provider-execution.json");
+  }
+
   /** Independent command outbox: changing its bytes cannot overwrite a concurrent conversation edit. */
   async saveProviderExecution(id: string, state: import("../agent-providers/execution.js").ProviderExecutionState): Promise<void> {
     const content = JSON.stringify(state);
     await this.serialize(id, async () => {
       if (await this.deleted(id)) throw new Error("The conversation was deleted; provider execution metadata is fenced.");
       await stat(path.join(this.sessionDir(id), "record.json"));
-      await durableWriteFile(path.join(this.sessionDir(id), "provider-execution.json"), content);
+      await durableWriteFile(this.executionFile(id, state.contextId), content);
     }, true);
   }
   async readProviderExecution(id: string): Promise<import("../agent-providers/execution.js").ProviderExecutionState | null> {
     this.assertWritable(id);
     if (await this.deleted(id)) return null;
     try {
-      const value = JSON.parse(await readFile(path.join(this.sessionDir(id), "provider-execution.json"), "utf8")) as import("../agent-providers/execution.js").ProviderExecutionState;
+      const checkpoint = JSON.parse(await readFile(path.join(this.sessionDir(id), "record.json"), "utf8")) as SessionRecord;
+      const contextId = checkpoint.contextChanges?.at(-1)?.requestId;
+      let raw: string;
+      try { raw = await readFile(this.executionFile(id, contextId), "utf8"); }
+      catch (error) { if (absent(error) && contextId) throw new Error("The selected provider context is missing."); throw error; }
+      const value = JSON.parse(raw) as import("../agent-providers/execution.js").ProviderExecutionState;
+      if (value.contextId !== contextId) throw new Error("Invalid provider context identity.");
       if (value.version !== 1 || !value.sessionId || !value.selection) throw new Error("Invalid provider execution outbox.");
       return value;
     } catch (error) { if (absent(error)) return null; throw this.problem(id, error, "The provider execution outbox needs recovery."); }
@@ -473,22 +498,51 @@ export class SessionStore {
     });
   }
 
-  private historyRunFile(id: string, runId: string): string {
+  private historyRunDirectory(id: string, runId: string): string {
     if (!/^[0-9a-f-]{36}$/i.test(runId)) throw new Error("Invalid provider run identity.");
-    return path.join(this.sessionDir(id), "provider-history", runId + ".json");
+    return path.join(this.sessionDir(id), "provider-history", runId);
   }
-  async readHistoryRun(id: string, runId: string): Promise<{ principalId: string; snapshot: import("@hosty-sdk/app/agent").AgentRunSnapshot; clock?: import("../agent-providers/history-projection.js").HistoryProjectionClock } | null> {
-    try { return JSON.parse(await readFile(this.historyRunFile(id, runId), "utf8")); }
-    catch (error) { if (absent(error)) return null; throw this.problem(id, error); }
+  private historyScopeKey(scope: { provider: AgentProviderRef; sessionId: string }): string {
+    return createHash("sha256").update(JSON.stringify([providerIdentityParts(scope.provider), scope.sessionId])).digest("hex");
   }
-  async saveHistoryRun(id: string, principalId: string, snapshot: import("@hosty-sdk/app/agent").AgentRunSnapshot,
-    clock?: import("../agent-providers/history-projection.js").HistoryProjectionClock): Promise<void> {
-    const file = this.historyRunFile(id, snapshot.ref.id);
+  async readHistoryRun(id: string, runId: string, scope?: { provider: AgentProviderRef; sessionId: string }): Promise<{
+    principalId: string; snapshot: AgentRunSnapshot; clock?: HistoryProjectionClock;
+  } | null> {
+    const directory = this.historyRunDirectory(id, runId);
+    const read = async (file: string) => {
+      try { return JSON.parse(await readFile(file, "utf8")) as { principalId: string; snapshot: AgentRunSnapshot; clock?: HistoryProjectionClock }; }
+      catch (error) { if (absent(error)) return null; throw this.problem(id, error); }
+    };
+    if (scope) {
+      const exact = await read(path.join(directory, this.historyScopeKey(scope) + ".json"));
+      if (exact) {
+        if (exact.snapshot.ref.id !== runId || exact.snapshot.sessionId !== scope.sessionId || !sameProviderRef(exact.snapshot.ref.provider, scope.provider))
+          throw this.problem(id, new Error("The retained provider history has a different identity."));
+        return exact;
+      }
+      const legacy = await read(directory + ".json");
+      return legacy?.snapshot.ref.id === runId && legacy.snapshot.sessionId === scope.sessionId && sameProviderRef(legacy.snapshot.ref.provider, scope.provider) ? legacy : null;
+    }
+    // Old workflow receipts can carry only a run UUID. An ambiguous UUID proves no particular admission.
+    const files = await readdir(directory).catch(error => { if (absent(error)) return []; throw this.problem(id, error); });
+    if (files.length > 1) return null;
+    const legacy = await read(directory + ".json");
+    if (!files.length) return legacy;
+    const retained = await read(path.join(directory, files[0]!));
+    if (legacy && retained && (legacy.snapshot.sessionId !== retained.snapshot.sessionId || !sameProviderRef(legacy.snapshot.ref.provider, retained.snapshot.ref.provider))) return null;
+    return retained;
+  }
+  async saveHistoryRun(id: string, principalId: string, snapshot: AgentRunSnapshot, clock?: HistoryProjectionClock): Promise<void> {
+    const directory = this.historyRunDirectory(id, snapshot.ref.id);
+    const scope = { provider: snapshot.ref.provider, sessionId: snapshot.sessionId };
     await this.serialize(id, async () => {
       if (await this.deleted(id)) throw new Error("Installation history belongs to a deleted chat.");
       await stat(path.join(this.sessionDir(id), "record.json"));
-      await durableMkdir(path.dirname(file));
-      await durableWriteFile(file, JSON.stringify({ principalId, snapshot, clock }));
+      const previous = await this.readHistoryRun(id, snapshot.ref.id, scope);
+      if (previous && (previous.principalId !== principalId || previous.snapshot.generation !== snapshot.generation))
+        throw new Error("The provider changed the recorded history owner or execution generation.");
+      await durableMkdir(directory);
+      await durableWriteFile(path.join(directory, this.historyScopeKey(scope) + ".json"), JSON.stringify({ principalId, snapshot, clock }));
     }, true);
   }
 
@@ -497,10 +551,10 @@ export class SessionStore {
     return this.serialize(id, async () => {
       if (await this.deleted(id)) throw new Error("The conversation was deleted; provider observation is fenced.");
       const current = await this.readProviderExecution(id);
-      if (!current || current.runId !== observed.runId || current.sessionId !== observed.sessionId)
+      if (!current || current.contextId !== observed.contextId || current.runId !== observed.runId || current.sessionId !== observed.sessionId)
         throw new Error("The provider observation belongs to an earlier execution.");
       const next = { ...current, run: observed.run, cursor: observed.cursor, historyClock: observed.historyClock };
-      await durableWriteFile(path.join(this.sessionDir(id), "provider-execution.json"), JSON.stringify(next));
+      await durableWriteFile(this.executionFile(id, current.contextId), JSON.stringify(next));
       return next;
     }, true);
   }

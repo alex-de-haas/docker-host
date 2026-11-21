@@ -61,8 +61,8 @@ export class NativeExecution implements ExecutionDriver {
     }, controller.capacity);
   }
   async initialize(): Promise<void> {
-    await this.journal.initialize();
-    for (const session of await this.store.records()) for (const run of Object.values(session.runs)) {
+    await this.journal.initialize(this.store.historicalRunIds);
+    for (const session of await this.store.records(true)) for (const run of Object.values(session.runs)) {
       this.observe(run.snapshot.ref.id);
       await this.synchronize(run.snapshot.ref.id);
       if (session.retirement?.runId === run.snapshot.ref.id) continue;
@@ -283,7 +283,7 @@ export class NativeExecution implements ExecutionDriver {
     this.maintenance = task; return task;
   }
   private async pump(): Promise<void> {
-    for (const session of await this.store.records()) for (const record of Object.values(session.runs)) {
+    for (const session of await this.store.records(true)) for (const record of Object.values(session.runs)) {
       const id = record.snapshot.ref.id;
       if (record.input && record.snapshot.stopConfirmed && !record.reservedFor && record.workspaceRelease?.state !== "released")
         await this.cleanup(id, true).catch(() => {});

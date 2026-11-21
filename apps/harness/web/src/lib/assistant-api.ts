@@ -445,6 +445,22 @@ export async function dispatchAppCreation(sessionId: string, requestId: string, 
 }
 
 export type ModelCatalog = { revision: string; defaultModel?: string; models: { id: string; label: string; unavailableReason?: string; defaultEffort?: string; efforts: { id: string; label: string }[] }[] };
+export type SessionContextOptions = {
+  connections: { id: string; name: string; available?: boolean; reason?: string; canResume?: boolean; bindingRevision?: string }[];
+  currentConnectionId: string | null;
+  selectionRevision: number;
+  blockedReason?: string;
+};
+export type SessionContextRequest = {
+  requestId: string; expectedRevision: number; connectionId: string; expectedBinding: string;
+  model: string | null; reasoningEffort: string | null; mode: "fresh" | "resume";
+};
+export async function getSessionContextOptions(id: string): Promise<SessionContextOptions> {
+  return (await call(`/sessions/${encodeURIComponent(id)}/context-options`, { cache: "no-store" })).json();
+}
+export async function changeSessionContext(id: string, input: SessionContextRequest): Promise<AssistantSession> {
+  return (await call(`/sessions/${encodeURIComponent(id)}/context`, { method: "POST", body: JSON.stringify(input) })).json();
+}
 export async function getSessionModels(id: string): Promise<ModelCatalog> {
   return (await call(`/sessions/${encodeURIComponent(id)}/models`)).json() as Promise<ModelCatalog>;
 }

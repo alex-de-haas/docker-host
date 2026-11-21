@@ -18,6 +18,18 @@ describe("profile persistence", () => {
     await store.remove(first.profiles[0]!.id, first.revision);
     expect(await open().read()).toMatchObject({ defaultId: null, profiles: [] }); expect(initialCalls).toBe(1);
   });
+  it("migrates a proven connection preference once without erasing skills during an outage", async () => {
+    const first = await store.read(), original = first.profiles[0]!;
+    const saved = await store.save({ ...config(), connectionId: a }, first.revision, original.id);
+    const logical = "agent-" + b;
+    const migration = new ProfileStore(dir, async () => config(), async () => null,
+      async ids => ids.includes(a) ? new Map([[a, logical]]) : new Map());
+    const result = await migration.read();
+    expect(result).toMatchObject({ revision: saved.revision + 1, catalogUnavailable: true,
+      profiles: [{ connectionId: logical, revision: saved.profiles[0]!.revision + 1, skillIds: [a, b] }] });
+    expect(await migration.read()).toEqual(result);
+    expect((await open().read()).profiles[0]?.connectionId).toBe(logical);
+  });
   it("does not erase selections on catalog failure and prunes confirmed deletion durably", async () => {
     const first = await store.read(); catalog = null;
     expect(await store.read()).toMatchObject({ revision: first.revision, catalogUnavailable: true, profiles: [{ skillIds: [a, b] }] });

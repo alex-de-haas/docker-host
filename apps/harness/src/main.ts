@@ -33,8 +33,13 @@ await acquireStorageOwner(config.dataDir, "coordinator");
 const agentBackend = config.coreOrigin && config.serviceToken ? new CoreAgentBackend({ coreOrigin: config.coreOrigin,
   appId: config.appId, serviceToken: config.serviceToken, runningInContainer: config.executionMode === "docker" }) : null;
 if (config.harness !== "fake" && !agentBackend) throw new Error("Harness requires its ordinary Core app identity.");
+const store = new SessionStore(config.dataDir, config.cacheDir);
 const connections = agentBackend && config.harness !== "fake" ? new AgentConsumerConnections({
-  directory: new AgentConnectionDirectory(config.dataDir, agentBackend), backend: agentBackend,
+  directory: new AgentConnectionDirectory(config.dataDir, agentBackend, async () =>
+    (await store.listRecords()).flatMap(record => [
+      ...(record.selection ? [record.selection] : []),
+      ...(record.contextChanges ?? []).map(change => ({ provider: change.previousProvider, connection: change.previousConnection })),
+    ])), backend: agentBackend,
   authority: currentAgentAuthority,
   adapter: (selection, capabilities, name) => manager.providerAdapter(selection, capabilities, name),
 }) : null;
@@ -43,7 +48,6 @@ const adapter: HarnessAdapter = config.harness === "fake" ? new FakeHarnessAdapt
   probe: async () => ({ available: true }),
   start: () => { throw new Error("Choose a provider connection before starting a chat."); },
 };
-const store = new SessionStore(config.dataDir, config.cacheDir);
 if (connections?.remote) await assertCleanProviderCutover(store);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
 const notifier = new WaitingNotifier(config.coreOrigin, config.serviceToken, config.appId);
@@ -69,7 +73,8 @@ const profiles = new ProfileStore(config.dataDir, async () => {
   const previous = await settings.read();
   return { name: "General", description: "General-purpose assistant", instructions: "", connectionId: null,
     model: null, reasoningEffort: null, skillIds: previous.skillIds ?? [] };
-}, async () => hasSkillLibrary() ? (await skillRequest<SkillCatalog>("")).skills.map(skill => skill.id) : null);
+}, async () => hasSkillLibrary() ? (await skillRequest<SkillCatalog>("")).skills.map(skill => skill.id) : null,
+  connections ? ids => connections.migratePreferences(ids) : undefined);
 const manager: SessionManager = new SessionManager(
   store,
   adapter,
