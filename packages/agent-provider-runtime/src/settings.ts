@@ -10,7 +10,7 @@ export type UsagePresentationPolicy = {
 };
 export type ProviderSettingsDefinition = {
   kind: string; name: string; connectionName?: string;
-  authentication: Array<{ id: string; label: string; credential?: boolean; hostDirectory?: boolean; browserLogin?: boolean; interfaceChoices?: Array<{ kind: string; label: string }> }>;
+  authentication: Array<{ id: string; label: string; credential?: boolean; hostDirectory?: boolean; browserLogin?: boolean; interfaceChoices?: Array<{ kind: string; label: string; statusLabel?: string }> }>;
   hostDirectory?: { label: string; placeholder: string; description: string };
   baseUrl?: { label: string; placeholder: string; description: string };
   login?: { name: string; description: string };
