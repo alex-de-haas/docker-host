@@ -100,7 +100,7 @@ export async function publicProviderFixture(installationHistory = false, impleme
         }
         return json({ provider, baseUrl: "http://provider.test/api/agent/v1/coding", token: "exact-operation-fixture",
           expiresAt: new Date(Date.now() + 60000).toISOString(), admissionRef: randomUUID(),
-          ...(behavior.legacyWorkflowCore ? {} : { supportedWorkflowCapabilities: [AGENT_CAPABILITIES.sessionSubagents] }) });
+          ...(behavior.legacyWorkflowCore ? {} : { supportedWorkflowCapabilities: [AGENT_CAPABILITIES.sessionSubagents, AGENT_CAPABILITIES.profileManagement] }) });
       }
       return error("fixture_route", "Unexpected Core fixture route.", 404);
     }

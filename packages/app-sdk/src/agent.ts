@@ -17,6 +17,7 @@ export const AGENT_CAPABILITIES = {
   predictions: "predictions", connectionUsage: "connections.usage",
   approvalMode: "configuration.approval-mode",
   mcpPolicy: "mcp.policy-update", consumerWorkflow: "workflow.consumer", sessionSubagents: "workflow.subagents",
+  profileManagement: "workflow.profile-management",
 } as const;
 export type AgentCapability = typeof AGENT_CAPABILITIES[keyof typeof AGENT_CAPABILITIES] | (string & {});
 export type AgentLimits = {
@@ -168,7 +169,12 @@ export const AGENT_SESSION_WORKFLOW_TOOLS = [
 ] as const;
 /** Optional business workflow owned by the invoking consumer, separate from native execution. */
 export const AGENT_SUBAGENT_WORKFLOW_TOOLS = ["subagent_profiles", "subagent_spawn", "subagent_status", "subagent_wait"] as const;
-export type AgentSessionWorkflowTool = typeof AGENT_SESSION_WORKFLOW_TOOLS[number] | typeof AGENT_SUBAGENT_WORKFLOW_TOOLS[number];
+/** Profile and skill management is separately selected for an operator's conversation. */
+export const AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS = [
+  "profile_list", "profile_options", "profile_create", "profile_edit", "skill_list", "skill_discover", "skill_install",
+] as const;
+export type AgentSessionWorkflowTool = typeof AGENT_SESSION_WORKFLOW_TOOLS[number] | typeof AGENT_SUBAGENT_WORKFLOW_TOOLS[number]
+  | typeof AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS[number];
 export type AgentSessionWorkflowBinding = {
   executor: ProviderRef; sessionId: string; tools?: AgentSessionWorkflowTool[]; policy?: AgentMcpPolicy;
 };

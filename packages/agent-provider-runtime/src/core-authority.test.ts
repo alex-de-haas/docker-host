@@ -24,6 +24,16 @@ it("sends only provider service identity and the exact admitted business workflo
   expect(request).toHaveBeenCalledOnce();
   expect(timeout).toHaveBeenCalledWith(120000);
 });
+it("allows Git fetch and publication time and reports a lost install response as uncertain", async () => {
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connection closed")));
+  const authority = new CoreAuthority("http://core.test", provider.appId, "synthetic-own-service");
+  for (const action of ["skill-discover", "skill-install"]) {
+    const call = authority.workflow("original-admission", action, {});
+    await expect(call).rejects.toThrow(action === "skill-install" ? /skill_list.*commit.*paths/ : /Discover the source again/);
+    expect(timeout).toHaveBeenLastCalledWith(180_000);
+  }
+});
 it("normalizes the actual Core nullable introspection wire format without adding a constraint", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...actor, sessionId: null, runId: null, configurationDigest: null, ceiling: null })));
   const authority = new CoreAuthority("http://core.test", provider.appId, "synthetic-own-service"), verified = await authority.introspect("operation-token", "runs.start", "PUT", "/session/run", "hash");

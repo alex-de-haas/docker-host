@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { AGENT_SESSION_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, AgentApiError, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest } from "@hosty-sdk/app/agent";
+import { AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS, AGENT_SESSION_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, AgentApiError, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest } from "@hosty-sdk/app/agent";
 import type { ProviderAuthority } from "./core.js";
 import { McpToolPolicy } from "./internal/mcp/policy.js";
 import type { ProxyTarget } from "./internal/mcp/proxy.js";
@@ -9,7 +9,8 @@ import { workflowTools } from "@hosty-sdk/app/agent/workflow-tools";
 
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-const workflowNames = [...AGENT_SESSION_WORKFLOW_TOOLS, ...AGENT_SUBAGENT_WORKFLOW_TOOLS];
+const chatTools: ReadonlySet<string> = new Set([...AGENT_SUBAGENT_WORKFLOW_TOOLS, ...AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS]);
+const workflowNames: ReadonlySet<string> = new Set([...AGENT_SESSION_WORKFLOW_TOOLS, ...chatTools]);
 const fields = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every(key => allowed.includes(key));
 type Registration = { admissionRef: string; binding: AgentSessionWorkflowBinding; identity: string; key: string; target: ProxyTarget; clients: Map<string, AbortController> };
 type LocalRequest = Parameters<NonNullable<ProxyTarget["local"]>>[0];
@@ -45,17 +46,17 @@ export class ProviderWorkflow {
   constructor(private readonly authority: ProviderAuthority,
     notify: ConstructorParameters<typeof McpToolPolicy>[1], settled: ConstructorParameters<typeof McpToolPolicy>[2],
     autonomous: (runId: string) => boolean) {
-    // Only explicitly selected child-chat operations inherit the run's autonomous mode.
+    // Explicitly selected chat operations can inherit session mode when no tool rule overrides it.
     this.policy = new McpToolPolicy({ read: async () => structuredClone(this.preferences), transform: async change => {
       this.preferences = { ...this.preferences, ...await change(structuredClone(this.preferences)) }; return structuredClone(this.preferences);
     } }, notify, settled, 24 * 60 * 60 * 1000, (runId, tool) => autonomous(runId)
-      && AGENT_SUBAGENT_WORKFLOW_TOOLS.some(name => name === tool)
+      && chatTools.has(tool)
       && this.registrations.get(runId)?.binding.tools?.some(name => name === tool) === true);
   }
   async configure(runId: string, admissionRef: string, binding: AgentSessionWorkflowBinding | undefined): Promise<void> {
     if (!binding) { this.close(runId); return; }
     if (!object(binding) || !object(binding.executor) || ![binding.executor.appId, binding.executor.installationId, binding.executor.key, binding.sessionId].every(value => typeof value === "string" && value.length > 0 && value.length <= 512)
-      || binding.tools && (!Array.isArray(binding.tools) || binding.tools.length > workflowNames.length || new Set(binding.tools).size !== binding.tools.length || binding.tools.some(name => !workflowNames.includes(name))))
+      || binding.tools && (!Array.isArray(binding.tools) || binding.tools.length > workflowNames.size || new Set(binding.tools).size !== binding.tools.length || binding.tools.some(name => !workflowNames.has(name))))
       throw new AgentApiError("workflow_binding_invalid", "Core returned an invalid explicit workflow binding.", 502);
     const existing = this.registrations.get(runId);
     if (existing) { if (existing.admissionRef !== admissionRef || hash(existing.binding) !== hash(binding)) throw new AgentApiError("workflow_binding_changed", "The admitted consumer workflow is immutable.", 409); return; }
@@ -68,7 +69,9 @@ export class ProviderWorkflow {
     }
     await this.policy.catalog(key, identity, tools);
     const registration: Registration = { admissionRef, binding: structuredClone(binding), identity, key, clients: new Map(),
-      target: { appId: "hosty-workflow", url: "local:hosty-workflow", local: request => this.handle(runId, registration, request) } };
+      target: { appId: "hosty-workflow", url: "local:hosty-workflow",
+        ...(binding.tools?.some(name => name === "skill_install" || name === "skill_discover") ? { nativeToolTimeoutMs: 240_000 } : {}),
+        local: request => this.handle(runId, registration, request) } };
     this.registrations.set(runId, registration);
   }
   target(runId: string): ProxyTarget | undefined { return this.registrations.get(runId)?.target; }

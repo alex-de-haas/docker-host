@@ -18,7 +18,7 @@
 import { createHash } from "node:crypto";
 
 /** The Claude-shaped entry the gateway already builds for every harness. */
-type HttpServer = { hostyPolicy?: boolean; type?: unknown; url?: unknown; headers?: Record<string, unknown> };
+type HttpServer = { hostyPolicy?: boolean; timeout?: number; type?: unknown; url?: unknown; headers?: Record<string, unknown> };
 
 export interface CodexMcpConfig {
   /** `-c key=value` pairs, in the order they must be passed. */
@@ -97,8 +97,10 @@ export function toCodexMcpConfig(servers: Record<string, unknown> | undefined): 
     if (server?.hostyPolicy === true) {
       // Only Hosty-authenticated proxies delegate approval to the shared broker.
       args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
-      args.push("-c", `mcp_servers.${name}.tool_timeout_sec=240`);
     }
+    const timeout = server?.timeout ?? (server?.hostyPolicy === true ? 240_000 : undefined);
+    if (typeof timeout === "number" && Number.isSafeInteger(timeout) && timeout >= 1000 && timeout <= 240_000)
+      args.push("-c", `mcp_servers.${name}.tool_timeout_sec=${Math.ceil(timeout / 1000)}`);
     env[variable] = bearer;
   }
 

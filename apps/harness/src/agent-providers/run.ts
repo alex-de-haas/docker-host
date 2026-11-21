@@ -185,7 +185,7 @@ export class ProviderHarnessRun implements HarnessRun {
     const missing = workflowCapabilities(workflow).find(capability => !available.includes(capability));
     if (missing) throw new AgentApiError("workflow_provider_unsupported", missing === AGENT_CAPABILITIES.consumerWorkflow
       ? "The selected provider does not support consumer task workflows. Update it or choose a compatible provider before running this task."
-      : "The selected provider no longer supports this subagent workflow.", 422);
+      : "The selected provider no longer supports this chat workflow.", 422);
   }
 
   async attach(observationOnly = false): Promise<void> {

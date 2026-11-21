@@ -11,11 +11,11 @@ namespace Haas.Hosty.Core;
 
 internal sealed record CoreTaskSessionWorkflowBinding(HostyProviderRef Executor, string SessionId, string[]? Tools = null, JsonElement? Policy = null)
 {
-    internal bool IsSubagentOnly => Tools is { Length: > 0 } && Tools.All(CoreProviderMediation.IsSubagentTool);
+    internal bool IsConversationOnly => Tools is { Length: > 0 } && Tools.All(CoreProviderMediation.IsConversationTool);
 }
 internal sealed record CoreAgentWorkflowRequest(string AdmissionRef, string Action, JsonElement Input, HostyTaskProviderRef? Source = null);
 internal sealed record CoreAgentWorkflowInvocation(HostyProviderRef Provider, string SessionId, string RunId);
-internal sealed record CoreAgentWorkflowGrant(string AdmissionRef, CoreTaskSessionWorkflowBinding Binding, CoreAgentWorkflowInvocation Agent);
+internal sealed record CoreAgentWorkflowGrant(string AdmissionRef, CoreTaskSessionWorkflowBinding Binding, CoreAgentWorkflowInvocation Agent, string? SessionCapability = null);
 internal sealed record CoreTaskSessionWorkflowCommand(string Action, JsonElement Input, CoreAgentWorkflowInvocation Agent, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HostyTaskProviderRef? Source = null);
 
 internal sealed partial class CoreAgentExecution
@@ -36,7 +36,11 @@ internal sealed partial class CoreAgentExecution
         if (selectedSubagents && (input.Conversation?.SessionId != binding.SessionId
             || !Supports("agent-sessions", "session.subagents")))
             throw new CoreProviderException("unsupported_capability", "Session subagents require the originating conversation and its reviewed session.subagents endpoint.", 422);
-        if (binding.IsSubagentOnly) return;
+        if (binding.Tools?.Any(CoreProviderMediation.IsProfileManagementTool) == true
+            && (input.Authority is not null || input.Conversation?.SessionId != binding.SessionId
+                || !Supports("agent-sessions", CoreProviderMediation.ProfileManagementCapability)))
+            throw new CoreProviderException("unsupported_capability", "Profile management requires an operator conversation and its reviewed session.profile-management endpoint.", 422);
+        if (binding.IsConversationOnly) return;
         if (!AppManagementAuthorization.HasPermission(consumer, CoreAppPermissions.TaskExecutors))
             throw new AppIdentityException("app_permission_required", "Session workflows require providers.task-executor.");
         if (!Supports("task-executor", "session-workflow"))
@@ -46,7 +50,7 @@ internal sealed partial class CoreAgentExecution
     internal async Task<bool> HasTaskWorkflow(AppRecord provider, string admission, CancellationToken ct)
     {
         var (record, _) = await ValidateRecord(provider, await store.Get(admission, ct), ct);
-        return Workflow(record.Request) is { IsSubagentOnly: false };
+        return Workflow(record.Request) is { IsConversationOnly: false };
     }
 
     internal async Task<(CoreAgentAuthorization Record, CoreCapabilityCaller Origin, CoreTaskSessionWorkflowBinding Binding)> WorkflowScope(
@@ -66,11 +70,15 @@ internal sealed partial class CoreAgentExecution
 internal sealed partial class CoreProviderMediation
 {
     internal static readonly string[] SubagentActions = ["subagent-profiles", "subagent-spawn", "subagent-status", "subagent-wait"];
+    internal const string ProfileManagementCapability = "session.profile-management";
+    internal static readonly string[] ProfileManagementActions = ["profile-list", "profile-options", "profile-create", "profile-edit", "skill-list", "skill-discover", "skill-install"];
+    internal static bool IsProfileManagementTool(string name) => ProfileManagementActions.Contains(name.Replace('_', '-'), StringComparer.Ordinal);
+    internal static bool IsConversationTool(string name) => IsSubagentTool(name) || IsProfileManagementTool(name);
     internal static bool IsSubagentTool(string name) => SubagentActions.Contains(name.Replace('_', '-'), StringComparer.Ordinal);
     internal static readonly string[] SessionWorkflowActions = ["task-executor-options", "task-options", "task-list", "task-get", "task-create", "task-edit", "task-action",
         "task-result", "task-fail", "task-request-input", "task-adopt", "task-prepare-executor", "task-delegate", "task-wait", "task-plan", "task-bind-workspace", "task-execution-get"];
 
-    internal static readonly IReadOnlySet<string> AllWorkflowTools = SessionWorkflowActions.Concat(SubagentActions)
+    internal static readonly IReadOnlySet<string> AllWorkflowTools = SessionWorkflowActions.Concat(SubagentActions).Concat(ProfileManagementActions)
         .Select(action => action.Replace('-', '_')).ToHashSet(StringComparer.Ordinal);
 
     internal async Task<JsonElement?> SessionWorkflowAsync(CoreCapabilityCaller caller, string action, JsonElement input, CancellationToken ct,
@@ -95,11 +103,12 @@ internal sealed partial class CoreProviderMediation
     private async Task<JsonElement> DispatchSessionWorkflow(CoreAgentAuthorization record, CoreCapabilityCaller origin,
         CoreTaskSessionWorkflowBinding binding, string action, JsonElement input, HostyTaskProviderRef? source, CancellationToken ct)
     {
-        var isSubagent = SubagentActions.Contains(action, StringComparer.Ordinal);
-        if ((!isSubagent && !SessionWorkflowActions.Contains(action, StringComparer.Ordinal)) || input.ValueKind != JsonValueKind.Object)
+        var isManagement = ProfileManagementActions.Contains(action, StringComparer.Ordinal);
+        var isConversation = isManagement || SubagentActions.Contains(action, StringComparer.Ordinal);
+        if ((!isConversation && !SessionWorkflowActions.Contains(action, StringComparer.Ordinal)) || input.ValueKind != JsonValueKind.Object)
             throw new CoreProviderException("invalid_input", "Use a documented session workflow action and object input.", 400);
         var name = action.Replace('-', '_');
-        if (isSubagent && (binding.Tools is null || source is not null)
+        if (isConversation && (binding.Tools is null || source is not null)
             || binding.Tools is not null && !binding.Tools.Contains(name, StringComparer.Ordinal)
             || binding.Policy is { ValueKind: JsonValueKind.Object } policy && policy.TryGetProperty("tools", out var toolRules)
                 && toolRules.ValueKind == JsonValueKind.Object && toolRules.TryGetProperty(name, out var rule)
@@ -116,16 +125,17 @@ internal sealed partial class CoreProviderMediation
                     && ProviderAccessService.Find(selectedConsumer, "tasks", source.Key, source.ImplementationId) is { Version: 1 } sourceDescriptor && (source.ImplementationId is null || sourceDescriptor.Available);
             if (!matches) throw new AppIdentityException("permission_denied", "Session task tools use their current selected task provider.");
         }
+        if (isManagement) await RequireManagementActor(record, ct);
         var agent = new CoreAgentWorkflowInvocation(record.Request.Provider, record.Request.SessionId!, record.Request.RunId!);
         var command = new CoreTaskSessionWorkflowCommand(action, input, agent, source);
         var body = JsonSerializer.SerializeToUtf8Bytes(command, CoreJson.TypeInfo<CoreTaskSessionWorkflowCommand>());
         if (body.Length > MaxBytes) throw new CoreProviderException("budget_exceeded", "The workflow request exceeds 1 MiB.", 413);
         var path = "/sessions/" + Uri.EscapeDataString(binding.SessionId) + "/workflow";
         var consumer = (await apps.GetAppAsync(binding.Executor.AppId, ct))!;
-        var kind = isSubagent ? "agent-sessions" : "task-executor";
+        var kind = isConversation ? "agent-sessions" : "task-executor";
         var descriptor = ProviderAccessService.Find(consumer, kind, binding.Executor.Key, binding.Executor.ImplementationId);
         if (descriptor is not { Available: true, Version: 1, Url: not null }) throw new CoreProviderException("provider_unavailable", "The workflow executor is unavailable.", 503, true);
-        var grant = new CoreAgentWorkflowGrant(record.Id, binding, agent);
+        var grant = new CoreAgentWorkflowGrant(record.Id, binding, agent, isManagement ? ProfileManagementCapability : null);
         var expires = clock.UtcNow.AddSeconds(120); if (record.ExpiresAt < expires) expires = record.ExpiresAt;
         var claims = new CoreProviderClaims(2, record.UserId, record.PrincipalId, record.Origin, binding.Executor,
             consumer.PermissionRevision, kind, "session.workflow", "POST", path, Hash(body), [], expires.ToUnixTimeSeconds(), AgentWorkflow: grant, ImplementationIncarnation: descriptor.Incarnation);
@@ -135,7 +145,10 @@ internal sealed partial class CoreProviderMediation
         request.Content = new ByteArrayContent(body); request.Content.Headers.ContentType = new("application/json");
         try
         {
-            using var response = await clients.CreateClient(ClientName).SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var client = clients.CreateClient(ClientName);
+            // A skill import includes the Git fetch and publication before the consumer responds.
+            if (action is "skill-discover" or "skill-install") client.Timeout = TimeSpan.FromSeconds(165);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
             using var document = JsonDocument.Parse(await ReadBoundedAsync(response.Content, ct));
             if (!response.IsSuccessStatusCode)
             {
@@ -147,7 +160,25 @@ internal sealed partial class CoreProviderMediation
             return document.RootElement.Clone();
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
-        { throw new CoreProviderException("provider_unavailable", "Workflow outcome is uncertain. Recover the same action with its unchanged request UUID and input.", 503, true); }
+        {
+            var recovery = action switch
+            {
+                "skill-install" => "Installation outcome is uncertain. Check skill_list for the selected source, commit and package paths before retrying the same selection.",
+                "skill-discover" => "Skill discovery did not return a result. Discover the source again to obtain its current commit and paths.",
+                "profile-create" or "profile-edit" => "The profile save outcome is uncertain. Read profile_list and check the stored configuration before retrying.",
+                _ => "Workflow outcome is uncertain. Recover the same action with its unchanged request UUID and input.",
+            };
+            throw new CoreProviderException("provider_unavailable", recovery, 503, true);
+        }
+    }
+
+    private async Task RequireManagementActor(CoreAgentAuthorization record, CancellationToken ct)
+    {
+        if (record.Authority is not null || record.Origin.Kind != "app" || record.Origin.IdentityHash is not { } hash)
+            throw new AppIdentityException("permission_denied", "Profile management requires the originating operator session.");
+        var actor = await identity.RequireActivityHashAsync(hash, record.CallerAppId, ct);
+        if (actor.UserId != record.UserId)
+            throw new AppIdentityException("permission_denied", "The profile management actor changed.");
     }
 
     private async Task<CoreProviderInvocation> IntrospectSessionWorkflow(AppRecord consumer, CoreProviderClaims claims, CoreProviderIntrospectionRequest input, CancellationToken ct)
@@ -163,7 +194,9 @@ internal sealed partial class CoreProviderMediation
             || grant.Agent != new CoreAgentWorkflowInvocation(record.Request.Provider, record.Request.SessionId!, record.Request.RunId!))
             throw new AppIdentityException("permission_denied", "The workflow no longer belongs to this exact actor and native run.");
         var descriptor = ProviderAccessService.Find(consumer, claims.Kind, binding.Executor.Key, binding.Executor.ImplementationId);
-        if (descriptor is not { Available: true, Version: 1 } || descriptor.Incarnation != claims.ImplementationIncarnation || !descriptor.Capabilities.Contains(claims.Kind == "agent-sessions" ? "session.subagents" : "session-workflow"))
+        if (grant.SessionCapability == ProfileManagementCapability) await RequireManagementActor(record, ct);
+        var capability = claims.Kind == "agent-sessions" ? grant.SessionCapability ?? "session.subagents" : "session-workflow";
+        if (descriptor is not { Available: true, Version: 1 } || descriptor.Incarnation != claims.ImplementationIncarnation || !descriptor.Capabilities.Contains(capability))
             throw new AppIdentityException("provider_unavailable", "The reviewed session workflow is unavailable.");
         return new(2, record.UserId, origin.User.Role, record.PrincipalId, record.CallerAppId, PanelIdentity.Installation(consumer),
             claims.Kind, binding.Executor.Key, "session.workflow", [], AgentExecution: grant.Agent, ImplementationId: binding.Executor.ImplementationId);

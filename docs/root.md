@@ -105,7 +105,7 @@ Plans: 14 In Progress · 2 Blocked · 45 Draft · 9 On Hold.
 - [CLI Bootstrap](features/cli-bootstrap/feature.md) — The hosty CLI installs itself and Core, discovers the Core control API and manages runtime apps.
 - [Feature: Cloudflare Ingress](features/cloudflare-ingress/feature.md) — An opt-in Cloudflare Tunnel provider that publishes app endpoints and derives their public origins.
 - [Codex Local Context Detail](features/codex-local-context-detail/feature.md) — Local Codex estimates for Hosty instructions and MCP definitions by server and tool, separate from the native context total.
-- [Composable Human And Agent Work](features/composable-agent-systems/plan.md) — Compose app-owned task providers and executors through Core contracts, with Harness profiles, optional resources, decisions and artifact handoffs. · Draft, 0/5, updated 2026-11-07
+- [Composable Human And Agent Work](features/composable-agent-systems/plan.md) — Compose app-owned task providers and executors through Core contracts, with Harness profiles, optional resources, decisions and artifact handoffs. · Draft, 0/5, updated 2026-11-21
 - [Concurrent Tool Panels](features/concurrent-tool-panels/feature.md) — Shell displays multiple retained app tools and Feedback with common chrome, independent visibility, resizing and compact tabs.
 - [Container Capabilities And Devices](features/container-capabilities/feature.md) — A docker service can add named Linux capabilities and device nodes under /dev, opt-in per service and never as --privileged.
 - [Continuous App Access](features/continuous-app-access/feature.md) — Silent maintenance of browser and native app sessions, with separately authorized and revocable background delegation.

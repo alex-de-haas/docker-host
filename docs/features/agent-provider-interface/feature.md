@@ -73,6 +73,12 @@ An omitted tool list selects the legacy task catalog. A mixed list requires both
 Delegation carries no reusable user credential. Launching a child or resuming a parent follows
 the consumer's ordinary authorization for its chosen provider.
 
+A provider can also advertise `workflow.profile-management`. The originating consumer selects
+the profile and skill tools in the run binding and declares `session.profile-management` on its
+agent-sessions interface. Core revalidates the foreground operator's activity for this workflow.
+Harness dispatches the selected calls in the owning chat and uses the same operator identity
+for model discovery and Core skill management. See [profiles](../agent-profiles/feature.md#managing-profiles-from-chat).
+
 Core MCP remains a separate connection with its existing target grants, originating-consumer
 rules and tool policy. The bounded business channel leaves those grants unchanged and supports
 consumer task tools while general Core MCP is disabled. Core also exposes task workflow wrappers

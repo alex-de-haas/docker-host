@@ -1,8 +1,9 @@
-import { CHAT_WORKFLOW_PROVIDER } from "../../shared/chat-workflow.js";
+import * as appSession from "../app-session.js";
+import { CHAT_WORKFLOW_PROVIDER, PROFILE_MANAGEMENT_PROVIDER } from "../../shared/chat-workflow.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { AGENT_CAPABILITIES, AGENT_SUBAGENT_WORKFLOW_TOOLS, AGENT_SESSION_WORKFLOW_TOOLS, type AgentSessionWorkflowRequest } from "@hosty-sdk/app/agent";
+import { AGENT_CAPABILITIES, AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, AGENT_SESSION_WORKFLOW_TOOLS, type AgentSessionWorkflowRequest } from "@hosty-sdk/app/agent";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type MediatedProviderInvocation } from "@hosty-sdk/app/providers";
 import { validateAgentMcpSelection } from "@hosty-sdk/app/agent/server";
@@ -18,7 +19,7 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0).reverse()) await fixture.close();
   vi.restoreAllMocks(); vi.unstubAllEnvs();
 });
-async function fixture(options: { enabled?: boolean; offered?: boolean; available?: boolean; permission?: boolean; subagents?: boolean; legacyWorkflowCore?: boolean; installationHistory?: boolean; implementationId?: string } = {}) {
+async function fixture(options: { enabled?: boolean; offered?: boolean; available?: boolean; permission?: boolean; subagents?: boolean; management?: boolean; legacyWorkflowCore?: boolean; installationHistory?: boolean; implementationId?: string } = {}) {
   vi.stubEnv("HOSTY_APP_ID", consumer.appId); vi.stubEnv("HOSTY_APP_INSTALLATION_ID", consumer.installationId);
   vi.stubEnv("HOSTY_CORE_ORIGIN", undefined); vi.stubEnv("HOSTY_APP_SERVICE_TOKEN", "fixture-service");
   vi.spyOn(ProviderClient.prototype, "permissions").mockResolvedValue({ required: [], optional: ["providers.task-executor"],
@@ -33,10 +34,11 @@ async function fixture(options: { enabled?: boolean; offered?: boolean; availabl
     policyIdentity: "reviewed-core-policy", url: "http://core.test/api/mcp", interfaces: [{ key: "default", url: "http://core.test/api/mcp" }] };
   vi.spyOn(providers, "read").mockResolvedValue(options.available === false ? null : { providers: [], installedAppIds: [], revision: "reviewed-directory" });
   vi.spyOn(providers, "core").mockReturnValue(core); vi.spyOn(providers, "readApps").mockResolvedValue([]);
-  const profiles = options.subagents ? new ProfileStore(path.join(f.root, "family-profiles"), async () => ({
+  const profiles = options.subagents || options.management ? new ProfileStore(path.join(f.root, "family-profiles"), async () => ({
     name: "Reviewer", description: "", instructions: "", model: null, connectionId: f.connectionId, reasoningEffort: null, skillIds: [],
   })) : undefined;
-  if (profiles) f.capabilities.capabilities.push(AGENT_CAPABILITIES.sessionSubagents);
+  if (options.subagents) f.capabilities.capabilities.push(AGENT_CAPABILITIES.sessionSubagents);
+  if (options.management) f.capabilities.capabilities.push(AGENT_CAPABILITIES.profileManagement);
   const { manager, store } = f.makeManager({ settings, providers, profiles });
   const taskAction = vi.fn(async () => ({ recorded: true })); manager.taskAction = taskAction;
   return { f, manager, store, settings, initialSettings, providers, profiles, taskAction };
@@ -79,6 +81,37 @@ it.each([false, true])("negotiates ordinary child chats independently of the tas
   await expect(manager.providerWorkflow(record.id, call, invocation, async () => invocation)).rejects.toMatchObject({ code: "workflow_binding_mismatch" });
   await expect(manager.providerWorkflow(record.id, call, actor, async () => ({ ...actor, userId: "another-user" }))).rejects.toMatchObject({ code: "workflow_binding_mismatch" });
   expect(taskAction).not.toHaveBeenCalled();
+});
+
+it("saves shared profiles only for the admitted operator and honors management tool exclusions", async () => {
+  const { manager, store, f, settings } = await fixture({ management: true, permission: false });
+  await manager.discoverMcpTools(f.credential);
+  const catalog = manager.mcpPolicy.snapshot().find(entry => entry.provider === PROFILE_MANAGEMENT_PROVIDER)!;
+  expect(catalog.tools.map(t => t.name)).toEqual([...AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS]);
+  const disabled = JSON.stringify([PROFILE_MANAGEMENT_PROVIDER, "profile_edit"]);
+  const { rules } = manager.mcpPolicy.preparePreferences({}, { [disabled]: { identity: catalog.identity, mode: "disabled" } });
+  await settings.update({ mcpToolRules: rules });
+  const record = await manager.createSession({ createdBy: f.owner });
+  await manager.postMessage(record.id, "Save a reusable reviewer", f.credential, [],
+    { actorUserId: f.owner, workspaceCredential: f.credential, clientRequestId: randomUUID() });
+  const state = (await store.readProviderExecution(record.id))!;
+  expect(state.lastRunInput!.input.requiredCapabilities).toEqual([AGENT_CAPABILITIES.profileManagement]);
+  const agent = { provider: f.provider, sessionId: state.sessionId, runId: state.runId! };
+  const actor: MediatedProviderInvocation = { version: 2, kind: "agent-sessions", key: "default", operation: "session.workflow",
+    callerAppId: f.provider.appId, callerInstallation: f.provider.installationId, userId: f.owner, hostRole: "host.admin",
+    principalId: "profile-operator", resourceIds: [], agentExecution: agent };
+  const call = (action: string, input: Record<string, unknown> = {}) => manager.providerWorkflow(record.id, { action, input, agent }, actor, async () => actor);
+  const identity = vi.spyOn(appSession, "resolveAppSession").mockResolvedValue({ status: "active", identity: { hostRole: "host.admin", userId: f.owner } });
+  const directory = await manager.profiles!.read();
+  expect(await call("profile-create", { expectedRevision: directory.revision, profile: { name: "Chat reviewer" } }))
+    .toMatchObject({ directoryRevision: directory.revision + 1, profile: { name: "Chat reviewer" } });
+  expect(identity).toHaveBeenCalledWith(f.credential, expect.any(AbortSignal));
+  await expect(call("profile-edit")).rejects.toMatchObject({ code: "workflow_action_unavailable" });
+  identity.mockResolvedValue({ status: "expired" });
+  await expect(call("profile-list")).rejects.toMatchObject({ code: "operator_session_required" });
+  identity.mockResolvedValue({ status: "active", identity: { userId: "other-admin", hostRole: "host.admin" } });
+  await expect(call("skill-list")).rejects.toMatchObject({ code: "operator_session_required" });
+  expect((await manager.profiles!.read()).revision).toBe(directory.revision + 1);
 });
 
 it("binds a named native provider to the static Harness child-chat callback", async () => {

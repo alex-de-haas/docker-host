@@ -275,6 +275,27 @@ public sealed class AgentSkillLibraryTests : IDisposable
     }
 
     [Fact]
+    public async Task GitDiscoveryAndInstallationKeepSourceSpellingAndRepositoryRelativeSelection()
+    {
+        var source = new AgentSkillGitRequest("https://example.test/team/guides.git/", "refs/heads/team", "catalog/skills");
+        const string selected = "catalog/skills/review";
+        git.Packages = new() { [selected] = Package("review"), ["other/test"] = Package("test") };
+
+        var discovered = await library.DiscoverAsync("operator", source, default);
+        Assert.Equal(source.Repository, discovered.Repository);
+        Assert.Equal(source.Ref, discovered.Ref);
+        Assert.Equal(selected, Assert.Single(discovered.Skills).Path);
+        var error = await Assert.ThrowsAsync<AppLifecycleException>(() => library.InstallAsync("operator",
+            new(source, discovered.Commit, ["review"]), default));
+        Assert.Equal("skill_package_invalid", error.Code);
+
+        var installed = await library.InstallAsync("operator", new(source, discovered.Commit, [selected]), default);
+        var skill = Assert.Single(installed.Skills, skill => skill.SourceKind == "git");
+        Assert.Equal((source.Repository, source.Ref, discovered.Commit, selected), (skill.Repository, skill.Ref, skill.Commit, skill.Path));
+        Assert.Equal(AgentSkillLibrary.Id("git", source.Repository, source.Ref, selected), skill.Id);
+    }
+
+    [Fact]
     public async Task RepositoryRootPackageUsesCurrentSourceGrantAndSurvivesRevocation()
     {
         var sourcePath = Path.Combine(root, "remote");

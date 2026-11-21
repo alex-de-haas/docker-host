@@ -70,6 +70,11 @@ describe("toCodexMcpConfig", () => {
 });
 
 
+it("gives a Git workflow its native deadline without changing approval policy", () => {
+  const config = toCodexMcpConfig({ "hosty-workflow": { type: "http", timeout: 240_000, url: "http://127.0.0.1/mcp", headers: { authorization: "Bearer local" } } });
+  expect(config.args).toContain("mcp_servers.hosty-workflow.tool_timeout_sec=240");
+  expect(config.args.some(arg => arg.includes("default_tools_approval_mode"))).toBe(false);
+});
 it("delegates only marked Hosty proxies to the shared approval broker", () => {
   const config = toCodexMcpConfig({ trusted: { hostyPolicy: true, url: "http://127.0.0.1:3400/proxy", headers: { authorization: "Bearer session-key" } },
     other: { url: "https://external.test/mcp", headers: { authorization: "Bearer external" } } });

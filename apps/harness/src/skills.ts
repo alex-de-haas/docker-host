@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { AppContextError } from "./sessions/app-context.js";
+import { requestSourceConnection } from "./source-connections.js";
 import type { SettingsStore } from "./settings/store.js";
 
 export interface SharedSkill {
@@ -45,15 +47,96 @@ export function isSkillManagementRoute(method: string, pathname: string): boolea
     method === "DELETE" && /^\/api\/skills\/[a-f0-9]{64}$/.test(pathname);
 }
 
-export async function manageSkills(method: string, url: URL, credential: string | null, body?: unknown) {
-  if (!credential) return { status: 401, body: { message: "Sign in through Core to manage skills." } };
+export function manageSkills(method: string, url: URL, credential: string | null, body?: unknown) {
+  return requestSkillManagement(method, url.pathname + url.search, credential, body);
+}
+
+async function requestSkillManagement(method: string, path: string, credential: string | null, body?: unknown) {
+  if (!credential) return { status: 401, body: { code: "reauth_required", message: "Sign in through Core to manage skills." } };
   const { origin, token } = connection();
-  const response = await fetch(new URL(url.pathname + url.search, origin), {
+  const response = await fetch(new URL(path, origin), {
     method, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(150_000),
     headers: { authorization: `Bearer ${token}`, "X-Hosty-App-Identity": credential, "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   return { status: response.status, body: await response.json() as unknown };
+}
+
+const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+const onlyKeys = (value: Record<string, unknown>, keys: string[]) => Object.keys(value).every(key => keys.includes(key));
+const invalidSkillInput = () => new AppContextError(400, "skill_input_invalid", "Supply the documented skill source and selections.");
+
+function gitSource(value: unknown) {
+  if (!object(value) || !onlyKeys(value, ["repository", "ref", "path", "connectionId"]) ||
+    typeof value.repository !== "string" || !value.repository.trim() ||
+    value.ref !== undefined && typeof value.ref !== "string" || value.path !== undefined && typeof value.path !== "string" ||
+    value.connectionId != null && typeof value.connectionId !== "string") throw invalidSkillInput();
+  return { repository: value.repository, ref: value.ref ?? "HEAD", path: value.path ?? "",
+    ...(value.connectionId == null ? {} : { connectionId: value.connectionId }) };
+}
+
+function managementResult(response: { status: number; body: unknown }) {
+  if (response.status >= 200 && response.status < 300) return response.body;
+  const error = object(response.body) ? response.body : {};
+  throw new AppContextError(response.status, typeof error.code === "string" ? error.code : "skill_request_failed",
+    typeof error.message === "string" ? error.message : "The Core skill request failed.");
+}
+
+async function listSkillSourceConnections(credential: string | null) {
+  const result = managementResult(await requestSourceConnection("GET", "/api/source-connections", credential));
+  const invalid = () => new AppContextError(502, "source_connections_invalid", "Core returned an invalid Source connection directory.");
+  if (!object(result) || !Array.isArray(result.connections)) throw invalid();
+  return result.connections.map(connection => {
+    if (!object(connection) || typeof connection.id !== "string" || !connection.id ||
+      typeof connection.provider !== "string" || !connection.provider || typeof connection.label !== "string") throw invalid();
+    return { id: connection.id, provider: connection.provider, label: connection.label.replace(/[\p{Cc}\p{Cf}]/gu, "").trim().slice(0, 100) };
+  });
+}
+
+/** A chat operates under its current owner's Core app-session identity, using the same catalog and permissions as Settings. */
+export async function callSkillChatTool(name: string, input: Record<string, unknown>, credential: string | null) {
+  async function request(method: string, path: string, body?: unknown) {
+    let response;
+    try { response = await requestSkillManagement(method, path, credential, body); }
+    catch {
+      throw new AppContextError(503, "skill_library_unavailable", name === "skill_install"
+        ? "Core did not confirm the installation. Read the skill catalog before retrying."
+        : "The Core skill library is unavailable.");
+    }
+    return managementResult(response);
+  }
+  const catalog = (value: unknown) => {
+    if (!object(value) || !Array.isArray(value.skills) || !validSkillIds(value.skills.map(skill => skill?.id)))
+      throw new AppContextError(502, "skill_catalog_invalid", "Core returned an invalid skill catalog.");
+    return value.skills as SharedSkill[];
+  };
+
+  if (name === "skill_list") {
+    if (!onlyKeys(input, ["includeSourceConnections"]) ||
+      input.includeSourceConnections !== undefined && typeof input.includeSourceConnections !== "boolean") throw invalidSkillInput();
+    const skills = catalog(await request("GET", "/api/skills"));
+    return input.includeSourceConnections ? { skills, sourceConnections: await listSkillSourceConnections(credential) } : { skills };
+  }
+  if (name === "skill_discover") {
+    if (!onlyKeys(input, ["source"])) throw invalidSkillInput();
+    const source = gitSource(input.source);
+    const result = await request("POST", "/api/skills/discover", source);
+    if (!object(result) || result.repository !== source.repository || result.ref !== source.ref ||
+      typeof result.commit !== "string" || !result.commit || !Array.isArray(result.skills))
+      throw new AppContextError(502, "skill_discovery_invalid", "Core returned an invalid Git skill discovery.");
+    return result;
+  }
+  if (name !== "skill_install") throw new AppContextError(400, "unknown_skill_tool", "Unknown skill library tool.");
+  const source = gitSource(input.source), paths = input.paths, commit = input.commit;
+  if (!onlyKeys(input, ["source", "commit", "paths"]) || typeof commit !== "string" || !commit ||
+    !Array.isArray(paths) || !paths.length || paths.length > 200 || paths.some(path => typeof path !== "string") ||
+    new Set(paths).size !== paths.length) throw invalidSkillInput();
+  const result = catalog(await request("POST", "/api/skills/install", { source, commit, paths }));
+  const skills = paths.map(path => result.find(skill => skill.sourceKind === "git" && skill.repository === source.repository &&
+    skill.ref === source.ref && skill.path === path && skill.commit === commit));
+  if (skills.some(skill => !skill))
+    throw new AppContextError(409, "skill_install_unconfirmed", "Core did not confirm every selected package at the discovered commit. Read the catalog before retrying.");
+  return { commit, skills };
 }
 
 /** Preserve explicit old app instruction choices once; newly supplied packages stay unselected. */

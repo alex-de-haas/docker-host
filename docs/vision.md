@@ -1,6 +1,6 @@
 ---
 created: 2026-08-19
-updated: 2026-11-19
+updated: 2026-11-21
 ---
 
 # Hosty Platform Vision
@@ -1335,7 +1335,9 @@ Decisions 1–5: 2026-08-19.
 
     Saved profile descriptions guide selection. The owner accepts a one-off instruction/installed-
     skill configuration only when available profiles do not fit, with an observable reason and
-    retained execution snapshot. Agents do not mutate the profile catalog. Manual agent-task
+    retained execution snapshot. Task delegation uses the existing profile catalog. On 2026-11-21
+    the owner approved [profile and skill management](features/agent-profiles/feature.md#managing-profiles-from-chat)
+    at an administrator's request in an ordinary Harness chat. Manual agent-task
     assignment retains saved-profile selection. With an empty directory, a no-profile chat creates
     the root using its existing configuration and may delegate one-off children. A single generalist
     also remains usable; no mandatory role names or seeded profile are selected. Initially inherit

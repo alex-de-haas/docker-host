@@ -93,9 +93,11 @@ public sealed class CoreTaskSessionWorkflowHttpTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ExplicitSubagentToolsUseOnlyTheAdmittedChatAndReviewedSessionsEndpoint(bool named)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ConversationToolsUseOnlyTheAdmittedChatAndReviewedSessionsEndpoint(bool named, bool management)
     {
         using var transport = new WorkflowTransport { Kind = "agent-sessions" };
         await using var host = await CoreHttpHarness.StartAsync(configure: services => services.AddSingleton<IHttpClientFactory>(transport));
@@ -104,14 +106,17 @@ public sealed class CoreTaskSessionWorkflowHttpTests
         await host.Services.GetRequiredService<UserDirectoryStore>().WriteAsync(new(1,
             [new("owner", "owner@example.test", "Owner", "host.admin", false, now, now)], [], [], []));
         var apps = host.Services.GetRequiredService<AppRegistryStore>();
+        var capability = management ? "session.profile-management" : "session.subagents";
+        var nativeCapability = management ? "workflow.profile-management" : "workflow.subagents";
+        var actions = management ? CoreProviderMediation.ProfileManagementActions : CoreProviderMediation.SubagentActions;
         var consumer = Record("independent.chat", now) with { RuntimeState = "running", ConfirmedRoles = ["agent-sessions"],
             GrantedCorePermissions = [CoreAppPermissions.AgentProviders], Endpoints = [new("api", "http", "http://chat.invalid", true)],
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
-                ["agent-sessions"] = [new("execution", "api", "/chats/v1", 1, named ? ["session.subagents", NamedProviderImplementations.Capability] : ["session.subagents"])] } };
+                ["agent-sessions"] = [new("execution", "api", "/chats/v1", 1, named ? [capability, NamedProviderImplementations.Capability] : [capability])] } };
         var provider = Record("independent.native", now) with { RuntimeState = "running", ConfirmedRoles = ["agent"],
             Endpoints = [new("api", "http", "http://native.invalid", true)],
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
-                ["agent"] = [new("native", "api", "/agent/v1", 1, ["workflow.subagents"])] } };
+                ["agent"] = [new("native", "api", "/agent/v1", 1, [nativeCapability])] } };
         await apps.UpsertAppAsync(consumer); await apps.UpsertAppAsync(provider);
         if (named)
         {
@@ -124,7 +129,7 @@ public sealed class CoreTaskSessionWorkflowHttpTests
         var agents = services.GetRequiredService<CoreAgentExecution>();
         var mediation = services.GetRequiredService<CoreProviderMediation>();
         var chat = Guid.NewGuid().ToString(); var native = Guid.NewGuid().ToString(); var run = Guid.NewGuid().ToString();
-        var selected = CoreProviderMediation.SubagentActions.Select(name => name.Replace('-', '_')).ToArray();
+        var selected = actions.Select(name => name.Replace('-', '_')).ToArray();
         var workflow = new CoreTaskSessionWorkflowBinding(new(consumer.Id, PanelIdentity.Installation(consumer), "execution") { ImplementationId = named ? "chat" : null }, chat, selected);
         CoreAgentAuthorizeRequest Request(CoreTaskSessionWorkflowBinding binding) => new(new(provider.Id, PanelIdentity.Installation(provider), "native"),
             "runs.start", "PUT", $"/sessions/{native}/runs/{run}", new string('c', 64), SessionId: native, RunId: run,
@@ -136,10 +141,11 @@ public sealed class CoreTaskSessionWorkflowHttpTests
             await Assert.ThrowsAsync<CoreProviderException>(() => agents.Authorize(consumer, credential.AccessToken,
                 Request(workflow with { Executor = workflow.Executor with { ImplementationId = "unpublished" } }), default));
         var admitted = await agents.Authorize(consumer, credential.AccessToken, Request(workflow), default);
-        Assert.Contains("workflow.subagents", admitted.SupportedWorkflowCapabilities);
+        Assert.Contains(nativeCapability, admitted.SupportedWorkflowCapabilities);
+        Assert.Equal(management, admitted.SupportedWorkflowCapabilities.Contains("workflow.profile-management"));
         await agents.Admit(provider, admitted.AdmissionRef, default);
         var input = JsonSerializer.SerializeToElement(new { requestId = Guid.NewGuid() });
-        foreach (var action in CoreProviderMediation.SubagentActions)
+        foreach (var action in actions)
         {
             await mediation.AgentWorkflowAsync(provider, new(admitted.AdmissionRef, action, input), default);
             Assert.Equal("/sessions/" + chat + "/workflow", transport.LastPath);
@@ -151,8 +157,12 @@ public sealed class CoreTaskSessionWorkflowHttpTests
         }
         await Assert.ThrowsAsync<AppIdentityException>(() => mediation.AgentWorkflowAsync(provider, new(admitted.AdmissionRef, "task-create", input), default));
         await Assert.ThrowsAsync<AppIdentityException>(() => mediation.AgentWorkflowAsync(provider, new(admitted.AdmissionRef,
-            "subagent-status", input, new(consumer.Id, PanelIdentity.Installation(consumer), "source")), default));
-        Assert.Equal(4, transport.Calls);
+            actions[0], input, new(consumer.Id, PanelIdentity.Installation(consumer), "source")), default));
+        var otherAction = management ? "subagent-spawn" : "profile-create";
+        await Assert.ThrowsAsync<AppIdentityException>(() => mediation.AgentWorkflowAsync(provider, new(admitted.AdmissionRef, otherAction, input), default));
+        await services.GetRequiredService<AppSessionGrantStore>().RevokeByAuthorizingSessionAsync("browser-session", now);
+        await Assert.ThrowsAsync<AppIdentityException>(() => mediation.AgentWorkflowAsync(provider, new(admitted.AdmissionRef, actions[0], input), default));
+        Assert.Equal(actions.Length, transport.Calls);
     }
 
     private static AppRecord Record(string id, DateTimeOffset now) => new(id, id, null, "0.1.0", "runtime", false, "installed", null, null,
@@ -167,7 +177,8 @@ public sealed class CoreTaskSessionWorkflowHttpTests
         internal CoreTaskSessionWorkflowCommand? LastCommand;
         internal string? LastPath;
         internal int Calls;
-        public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
+        private HttpClient? client;
+        public HttpClient CreateClient(string name) => client = new(this, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(30) };
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls++; var bytes = await request.Content!.ReadAsByteArrayAsync(ct);
@@ -179,6 +190,8 @@ public sealed class CoreTaskSessionWorkflowHttpTests
                     LastPath, CoreProviderMediation.Hash(bytes)), ct);
             LastCommand = JsonSerializer.Deserialize(bytes, CoreJson.TypeInfo<CoreTaskSessionWorkflowCommand>());
             Assert.Equal(Invocation.AgentExecution, LastCommand!.Agent);
+            var timeout = LastCommand.Action is "skill-discover" or "skill-install" ? 165 : 30;
+            Assert.Equal(TimeSpan.FromSeconds(timeout), client!.Timeout);
             if (LastCommand.Source is null) Assert.False(JsonDocument.Parse(bytes).RootElement.TryGetProperty("source", out _));
             await Assert.ThrowsAsync<AppIdentityException>(() => Services.GetRequiredService<CoreProviderMediation>().IntrospectAsync(Consumer,
                 new(request.Headers.Authorization.Parameter!, Kind, "execution", "session.workflow", "POST", LastPath,

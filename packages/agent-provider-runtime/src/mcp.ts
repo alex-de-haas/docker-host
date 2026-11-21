@@ -71,7 +71,8 @@ export class ProviderMcp {
     for (const [key, target] of this.targets) if (target.runId === runId && !keys.has(key)) this.targets.delete(key);
     const workflow = this.workflow.target(runId); if (workflow) targets.push(workflow);
     const token = this.proxy.register(runId, targets);
-    return { servers: Object.fromEntries(targets.map(target => [target.appId, { type: "http", url: `${this.origin()}/internal/mcp/${encodeURIComponent(runId)}/${target.appId}`, headers: { Authorization: `Bearer ${token}` } }])),
+    return { servers: Object.fromEntries(targets.map(target => [target.appId, { type: "http", url: `${this.origin()}/internal/mcp/${encodeURIComponent(runId)}/${target.appId}`,
+      ...(target.nativeToolTimeoutMs ? { timeout: target.nativeToolTimeoutMs } : {}), headers: { Authorization: `Bearer ${token}` } }])),
       prefixes: targets.map(target => `mcp__${target.appId}__`) };
   }
   resolve(runId: string, decisionId: string, allowed: boolean) { return this.policy.resolve(runId, decisionId, allowed) || this.workflow.resolve(runId, decisionId, allowed); }

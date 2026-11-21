@@ -47,7 +47,22 @@ export class CoreAuthority implements ProviderAuthority {
   renew(admissionRef: string) { return this.json("/renew", { admissionRef }); }
   mcp(admissionRef: string, target: AgentMcpTarget, tools?: string[]) { return this.json<{ url: string; token: string; expiresAt: string }>("/mcp/token", { admissionRef, target, tools }); }
   workspace<T>(admissionRef: string, operation: string, input: unknown) { return this.json<T>("/workspace", { admissionRef, operation, input }); }
-  workflow<T>(admissionRef: string, action: string, input: Record<string, unknown>, source?: AgentSessionWorkflowRequest["source"]) { return this.json<T>("/workflow", { admissionRef, action, input, ...(source ? { source } : {}) }, 120_000); }
+  async workflow<T>(admissionRef: string, action: string, input: Record<string, unknown>, source?: AgentSessionWorkflowRequest["source"]): Promise<T> {
+    const timeout = action === "skill-discover" || action === "skill-install" ? 180_000 : 120_000;
+    try {
+      return await this.json<T>("/workflow", { admissionRef, action, input, ...(source ? { source } : {}) }, timeout);
+    } catch (error) {
+      if (error instanceof AgentApiError && (error.code === "core_unavailable" || error.code === "core_response_invalid")) {
+        if (action === "skill-install") throw new AgentApiError("workflow_outcome_unknown",
+          "Check skill_list for the selected Git source, commit and package paths before retrying. The installation may already have completed.", 503, true);
+        if (action === "profile-edit" || action === "profile-create") throw new AgentApiError("workflow_outcome_unknown",
+          "Read profile_list and check the stored configuration before retrying. The profile may already have been saved.", 503, true);
+        if (action === "skill-discover") throw new AgentApiError("core_unavailable",
+          "Skill discovery did not return a result. Discover the source again to obtain its current commit and paths.", 503, true);
+      }
+      throw error;
+    }
+  }
   skills(admissionRef: string, requestId: string, configurationId: string, skills: Array<{ skillId: string; expectedDigest?: string }>) {
     return this.json<{ id: string; path: string; digest: string; skills: Array<{ skillId: string; digest: string }> }>("/skills/snapshots", { admissionRef, requestId, configurationId, skills });
   }
