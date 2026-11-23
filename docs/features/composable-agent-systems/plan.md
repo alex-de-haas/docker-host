@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-25
-updated: 2026-11-16
+updated: 2026-11-21
 summary: Compose app-owned task providers and executors through Core contracts, with Harness profiles, optional resources, decisions and artifact handoffs.
 components: [apps/core, apps/harness, apps/documents, packages/app-sdk]
 ---
@@ -62,7 +62,8 @@ long-term memory is excluded from this composition. The separately requested
 composition. Existing profiles are the executor pool; no additional agent identity, saved team or
 reporting hierarchy is selected. Task ancestry/dependencies and coordinator instructions supply
 the workflow. Saved descriptions guide selection, with an explicit one-off instruction/installed-
-skill configuration only when profiles do not fit. Agents do not mutate the profile catalog.
+skill configuration only when profiles do not fit. Task delegation leaves the shared profile catalog unchanged. An operator can manage the catalog
+separately through an [ordinary Harness chat](../agent-profiles/feature.md#managing-profiles-from-chat).
 Manual agent-task assignment retains saved-profile selection; an empty directory is supported by
 starting from a no-profile chat. Chat task execution persists its root before any children, while
 task-first execution reuses its existing root. Delegation remains optional. Task-list regrouping is

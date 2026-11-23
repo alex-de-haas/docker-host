@@ -448,6 +448,33 @@ def check(context):
         spec.loader.exec_module(module)
         module.check(context, app, app_origin, call, client)
 
+    if os.environ.get('HOSTY_PROFILE_SKILLS_BROWSER') == '1':
+        import subprocess
+        from skills_acceptance import start_skill_git_http
+        connection = providers.configure_for_harness(app_origin, call, 'codex', 'Profile skill acceptance', secret='synthetic-profile-skill-fixture')
+        source = base/'profile-skill-source'
+        source.mkdir()
+        run(['git', 'init', '-b', 'main'], source)
+        for name in ('fixture-review', 'fixture-other'):
+            package = source/'skills'/name
+            package.mkdir(parents=True)
+            (package/'SKILL.md').write_text(f'---\nname: {name}\ndescription: Fixture guidance for {name}.\n---\nRead the assigned change.\n', encoding='utf-8')
+        run(['git', 'add', 'skills'], source)
+        run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'Add review fixture skills'], source)
+        commit = run(['git', 'rev-parse', 'HEAD'], source).strip()
+        server, thread, _ = start_skill_git_http(base, context['env'])
+        try:
+            subprocess.run(['node', str(workspace/'apps/harness/test/profile-skills-browser.mjs')], check=True, cwd=workspace,
+                input=json.dumps({'core': (context.get('child', {}).get('previewUrl') or origin).rstrip('/'), 'harness': app_origin,
+                    'harnessAppId': app, 'email': 'activation-fixture@example.test', 'password': password, 'link': link,
+                    'connectionId': connection['id'], 'repository': f'http://127.0.0.1:{server.server_port}/profile-skill-source/.git',
+                    'commit': commit}), text=True)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+        say('PASS: chat recommended a Git skill, installed only the selected package, recovered a stale profile save, and kept existing and new chat snapshots distinct')
+
     if os.environ.get('HOSTY_SESSION_SUBAGENTS_BROWSER'):
         import subprocess
         connection = providers.configure_for_harness(app_origin, call, 'codex', 'Chat family acceptance', secret='synthetic-chat-family-fixture')

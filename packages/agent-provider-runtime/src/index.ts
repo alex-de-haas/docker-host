@@ -25,7 +25,7 @@ export async function startAgentProvider<C extends EngineConnections>(options: {
   const store = new ProviderStore(path.join(data, "agent-sessions"), provider); await store.initialize();
   const attachments = new AttachmentStore(path.join(data, "attachments"), provider);
   const controller = new ProviderController(store, authority, connections, options.engine.capabilities, Number(env.AGENT_MAX_CONCURRENCY ?? 4));
-  const driver = new NativeExecution(controller, store, authority, connections, attachments, data, () => `http://127.0.0.1:${port}`, options.engine.prepareInput); controller.driver = driver;
+  const driver = new NativeExecution(controller, store, authority, connections, attachments, data, () => `http://127.0.0.1:${port}`, options.engine.prepareInput, options.engine.gitSkillWorkflowTimeoutMs); controller.driver = driver;
   await driver.initialize();
   const api = agentRoutes(controller, attachments);
   const interfaces = options.engine.openInterfaces?.(connections, data);

@@ -260,7 +260,11 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
         await ValidateRecord(provider, record, ct, admitted: false);
         var tokenExpires = clock.UtcNow.AddMinutes(2); if (record.ExpiresAt < tokenExpires) tokenExpires = record.ExpiresAt;
         var token = SignToken(Prefix, new CoreAgentToken(id, tokenExpires.ToUnixTimeSeconds()));
-        return new(input.Provider, descriptor.Url!, token, tokenExpires, id, record.ExpiresAt, ["workflow.subagents"]);
+        var managementAvailable = input.Authority is null && descriptor.Capabilities.Contains("workflow.profile-management")
+            && ProviderAccessService.Describe(consumer, "agent-sessions", named: true).Any(session =>
+                session is { Available: true, Version: 1 } && session.Capabilities.Contains(CoreProviderMediation.ProfileManagementCapability));
+        return new(input.Provider, descriptor.Url!, token, tokenExpires, id, record.ExpiresAt,
+            managementAvailable ? ["workflow.subagents", "workflow.profile-management"] : ["workflow.subagents"]);
     }
     private static ProviderDescriptor Descriptor(AppRecord provider, HostyProviderRef reference)
     {

@@ -14,6 +14,7 @@
 //     internally tagged object.
 //   * an approval reply must never be "approved_for_session".
 
+import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -296,12 +297,13 @@ function handle(msg) {
         turn: { id: "feedback-turn", status: "failed", error: { message: "Feedback acceptance fixture failed: " + error.message } } } }));
       return;
     }
-    if (currentTurnText.includes("CHAT_FAMILY_ACCEPTANCE") || currentTurnText.includes("Harness subagent results\n") && currentTurnText.includes("Family fixture")) {
+    if (currentTurnText.includes("PROFILE_SKILLS_ACCEPTANCE:") || currentTurnText.includes("CHAT_FAMILY_ACCEPTANCE") || currentTurnText.includes("Harness subagent results\n") && currentTurnText.includes("Family fixture")) {
       const threadId = msg.params.threadId, turnId = crypto.randomUUID();
       send({ id: msg.id, result: { turn: { id: turnId } } });
       send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
       const item = (method, value) => send({ method, params: { threadId, turnId, item: value } });
-      void familyTurn(currentTurnText, item).then(text => {
+      const scriptedTurn = currentTurnText.includes("PROFILE_SKILLS_ACCEPTANCE:") ? profileTurn : familyTurn;
+      void scriptedTurn(currentTurnText, item).then(text => {
         item("item/completed", { type: "agentMessage", id: crypto.randomUUID(), phase: "final_answer", text });
         send({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "completed" } } });
       }).catch(error => send({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "failed", error: { message: error.message } } } }));
@@ -656,25 +658,7 @@ async function familyTurn(text, emit) {
   const wake = text.includes("Harness subagent results\n");
   if (!wake && text.includes("CHAT_FAMILY_ACCEPTANCE:BUILD")) return "Family fixture implementation completed.";
   if (!wake && text.includes("CHAT_FAMILY_ACCEPTANCE:QA")) return "Family fixture verification passed.";
-  const config = Object.fromEntries(argv.filter(v => v.startsWith("mcp_servers.")).map(v => {
-    const end = v.indexOf("="); return [v.slice(0, end), JSON.parse(v.slice(end + 1))];
-  }));
-  const endpoint = Object.keys(config).find(k => k.includes("hosty-workflow") && k.endsWith(".url"));
-  if (!endpoint) throw new Error("The admitted conversation has no subagent MCP server.");
-  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
-  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
-  const client = new Client({ name: "session-family-acceptance", version: "1" });
-  const token = process.env[config[endpoint.replace(/url$/, "bearer_token_env_var")]];
-  await client.connect(new StreamableHTTPClientTransport(new URL(config[endpoint]), { requestInit: { headers: { Authorization: "Bearer " + token } } }));
-  const call = async (name, input) => {
-    const observed = { type: "mcpToolCall", id: crypto.randomUUID(), server: "hosty-workflow", tool: name, arguments: { input } };
-    emit("item/started", { ...observed, status: "inProgress" });
-    const response = await client.callTool({ name, arguments: { input } });
-    emit("item/completed", { ...observed, status: response.isError ? "failed" : "completed", result: response });
-    if (response.isError) throw new Error(name + " failed: " + response.content.find(v => v.type === "text")?.text);
-    return JSON.parse(response.content.find(v => v.type === "text").text);
-  };
-  try {
+  return withWorkflowClient(emit, async (client, call) => {
     const catalog = (await client.listTools()).tools;
     if (!catalog.some(tool => tool.name === "subagent_spawn") || catalog.some(tool => tool.name === "task_delegate"))
       throw new Error("Expected child chat tools with task delegation disabled");
@@ -694,7 +678,87 @@ async function familyTurn(text, emit) {
     const { children } = await call("subagent_status", {});
     if (children.length !== 2 || !children.every(child => child.status === "completed" && child.result)) throw new Error("Expected two completed child chats with replies");
     return "Family fixture handoff verified.";
-  } finally { await client.close(); }
+  });
+}
+
+async function withWorkflowClient(emit, run) {
+  const config = Object.fromEntries(argv.filter(v => v.startsWith("mcp_servers.")).map(v => {
+    const end = v.indexOf("="); return [v.slice(0, end), JSON.parse(v.slice(end + 1))];
+  }));
+  const endpoint = Object.keys(config).find(k => k.includes("hosty-workflow") && k.endsWith(".url"));
+  if (!endpoint) throw new Error("The admitted conversation has no Harness workflow MCP server.");
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  const client = new Client({ name: "harness-chat-acceptance", version: "1" });
+  const token = process.env[config[endpoint.replace(/url$/, "bearer_token_env_var")]];
+  await client.connect(new StreamableHTTPClientTransport(new URL(config[endpoint]), { requestInit: { headers: { Authorization: "Bearer " + token } } }));
+  const call = async (name, input) => {
+    const observed = { type: "mcpToolCall", id: crypto.randomUUID(), server: "hosty-workflow", tool: name, arguments: { input } };
+    emit("item/started", { ...observed, status: "inProgress" });
+    let response;
+    try {
+      response = await client.callTool({ name, arguments: { input } });
+    } catch (error) {
+      emit("item/completed", { ...observed, status: "failed", error: { message: error.message } });
+      throw error;
+    }
+    emit("item/completed", { ...observed, status: response.isError ? "failed" : "completed", result: response });
+    if (response.isError) throw new Error(name + " failed: " + response.content.find(v => v.type === "text")?.text);
+    return JSON.parse(response.content.find(v => v.type === "text").text);
+  };
+  try { return await run(client, call); } finally { await client.close(); }
+}
+
+async function profileTurn(text, emit) {
+  const args = JSON.parse(text.match(/PROFILE_SKILLS_ACCEPTANCE:(\{[^\n]+\})/)[1]);
+  if (args.action === "snapshot") return "Snapshot chat started.";
+  return withWorkflowClient(emit, async (client, call) => {
+    const required = ["profile_list", "profile_options", "skill_list", "skill_discover", "skill_install", "profile_create", "profile_edit"];
+    const names = (await client.listTools()).tools.map(tool => tool.name);
+    assert.ok(required.every(name => names.includes(name)), "Expected profile and skill tools in this admitted chat");
+    const source = { repository: args.repository, ref: "main", path: "skills" };
+    const name = "Chat fixture reviewer";
+    const directory = await call("profile_list", {});
+    if (args.action === "recommend" || args.action === "install") {
+      const discovered = await call("skill_discover", { source });
+      const candidate = discovered.skills.find(skill => skill.name === "fixture-review");
+      assert.equal(candidate?.path, "skills/fixture-review");
+      assert.equal(discovered.skills.length, 2);
+      if (args.action === "recommend") return "I recommend fixture-review from the selected repository.";
+      const installed = await call("skill_install", { source, commit: discovered.commit, paths: [candidate.path] });
+      assert.equal(installed.skills.length, 1);
+      assert.equal(installed.skills[0].commit, discovered.commit);
+      assert.notEqual(directory.directoryRevision, args.expectedRevision, "A concurrent operator edit must have advanced the directory");
+      await assert.rejects(call("profile_create", { expectedRevision: args.expectedRevision, profile: { name, skillIds: [installed.skills[0].id] } }),
+        /profiles.changed|profiles changed|reload before|stale/i);
+      return "Skill installed. The profile directory changed before saving.";
+    }
+    if (args.action === "create") {
+      const { skills } = await call("skill_list", {});
+      const selected = skills.find(skill => skill.name === "fixture-review");
+      assert.equal(selected?.sourceKind, "git");
+      assert.ok(!(skills.some(skill => skill.name === "fixture-other")));
+      const { connections } = await call("profile_options", {});
+      assert.ok(connections.some(connection => connection.id === args.connectionId && connection.available));
+      const { models } = await call("profile_options", { connectionId: args.connectionId });
+      const model = models.find(model => model.efforts.some(effort => effort.id === "high"));
+      assert.ok(model, "Expected the configured fixture model and high reasoning effort");
+      const result = await call("profile_create", { expectedRevision: directory.directoryRevision, profile: {
+        name, description: "Checks review requests.", instructions: "Review the original change.", connectionId: args.connectionId,
+        model: model.id, reasoningEffort: "high", skillIds: [selected.id],
+      } });
+      assert.deepEqual(result.profile.skillIds, [selected.id]);
+      assert.equal(result.profile.revision, 1);
+      return "Created the reviewer with the installed skill.";
+    }
+    assert.equal(args.action, "edit");
+    const selected = directory.profiles.find(profile => profile.name === name);
+    const original = await call("profile_list", { profileId: selected.id });
+    const edited = await call("profile_edit", { profileId: selected.id, expectedRevision: original.directoryRevision,
+      changes: { instructions: "Review the change and its tests." } });
+    assert.deepEqual(edited.profile, { ...original.profile, revision: original.profile.revision + 1, instructions: "Review the change and its tests." });
+    return "Updated the reviewer instructions.";
+  });
 }
 
 // Exercise the real session MCP transport and approval gate; never write task/session state.

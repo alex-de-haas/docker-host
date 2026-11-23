@@ -13,11 +13,11 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { ApiError, call, loadSettings, type Settings, type SettingsResponse, type ToolCatalog, type ToolRule } from "@/lib/api";
 
 import { mcpGroups } from "@/lib/mcp-groups";
-import { CHAT_WORKFLOW_PROVIDER } from "../../../shared/chat-workflow";
+import { CHAT_WORKFLOW_PROVIDER, PROFILE_MANAGEMENT_PROVIDER, isChatWorkflowProvider, isPrivateToolProvider } from "../../../shared/chat-workflow";
 
 type Mode = "ask" | "run";
 type Choice = Mode | "inherit";
-const localPolicy = (id: string) => id === "hosty:development" || id === CHAT_WORKFLOW_PROVIDER;
+const localPolicy = isPrivateToolProvider;
 type Access = { enabled: boolean; denied: string[] };
 type Draft = { access: Record<string, Access>; defaults: NonNullable<Settings["mcpDefaults"]>; rules: Record<string, ToolRule>;
   resetProviders: string[] };
@@ -134,7 +134,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
   };
   const mode = (catalog: ToolCatalog, tool: string): Choice => {
     const rule = draft.rules[keyOf(catalog.provider, tool)], fallback = draft.defaults[catalog.provider];
-    if (catalog.provider === CHAT_WORKFLOW_PROVIDER) return !rule || rule.mode === "disabled" ? "inherit" : rule.identity === catalog.identity ? rule.mode : "ask";
+    if (isChatWorkflowProvider(catalog.provider)) return !rule || rule.mode === "disabled" ? "inherit" : rule.identity === catalog.identity ? rule.mode : "ask";
     return rule?.identity === catalog.identity && rule.mode !== "disabled" ? rule.mode : fallback?.identity === catalog.identity ? fallback.mode : "ask";
   };
   const locallyDisabled = (catalog: ToolCatalog, tool: string) => localPolicy(catalog.provider) &&
@@ -143,7 +143,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
     const defaults = { ...draft.defaults }, rules = { ...draft.rules }, resetProviders = new Set(draft.resetProviders);
     for (const id of providers) {
       const catalog = catalogs.find(c => c.provider === id); if (!catalog) continue;
-      if (id === CHAT_WORKFLOW_PROVIDER) {
+      if (isChatWorkflowProvider(id)) {
         for (const tool of catalog.tools) if (!locallyDisabled(catalog, tool.name)) rules[keyOf(id, tool.name)] = { identity: catalog.identity, mode: value };
         continue;
       }
@@ -214,7 +214,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
     finally { setBusy(false); }
   };
   const entries = [...base.providers, ...catalogs.filter(c => localPolicy(c.provider)).map(c => ({ appId: c.provider,
-    displayName: c.provider === CHAT_WORKFLOW_PROVIDER ? "Chat subagents" : c.localOwner?.displayName ?? "Harness private tools", running: true, url: null, offered: true }))];
+    displayName: c.provider === CHAT_WORKFLOW_PROVIDER ? "Chat subagents" : c.provider === PROFILE_MANAGEMENT_PROVIDER ? "Profiles and skills" : c.localOwner?.displayName ?? "Harness private tools", running: true, url: null, offered: true }))];
   const groups = mcpGroups(entries, catalogs);
   const coreAccess = draft.access["hosty:core"];
   const enabled = entries.filter(p => (draft.access[p.appId]?.enabled ?? p.offered) && catalogs.some(c => c.provider === p.appId));
@@ -226,7 +226,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
     {loading && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><HostyLoader label={null} className="size-4" />Loading tools…</p>}
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
     {base.discovery !== "ok" && <Alert><AlertDescription>Core is unavailable. Existing access choices are unchanged.</AlertDescription></Alert>}
-    <p className="text-sm text-muted-foreground">Task and chat subagent rules apply to the next provider turn. General Core and application tool connections keep their supported live updates.</p>
+    <p className="text-sm text-muted-foreground">Task, subagent, and profile and skill rules apply to the next provider turn. General Core and application tool connections keep their supported live updates.</p>
     <Field orientation="horizontal"><FieldLabel>All enabled tools</FieldLabel><ModeSelect label="Approval for all enabled tools" disabled={busy || loading || !enabled.length}
       value={new Set(allModes).size > 1 ? "mixed" : allModes[0] ?? "ask"} change={value => bulk(enabled.map(p => p.appId), value)} /></Field>
     {groups.map(group => <section key={group.title} aria-label={group.title} className="flex flex-col gap-3">
@@ -249,7 +249,7 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
             denied: checked === true ? access.denied.filter(name => !tools.some(t => t.name === name)) : access.denied } } })} />}
         <CollapsibleTrigger asChild><Button variant="ghost" className="min-w-0 flex-1 justify-start"><ChevronDown data-icon="inline-start" /><span className="truncate">{row.title}</span><span className="ml-auto">{catalog ? `${permitted.length}/${tools.length}` : "—"}</span></Button></CollapsibleTrigger>
         <ModeSelect label={`Approval for ${row.title}`} disabled={busy || loading || !access.enabled || !catalog || !permitted.length}
-          inherit={id === CHAT_WORKFLOW_PROVIDER && catalog ? () => sectionMode(catalog, tools, "inherit") : undefined}
+          inherit={isChatWorkflowProvider(id) && catalog ? () => sectionMode(catalog, tools, "inherit") : undefined}
           value={new Set(modes).size > 1 ? "mixed" : modes[0] ?? draft.defaults[id]?.mode ?? "ask"} change={value => row.feature && catalog ? sectionMode(catalog, tools, value) : bulk([id], value)} />
       </div><CollapsibleContent className="pt-4"><FieldSet disabled={busy || loading}><FieldLegend className="sr-only">{row.title} tools</FieldLegend><FieldGroup>
         {!catalog && !loading && <p className="text-sm text-muted-foreground">{provider.running ? "Refresh tools to load the unavailable catalog. Saved choices are preserved." : "Start this application to preview its tools. Saved choices are preserved."}</p>}
@@ -264,9 +264,9 @@ export function McpAccess({ data, onRefresh }: { data: SettingsResponse; busy: b
             }} />
           <div className="min-w-0"><FieldLabel htmlFor={`tool-${id}-${tool.name}`}>{tool.name}</FieldLabel><p className="text-sm text-muted-foreground">{tool.description}</p></div></div>
           <ModeSelect label={`Approval for ${tool.name}`} disabled={!access.enabled || access.denied.includes(tool.name) || locallyDisabled(catalog, tool.name)} value={mode(catalog, tool.name)}
-            inherit={id === CHAT_WORKFLOW_PROVIDER ? () => sectionMode(catalog, [tool], "inherit") : undefined}
+            inherit={isChatWorkflowProvider(id) ? () => sectionMode(catalog, [tool], "inherit") : undefined}
             change={value => {
-              if (id === CHAT_WORKFLOW_PROVIDER) { sectionMode(catalog, [tool], value); return; }
+              if (isChatWorkflowProvider(id)) { sectionMode(catalog, [tool], value); return; }
               const rules = { ...draft.rules }, key = keyOf(id, tool.name);
               if (value === (draft.defaults[id]?.mode ?? "ask")) delete rules[key]; else rules[key] = { identity: catalog.identity, mode: value };
               change({ ...draft, rules });

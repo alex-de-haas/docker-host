@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { randomUUID, createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { AGENT_SESSION_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, type AgentSessionWorkflowBinding } from "@hosty-sdk/app/agent";
+import { AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS, AGENT_SESSION_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, type AgentSessionWorkflowBinding } from "@hosty-sdk/app/agent";
 import { ProviderMcp } from "./mcp.js";
 import type { ProviderAuthority } from "./core.js";
 import { workflowTools } from "@hosty-sdk/app/agent/workflow-tools";
@@ -11,11 +11,11 @@ import { workflowTools } from "@hosty-sdk/app/agent/workflow-tools";
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const binding = (): AgentSessionWorkflowBinding => ({ executor: { appId: "independent.consumer", installationId: "consumer-installation", key: "workflow" }, sessionId: randomUUID() });
-async function fixture(value?: AgentSessionWorkflowBinding, autonomous = false) {
+async function fixture(value?: AgentSessionWorkflowBinding, autonomous = false, gitSkillWorkflowTimeoutMs?: number) {
   const notify = vi.fn(async (_run: string, _event: { approvalId: string }) => {}), settled = vi.fn(async () => {});
   const authority = { renew: vi.fn(async () => ({})), mcp: vi.fn(async () => { throw new Error("A workflow must never request a Core MCP token."); }), workflow: vi.fn(async () => ({ state: "received" })) } as unknown as ProviderAuthority;
   let origin = "";
-  const runId = randomUUID(), mcp = new ProviderMcp(authority, () => origin, notify, settled);
+  const runId = randomUUID(), mcp = new ProviderMcp(authority, () => origin, notify, settled, gitSkillWorkflowTimeoutMs);
   const server = createServer((request, response) => { void mcp.proxy.handle(request, response, new URL(request.url!, "http://fixture.invalid").pathname).then(handled => { if (!handled) { response.writeHead(404); response.end(); } }); });
   cleanups.push(async () => { mcp.close(runId); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); const address = server.address(); if (!address || typeof address === "string") throw new Error("No fixture listener."); origin = `http://127.0.0.1:${address.port}`;
@@ -61,6 +61,34 @@ it("negotiates child-chat tools separately and dispatches only validated input u
   expect(f.authority.workflow).toHaveBeenCalledWith("original-admission", "subagent-spawn", input, undefined);
   expect(f.authority.mcp).not.toHaveBeenCalled();
 });
+it("exposes profile and skill management only on a selected workflow and checks arguments before dispatch", async () => {
+  const f = await fixture({ ...binding(), tools: [...AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS],
+    policy: { default: "run", tools: { skill_install: { mode: "disabled" } } } });
+  const tools = (await f.rpc("tools/list")).body.result as { tools: { name: string; annotations: { readOnlyHint: boolean } }[] };
+  expect(f.configured.servers["hosty-workflow"]).not.toHaveProperty("timeout");
+  expect(tools.tools.map(tool => tool.name)).toEqual(AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS.filter(name => name !== "skill_install"));
+  expect(tools.tools.filter(tool => tool.annotations.readOnlyHint).map(tool => tool.name)).toEqual(["profile_list", "profile_options", "skill_list", "skill_discover"]);
+  const input = { expectedRevision: 0, profile: { name: "Reviewer", skillIds: ["a".repeat(64)] } };
+  for (const [name, args] of [
+    ["skill_install", { input: { source: { repository: "https://example.test/team.git" }, commit: "a".repeat(40), paths: [""] } }],
+    ["profile_create", { input, source: binding().executor }],
+    ["profile_create", { input: { ...input, profile: { ...input.profile, grant: "admin" } } }],
+  ] as const) expect((await f.rpc("tools/call", { name, arguments: args })).body.error).toBeDefined();
+  expect(f.authority.workflow).not.toHaveBeenCalled();
+  expect((await f.rpc("tools/call", { name: "profile_create", arguments: { input } })).body.error).toBeUndefined();
+  expect(f.authority.workflow).toHaveBeenCalledWith("original-admission", "profile-create", input, undefined);
+  expect(f.authority.mcp).not.toHaveBeenCalled();
+});
+it("extends short native deadlines only for engines that require it and can use Git tools", async () => {
+  const git: AgentSessionWorkflowBinding = { ...binding(), tools: ["profile_list", "skill_install"] };
+  const ordinary = await fixture(git);
+  const shortClient = await fixture(git, false, 240_000);
+  const gitDisabled = await fixture({ ...git, policy: { default: "ask", tools: { skill_install: { mode: "disabled" } } } }, false, 240_000);
+  const unrelated = await fixture({ ...binding(), tools: ["subagent_status"] }, false, 240_000);
+  expect(shortClient.configured.servers["hosty-workflow"]).toHaveProperty("timeout", 240_000);
+  for (const target of [ordinary, gitDisabled, unrelated])
+    expect(target.configured.servers["hosty-workflow"]).not.toHaveProperty("timeout");
+});
 it("keeps Disabled and selected tools authoritative for discovery and calls", async () => {
   const f = await fixture({ ...binding(), tools: ["task_get"], policy: { default: "run", tools: { task_get: { mode: "disabled" } } } });
   expect((await f.rpc("tools/list")).body.result).toEqual({ tools: [] });
@@ -88,6 +116,22 @@ it("inherits autonomous mode for the four child-chat operations in a mixed task 
   expect(f.authority.workflow).toHaveBeenCalledTimes(4);
 });
 
+it("applies session mode and explicit per-tool preferences to profile management", async () => {
+  const autonomous = await fixture({ ...binding(), tools: ["profile_edit", "profile_list", "skill_install"],
+    policy: { default: "ask", tools: { profile_list: { mode: "ask" }, skill_install: { mode: "disabled" } } } }, true);
+  const edit = { profileId: "reviewer", expectedRevision: 1, changes: { instructions: "Review the test coverage." } };
+  expect((await autonomous.rpc("tools/call", { name: "profile_edit", arguments: { input: edit } })).body.error).toBeUndefined();
+  expect(autonomous.notify).not.toHaveBeenCalled();
+  const normal = await fixture({ ...binding(), tools: ["profile_edit"] });
+  for (const [target, name, input] of [[autonomous, "profile_list", {}], [normal, "profile_edit", edit]] as const) {
+    const pending = target.rpc("tools/call", { name, arguments: { input } });
+    await vi.waitFor(() => expect(target.notify).toHaveBeenCalledOnce());
+    target.mcp.resolve(target.runId, target.notify.mock.calls[0]![1].approvalId, false);
+    expect((await pending).body.error).toBeDefined();
+  }
+  expect((await autonomous.rpc("tools/call", { name: "skill_install", arguments: { input: {} } })).body.error).toBeDefined();
+  expect(autonomous.authority.workflow).toHaveBeenCalledTimes(1);
+});
 it("preserves normal mode, explicit Ask, stale Run definitions and Disabled for child-chat tools", async () => {
   const f = await fixture({ ...binding(), tools: ["subagent_profiles", "subagent_status", "subagent_wait"], policy: { default: "ask", tools: {
     subagent_profiles: { mode: "ask" },

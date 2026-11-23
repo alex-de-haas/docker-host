@@ -51,9 +51,11 @@ import { CORE_PROVIDER_ID, type McpProvider, type ProviderDirectory } from "../s
 import { TokenExchange, toMcpServerConfig, serverName, TOKEN_REFRESH_MARGIN_MS } from "../mcp/exchange.js";
 import { readOnlyToolNames } from "../mcp/readonly.js";
 import { workflowGuide } from "../agent-providers/subagent-workflow.js";
-import { CHAT_WORKFLOW_PROVIDER } from "../../shared/chat-workflow.js";
+import { callProfileChatTool } from "../profiles/chat-tools.js";
+import { callSkillChatTool } from "../skills.js";
+import { CHAT_WORKFLOW_PROVIDER, PROFILE_MANAGEMENT_PROVIDER } from "../../shared/chat-workflow.js";
 import { workflowTools } from "@hosty-sdk/app/agent/workflow-tools";
-import { AGENT_CAPABILITIES, AGENT_SUBAGENT_WORKFLOW_TOOLS, AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentAttachment, type AgentMcpSelection, type AgentPendingDecision, type AgentRunSnapshot, type AgentSource, type AgentRunControlInput, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest, type AgentWatchItem } from "@hosty-sdk/app/agent";
+import { AGENT_CAPABILITIES, AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, AGENT_SESSION_WORKFLOW_TOOLS, AgentApiError, type AgentAttachment, type AgentMcpSelection, type AgentPendingDecision, type AgentRunSnapshot, type AgentSource, type AgentRunControlInput, type AgentSessionWorkflowBinding, type AgentSessionWorkflowRequest, type AgentWatchItem } from "@hosty-sdk/app/agent";
 import { prepareAgentControl } from "@hosty-sdk/app/agent/client";
 import type { MediatedProviderInvocation } from "@hosty-sdk/app/providers";
 import { CoreAgentBackend } from "../agent-providers/core.js";
@@ -526,12 +528,12 @@ export class SessionManager {
       if (!credential) throw new AppContextError(401, "provider_credentials_required", "Refresh Hosty sign-in to observe or control this provider execution.");
       return credential;
     };
-    let coreSupportsSubagents = false;
+    let coreCapabilities: readonly string[] = [];
     const client = backend.client(selection.provider, authority, workspaceConversation(session.record),
-      capabilities => { coreSupportsSubagents = capabilities.includes(AGENT_CAPABILITIES.sessionSubagents); });
+      capabilities => { coreCapabilities = capabilities; });
     const negotiatedCapabilities = admitting && this.profiles && !session.record.taskExecutionId
       ? (await client.capabilities()).capabilities : undefined;
-    const workflow = admitting ? await this.providerWorkflowBinding(options.sessionId, coreSupportsSubagents, negotiatedCapabilities) : state.lastRunInput?.workflow;
+    const workflow = admitting ? await this.providerWorkflowBinding(session.record, coreCapabilities, negotiatedCapabilities) : state.lastRunInput?.workflow;
     if (admitting && session.record.taskExecutionId && !workflow)
       throw new AppContextError(409, "task_workflow_setup_required", "Approve Harness's optional task-executor provider permission in Core before running this task. General Core MCP access is separate.");
     if (admitting && session.record.taskExecutionId && (!workflow!.tools?.includes("task_result") || workflow!.policy?.tools?.task_result?.mode === "disabled"))
@@ -695,40 +697,45 @@ export class SessionManager {
     return Object.fromEntries(bindings);
   }
 
-  private async providerWorkflowBinding(id: string, coreSupportsSubagents: boolean, providerCapabilities?: string[]): Promise<AgentSessionWorkflowBinding | undefined> {
+  private async providerWorkflowBinding(record: SessionRecord, coreCapabilities: readonly string[], providerCapabilities?: string[]): Promise<AgentSessionWorkflowBinding | undefined> {
     const appId = process.env.HOSTY_APP_ID, installationId = process.env.HOSTY_APP_INSTALLATION_ID;
     if (!appId || !installationId) return;
-    const supportsSubagents = coreSupportsSubagents && providerCapabilities?.includes(AGENT_CAPABILITIES.sessionSubagents) === true;
+    const supports = (capability: string) => coreCapabilities.includes(capability) && providerCapabilities?.includes(capability) === true;
+    const supportsSubagents = supports(AGENT_CAPABILITIES.sessionSubagents);
+    const supportsManagement = !record.taskExecutionId && !record.parentSessionId && supports(AGENT_CAPABILITIES.profileManagement);
     // Providers can implement chat delegation independently. Keep the existing task preflight on legacy and task-bound turns.
-    const includeTasks = !supportsSubagents || providerCapabilities!.includes(AGENT_CAPABILITIES.consumerWorkflow);
+    const includeTasks = (!supportsSubagents && !supportsManagement) || providerCapabilities?.includes(AGENT_CAPABILITIES.consumerWorkflow);
     const permissions = this.taskAction && includeTasks ? await new CoreProviderClient().permissions().catch(() => null) : null;
     const selected = [...(permissions?.granted.includes("providers.task-executor") ? AGENT_SESSION_WORKFLOW_TOOLS : []),
-      ...(supportsSubagents ? AGENT_SUBAGENT_WORKFLOW_TOOLS : [])];
+      ...(supportsSubagents ? AGENT_SUBAGENT_WORKFLOW_TOOLS : []),
+      ...(supportsManagement ? AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS : [])];
     if (!selected.length) return;
     const settings = await this.settings?.read(), core = this.providers?.core();
-    const workflowIdentity = JSON.stringify([CHAT_WORKFLOW_PROVIDER, appId, installationId]);
     const tools: NonNullable<AgentSessionWorkflowBinding["policy"]>["tools"] = {};
     for (const [key, rule] of Object.entries(settings?.mcpToolRules ?? {})) {
       let pair: unknown; try { pair = JSON.parse(key); } catch { continue; }
       if (!Array.isArray(pair) || !(selected as readonly string[]).includes(pair[1])) continue;
-      const chatTool = AGENT_SUBAGENT_WORKFLOW_TOOLS.some(name => name === pair[1]);
-      if (chatTool ? pair[0] !== CHAT_WORKFLOW_PROVIDER : ![CORE_PROVIDER_ID, "hosty:development"].includes(pair[0])) continue;
-      const current = chatTool ? rule.identity === workflowIdentity : pair[0] === CORE_PROVIDER_ID
+      const chatProvider = AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS.some(name => name === pair[1]) ? PROFILE_MANAGEMENT_PROVIDER
+        : AGENT_SUBAGENT_WORKFLOW_TOOLS.some(name => name === pair[1]) ? CHAT_WORKFLOW_PROVIDER : undefined;
+      if (chatProvider ? pair[0] !== chatProvider : ![CORE_PROVIDER_ID, "hosty:development"].includes(pair[0])) continue;
+      const current = chatProvider ? rule.identity === JSON.stringify([chatProvider, appId, installationId]) : pair[0] === CORE_PROVIDER_ID
         ? !!core && rule.identity === core.policyIdentity : rule.identity === this.mcpPolicy.localIdentity;
       if (tools[pair[1]]?.mode === "disabled" || tools[pair[1]]?.mode === "ask" && rule.mode !== "disabled") continue;
       const mode = rule.mode === "disabled" ? "disabled" : current && rule.definition ? rule.mode : "ask";
       tools[pair[1]] = { mode, ...(mode === "run" ? { definition: rule.definition! } : {}) };
     }
-    return { executor: { appId, installationId, key: "default" }, sessionId: id, tools: selected, policy: { default: "ask", tools } };
+    return { executor: { appId, installationId, key: "default" }, sessionId: record.id, tools: selected, policy: { default: "ask", tools } };
   }
 
   async providerWorkflow(id: string, input: AgentSessionWorkflowRequest, invocation: MediatedProviderInvocation,
     revalidate: () => Promise<MediatedProviderInvocation>, recovery?: { retained: boolean; dispatch: (guard: () => Promise<void>) => Promise<unknown> }): Promise<unknown> {
-    const subagent = AGENT_SUBAGENT_WORKFLOW_TOOLS.some(tool => tool.replaceAll("_", "-") === input.action);
+    const subagent = AGENT_SUBAGENT_WORKFLOW_TOOLS.find(tool => tool.replaceAll("_", "-") === input.action);
+    const management = AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS.find(tool => tool.replaceAll("_", "-") === input.action);
+    const chatTool = subagent ?? management;
     const guard = async () => {
       const current = await revalidate(), record = await this.store.readRecord(id), state = await this.store.readProviderExecution(id);
       const agent = input.agent, signed = current.agentExecution, binding = state?.lastRunInput?.workflow;
-      if (current.operation !== "session.workflow" || current.kind !== (subagent ? "agent-sessions" : "task-executor")
+      if (current.operation !== "session.workflow" || current.kind !== (chatTool ? "agent-sessions" : "task-executor")
         || current.key !== "default" || current.implementationId != null
         || current.userId !== invocation.userId || current.principalId !== invocation.principalId || current.hostRole !== "host.admin"
         || !record || record.createdBy !== current.userId || record.storageRecovery || record.providerRetirement || !state || !signed
@@ -742,10 +749,10 @@ export class SessionManager {
       const source = record.taskContext?.taskRef ?? { appId: process.env.HOSTY_APP_ID, installationId: process.env.HOSTY_APP_INSTALLATION_ID, key: "default", implementationId: null };
       if (input.source && (input.source.appId !== source.appId || input.source.installationId !== source.installationId || input.source.key !== source.key || (input.source.implementationId ?? null) !== (source.implementationId ?? null)))
         throw new AppContextError(403, "workflow_source_mismatch", "Use the exact task provider and interface bound to this session.");
-      if (subagent) {
-        const tool = AGENT_SUBAGENT_WORKFLOW_TOOLS.find(name => name.replaceAll("_", "-") === input.action)!;
-        if (input.source || !binding.tools?.includes(tool) || binding.policy?.tools?.[tool]?.mode === "disabled")
-          throw new AppContextError(403, "workflow_action_unavailable", "This subagent action is outside the admitted conversation workflow.");
+      if (chatTool) {
+        if (input.source || !binding.tools?.includes(chatTool) || binding.policy?.tools?.[chatTool]?.mode === "disabled"
+          || management && (record.taskExecutionId || record.parentSessionId))
+          throw new AppContextError(403, "workflow_action_unavailable", "This action is outside the admitted conversation workflow.");
       } else if (!(taskActions as readonly string[]).includes(input.action) || input.action.startsWith("task-legacy-"))
         throw new AppContextError(403, "workflow_action_unavailable", "This action is outside the admitted task workflow.");
       // The provider can call back before its start response or first state update. An idle
@@ -758,6 +765,24 @@ export class SessionManager {
         || !beforeFirstProjection && !["running", "awaiting_approval", "awaiting_question", "suggesting"].includes(record.status)))
         throw new AppContextError(409, "workflow_run_inactive", "This provider execution is no longer active.");
     };
+    if (management) {
+      const credential = (await this.requireLive(id)).workspaceCredential;
+      if (!credential) throw new AppContextError(401, "operator_session_required", "Sign in to Harness to manage profiles and skills.");
+      const validateOperator = async () => {
+        await guard();
+        const identity = await resolveAppSession(credential, AbortSignal.timeout(5_000));
+        if (identity.status === "unavailable") throw new AppContextError(503, "identity_unavailable", "Core could not verify the operator session. Retry when Core is available.");
+        if (identity.status !== "active" || identity.identity.hostRole !== "host.admin" || identity.identity.userId !== invocation.userId)
+          throw new AppContextError(403, "operator_session_required", "Sign in to Harness as this conversation's administrator to manage profiles and skills.");
+      };
+      await validateOperator();
+      if (management.startsWith("skill_")) return callSkillChatTool(management, input.input, credential);
+      const profiles = this.profiles;
+      if (!profiles) throw new AppContextError(409, "profiles_unavailable", "Profiles are unavailable.");
+      return withAgentAuthority(async () => credential, () => callProfileChatTool(management, input.input, {
+        profiles, connections: this.connections, validateProfile: value => this.validateProfile(value), guard: validateOperator,
+      }));
+    }
     await guard();
     if (subagent) {
       const result = await this.subagentAction(id, input.action, input.input, guard);
@@ -2097,6 +2122,7 @@ export class SessionManager {
     if (this.profiles && this.agentBackend && appId && installationId) {
       // The private catalog supplies reviewed definitions for preferences. Only an admitted provider run can execute these tools.
       await this.mcpPolicy.catalog(CHAT_WORKFLOW_PROVIDER, JSON.stringify([CHAT_WORKFLOW_PROVIDER, appId, installationId]), workflowTools(AGENT_SUBAGENT_WORKFLOW_TOOLS));
+      await this.mcpPolicy.catalog(PROFILE_MANAGEMENT_PROVIDER, JSON.stringify([PROFILE_MANAGEMENT_PROVIDER, appId, installationId]), workflowTools(AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS));
     }
     if (!snapshot) return unavailable;
     for (const p of [this.providers?.core(), ...snapshot.providers]) {

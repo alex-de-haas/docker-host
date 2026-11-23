@@ -6,12 +6,12 @@ import { AppContextError } from "../sessions/app-context.js";
 import { validSkillIds } from "../skills.js";
 import type { AgentProfile, AgentProfileConfig, ProfileDirectory } from "./types.js";
 
-const fields = ["name", "description", "instructions", "connectionId", "model", "reasoningEffort", "skillIds"];
+export const profileConfigFields: readonly string[] = ["name", "description", "instructions", "connectionId", "model", "reasoningEffort", "skillIds"];
 const identifier = (value: unknown) => value === null || typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(value);
 export function profileConfig(input: unknown): AgentProfileConfig {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw invalid();
   const v = input as Record<string, unknown>;
-  if (Object.keys(v).some(key => !fields.includes(key)) || typeof v.name !== "string" || !v.name.trim() || v.name.trim().length > 100
+  if (Object.keys(v).some(key => !profileConfigFields.includes(key)) || typeof v.name !== "string" || !v.name.trim() || v.name.trim().length > 100
     || /[\x00-\x1f\x7f]/.test(v.name) || typeof v.description !== "string" || v.description.length > 2000
     || typeof v.instructions !== "string" || v.instructions.length > 8000 || !identifier(v.connectionId)
     || !(v.model === null || typeof v.model === "string" && /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$/.test(v.model)) || !identifier(v.reasoningEffort) || !validSkillIds(v.skillIds)) throw invalid();
@@ -51,7 +51,7 @@ export class ProfileStore {
         || !Number.isSafeInteger(p.revision) || p.revision < 1)
       || new Set(state.profiles.map((p: AgentProfile) => p.id)).size !== state.profiles.length
       || state.defaultId !== null && !state.profiles.some((p: AgentProfile) => p.id === state.defaultId)) throw new Error("Invalid stored agent profiles.");
-    const profiles = state.profiles.map((p: AgentProfile) => ({ ...profileConfig(Object.fromEntries(fields.map(k => [k, p[k as keyof AgentProfile]]))), id: p.id, revision: p.revision }));
+    const profiles = state.profiles.map((p: AgentProfile) => ({ ...profileConfig(Object.fromEntries(profileConfigFields.map(k => [k, p[k as keyof AgentProfile]]))), id: p.id, revision: p.revision }));
     return { revision: state.revision, defaultId: state.defaultId, profiles };
   }
   private async current(): Promise<ProfileDirectory> {
@@ -86,7 +86,8 @@ export class ProfileStore {
       return profile;
     });
   }
-  save(input: unknown, expectedRevision: unknown, id?: string): Promise<ProfileDirectory> {
+  save(input: unknown, expectedRevision: unknown, id?: string, skillPolicy: "prune" | "require-installed" = "prune",
+    guard?: () => Promise<void>): Promise<ProfileDirectory> {
     const config = profileConfig(input);
     return this.serial(async () => {
       const state = await this.current(); if (expectedRevision !== state.revision) throw conflict();
@@ -97,10 +98,19 @@ export class ProfileStore {
         throw new AppContextError(409, "profile_name_exists", "Choose a different profile name.");
       // Re-read the authoritative catalog for new selections; failed catalog reads do not prune.
       const available = await this.catalog().catch(() => null);
+      if (available === null && skillPolicy === "require-installed" && config.skillIds.length)
+        throw new AppContextError(503, "skill_catalog_unavailable", "The installed skills could not be verified. Retry after Core's skill library is available.");
       if (available !== null) {
         if (!validSkillIds(available)) throw new Error("Invalid skill catalog.");
-        config.skillIds = config.skillIds.filter(id => available.includes(id));
+        const installed = new Set(available);
+        if (skillPolicy === "require-installed") {
+          const missing = config.skillIds.filter(id => !installed.has(id));
+          if (missing.length) throw new AppContextError(409, "skill_unavailable", `These skill IDs are not installed: ${missing.join(", ")}.`);
+        } else {
+          config.skillIds = config.skillIds.filter(id => installed.has(id));
+        }
       }
+      await guard?.();
       const profile: AgentProfile = { ...config, id: id ?? randomUUID(), revision: (existing?.revision ?? 0) + 1 };
       state.profiles = existing ? state.profiles.map(p => p.id === id ? profile : p) : [...state.profiles, profile];
       state.revision++; delete state.catalogUnavailable; await this.write(state); return state;

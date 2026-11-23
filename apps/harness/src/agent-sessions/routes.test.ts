@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { AgentApiError } from "@hosty-sdk/app/agent";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type MediatedProviderInvocation } from "@hosty-sdk/app/providers";
 import { SessionManager } from "../sessions/manager.js";
@@ -54,6 +55,10 @@ it.each([null, "work"])("accepts only the admitted conversation workflow on the 
   expect((await call({ ...command, agent: { ...agent, runId: "another-run" } })).status).toBe(403);
   expect((await call({ ...command, agent: { ...agent, provider: { ...agent.provider, implementationId: "personal" } } })).status).toBe(403);
   expect(dispatch).toHaveBeenCalledOnce();
+  dispatch.mockRejectedValueOnce(new AgentApiError("model_unavailable", "Choose an available model.", 400));
+  const profile = await call({ ...command, action: "profile-edit", input: { changes: { model: "old-model" } } });
+  expect(profile.status).toBe(400);
+  expect(await profile.json()).toMatchObject({ error: { code: "model_unavailable", retryable: false } });
 });
 
 it("withholds execution metadata after revocation during the read", async () => {

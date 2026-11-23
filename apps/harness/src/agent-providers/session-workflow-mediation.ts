@@ -1,6 +1,6 @@
 import { sameProviderRef } from "../../shared/provider-reference.js";
 import type { IncomingMessage } from "node:http";
-import { AGENT_SUBAGENT_WORKFLOW_TOOLS, type AgentExecutionReference, type AgentSessionWorkflowRequest } from "@hosty-sdk/app/agent";
+import { AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS, AGENT_SUBAGENT_WORKFLOW_TOOLS, type AgentExecutionReference, type AgentSessionWorkflowRequest } from "@hosty-sdk/app/agent";
 import { ProviderClient } from "@hosty-sdk/app/providers/server";
 import { ProviderError, type MediatedProviderInvocation } from "@hosty-sdk/app/providers";
 import { taskActions } from "../tasks/tools.js";
@@ -17,14 +17,14 @@ function providerRef(value: unknown): boolean {
     && (value.implementationId == null || identity(value.implementationId) && value.implementationId.length <= 128);
 }
 
-const subagentActions = AGENT_SUBAGENT_WORKFLOW_TOOLS.map(name => name.replaceAll("_", "-"));
+const chatActions = [...AGENT_SUBAGENT_WORKFLOW_TOOLS, ...AGENT_PROFILE_MANAGEMENT_WORKFLOW_TOOLS].map(name => name.replaceAll("_", "-"));
 
 function readWorkflow(bytes: Buffer, kind: "task-executor" | "agent-sessions"): AgentSessionWorkflowRequest {
   let value: unknown;
   try { value = JSON.parse(bytes.toString("utf8")); }
   catch { throw new ProviderError("invalid_input", "Expected a JSON workflow request.", 400); }
   if (!object(value) || !fields(value, ["action", "input", "agent", ...(Object.hasOwn(value, "source") ? ["source"] : [])]) || typeof value.action !== "string"
-    || !(kind === "task-executor" ? taskActions : subagentActions).some(action => action === value.action) || !object(value.input) || !object(value.agent)
+    || !(kind === "task-executor" ? taskActions : chatActions).some(action => action === value.action) || !object(value.input) || !object(value.agent)
     || !fields(value.agent, ["provider", "sessionId", "runId"]) || !identity(value.agent.sessionId) || !identity(value.agent.runId)
     || !providerRef(value.agent.provider) || Object.hasOwn(value, "source") && (kind !== "task-executor" || !providerRef(value.source)))
     throw new ProviderError("invalid_input", "Use a declared session action, object input and qualified public agent execution.", 400);

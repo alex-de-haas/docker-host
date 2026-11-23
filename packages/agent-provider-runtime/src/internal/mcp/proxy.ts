@@ -56,6 +56,8 @@ const FORWARDED_RESPONSE_HEADERS = ["content-type", "cache-control", "mcp-sessio
 
 export interface ProxyTarget {
   appId: string;
+  /** This workflow offers Git skill discovery or installation on the current run. */
+  gitSkillTools?: boolean;
   /** The app's resolved MCP URL, as Core reported it. */
   url: string;
   /** Provider-owned bounded protocol adapter; never an upstream URL or caller-supplied callback. */

@@ -79,6 +79,31 @@ profile revisions reject stale edits/selections. A failed save keeps form fields
 values requires the explicit Reload saved profile action. Settings load on entry and refresh after
 action or explicit Refresh, without periodic requests that overwrite edits.
 
+## Managing Profiles from Chat
+
+An administrator can ask an agent in an ordinary Harness chat to create or edit a reusable
+profile. For example, “Install the testing skill from our team repository and create a .NET
+reviewer that uses it.” Harness exposes the tools when Core and the chosen provider both support
+the profile-management workflow. **Settings → MCP & tools → Profiles and skills** controls each
+tool's approval policy for the next turn.
+
+| Tool | Result |
+| --- | --- |
+| `profile_list` | Lists names, description previews of up to 240 characters, and revisions. Pass a profile ID to read its full configuration. |
+| `profile_options` | Lists available provider connections. Pass a connection ID to read its model and reasoning options. |
+| `profile_create` | Saves a new profile with the current directory revision and returns the stored profile. |
+| `profile_edit` | Updates only the supplied fields of an existing profile at the expected directory revision. |
+
+Both writes verify requested skill IDs against the [Core skill library](../agent-skills/feature.md).
+A revision conflict requires a new directory read. A skill installed earlier in the request
+remains available for the retry. The saved profile appears in Settings and can be selected for
+a new conversation. Running conversations retain their profile snapshots.
+
+Core checks the originating operator and admitted provider run. Harness checks the chat owner,
+active administrator identity and selected tool before dispatch. Task runs and delegated child
+chats have their own workflows. External-client access is discussed in
+[idea I20](../../ideas.md#i20-how-external-agents-interact-with-hosty).
+
 ## Conversation Selection And Persistence
 
 A new chat starts with No profile unless the operator explicitly configured a default or supplied a
@@ -141,6 +166,17 @@ manual connection/skill inputs without a profile bypass the profile default.
 
 ## Verification Evidence
 
+On 2026-11-21 the macOS managed acceptance suite exercised the ordinary chat workflow through
+a scripted native Codex provider, the production Harness image, a fixture Git repository and
+a password-authenticated browser. A recommendation left the catalogs intact. Installing one
+of two packages succeeded, a concurrent Settings edit rejected the stale profile save, and
+the agent recovered using the installed ID. Settings showed the selected skill and updated
+instructions. A chat started before the edit retained its profile, and a new chat selected
+the updated revision.
+
+Run `HOSTY_PROFILE_SKILLS_BROWSER=1 npm run test:integration -- agent-providers` to repeat
+this scenario. `HOSTY_PROFILE_PLAYWRIGHT_MODULE` can point to an installed Playwright module.
+
 The following records describe the profile release before independent provider applications.
 References to Worker, native homes and the retired integration command describe those dated
 versions; they are not verification of the current provider interface or release artifacts.
@@ -193,6 +229,8 @@ Verified on macOS, 2026-10-26, for Harness 0.71.0 → 0.72.0:
   Core and CLI builds for the sandbox pass; Core reports four existing warnings, CLI none.
 
 ## Testing Expectations
+
+- Exercise profile discovery, revision-checked creation and partial edits through the admitted chat workflow. Cover stale revisions, missing skills, revoked authority and per-tool exclusions.
 
 - Preserve one-time initialization without an implicit default, empty collections, explicit defaults and persisted configurations;
   reject malformed storage, duplicate names, unsupported fields and stale concurrent writes.
