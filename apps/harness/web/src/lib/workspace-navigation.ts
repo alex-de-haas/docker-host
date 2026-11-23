@@ -1,5 +1,5 @@
 import type { AssistantSession } from "./assistant-api";
-import type { DevelopmentWorkspace } from "./development-api";
+import type { DevelopmentWorkspace, WorkspaceParticipation } from "./development-api";
 import { activityTime, isWaiting, observedSessionStatus, orderSessions } from "./attention";
 
 export type ActivityCounts = { working: number; waiting: number; failed: number; unknown: number };
@@ -10,8 +10,11 @@ export function countStatus(counts: ActivityCounts, status: string) {
   else if (status === "failed") counts.failed++;
   else if (["unknown", "stopping"].includes(status)) counts.unknown++;
 }
+export function attachedWorkspaceSessionIds(participation: WorkspaceParticipation): string[] {
+  return [...new Set(participation.sessions.filter(session => session.attached && session.canOpen).map(session => session.sessionId))];
+}
 export function workspaceSessionIds(workspace: DevelopmentWorkspace): string[] {
-  return workspace.participation ? workspace.participation.sessions.filter(s => s.attached && s.canOpen).map(s => s.sessionId)
+  return workspace.participation ? attachedWorkspaceSessionIds(workspace.participation)
     : workspace.owner.kind === "assistant" && workspace.owner.appId === "hosty.harness" ? [workspace.owner.reference] : [];
 }
 export function workspaceChats(workspace: DevelopmentWorkspace, sessions: readonly AssistantSession[]) {

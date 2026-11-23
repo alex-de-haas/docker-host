@@ -18,6 +18,8 @@ import { LocalAppHandoff } from "./local-app-handoff";
 import { WorkspaceActivation } from "./workspace-activation";
 import { WorkspaceActivity, WorkspaceConsumers } from "./workspace-consumers";
 import { WorkspaceDelete } from "./workspace-delete";
+import { useWorkspaceDeletion, type WorkspaceDeletion } from "@/lib/workspace-deletion";
+import { workspaceSessionIds } from "@/lib/workspace-navigation";
 import { WorkspaceLeaseRecovery } from "./workspace-lease-recovery";
 import { WorkspacePreviews } from "./workspace-previews";
 import { WorkspacePullRequest } from "./workspace-pull-request";
@@ -39,14 +41,18 @@ function readPendingAction(workspaceId: string): PendingAction | null {
     return value && ["complete", "resume", "pause", "defer", "delete", "close"].includes(value.kind) && typeof value.requestId === "string" && Number.isSafeInteger(value.expectedRevision) ? value : null;
   } catch { return null; }
 }
-export function WorkspaceDetails({ workspace, title, sessionId, running, refresh, deleteConversation, onReview, onSessionSelected, onSessionPicked, onDeleteSession, sessionActions, chats, appMetadata = [] }: {
+export function WorkspaceDetails({ workspace, title, sessionId, running, refresh, workspaceDeletion, deletingSessionIds, onReview, onSessionSelected, onSessionPicked, onDeleteSession, sessionActions, chats, appMetadata = [] }: {
   workspace: DevelopmentWorkspace; title: string; sessionId?: string; running?: boolean; appMetadata?: readonly ContextApp[];
   sessionActions?: WorkspaceSessionActions; chats?: readonly AssistantSession[];
   onSessionPicked?: (sessionId: string) => void; onDeleteSession?: (sessionId: string) => Promise<void>;
   onSessionSelected?: (session: AssistantSession) => void;
-  refresh: () => void; deleteConversation?: () => Promise<void>; onReview?: (tree: Worktree, choice?: ReviewChoice) => void;
+  refresh: () => void; workspaceDeletion?: WorkspaceDeletion; deletingSessionIds?: ReadonlySet<string>; onReview?: (tree: Worktree, choice?: ReviewChoice) => void;
 }) {
   const canManage = workspace.permissions?.manage !== false;
+  const localWorkspaceDeletion = useWorkspaceDeletion(onDeleteSession, refresh);
+  const workspaceRemovals = workspaceDeletion ?? localWorkspaceDeletion;
+  const deletingWorkspace = workspaceRemovals.pending.has(workspace.id);
+  const deletionError = !workspaceDeletion && workspaceRemovals.failures.get(workspace.id)?.error;
   const [trees, setTrees] = useState<Worktree[]>(() => workspace.worktrees.map(t => ({ ...t, sessionChanges: undefined })));
   const updatePrConsumer = useEffectEvent(() => refresh());
   // Published PRs can live in publication records rather than the worktree's explicit URL list.
@@ -172,13 +178,13 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
             <TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="size-6 text-muted-foreground" aria-label="Created from an external session"><Cast className="size-3.5" aria-hidden="true" /></Button></TooltipTrigger>
             <TooltipContent className="max-w-xs">Created from an external session using {workspace.owner.label}. Its conversation and agent activity are not synchronized here. Harness sessions can also use this workspace.</TooltipContent>
           </Tooltip></TooltipProvider>}
-          <Badge variant="outline" className="bg-muted text-xs font-medium">{workflowLabel(state)}</Badge>
+          <Badge variant="outline" className="bg-muted text-xs font-medium">{deletingWorkspace ? "deleting" : workflowLabel(state)}</Badge>
         </div></div>
       <div className="flex items-start gap-1.5">
       <div className="min-w-0 flex-1"><WorkspaceName key={workspace.id} workspace={workspace} fallback={title} refresh={refresh} />
         {state.completedAt && <p className="mt-1 text-xs text-muted-foreground">Completed {new Date(state.completedAt).toLocaleDateString()}</p>}</div>
       <Button size="icon-sm" variant="ghost" aria-label="Refresh workspace" disabled={requestingPrRefresh} onClick={() => void refreshWorkspace()}><RefreshCw className="size-3.5" /></Button>
-      {canManage && <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Workspace actions"><MoreHorizontal /></Button></DropdownMenuTrigger>
+      {canManage && !deletingWorkspace && <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Workspace actions"><MoreHorizontal /></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem disabled={busy || recovering || !!discardOperation || !!pending || running || !["in-progress", "deferred"].includes(state.state)} onSelect={() => void run("complete")}>Complete workspace</DropdownMenuItem>
           <DropdownMenuItem disabled={busy || recovering || !!discardOperation || !!pending || !workflowIsActive(state)} onSelect={() => void run("pause")}>Pause workspace</DropdownMenuItem>
@@ -190,14 +196,15 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       <WorkspaceObservation trees={trees} now={now} />
     </div>
     <div className="space-y-4 p-4 [&>[data-workspace-section]~[data-workspace-section]]:border-t [&>[data-workspace-section]~[data-workspace-section]]:pt-4">
-      <WorkspaceSessions chats={chats} now={now} actions={sessionActions} workspace={workspace} sessionId={sessionId} running={running} refresh={refresh} onSelect={onSessionSelected} onPick={onSessionPicked} onDelete={onDeleteSession} />
+      {deletionError && <p role="alert" className="text-sm text-destructive-foreground">{deletionError}</p>}
+      <WorkspaceSessions deletingSessionIds={deletingSessionIds} workspaceDeleting={deletingWorkspace || state.state === "deleting"} chats={chats} now={now} actions={sessionActions} workspace={workspace} sessionId={sessionId} running={running} refresh={refresh} onSelect={onSessionSelected} onPick={onSessionPicked} onDelete={onDeleteSession} />
       {trees.some(tree => tree.apps.length || tree.consumers?.length) && <div data-workspace-section className="space-y-3"><WorkspaceSectionHeading informationLabel="About using apps on this Core" information={<WorkspaceConsumers trees={trees} />}>Used by</WorkspaceSectionHeading>
       <WorkspaceActivation key={workspace.id} workspaceId={workspace.id} workspaceName={workspace.name || workspace.owner.label || title} appMetadata={workspaceAppMetadata} apps={[...new Map(trees.flatMap(tree => tree.apps).map(app => [app.appId, app])).values()]}
         disabled={busy || recovering} canUse={workflowIsActive(state)} refresh={refresh} /></div>}
       {running && <p className="text-xs text-muted-foreground">An agent is running. Pause workspace fences all participants and waits for confirmed execution stops.</p>}
       {(state.closure || state.state === "deferred") && !["deleting", "deleted"].includes(state.state) && <p role="status" className="text-xs text-muted-foreground">{state.closure === "closing" ? "Pausing: new development work is blocked while execution stop is verified." : "Paused: source, previews and conversation are retained. Resume to continue development."}</p>}
       {(!externalClose || loadError) && (error || loadError || operation?.error) && <p role="alert" className="text-sm text-destructive-foreground">{error || loadError || operation?.error}</p>}
-      {discardOperation && <div className="space-y-2 text-xs"><p>Workspace removal is pending. Recover the original confirmed request.</p><Button variant="outline" size="sm" disabled={busy || recovering} onClick={() => setConfirmDelete(true)}>Recover removal</Button></div>}
+      {discardOperation && !deletingWorkspace && <div className="space-y-2 text-xs"><p>Workspace removal is pending. Recover the original confirmed request.</p><Button variant="outline" size="sm" disabled={busy || recovering} onClick={() => setConfirmDelete(true)}>Recover removal</Button></div>}
       {busy && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground"><HostyLoader label={null} className="size-4" />{actionProgress[pending?.kind ?? ""] ?? "Updating workspace…"}</p>}
       {leaseRefusal && !busy && !recovering && !pending && canManage && workflowIsActive(state) && trees.some(tree => tree.leases.length) && <div className="space-y-2 text-xs">
         <p>Pause this workspace, then confirm that all agent executions and their commands have stopped. Source files are retained.</p>
@@ -267,7 +274,9 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
       onBack={() => { setDiffTree(null); requestAnimationFrame(() => diffTrigger.current?.focus()); }} /></div>}
     {confirmDelete && <WorkspaceDelete key={workspace.id} workspaceId={workspace.id} name={workspace.name ?? title}
       pendingRequestId={discardOperation?.id ?? (pending?.kind === "delete" ? pending.requestId : undefined)}
-      onClose={() => setConfirmDelete(false)} refresh={refresh} deleteConversation={deleteConversation} />}
+      sessionIds={onDeleteSession ? workspaceSessionIds(workspace) : undefined}
+      onSubmit={command => workspaceRemovals.run(workspace.id, workspace.name || title, command)}
+      onClose={() => setConfirmDelete(false)} refresh={refresh} />}
 
   </aside>;
 }

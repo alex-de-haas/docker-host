@@ -4,14 +4,17 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AssistantConversation } from "./assistant-conversation";
 import type { ReviewChoice } from "./workspace-review";
-import type { DevelopmentWorkspace, Worktree } from "@/lib/development-api";
+import { developmentRequest, DevelopmentRequestError, type DevelopmentWorkspace, type Worktree } from "@/lib/development-api";
+import type { WorkspaceDeletion } from "@/lib/workspace-deletion";
 import * as api from "@/lib/assistant-api";
 import { WORK_SELECTION_STORAGE_KEY } from "@/lib/work-selection";
 const controls = vi.hoisted(() => ({ workspaces: [] as DevelopmentWorkspace[], loading: false, error: "", inventoryEnabled: [] as boolean[], events: [] as api.AssistantEvent[], capturedReviewAsk: undefined as ((reference: string) => void) | undefined, ui: { reportSurfaceState: vi.fn(), getNavigation: () => ({ entries: [] }), navigate: vi.fn() } }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => controls.ui }));
 vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), listAppNames: vi.fn(), listAgentConnections: vi.fn(), streamEvents: vi.fn(), postMessage: vi.fn() }));
-vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), useDevelopmentInventory: (enabled: boolean) => { controls.inventoryEnabled.push(enabled); return { workspaces: controls.workspaces, loading: controls.loading, error: controls.error, refresh: vi.fn() }; } }));
-vi.mock("./workspace-details", () => ({ WorkspaceDetails: ({ workspace, onReview, onSessionPicked }: { workspace: DevelopmentWorkspace; onSessionPicked: (id: string) => void; onReview: (tree: Worktree, choice?: ReviewChoice) => void }) => <div>
+vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), developmentRequest: vi.fn(), useDevelopmentInventory: (enabled: boolean) => { controls.inventoryEnabled.push(enabled); return { workspaces: controls.workspaces, loading: controls.loading, error: controls.error, refresh: vi.fn() }; } }));
+const deleteRequestId = "d90249e4-0f99-4813-be28-11c2c9d4861f";
+vi.mock("./workspace-details", () => ({ WorkspaceDetails: ({ workspace, onReview, onSessionPicked, workspaceDeletion }: { workspace: DevelopmentWorkspace; onSessionPicked: (id: string) => void; onReview: (tree: Worktree, choice?: ReviewChoice) => void; workspaceDeletion: WorkspaceDeletion }) => <div>
+  <button onClick={() => workspaceDeletion.run(workspace.id, workspace.name ?? workspace.id, { requestId: deleteRequestId })}>Confirm workspace deletion</button>
   {workspace.participation?.sessions.filter(s => s.attached && s.canOpen).map(s => <button key={s.sessionId} data-workspace-session onClick={() => onSessionPicked(s.sessionId)}>{s.title}</button>)}
   <button onClick={() => onReview(workspace.worktrees[0], { view: `pr:${workspace.worktrees[0].pullRequests[0].url}`, path: "" })}>Review PR in {workspace.id}</button>
   <button onClick={() => onReview(workspace.worktrees[0])}>Resume review in {workspace.id}</button>
@@ -344,4 +347,32 @@ it("keeps workspace details reachable without session tabs on narrow layouts", a
   expect(container.querySelector('[role="dialog"][aria-label="Workspace"]')).toBeNull();
   expect(container.querySelector('textarea[aria-label="Workspace draft external-workspace"]')).toBe(field);
   expect(field.value).toBe("Keep workspace edits");
+});
+
+it("keeps one actionable workspace deletion failure on the visible narrow surface", async () => {
+  vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("max-width: 899px"), addEventListener() {}, removeEventListener() {} }));
+  window.history.replaceState({}, "", "/development?workspace=external-workspace");
+  const refusal = new DevelopmentRequestError("Workspace cleanup is blocked", "workspace_in_use", 409);
+  vi.mocked(developmentRequest).mockRejectedValueOnce(refusal).mockRejectedValueOnce(refusal)
+    .mockResolvedValueOnce({ workspaceId: "external-workspace", requestId: deleteRequestId, state: "removed", trees: [], resources: [] });
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  await act(async () => container.querySelector<HTMLButtonElement>('main [aria-label="Workspace details"]')!.click());
+  const sheet = container.querySelector('[role="dialog"][aria-label="Workspace"]')!;
+  const alerts = () => [...container.querySelectorAll('[role="alert"]')].filter(alert => alert.textContent?.includes(refusal.message));
+  await act(async () => button("Confirm workspace deletion").click());
+  expect(alerts()).toHaveLength(1);
+  expect(sheet.contains(alerts()[0])).toBe(true);
+  expect(sheet.contains(button("Retry deletion"))).toBe(true);
+  await act(async () => button("Retry deletion").click());
+
+  controls.workspaces = controls.workspaces.filter(workspace => workspace.id !== "external-workspace");
+  await act(async () => root.render(<AssistantConversation fullPage />));
+  expect(container.querySelector('[role="dialog"][aria-label="Workspace"]')).toBeNull();
+  expect(alerts()).toHaveLength(1);
+  expect(alerts()[0].closest(".harness-conversation")?.contains(button("Retry deletion"))).toBe(true);
+  expect(container.querySelector('nav[aria-label="Sessions"]')?.contains(alerts()[0])).toBe(false);
+  await act(async () => button("Retry deletion").click());
+
+  expect(vi.mocked(developmentRequest).mock.calls).toEqual(Array.from({ length: 3 }, () => ["/external-workspace/delete", { requestId: deleteRequestId }]));
+  expect(alerts()).toHaveLength(0);
 });

@@ -50,7 +50,7 @@ import { rememberWorkspaceSession, rememberedWorkspaceSession, workspaceSessionI
 import { readWorkSelection, rememberWorkSelection } from "@/lib/work-selection";
 import { ColumnResizeHandle } from "@/components/column-resize-handle";
 import { COLUMN_DEFAULTS, COLUMN_MIN, useConversationColumns } from "@/lib/use-conversation-columns";
-import { DevelopmentNavigation } from "@/components/development-navigation";
+import { DevelopmentNavigation, WorkspaceDeletionFailures } from "@/components/development-navigation";
 import { CreateApp } from "@/components/create-app";
 import { RetainedWorkspacePane, useNarrowWorkspace } from "@/components/retained-workspace-pane";
 import { WorkspaceReview, type ReviewChoice } from "@/components/workspace-review";
@@ -63,6 +63,7 @@ import { approvalDecisions, cancelledQuestions, questionAnswers, transcriptDecis
 import type { QuestionAnswers } from "../../../src/agent-providers/decision-identity";
 import { retryHandoff } from "@/lib/assistant-api";
 import { deleteAndReconcileSession } from "@/lib/session-deletion";
+import { useWorkspaceDeletion } from "@/lib/workspace-deletion";
 import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, draftStorageText, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
 import { forgetPendingSend, readPendingSend, PENDING_SEND_PREFIX, PENDING_SEND_CHANGED, withPendingSendLock, retryPendingSend, type PendingSend } from "@/lib/pending-send";
@@ -286,7 +287,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   // Reach the current deletion handler from the stream without stale state.
   const deletedSessionRef = useRef<(sessionId: string, local: boolean) => void>(() => {});
   // A terminal stream event can confirm a local deletion before its HTTP response arrives.
-  const pendingDeletes = useRef(new Map<string, AbortController>());
+  const pendingDeletes = useRef(new Map<string, { confirmation: AbortController; result: Promise<void> }>());
+  const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(() => new Set());
 
   const mentionInputRef = useRef<AppMentionInputHandle>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -674,7 +676,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         }
         if (event.type === "session_deleted") {
           const pending = pendingDeletes.current.get(record.id);
-          pending?.abort();
+          pending?.confirmation.abort();
           // Always detach immediately, even when this tab initiated the request. The HTTP response
           // may never arrive; a confirmed terminal event is already sufficient evidence of success.
           deletedSessionRef.current(record.id, !!pending);
@@ -710,7 +712,67 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     ui.reportSurfaceState({ route: `${route.pathname}${route.search}${route.hash}`, state: "ready" });
   }, [fullPage, ui]);
   const selectedRoute = useRef<string | null>(null);
+
+  // Deletion clears the active conversation without creating or selecting another one.
+  const detachDeleted = useCallback((sessionId: string) => {
+    if (activeSessionId.current !== sessionId) return;
+    streamAbortRef.current?.abort();
+    activeSessionId.current = null;
+    setSession(null);
+    setStatus("idle");
+    setEvents([]);
+    setStreams(emptyTranscriptStreams());
+    setInput("");
+    setPending([]);
+    setUploaded([]);
+    setContextUnavailable(false);
+    setWithoutAppDetails(false);
+    requestedSessionRef.current = null;
+    selectedRoute.current = null;
+    setRequestedSessionId(null);
+    setSurfaceSessionId(null);
+    setMobileDetails(false);
+    setHistoryOpen(!fullPage);
+    const retainedWorkspaceId = workspace?.id;
+    setSelectedWorkspaceId(retainedWorkspaceId ?? null);
+    void inventory.refresh();
+    void navigateSelection(null, retainedWorkspaceId).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+    try {
+      if (!fullPage) window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch {
+      // An obsolete stored id is harmless: reattachment resolves it through the API.
+    }
+  }, [setHistoryOpen, fullPage, navigateSelection, workspace, inventory]);
+
+  const remove = useCallback((sessionId: string, reportError = true) => {
+    const existing = pendingDeletes.current.get(sessionId);
+    if (existing) return existing.result;
+    if (reportError) setError(null);
+    const confirmation = new AbortController();
+    setDeletingIds(current => new Set(current).add(sessionId));
+    const result = deleteAndReconcileSession(sessionId, confirmation.signal).then(() => {
+      clearDraft(sessionId);
+      setSessions(current => current.filter(entry => entry.id !== sessionId));
+      detachDeleted(sessionId);
+    }).catch(cause => {
+      if (reportError) setError(cause instanceof Error ? cause.message : String(cause));
+      throw cause;
+    }).finally(() => {
+      pendingDeletes.current.delete(sessionId);
+      setDeletingIds(current => {
+        const next = new Set(current);
+        next.delete(sessionId);
+        return next;
+      });
+    });
+    pendingDeletes.current.set(sessionId, { confirmation, result });
+    return result;
+  }, [detachDeleted]);
+  const workspaceDeletion = useWorkspaceDeletion(id => remove(id, false), inventory.refresh);
+  const deletingSessionIds = new Set([...deletingIds, ...[...workspaceDeletion.pending.values()].flatMap(command => command.sessionIds ?? [])]);
+
   const pickSession = (record: Pick<AssistantSession, "id">) => {
+    if (deletingSessionIds.has(record.id)) return;
     selectionIntent.current++;
     setSelectedWorkspaceId(null); setWorkspaceToResolve(null);
     selectedRoute.current = fullPage ? record.id : null;
@@ -729,7 +791,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setPendingSend(null); setError(null);
   }, []);
   const pickWorkspace = (target: DevelopmentWorkspace, matched?: AssistantSession) => {
-    const record = matched ?? rememberedWorkspaceSession(target, sessions);
+    if (workspaceDeletion.pending.has(target.id) || target.workflow.state === "deleting") return;
+    const record = matched && !deletingSessionIds.has(matched.id) ? matched
+      : rememberedWorkspaceSession(target, sessions.filter(entry => !deletingSessionIds.has(entry.id)));
     setMobileSessions(false); setMobileDetails(false); setReview(null); setWorkspaceVisible(true);
     if (record) pickSession(record);
     else {
@@ -1137,54 +1201,6 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     }
   }, [session, running]);
 
-  // Deletion clears the active conversation without creating or selecting another one.
-  const detachDeleted = useCallback((sessionId: string) => {
-    if (activeSessionId.current !== sessionId) return;
-    streamAbortRef.current?.abort();
-    activeSessionId.current = null;
-    setSession(null);
-    setStatus("idle");
-    setEvents([]);
-    setStreams(emptyTranscriptStreams());
-    setInput("");
-    setPending([]);
-    setUploaded([]);
-    setContextUnavailable(false);
-    setWithoutAppDetails(false);
-    requestedSessionRef.current = null;
-    selectedRoute.current = null;
-    setRequestedSessionId(null);
-    setSurfaceSessionId(null);
-    setMobileDetails(false);
-    setHistoryOpen(!fullPage);
-    const retainedWorkspaceId = workspace?.id;
-    setSelectedWorkspaceId(retainedWorkspaceId ?? null);
-    void inventory.refresh();
-    void navigateSelection(null, retainedWorkspaceId).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
-    try {
-      if (!fullPage) window.localStorage.removeItem(SESSION_STORAGE_KEY);
-    } catch {
-      // An obsolete stored id is harmless: reattachment resolves it through the API.
-    }
-  }, [setHistoryOpen, fullPage, navigateSelection, workspace, inventory]);
-
-  const remove = useCallback(async (sessionId: string) => {
-    setError(null);
-    const confirmation = new AbortController();
-    pendingDeletes.current.set(sessionId, confirmation);
-    try {
-      await deleteAndReconcileSession(sessionId, confirmation.signal);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-      throw cause;
-    } finally {
-      pendingDeletes.current.delete(sessionId);
-    }
-    clearDraft(sessionId);
-    setSessions(current => current.filter(entry => entry.id !== sessionId));
-    detachDeleted(sessionId);
-  }, [detachDeleted]);
-
   useEffect(() => {
     deletedSessionRef.current = (sessionId: string, local: boolean) => {
       setSessions(current => current.filter(entry => entry.id !== sessionId));
@@ -1276,12 +1292,16 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const sessionTitle = listedSession && activityTime(listedSession) >= activityTime(session!)
     && (listedSession.lastEventSeq ?? 0) >= (session?.lastEventSeq ?? 0) ? listedSession.title : session?.title;
 
+  const failuresInDetails = !!workspace && workspaceModal && !review;
+  const deletionFailures = fullPage && <WorkspaceDeletionFailures deletion={workspaceDeletion} className="shrink-0 border-b px-4 py-2" />;
+
   return (
     <div className={`harness-conversation flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
       {fullPage && ready && <StorageRecoveryNotice />}
       {fullPage && inventory.error && <p role="alert" className="border-b px-4 py-2 text-sm text-destructive-foreground">{inventory.error}</p>}
+      {!failuresInDetails && deletionFailures}
       <div ref={columnsRef} className="flex min-h-0 min-w-0 flex-1">
-      {fullPage && <div inert={workspaceModal} style={{ "--navigation-width": `${columns.widths.navigation}px` } as CSSProperties} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} relative w-full shrink-0 border-r md:w-[var(--navigation-width)]`}><DevelopmentNavigation sessions={listedSessions} activeId={session?.id} activeWorkspaceId={workspace?.id} workspaces={inventory.workspaces}
+      {fullPage && <div inert={workspaceModal} style={{ "--navigation-width": `${columns.widths.navigation}px` } as CSSProperties} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} relative w-full shrink-0 border-r md:w-[var(--navigation-width)]`}><DevelopmentNavigation deletingSessionIds={deletingSessionIds} workspaceDeletion={workspaceDeletion} sessions={listedSessions} activeId={session?.id} activeWorkspaceId={workspace?.id} workspaces={inventory.workspaces}
         createAppAction={createAppAction} onRefresh={inventory.refresh} onClose={() => setMobileSessions(false)} onWorkspace={pickWorkspace} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} />
         <ColumnResizeHandle label={`Resize ${navigationTitle.toLowerCase()} list`} side="right" className="hidden md:block"
           width={columns.widths.navigation} min={COLUMN_MIN.navigation} max={columns.maximum.navigation} defaultWidth={COLUMN_DEFAULTS.navigation}
@@ -1385,6 +1405,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       {showSessions ? (
         <SessionList
           sessions={orderSessions(listedSessions)}
+          deletingSessionIds={deletingSessionIds}
           activeId={session?.id ?? null}
           onPick={pickSession}
           onRename={rename}
@@ -1675,7 +1696,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       </div>}
       </main>
       {fullPage && workspace && <RetainedWorkspacePane narrow={narrowWorkspace} width={columns.widths.details} resizeHandle={<ColumnResizeHandle label="Resize workspace details" side="left" width={columns.widths.details} min={COLUMN_MIN.details} max={columns.maximum.details} defaultWidth={COLUMN_DEFAULTS.details} onResize={width => columns.resize("details", width)} />} open={mobileDetails} visible={workspaceVisible} reviewing={!!review} onClose={() => setMobileDetails(false)}>
-        <WorkspaceDetails chats={listedSessions} onSessionPicked={id => pickSession({ id })} onDeleteSession={remove} sessionActions={workspaceActions} key={workspace.id} workspace={workspace} onSessionSelected={record => { setSessions(current => [record, ...current.filter(s => s.id !== record.id)]); pickSession(record); }} appMetadata={appIconMetadata} title={workspace.name || sessionTitle || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} deleteConversation={session ? () => remove(session.id) : undefined} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
+        {failuresInDetails && deletionFailures}
+        <WorkspaceDetails deletingSessionIds={deletingSessionIds} workspaceDeletion={workspaceDeletion} chats={listedSessions} onSessionPicked={id => pickSession({ id })} onDeleteSession={remove} sessionActions={workspaceActions} key={workspace.id} workspace={workspace} onSessionSelected={record => { setSessions(current => [record, ...current.filter(s => s.id !== record.id)]); pickSession(record); }} appMetadata={appIconMetadata} title={workspace.name || sessionTitle || "Workspace"} sessionId={session?.id} running={running} refresh={inventory.refresh} onReview={(tree, choice) => openReview(workspace.id, tree, session?.id, choice)} />
       </RetainedWorkspacePane>}
       {review && <WorkspaceReview key={`${review.workspaceId}:${review.tree.id}`} workspaceId={review.workspaceId} tree={review.tree}
         choice={review.transcriptChoice ?? reviewChoices[review.tree.id] ?? { view: "session", path: "" }} onChoice={choice => {

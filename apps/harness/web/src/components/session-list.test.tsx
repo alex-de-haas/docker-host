@@ -49,3 +49,35 @@ it("keeps the embedded history waiting label and session action with a decorativ
     expect(onPick).toHaveBeenCalledExactlyOnceWith(waiting);
   } finally { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); }
 });
+
+it("closes inline confirmation and hides actions for sessions being deleted", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+  const first = { id: "first", title: "First chat", status: "idle", createdAt: "2026-10-23T12:00:00Z" } as AssistantSession;
+  const second = { ...first, id: "second", title: "Second chat" };
+  const third = { ...first, id: "third", title: "Third chat" };
+  let rejectDelete!: (reason: Error) => void;
+  const onDelete = vi.fn(() => new Promise<void>((_, reject) => { rejectDelete = reject; }));
+  const onPick = vi.fn();
+  const button = (label: string) => container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
+  try {
+    await act(async () => root.render(<SessionList sessions={[first, second, third]} activeId={null} onPick={onPick}
+      onRename={vi.fn()} onDelete={onDelete} deletingSessionIds={new Set(["second"])} />));
+    await act(async () => button("Delete First chat")!.click());
+    await act(async () => button("Confirm delete")!.click());
+    expect(onDelete).toHaveBeenCalledExactlyOnceWith(first.id);
+    expect(button("Confirm delete")).toBeNull();
+    expect([...container.querySelectorAll('[role="status"]')].map(status => status.textContent)).toEqual(["Deleting…", "Deleting…"]);
+    expect(button("Delete First chat")).toBeNull();
+    expect(button("Delete Second chat")).toBeNull();
+    expect(button("Rename First chat")).toBeNull();
+    expect([...container.querySelectorAll("button")].some(control => control.textContent?.includes("First chat"))).toBe(false);
+    await act(async () => [...container.querySelectorAll("button")].find(control => control.textContent?.includes(third.title))!.click());
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(third);
+
+    await act(async () => rejectDelete(new Error("Session remains")));
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
+    expect(button("Delete First chat")).not.toBeNull();
+    expect(button("Confirm delete")).toBeNull();
+  } finally { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); }
+});

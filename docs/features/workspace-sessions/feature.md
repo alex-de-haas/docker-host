@@ -1,6 +1,6 @@
 ---
 created: 2026-10-25
-updated: 2026-11-21
+updated: 2026-11-23
 summary: Core workspaces support concurrent private sessions, permission-based source access, attributable activity and independent conversation lifetimes.
 components: [apps/core, apps/harness]
 ---
@@ -138,9 +138,9 @@ when none are attached. Own chat rows select the conversation and highlight the 
 Used by, without an enclosing card. Its information tooltip explains shared files,
 private conversations and concurrent editing. It does not show the viewer's technical role or offer
 user invitations: session association does not manage access. Each accessible own session has a
-three-dot menu with Detach session and Delete session. Detach requires an inactive chat. Delete opens
-one confirmation, removes the chosen conversation after detaching it, and shows any refusal in that
-same dialog.
+three-dot menu with Detach session and Delete session. Detach requires an inactive chat. Confirming
+Delete closes the dialog, disables selection and replaces the row's actions with a deletion indicator.
+A refusal appears in the Sessions section and restores the actions.
 Other participants expose metadata only. Source lifecycle/review actions remain on the right.
 Source views say Workspace changes because a diff is not attributable to one chat.
 
@@ -163,8 +163,13 @@ including deletion of the original creator's chat. The [provider retirement cont
 covers retained evidence and retry behavior.
 Session-owned unfinished resources still need explicit Finish when deleting only a chat. Workspace Delete
 coordinates removal of its attached resources under workspace management authority, including resources
-created by another user. It accepts dirty source and retained leases without requiring Pause or Complete. Retained histories
-cannot restore a removed source association.
+created by another user. It accepts dirty source and retained leases without requiring Pause or Complete.
+An unchecked option includes all attached sessions owned by the viewer in this Harness installation,
+including ones they have not opened. With this option selected, Harness reads the current authorized
+attachment list from Core and saves the selected session IDs before starting workspace deletion.
+After Core confirms workspace removal, Harness deletes those sessions through its normal owner-checked API.
+A failed session deletion leaves that history available for retry. Other participants' histories
+are retained.
 
 Automatic retention protects attached development chats, including completed workspaces. Detached
 chats become eligible for ordinary-chat retention only after Core confirms resource reconciliation.
@@ -179,7 +184,9 @@ fresh consumer checks.
   legacy repair using the authenticated owner route, repeated requests, different users, detached
   bindings and independent verification of the provider generation and preparation receipt.
 - Verify highlighted sidebar selection, retained drafts, no top session tabs, and narrow-screen access.
-  Confirm Delete targets the chosen own chat, preserves source, and retains errors in its dialog.
+  Confirm Delete targets the chosen own chat, preserves source, and restores row actions on failure.
+  Exercise workspace deletion from both entry points with the option enabled and disabled, including
+  multiple own chats, another participant's private chat and partial failure.
   Verify that retained terminal runs with unresolved outcomes use the same confirmation and that an
   unverified execution continues to hold its resource claims.
 - The `agent-providers` integration suite reinstalls the provider after a successful turn, confirms
