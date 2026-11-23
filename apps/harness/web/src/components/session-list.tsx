@@ -17,12 +17,14 @@ export function SessionList({
   onPick,
   onRename,
   onDelete,
+  deletingSessionIds,
 }: {
   sessions: AssistantSession[];
   activeId: string | null;
   onPick: (session: AssistantSession) => void;
   onRename: (sessionId: string, title: string) => Promise<void>;
   onDelete: (sessionId: string) => Promise<void>;
+  deletingSessionIds?: ReadonlySet<string>;
 }) {
   // Which row is being renamed, not what it says: the input owns its own text, so a reordering of
   // the list mid-edit cannot move someone's half-typed name onto another session.
@@ -49,7 +51,14 @@ export function SessionList({
             record.id === activeId && "bg-muted",
           )}
         >
-          {confirmingId === record.id ? (
+          {deletingId === record.id || deletingSessionIds?.has(record.id) ? (
+            <div className="min-w-0 flex-1 px-2 py-1.5">
+              <div className="truncate text-sm font-normal">{record.title || "Untitled session"}</div>
+              <span role="status" className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Loader2 className="size-3 motion-safe:animate-spin" aria-hidden />Deleting…
+              </span>
+            </div>
+          ) : confirmingId === record.id ? (
             <div className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1.5">
               <span className="min-w-0 flex-1 truncate text-sm">
                 Delete “{record.title || "Untitled session"}”?
@@ -61,12 +70,12 @@ export function SessionList({
                 onClick={async () => {
                   if (deleting.current) return;
                   deleting.current = true;
+                  setConfirmingId(null);
                   setDeletingId(record.id);
                   try {
                     await onDelete(record.id);
-                    setConfirmingId(null);
                   } catch {
-                    // The page shows the error; keep this confirmation available for retry.
+                    // The page shows the error and the row can be retried.
                   } finally {
                     deleting.current = false;
                     setDeletingId(null);
@@ -74,7 +83,7 @@ export function SessionList({
                 }}
                 className="shrink-0 rounded-md p-1.5 text-destructive-foreground hover:bg-destructive/10 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-brand focus-visible:ring-0"
               >
-                {deletingId === record.id ? <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-label="Deleting session" /> : <Check className="h-3.5 w-3.5" aria-hidden />}
+                <Check className="h-3.5 w-3.5" aria-hidden />
               </button>
               <button
                 type="button"

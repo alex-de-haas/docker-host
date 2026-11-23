@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-20
+updated: 2026-11-23
 summary: Harness combines conversations and workspace groups in Sessions, with shared navigation, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -204,20 +204,23 @@ including verified execution stop, independent workspace detachment and resource
 away from the current conversation. Deleting the selected session clears its draft and route selection;
 deleting another session preserves the selected conversation. A terminal deletion event detaches
 the session immediately, including when a locally initiated DELETE loses its HTTP response.
-Harness emits this event after it deletes the stored conversation. A refusal to delete, including
-an unconfirmed provider stop, appears in the dialog. Harness waits up to 45 seconds for the
-DELETE response. If the response is lost or times out, it allows up to eight seconds to check
-the selected session through its authenticated API.
-A confirmed missing session clears its row and draft. When the session still exists or its status
-is unavailable, the dialog shows the error and allows the owner to close it or retry.
+Confirmation closes immediately. During deletion, the session row shows a progress indicator
+and disallows selection and further actions. Harness emits the terminal event after deleting
+the stored conversation. It waits up to 45 seconds for the DELETE response and, after a lost
+response, up to eight seconds to check the session through its authenticated API. A confirmed
+missing session clears its row and draft. A refusal or unconfirmed outcome restores row actions
+and displays the error so the user can retry.
 
 Manageable workspace rows offer a trailing trash shortcut with the same hover, keyboard-focus and
 touch reachability as conversation deletion. It opens the existing workspace deletion dialog for
 that row without selecting it or switching conversations. The dialog retains source/unmerged-commit
-details, temporary resources, activity warnings, confirmation, progress and same-request recovery.
-The shortcut does not bind deletion to an unrelated current conversation. The dialog remains mounted
-after its row disappears so the result stays visible. Cancel restores focus to the shortcut;
-removal falls back to a surviving list control. Completed/merged state is not a prerequisite.
+details, temporary resources and activity warnings. Confirmation closes the dialog and shows
+deletion progress in the workspace row, which cannot be selected or deleted again while the request
+runs. Cancel restores focus to the shortcut. Confirmation moves focus to a surviving list control.
+A failed or unconfirmed workspace deletion keeps the same request ID available for retry. The error
+and any retry control appear in the visible page or workspace details sheet. Both the shortcut and
+the workspace details action offer an unchecked option to also delete all of the
+viewer's attached Harness sessions after Core confirms source removal.
 Removing a session removes its single navigation row; search and activity-chip selection remain
 unchanged. Delete controls and confirmations use the displayed label while deleting only the
 selected session by ID. History belongs only to the compact assistant.

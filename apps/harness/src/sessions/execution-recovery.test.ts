@@ -361,6 +361,22 @@ it("deletes through confirmed Stop when the original provider lacks retirement s
   expect(f.controls.map(control => control.input.command ?? "cancel")).toEqual(["cancel"]);
 });
 
+it("removes a session when provider reads fail after its Stop was confirmed", async () => {
+  const core = new DevelopmentClient("http://core.invalid", "unrelated.consumer", "fixture-service");
+  vi.spyOn(core, "call").mockResolvedValue({});
+  const f = await fixture(core);
+  const retention = vi.spyOn(core, "retention").mockImplementation(async () => {
+    expect(f.snapshot(f.runId)).toMatchObject({ state: "cancelled", stopConfirmed: true });
+    f.behavior.snapshotIssue = "timeout";
+    return { kind: "chat", workflow: null, resourcesFinished: true };
+  });
+
+  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential)).resolves.toBe(true);
+  expect(retention).toHaveBeenCalledOnce();
+  expect(f.controls.filter(control => control.path.endsWith("/cancel"))).toHaveLength(1);
+  expect(await f.store.readRecord(f.session.id)).toBeNull();
+});
+
 it.each([true, false])("keeps a run with unverified exit when Stop fails (interactive owner %s)", async interactive => {
   const f = await fixture(); await f.interrupt(); f.behavior.cancel = "unavailable";
   await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, interactive)).rejects.toMatchObject({ code: "exit_unconfirmed" });

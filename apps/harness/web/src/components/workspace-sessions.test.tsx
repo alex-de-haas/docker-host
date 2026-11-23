@@ -273,21 +273,49 @@ it.each(["running", "waiting", "unknown", "current-running"])("blocks detachment
   expect(document.querySelector('[role="menuitem"]')?.getAttribute("aria-disabled")).toBe("true");
 });
 
-it("confirms deletion of the chosen own session and preserves the dialog on refusal", async () => {
-  const remove = vi.fn().mockRejectedValueOnce(new Error("Reconcile session resources")).mockResolvedValueOnce(undefined);
+it("closes session confirmation immediately and restores row actions on refusal", async () => {
+  let rejectDelete!: (reason: Error) => void;
+  const remove = vi.fn().mockImplementationOnce(() => new Promise<void>((_, reject) => { rejectDelete = reject; })).mockResolvedValueOnce(undefined);
   const refresh = vi.fn();
-  await act(async () => root.render(<WorkspaceSessions workspace={workspace()} sessionId="another" refresh={refresh} onDelete={remove} />));
+  const pick = vi.fn();
+  await act(async () => root.render(<WorkspaceSessions workspace={workspace()} sessionId="another" refresh={refresh} onDelete={remove} onPick={pick} />));
   await openSessionMenu("My chat");
-  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent === "Delete session…")!;
-  await act(async () => item.click());
+  const chooseDelete = () => act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent === "Delete session…")!.click());
+  await chooseDelete();
   expect(remove).not.toHaveBeenCalled();
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain("workspace files and other conversations are retained");
   await act(async () => button("Delete session").click());
   expect(remove).toHaveBeenCalledWith("second");
-  expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe("Reconcile session resources");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Deleting…");
+  expect(button("Session actions for My chat")).toBeUndefined();
+  expect(button("Open session My chat")).toBeUndefined();
+  expect(pick).not.toHaveBeenCalled();
+
+  await act(async () => rejectDelete(new Error("Reconcile session resources")));
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe("Could not delete “My chat”. Reconcile session resources");
+  expect(button("Open session My chat").disabled).toBe(false);
+  await openSessionMenu("My chat");
+  await chooseDelete();
   await act(async () => button("Delete session").click());
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   expect(refresh).toHaveBeenCalledTimes(2);
+});
+
+it("reflects deletion started elsewhere and freezes controls while the workspace is deleting", async () => {
+  const space = workspace();
+  const view = { workspace: space, refresh: vi.fn(), onPick: vi.fn(), onDelete: vi.fn() };
+  await act(async () => root.render(<WorkspaceSessions {...view} deletingSessionIds={new Set(["second"])} />));
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Deleting…");
+  expect(button("Open session My chat")).toBeUndefined();
+  expect(button("Session actions for My chat")).toBeUndefined();
+
+  await act(async () => root.render(<WorkspaceSessions {...view} workspaceDeleting />));
+  expect(container.querySelector('[role="status"]')).toBeNull();
+  expect(button("New session in workspace").disabled).toBe(true);
+  expect(button("Attach session").disabled).toBe(true);
+  expect(button("Open session My chat").disabled).toBe(true);
+  expect(button("Session actions for My chat")).toBeUndefined();
 });
 it("offers one Delete confirmation for an own chat with unconfirmed activity", async () => {
   const space = workspace();

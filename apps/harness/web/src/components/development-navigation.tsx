@@ -1,19 +1,20 @@
 "use client";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Hammer, Loader2, MessageSquarePlus, Trash2, Search, ListFilter, Diamond, CircleAlert, MessageSquare, PanelLeftClose } from "lucide-react";
+import { Hammer, Loader2, MessageSquarePlus, Trash2, Search, ListFilter, Diamond, CircleAlert, MessageSquare, PanelLeftClose, RotateCcw } from "lucide-react";
 import type { AssistantSession } from "@/lib/assistant-api";
 import type { DevelopmentWorkspace } from "@/lib/development-api";
 import { observedSessionStatus } from "@/lib/attention";
-import { navigationItems } from "@/lib/workspace-navigation";
+import { navigationItems, workspaceSessionIds } from "@/lib/workspace-navigation";
 import { WorkspaceRowStatus } from "./workspace-row-status";
 import { WorkspaceActivityCounts } from "./workspace-activity-counts";
 import { SessionActivityIndicator, SessionRowStatus } from "./session-row-status";
 import { WorkspaceDelete } from "./workspace-delete";
+import { useWorkspaceDeletion, type WorkspaceDeletion } from "@/lib/workspace-deletion";
 import { Input } from "@/components/ui/input";
 import { HostyMark } from "../../../../../shared/web/hosty-mark";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Dialog, DialogContent, DialogBody, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 const statusFilters = [
@@ -23,17 +24,32 @@ const statusFilters = [
   { key: "failed", label: "Failed", Icon: CircleAlert, tone: "text-destructive-foreground" },
 ] as const;
 
-export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction, onClose, onRefresh }: {
+export function WorkspaceDeletionFailures({ deletion, className }: { deletion: WorkspaceDeletion; className?: string }) {
+  return [...deletion.failures].map(([id, failure]) => <div key={id} className={cn("space-y-1", className)}>
+    <p role="alert" className="text-sm text-destructive-foreground">{failure.label}: {failure.error}</p>
+    <Button size="sm" variant="outline" onClick={() => deletion.run(id, failure.label, failure.retry)}>Retry deletion</Button>
+  </div>);
+}
+
+export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction, onClose, onRefresh, workspaceDeletion, deletingSessionIds }: {
   onClose?: () => void; onRefresh?: () => void;
+  workspaceDeletion?: WorkspaceDeletion; deletingSessionIds?: ReadonlySet<string>;
   activeWorkspaceId?: string; onWorkspace?: (workspace: DevelopmentWorkspace, session?: AssistantSession) => void; createAppAction?: ReactNode;
   sessions: AssistantSession[]; activeId?: string; workspaces: DevelopmentWorkspace[];
   onPick: (session: AssistantSession) => void; onNew: () => void; onDelete: (sessionId: string) => Promise<void>;
 }) {
   const [deleting, setDeleting] = useState<AssistantSession | null>(null);
-  const [deletingWorkspace, setDeletingWorkspace] = useState<{ workspace: DevelopmentWorkspace; pendingRequestId?: string } | null>(null);
-  const [pending, setPending] = useState(false);
+  const [workspaceToDelete, setWorkspaceToDelete] = useState<DevelopmentWorkspace | null>(null);
+  const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
-  const deletionPending = useRef(false);
+  const localDeletes = useRef(new Set<string>());
+  const localWorkspaceDeletion = useWorkspaceDeletion(onDelete, () => onRefresh?.());
+  const workspaceRemovals = workspaceDeletion ?? localWorkspaceDeletion;
+  const latestDeleteTarget = workspaces.find(workspace => workspace.id === workspaceToDelete?.id);
+  const deletingWorkspace = latestDeleteTarget ?? workspaceToDelete;
+  const workspaceDeleteName = deletingWorkspace?.name?.trim() || deletingWorkspace?.owner.label?.trim() || "Workspace";
+  const workspaceDeleteRequest = deletingWorkspace?.workflow.operations?.find(operation =>
+    ["pending", "unknown"].includes(operation.state) && ["delete", "discard"].includes(operation.kind));
   const deleteTrigger = useRef<HTMLButtonElement | null>(null);
   const workspaceDeleteTrigger = useRef<HTMLButtonElement | null>(null);
   const newButton = useRef<HTMLButtonElement | null>(null);
@@ -47,11 +63,31 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
   const visible = items.filter(item => matchesState(item, stateFilter) && (!query.trim() || item.search.includes(query.trim().toLowerCase())));
   const sessionLabel = (session: AssistantSession) => session.title?.trim() || "Untitled session";
 
+  const confirmSessionDeletion = async (session: AssistantSession) => {
+    if (localDeletes.current.has(session.id)) return;
+    localDeletes.current.add(session.id);
+    setDeleting(null);
+    setError(null);
+    setDeletingIds(current => new Set(current).add(session.id));
+    try { await onDelete(session.id); }
+    catch (cause) { setError(sessionLabel(session) + ": " + (cause instanceof Error ? cause.message : String(cause))); }
+    finally {
+      localDeletes.current.delete(session.id);
+      setDeletingIds(current => {
+        const next = new Set(current);
+        next.delete(session.id);
+        return next;
+      });
+    }
+  };
   const renderItem = (item: typeof items[number]) => {
     const { workspace, session, label } = item;
+    const removing = workspace ? workspaceRemovals.pending.has(workspace.id)
+      : !!session && (deletingSessionIds?.has(session.id) || deletingIds.has(session.id));
+    const removalPending = workspace?.workflow.state === "deleting";
     const selected = workspace ? activeWorkspaceId === workspace.id || !activeWorkspaceId && item.matches.some(s => s.id === activeId) : !activeWorkspaceId && activeId === session?.id;
     return <div key={item.key} className={`group mx-1 flex items-center rounded-md pr-1 hover:bg-muted ${selected ? "bg-accent" : ""}`}>
-      <Button variant="ghost" type="button" aria-current={selected ? "page" : undefined} onClick={() => {
+      <Button variant="ghost" type="button" aria-current={selected ? "page" : undefined} disabled={removing || removalPending} onClick={() => {
         if (workspace) {
           const match = query.trim() ? item.matches.find(s => s.title?.toLowerCase().includes(query.trim().toLowerCase())) : undefined;
           onWorkspace?.(workspace, match);
@@ -60,21 +96,22 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         {workspace ? <Hammer className="size-3.5 shrink-0 text-muted-foreground" role="img" aria-label="Workspace" /> : <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
         <span className="min-w-0 flex-1 text-left">
           <span className="flex min-w-0 items-center gap-2"><span className="block min-w-0 flex-1 truncate text-sm font-normal" title={label}>{label}</span>
-            {workspace ? <WorkspaceActivityCounts counts={item.counts} /> : session && <SessionActivityIndicator status={observedSessionStatus(session)} />}
+            {!removing && !removalPending && (workspace ? <WorkspaceActivityCounts counts={item.counts} /> : session && <SessionActivityIndicator status={observedSessionStatus(session)} />)}
           </span>
-          {workspace ? <WorkspaceRowStatus workspace={workspace} now={now} /> : session && <SessionRowStatus session={session} now={now} />}
+          {removing || removalPending ? <span role="status" className="flex items-center gap-1 text-xs text-muted-foreground">
+            {removing && <Loader2 className="size-3 motion-safe:animate-spin" aria-hidden />} {removing ? "Deleting…" : "Deletion pending"}
+          </span> : workspace ? <WorkspaceRowStatus workspace={workspace} now={now} /> : session && <SessionRowStatus session={session} now={now} />}
         </span>
       </Button>
-      {session && <Button variant="ghost" size="icon-sm" aria-label={`Delete ${label}`} title="Delete session"
+      {session && !removing && <Button variant="ghost" size="icon-sm" aria-label={`Delete ${label}`} title="Delete session"
         className="shrink-0 text-muted-foreground hover:text-destructive-foreground [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
         onClick={event => { deleteTrigger.current = event.currentTarget; setError(null); setDeleting(session); }}><Trash2 /></Button>}
-      {workspace && workspace.permissions?.manage !== false && <Button variant="ghost" size="icon-sm" aria-label={`Delete workspace ${label}`} title="Delete workspace"
+      {workspace && !removing && workspace.permissions?.manage !== false && <Button variant="ghost" size="icon-sm" aria-label={(removalPending ? "Recover workspace deletion " : "Delete workspace ") + label} title={removalPending ? "Recover workspace deletion" : "Delete workspace"}
         className="shrink-0 text-muted-foreground hover:text-destructive-foreground [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
         onClick={event => {
           workspaceDeleteTrigger.current = event.currentTarget;
-          const operation = workspace.workflow.operations?.find(o => ["pending", "unknown"].includes(o.state) && ["delete", "discard"].includes(o.kind));
-          setDeletingWorkspace({ workspace, pendingRequestId: operation?.id });
-        }}><Trash2 /></Button>}
+          setWorkspaceToDelete(workspace);
+        }}>{removalPending ? <RotateCcw aria-hidden /> : <Trash2 />}</Button>}
     </div>;
   };
   return <nav aria-label={title} className="flex h-full min-h-0 flex-col">
@@ -103,38 +140,33 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         </Button>;
       })}</div>
     </div>
+    {error && <p role="alert" className="px-3 py-2 text-sm text-destructive-foreground">{error}</p>}
+    {!workspaceDeletion && <WorkspaceDeletionFailures deletion={localWorkspaceDeletion} className="px-3 py-2" />}
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-2">
       {visible.map(renderItem)}
       {!!items.length && !visible.length && <p className="p-3 text-sm text-muted-foreground">No sessions match this search and filter.</p>}
       {!items.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">Start a new session or create an app.</p></div>}
     </div>
-    {deletingWorkspace && <WorkspaceDelete key={deletingWorkspace.workspace.id}
-      workspaceId={deletingWorkspace.workspace.id} name={deletingWorkspace.workspace.name?.trim() || deletingWorkspace.workspace.owner.label?.trim() || "Workspace"}
-      pendingRequestId={deletingWorkspace.pendingRequestId} refresh={() => onRefresh?.()} onClose={() => setDeletingWorkspace(null)}
+    {deletingWorkspace && <WorkspaceDelete key={deletingWorkspace.id + ":" + (workspaceDeleteRequest?.id ?? "")}
+      workspaceId={deletingWorkspace.id} name={workspaceDeleteName}
+      sessionIds={latestDeleteTarget ? workspaceSessionIds(latestDeleteTarget) : undefined}
+      pendingRequestId={workspaceDeleteRequest?.id} refresh={() => onRefresh?.()} onClose={() => setWorkspaceToDelete(null)}
+      onSubmit={command => workspaceRemovals.run(deletingWorkspace.id, workspaceDeleteName, command)}
       onCloseAutoFocus={event => {
         event.preventDefault();
         (workspaceDeleteTrigger.current?.isConnected ? workspaceDeleteTrigger.current : newButton.current)?.focus();
       }} />}
-    <Dialog open={deleting !== null} onOpenChange={open => { if (!open && !deletionPending.current) setDeleting(null); }}>
-      <DialogContent showCloseButton={!pending} onCloseAutoFocus={event => {
+    <Dialog open={deleting !== null} onOpenChange={open => { if (!open) setDeleting(null); }}>
+      <DialogContent onCloseAutoFocus={event => {
         event.preventDefault();
         (deleteTrigger.current?.isConnected ? deleteTrigger.current : newButton.current)?.focus();
       }}>
         <DialogHeader><DialogTitle>Delete session?</DialogTitle>
           <DialogDescription>Delete the session “{deleting ? sessionLabel(deleting) : "Untitled session"}” and its conversation history? This cannot be undone. The session is stopped and detached. Shared source and other conversations are retained. Any unreported tool outcomes stay unknown.</DialogDescription>
         </DialogHeader>
-      <DialogBody>
-          {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
-      </DialogBody>
       <DialogFooter>
-          <Button variant="outline" disabled={pending} onClick={() => setDeleting(null)}>Keep session</Button>
-          <Button variant="destructive" disabled={pending} onClick={async () => {
-            if (!deleting || deletionPending.current) return;
-            deletionPending.current = true; setPending(true); setError(null);
-            try { await onDelete(deleting.id); setDeleting(null); }
-            catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-            finally { deletionPending.current = false; setPending(false); }
-          }}>{pending ? <><Loader2 className="motion-safe:animate-spin" aria-hidden />Deleting…</> : "Delete session"}</Button>
+          <Button variant="outline" onClick={() => setDeleting(null)}>Keep session</Button>
+          <Button variant="destructive" onClick={() => { if (deleting) void confirmSessionDeletion(deleting); }}>Delete session</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

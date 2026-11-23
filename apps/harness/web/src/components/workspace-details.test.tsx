@@ -166,7 +166,7 @@ it("recovers interrupted closure from Core without browser storage and retains t
   w.workflow = { state: "in-progress", closure: "closing", revision: 3,
     operations: [{ id: requestId, kind: "close", expectedRevision: 3, state: "pending", error: "Execution stop is unconfirmed" }] };
   replies(w); const remove = vi.fn();
-  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Unfinished" refresh={() => {}} deleteConversation={remove} />));
+  await act(async () => root.render(<WorkspaceDetails workspace={w} title="Unfinished" refresh={() => {}} onDeleteSession={remove} />));
   expect(container.textContent).toContain("Execution stop is unconfirmed");
   expect(container.textContent).not.toContain("Dismiss");
   vi.mocked(developmentRequest).mockResolvedValueOnce({ state: "in-progress", closure: "closed", revision: 4 });
@@ -176,18 +176,24 @@ it("recovers interrupted closure from Core without browser storage and retains t
   expect(remove).not.toHaveBeenCalled();
 });
 
-it("keeps Delete available when a pending lifecycle action arrives after the popup opens", async () => {
-  const w = workspace(); replies(w);
-  const render = async (value: DevelopmentWorkspace) => act(async () => root.render(<WorkspaceDetails workspace={value} title="Delete" refresh={() => {}} />));
+it("keeps Delete and its linked-session option available when a pending lifecycle action arrives", async () => {
+  const w = workspace(); w.owner.appId = "hosty.harness"; replies(w);
+  const remove = vi.fn().mockResolvedValue(undefined);
+  const render = async (value: DevelopmentWorkspace) => act(async () => root.render(<WorkspaceDetails workspace={value} title="Delete" refresh={() => {}} onDeleteSession={remove} />));
   await render(w); await chooseWorkflowAction("Delete workspace…");
   const pending = { ...w, workflow: { state: "in-progress", closure: "closing", revision: 3,
     operations: [{ id: "pending-close", kind: "close", expectedRevision: 3, state: "pending" }] } };
   await render(pending);
   const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Delete")!;
   expect(confirm.disabled).toBe(false);
-  vi.mocked(developmentRequest).mockResolvedValueOnce({ workspaceId: "workspace", requestId: "delete-request", state: "removed", trees: [], resources: [] });
+  await act(async () => document.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ sessions: [{ sessionId: "session", attached: true, canOpen: true }] })
+    .mockResolvedValueOnce({ workspaceId: "workspace", requestId: "delete-request", state: "removed", trees: [], resources: [] });
   await act(async () => confirm.click());
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/participants");
   expect(developmentRequest).toHaveBeenCalledWith("/workspace/delete", { requestId: expect.any(String) });
+  expect(remove).toHaveBeenCalledExactlyOnceWith("session");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
 
 

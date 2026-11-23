@@ -3668,7 +3668,7 @@ export class SessionManager {
           && !(snapshot.independentEnvironments && snapshot.workspaceAbsent && !hasWorkspaceHistory(record)))
         throw new AppContextError(409, "resource_retained", "Reconcile retained resource history before deleting the conversation.");
       if (retiredObservation) await this.observations.retire(retiredObservation, deletedBy, id);
-      return this.removeSessionRecord(record, deletedBy, { providerRetired: retired, ownerConfirmed: canRetire });
+      return this.removeSessionRecord(record, deletedBy, retired);
     });
   }
 
@@ -3695,13 +3695,10 @@ export class SessionManager {
     return result;
   }
 
-  private async removeSessionRecord(record: SessionRecord, deletedBy: string, { providerRetired = false, ownerConfirmed = false } = {}): Promise<boolean> {
+  // Both deletion paths settle execution while holding this session's mutation lock.
+  private async removeSessionRecord(record: SessionRecord, deletedBy: string, providerRetired = false): Promise<boolean> {
       const id = record.id;
       const session = this.live.get(id);
-      if (this.connections?.remote && !providerRetired) {
-        const current = await this.requireLive(id);
-        await this.finishExecution(current, false, false, current.record.status, ownerConfirmed && hasSettledProviderRun(current));
-      }
       if (session) {
         if (session.run) {
           await session.run.stop();

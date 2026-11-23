@@ -15,9 +15,9 @@ const details = (): DeleteDetails => ({ name: "Disposable experiment", trees: [{
 const progress = (state: DeleteProgress["state"] = "pending"): DeleteProgress => ({ workspaceId: "workspace", requestId, state,
   trees: [{ id: "one", state: state === "removed" ? "removed" : "pending" }], resources: [] });
 const button = (name: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === name)!;
-const refresh = vi.fn(), close = vi.fn(), removeConversation = vi.fn();
+const refresh = vi.fn(), close = vi.fn(), submit = vi.fn();
 async function render(extra: Partial<Parameters<typeof WorkspaceDelete>[0]> = {}) {
-  await act(async () => root.render(<WorkspaceDelete workspaceId="workspace" name="Disposable experiment" onClose={close} refresh={refresh} {...extra} />));
+  await act(async () => root.render(<WorkspaceDelete workspaceId="workspace" name="Disposable experiment" onClose={close} onSubmit={submit} refresh={refresh} {...extra} />));
 }
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); localStorage.clear();
@@ -42,36 +42,46 @@ it.each(["loading", "failed"])("keeps deletion available when inspection is %s",
   await render(); expect(button("Delete").disabled).toBe(false);
   expect(document.body.textContent).toContain("An agent may still be using this directory");
 });
-it("sends only the persisted request ID and deletes a selected conversation only after success", async () => {
-  await render({ deleteConversation: removeConversation });
-  await act(async () => document.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
-  vi.mocked(developmentRequest).mockImplementationOnce(async (path, body) => {
-    expect(path).toBe("/workspace/delete"); expect(Object.keys(body!)).toEqual(["requestId"]);
-    expect(JSON.parse(localStorage.getItem("hosty.workspace.delete.workspace")!)).toEqual(body);
-    expect(removeConversation).not.toHaveBeenCalled(); return { ...progress("removed"), requestId: body!.requestId } as never;
-  });
+it.each([true, false])("closes on confirmation and includes all attached sessions only when checked (%s)", async checked => {
+  await render({ sessionIds: ["first", "second"] });
+  const checkbox = document.querySelector<HTMLButtonElement>('[role="checkbox"]')!;
+  expect(checkbox.getAttribute("aria-checked")).toBe("false");
+  if (checked) await act(async () => checkbox.click());
   await act(async () => button("Delete").click());
-  expect(removeConversation).toHaveBeenCalledOnce(); expect(localStorage.getItem("hosty.workspace.delete.workspace")).toBeNull();
-  expect(document.body.textContent).toContain("Workspace deleted");
+  expect(submit).toHaveBeenCalledExactlyOnceWith(checked
+    ? { requestId: expect.any(String), captureSessions: true }
+    : { requestId: expect.any(String) });
+  expect(close).toHaveBeenCalledOnce();
+  expect(developmentRequest).toHaveBeenCalledTimes(1);
 });
 it("recovers an old accepted discard using its request ID without another review", async () => {
   localStorage.setItem("hosty.workspace.discard.workspace", JSON.stringify({ requestId, digest: "old-review", confirmationName: "old-name" }));
   vi.mocked(developmentRequest).mockResolvedValueOnce(progress()); await render();
   expect(developmentRequest).toHaveBeenCalledWith(`/workspace/delete/status?requestId=${requestId}`, undefined, expect.any(AbortSignal));
-  vi.mocked(developmentRequest).mockResolvedValueOnce(progress("removed"));
   await act(async () => button("Retry deletion").click());
-  expect(developmentRequest).toHaveBeenLastCalledWith("/workspace/delete", { requestId });
-  expect(localStorage.getItem("hosty.workspace.discard.workspace")).toBeNull();
+  expect(submit).toHaveBeenCalledExactlyOnceWith({ requestId });
+  expect(close).toHaveBeenCalledOnce();
 });
-it("reuses an uncertain request after connection loss and does not delete a conversation early", async () => {
-  await render({ deleteConversation: removeConversation });
+it("retains only the original selection when retrying after a status read fails", async () => {
+  const original = { requestId, sessionIds: ["first"] };
+  localStorage.setItem("hosty.workspace.delete.workspace", JSON.stringify(original));
   vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Connection lost"));
-  await act(async () => button("Delete").click());
-  const saved = JSON.parse(localStorage.getItem("hosty.workspace.delete.workspace")!);
-  expect(removeConversation).not.toHaveBeenCalled(); expect(document.body.textContent).toContain("same deletion request");
-  vi.mocked(developmentRequest).mockResolvedValueOnce({ ...progress("removed"), requestId: saved.requestId });
+  await render({ pendingRequestId: requestId, sessionIds: ["new-session"] });
+  expect(document.body.textContent).toContain("Connection lost");
+  expect(document.querySelector('[role="checkbox"]')).toBeNull();
   await act(async () => button("Retry deletion").click());
-  expect(developmentRequest).toHaveBeenLastCalledWith("/workspace/delete", saved);
+  expect(submit).toHaveBeenCalledExactlyOnceWith(original);
+});
+it("keeps a completed source receipt available to retry its selected session cleanup", async () => {
+  const original = { requestId, sessionIds: ["first", "second"] };
+  localStorage.setItem("hosty.workspace.delete.workspace", JSON.stringify(original));
+  vi.mocked(developmentRequest).mockResolvedValueOnce(progress("removed"));
+  await render();
+  expect(document.body.textContent).toContain("Workspace deleted");
+  expect(JSON.parse(localStorage.getItem("hosty.workspace.delete.workspace")!)).toEqual(original);
+  await act(async () => button("Retry session deletion").click());
+  expect(submit).toHaveBeenCalledExactlyOnceWith(original);
+  expect(close).toHaveBeenCalledOnce();
 });
 
 it.each(["delete", "discard"])("retires a completed %s receipt and offers a fresh Delete for a replacement allocation", async prefix => {
@@ -81,12 +91,9 @@ it.each(["delete", "discard"])("retires a completed %s receipt and offers a fres
   expect(localStorage.getItem(`hosty.workspace.${prefix}.workspace`)).toBeNull();
   expect(button("Delete").disabled).toBe(false);
   expect(document.body.textContent).toContain("1 changed · 1 untracked · 1 ignored · 2 unmerged commits");
-  vi.mocked(developmentRequest).mockImplementationOnce(async (_path, body) => {
-    expect(body!.requestId).not.toBe(requestId);
-    return { ...progress("removed"), requestId: body!.requestId } as never;
-  });
   await act(async () => button("Delete").click());
-  expect(document.body.textContent).toContain("Workspace deleted");
+  expect(submit).toHaveBeenCalledOnce();
+  expect(submit.mock.calls[0]?.[0].requestId).not.toBe(requestId);
 });
 it("retires a completed receipt when the deleted workspace is still absent", async () => {
   localStorage.setItem("hosty.workspace.delete.workspace", JSON.stringify({ requestId }));
@@ -102,11 +109,12 @@ it("ignores a late status response after the user retries the accepted request",
   let finishStatus!: (value: DeleteProgress) => void;
   vi.mocked(developmentRequest).mockImplementationOnce(() => new Promise(resolve => { finishStatus = resolve as typeof finishStatus; }));
   await render();
-  vi.mocked(developmentRequest).mockResolvedValueOnce(progress("removed"));
   await act(async () => button("Retry deletion").click());
-  await act(async () => finishStatus(progress()));
-  expect(document.body.textContent).toContain("Workspace deleted");
-  expect(button("Retry deletion")).toBeUndefined();
+  await act(async () => finishStatus(progress("removed")));
+  expect(submit).toHaveBeenCalledExactlyOnceWith({ requestId });
+  expect(close).toHaveBeenCalledOnce();
+  expect(refresh).not.toHaveBeenCalled();
+  expect(localStorage.getItem("hosty.workspace.delete.workspace")).not.toBeNull();
 });
 
 it("shows runtime blockers and explains Return before sending a deletion request", async () => {
