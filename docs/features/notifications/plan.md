@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-06-16
-updated: 2026-11-03
+updated: 2026-11-16
 summary: Expose notifications to non-browser clients and add delivery channels that reach users outside any client.
 components: [apps/core]
 ---
@@ -73,6 +73,26 @@ and app-produced domain events. A later resolution event must preserve the origi
 command identity and must not independently resume work already delivered through the direct path.
 D7 channels and the other notification surfaces remain separate unfinished deliverables.
 
+## Personal Assistant Delivery Consumer (2026-11-16)
+
+The [Personal Assistant Draft](../personal-assistant/plan.md) consumes retained task observations
+and user-requested completion reports. [Assistant Events](../assistant-events-and-continuation/plan.md#independent-assistant-watches-2026-11-16)
+owns watch criteria, recipient binding and assistant input receipts; D6 here owns general durable
+cross-app transport. Reuse existing local outbox/inbox mechanisms for an explicitly scoped local
+consumer instead of creating a second bus. Source/current-state reconciliation cannot promise every
+intermediate transition, and a human inbox notification is not a model-execution command.
+
+D4/D7 owns external delivery, destination-specific receipts, bounded retry/backoff and unknown-send
+reconciliation. Failed outbound delivery preserves the pending obligation and never relaunches a
+completed task. The assistant can append a passive result or consume an authorized event in a short
+turn; channel providers do not own a separate assistant memory, transcript or orchestration loop.
+
+If the first external channel also accepts user input, bind its authenticated external sender and
+conversation to the separate assistant input contract. Capture stable inbound message/reply IDs;
+do not treat a bot token or group membership as Hosty user authority. This bidirectional option is
+still a Draft selection. A fixture can validate the neutral contract before any real Telegram or
+Discord deployment; neither installing a channel nor copying credentials is authorized here.
+
 ## Deliverables
 
 - [ ] D1. **Register the built-in `notifications` platform interface** so clients discover it uniformly
@@ -104,7 +124,7 @@ D7 channels and the other notification surfaces remain separate unfinished deliv
 - [ ] D5. Docs: fold each shipped surface into [feature.md](feature.md) and regenerate the index.
 
 - [ ] D6. Design and implement bounded durable domain-event retention and app-facing cursor subscriptions with authorized producer/consumer boundaries, including app-produced task/decision facts and consistency with the owning state; persist replay positions, version events, define retention-gap recovery and use at-least-once delivery with idempotent consumption. This is separate from the ephemeral Core event bus.
-- [ ] D7. Deliver the first external notification-channel app (for example Telegram) using D6 and D4; define explicit subscription permissions, per-user visibility, retry/backoff and observable failures. Verify reconnects, duplicate handling and stopped/slow consumers without blocking Core.
+- [ ] D7. Deliver the first external notification-channel app (for example Telegram) using D6 and D4; define explicit subscription permissions, per-user visibility, retry/backoff and observable failures. Verify reconnects, duplicate handling, unknown-send reconciliation and stopped/slow consumers without blocking Core; if bidirectional input is selected, consume the separate assistant input/identity contract rather than creating another assistant state.
 
 D6–D7 receive Core Extension Model D3. Transport, retention and the first delivery provider remain
 Draft design choices; no generic extension framework is a prerequisite.

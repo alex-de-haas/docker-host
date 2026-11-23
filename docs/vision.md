@@ -1396,6 +1396,39 @@ Decisions 1–5: 2026-08-19.
     decisions cover repeated operations within their scope. Ask the operator when a new
     decision changes the outcome or requires additional authority.
 
+72. **Plan a continuing personal assistant and reusable memory (2026-11-16).**
+    The owner requests a separate [Personal Assistant Draft](features/personal-assistant/plan.md):
+    one continuing point of contact that accepts unrelated requests, dispatches independent task
+    coordinators, reports current progress and delivers selected results. The visible history and
+    personal memory outlive individual bounded model interactions. Persistent personal memory and
+    recall by date/keywords are part of the desired design, rather than replaying the full history
+    or rediscovering stable preferences through service calls on every turn.
+
+    Adapt or extend existing delegation, admission, context and event contracts where necessary;
+    do not duplicate them or force the product into an unsuitable long-running task conversation.
+    [Persistent Memory](features/persistent-memory/plan.md),
+    [Conversation History recall](features/conversation-history/plan.md) and
+    [Invocation Admission](features/agent-invocation-admission/plan.md) own reusable new scope.
+    Existing continuation/notification plans retain their work with explicit consumer boundaries.
+    Research other systems and actual user reports, distinguishing anecdotes from verified behavior.
+
+    This selects detailed planning only. All new plans remain Draft; implementation, automatic
+    history extraction, external-channel deployment, commits and publication are not authorized.
+    Memory remains optional for Core, ordinary chats and the separate composable-work examples.
+    Broader I1/I2 knowledge/indexing questions and the current user/permission boundaries remain.
+
+73. **The assistant as the single entry point (2026-11-17).**
+    The owner refined the [Personal Assistant Draft](features/personal-assistant/plan.md). The Shell
+    side-panel assistant becomes one continuing chat without a session list, synchronized with
+    Telegram and other devices. It discusses and refines requests before delegating, never sends the
+    owner to a worker's session to explain again, stays quiet by default and summarizes running work
+    in a side panel and on request. Delegated work must not clutter the global Tasks list; the owner
+    expects to start most work through the assistant and accepts reworking the task model if needed.
+    Recurring routines, specialist roles in the same chat and dispatch checks that prevent mid-run
+    permission failures belong to the target. The owner also questioned the default provider
+    capacity of four. Mechanisms are chosen after comparing existing systems; this remains planning
+    only, with no implementation, commits or publication authorized.
+
 ## Personal And Shared Environments (owner exploration, 2026-10-23)
 
 ### Composition And Extension Boundaries

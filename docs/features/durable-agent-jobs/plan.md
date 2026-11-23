@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-11-07
+updated: 2026-11-18
 summary: Durable jobs and recoverable Harness sessions with scheduling, bounded context, same-provider continuation, budgets and decision waits.
 components: [apps/harness, apps/core, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -203,19 +203,75 @@ verification. The Decisions delivery authorizes none of those broader deliverabl
 wait consumer of D4/D7: durable local result delivery, parent parking, native capacity release and
 same-provider/account continuation of the original task attempt. It extends the common session
 primitives used by Decisions; it must not add another session engine or claim broader reconstruction.
-Its Ready C4-C8 contracts fix the bounded journal, native barriers, mode-action transition and task
-budgets. Only D1 documentation is complete, and implementation remains explicitly withheld.
+The shipped feature records the bounded journal, native barriers, mode-action transition and task
+budgets, including verified local result delivery and continuation. This transfer does not complete
+the general runner or remaining bounded-context work here.
 
 D4 retains general job wait policy. D7 retains other non-decision/non-child-task commands and broader
 recoverable context. General schedules, event-triggered routines and scheduler retry policy stay
 here. Neither shared task limits nor an Autonomous mode constitutes this general runner.
 
+## Personal Assistant Context And Admission Consumer (2026-11-16)
+
+The owner requests a separate [Personal Assistant Draft](../personal-assistant/plan.md), including
+shared persistent memory and historical recall. D7 owns the reusable input/context changes it needs;
+the assistant owns product policy and integration, not a second execution engine. The existing
+ordinary-chat queue remains ordered and independently usable.
+
+D7 also permits several correlated user messages to target the same active foreground run. Reuse
+the public active-input command and its receipt. Retain the reply and work-context reference for
+each message. Continue the compatible session for subsequent turns as supported. Fresh segments
+remain available for independent or reconstructed work. [Active Run Input](../active-run-input/plan.md)
+
+Generalize the existing conversation-to-provider association to explicit execution segments. A
+continuing Harness conversation can map independent short inputs to fresh provider sessions while
+retaining each segment's qualified provider/account/run and exact command receipts. Never overwrite
+one native session pointer or call fresh context reconstruction a resume. Existing task/Decision
+continuations retain their original attempt and native checkpoints. Only independent inputs use
+the new fresh-context path; related changes serialize by target revision and causal reference.
+
+Qualify streamed text, tool calls/results, workflow callbacks, Decisions, approvals, cancellation and
+recovery by execution segment, provider run and message identity. Generalize the current single-run
+sidecar and single assistant-text projection buffer; interleaved independent replies must not merge.
+A late callback, answer or Stop for one segment cannot affect another. Keep task workflow authority
+bound to the exact admitted task/run; a shared visible timeline does not transfer that binding.
+
+Build a common bounded context packet containing stable instructions, the current request, recent
+relevant messages, a summary with coverage, selected memory/history references and current task or
+Decision evidence. Record source and assembly-policy revisions, omissions and uncertainty. Separate
+source budgets and stale-context invalidation; revalidate source access before disclosure or effects.
+Compaction changes model input, never the authoritative transcript. Concurrent summary publication
+checks its source cut so it cannot erase a newer message, correction or deletion.
+
+[Persistent Memory](../persistent-memory/plan.md) owns durable facts and their lifecycle;
+[Conversation History recall](../conversation-history/plan.md) owns temporal queries and neighbors.
+D7 consumes those contracts without copying a corpus. [Invocation Admission](../agent-invocation-admission/plan.md)
+owns shared provider capacity, supported run restrictions and configuration plumbing. Keep generic
+acceptance/claim/recovery semantics here and actual provider admission there, with one owner for
+each queued dispatch. Provider capabilities govern enforcement and unsupported outcomes.
+
+An incoming input receipt must settle independently of slow inference or compaction. Preserve
+uncertain command identities and cancellation dispositions across restart. Distinguish accepted,
+queued, assigned-to-segment, answered and delivered; an input receipt is not a result. The consumer
+can configure independent short interactions without making every ordinary chat concurrent.
+
+Use the existing startup/reconnect recovery owner and a bounded pass over due pending receipts to
+reconcile accepted dispatches without a new user message. Reuse command IDs and observed provider
+state; missing activity is not stop evidence. Exhausted safe retries or unresolved outcomes remain
+visible with a reason and supported recovery/cancel action, protected from ordinary idle cleanup.
+This is D7 receipt recovery, not a dependency on general scheduling or a second watchdog service.
+
+This is additional Draft consumer/design scope within D7, not approval of the broader runner.
+Before Ready, explicitly agree a separately deliverable D7 slice/transfer or complete this owner;
+do not silently require all schedules/retries or claim them complete to ship the assistant.
+
 ## Dependencies And Ownership
 
-- [Agent Providers](../agent-provider-interface/plan.md) owns invocation, results, cancellation and
-  capability declarations for separately provided model/agent execution. The initial Harness task
-  path can use its internal runtime; extraction is not a prerequisite. D7 here owns Harness session
-  commands, context and continuation cursors;
+- [Agent Provider Execution](../agent-provider-interface/feature.md) owns public invocation, results,
+  cancellation, capabilities and provider-native state. Harness uses that public contract; it does
+  not contain a replacement native runtime. Its [remaining acceptance plan](../agent-provider-interface/plan.md)
+  keeps its own scope. D7 here owns Harness session commands, execution-segment correlation,
+  context and continuation cursors;
   [Action Summary D4](../assistant-action-summary/plan.md#deliverables) owns the shared journal/event foundation.
 - [Shared Decisions](../shared-decisions/feature.md) owns question/response records;
   [Notifications D6](../notifications/plan.md#deliverables) owns durable subscriptions. The runner
@@ -242,7 +298,7 @@ here. Neither shared task limits nor an Autonomous mode constitutes this general
 - [ ] D4. Integrate general job/attempt wait policy with Shared Decisions D7's ordinary-session/task question primitives and this plan's broader recovery contract, preserving pending inputs, confirmed-consumer lease discipline and cancellation; do not duplicate the proposed decision-specific wait/continuation implementation.
 - [ ] D5. Verify recurring monitoring and one authorized source job, restart/duplicate claims, lost provider responses, expired/revoked grants, budget exhaustion and failed notification delivery; cover overnight and response/parking races without duplicate effects.
 - [ ] D6. Document shipped behavior and compatibility in feature.md, reconcile consumers and remove this plan when all deliverables pass; preserve the historical Bridge D11 and session-recovery transfers without claiming they shipped earlier.
-- [ ] D7. Define, implement after Ready approval, and verify remaining common Harness session commands and broader bounded recoverable context over the existing journal, consuming the transferred decision and task-child wait controls; cover other ordinary-chat/parked-job consumers, provider/account-bound continuation, multi-client races, restart, unsupported resume, summary coverage, changed source and retention/revocation without duplicate tool effects.
+- [ ] D7. Define, implement after Ready approval, and verify remaining common Harness session commands, explicit execution segments and bounded recoverable context packets over existing journals/receipts, consuming transferred decision/task-child controls and the memory/history/invocation contracts; cover ordinary-chat, parked-job and independent assistant inputs, provider/account-bound continuation versus fresh execution, causal ordering, segment/run-qualified streaming and controls, concurrent summary cuts, multi-client races, restart, unsupported capabilities, changed source and retention/revocation without duplicate effects or a second transcript.
 
 ## Proposed Sequence
 
