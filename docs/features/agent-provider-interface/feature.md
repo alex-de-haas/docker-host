@@ -1,6 +1,6 @@
 ---
 created: 2026-11-12
-updated: 2026-11-21
+updated: 2026-11-23
 summary: Independent Local agent apps expose installation-qualified HTTP/SSE execution with provider-owned native state and Core-scoped authority.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -511,9 +511,10 @@ nonblocking output descriptors into the native binary. Native exit initiates own
 cleanup, while pipe EOF and output flush remain separate completion facts. Receipts distinguish
 physical tree closure from output delivery; producer loss never manufactures SDK-stop confirmation.
 Windows uses a suspended native launch assigned to a non-breakaway kill-on-close Job Object and
-handle/accounting checks. Private
-control channels stay separate from native stdin/stdout/stderr. Native environments exclude Hosty
-service/control credentials and unrelated tool bearers.
+handle/accounting checks. Windows PowerShell compiles the bridge against the .NET Framework
+serialization and XML assemblies before it accepts a native command. Private control channels
+stay separate from native stdin/stdout/stderr. Native environments exclude Hosty service/control
+credentials and unrelated tool bearers.
 
 When the native receipt confirms physical exit but effect outcomes remain unresolved, the provider
 emits a distinct diagnostic and keeps ordinary execution fenced. Harness reports unreconciled tool
