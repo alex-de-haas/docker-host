@@ -51,6 +51,14 @@ across several ideas.
 
 ## I1. Memory As A Replaceable Provider
 
+**Scoped promotion, 2026-11-16:** The owner requests a detailed
+[Persistent Memory Draft](features/persistent-memory/plan.md) as a shared prerequisite for
+[Personal Assistant](features/personal-assistant/plan.md): scoped durable facts/preferences,
+correction/forgetting, provenance and selected recall across short interactions. The new plan owns
+that bounded work. General knowledge ingestion, household/team sharing and automatic learning
+remain exploratory. The older exclusion below still applies to the independent composable-work
+scope; it is not a prohibition on this newly requested design. No implementation is approved.
+
 **Owner boundary, 2026-10-26:** Keep learned long-term memory outside the current
 [composable-work investigation](features/composable-agent-systems/plan.md). Session context,
 explicitly shared materials, artifacts and skills should suffice for its first compositions.
@@ -59,7 +67,9 @@ Do not add a memory implementation, automatic extraction or adaptive policy as a
 A later idea is to remember a person's recurring preferences or decisions so an agent does not
 repeat the same question. Its applicability, visibility, correction and forgetting need separate
 design: an old answer must not silently become a new permission or override changed circumstances.
-This remains an idea; the owner is concerned about unpredictable influence on subsequent behavior.
+This was retained as an idea under the 2026-10-26 boundary; the bounded personal-memory slice now
+has the Draft above. The concern about unpredictable influence informs its correction and
+applicability design.
 Existing session history and explicit standing instructions are not excluded by this boundary.
 
 **Source:** Slides 12 and 17 describe chat search with embeddings, Qdrant and hybrid ranking.
@@ -138,6 +148,12 @@ apply to retrieval and derived copies; indexing is not a new access grant.
   the model; recall never widens tool permissions.
 
 ## I2. Search Across Knowledge Providers
+
+**Recall extension, 2026-11-16:** The owner requests date/keyword recall for Personal Assistant.
+The [Conversation History extension](features/conversation-history/plan.md) owns temporal filters,
+date-only queries, bounded surrounding messages and useful match excerpts over existing authorized
+source records. Persistent Memory owns separately retained facts. This does not select Qdrant,
+automatic full-corpus extraction or a second transcript/search implementation.
 
 **Conversation-history direction, 2026-10-30:** The owner selects the concrete chat-history slice
 for [Conversation History](features/conversation-history/feature.md): Core-owned common schemas and

@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-10-10
-updated: 2026-11-20
+updated: 2026-11-21
 summary: Extract independent local agent-provider apps consumed by Docker-hosted Harness, with explicit discovery, authority, recovery and host-tool readiness.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -969,6 +969,21 @@ is documentation-only and has no version bump.
 Measure the release path again after extraction. Removing the worker's Docker/toolchain build
 is an extraction result, not an Nx cache speedup. Nx remains a separately tracked next initiative;
 neither caching nor a universal inference API is a prerequisite to this provider design.
+
+## Follow-Ups During An Active Run (2026-11-18)
+
+The [Active Run Input Draft](../active-run-input/plan.md) tracks the optional public capability,
+exact-run operation, native adapter evidence and ordinary Harness composer behavior requested by
+the owner. The existing extraction deliverables retain their approved scope.
+
+## Separately Planned Invocation Admission (2026-11-16)
+
+[Agent Invocation Admission And Limits](../agent-invocation-admission/plan.md) is a separate Draft
+for interactive/background capacity, capability-checked restrictions and shared consumer plumbing,
+motivated by [Personal Assistant](../personal-assistant/plan.md). It extends the public interface and
+existing provider runtime rather than returning native execution to Harness. Its unapproved work
+does not expand or reopen the extraction deliverables below. Current unsupported restrictions and
+unknown-stop capacity accounting remain authoritative until that extension is approved and verified.
 
 ## Deliverables
 

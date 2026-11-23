@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-10-26
-updated: 2026-11-04
+updated: 2026-11-18
 summary: Deferred task-list presentation, artifact and human-review composition and selected material access beyond profile-based task delegation.
 components: [apps/harness]
 ---
@@ -176,17 +176,21 @@ root tasks and all authorized execution sessions, prioritizing recorded profile 
 sidebar change is selected for the delegation plan; only the global task-list hierarchy remains
 deferred here. A separate responsible-person presentation is not selected by that clarification.
 
+On 2026-11-17 the owner questioned whether the global list should show assistant-dispatched work at
+all and whether Tasks should be reworked, because trivial delegated requests would otherwise pile up
+there. [Personal Assistant](../personal-assistant/plan.md#delegated-work-weight-and-visibility) records
+the options; no option is selected. A resulting change to the global list belongs to D3 here.
+
 ## Deliverables
 
-- [ ] D3. Design and implement the deferred task-list hierarchy presentation, evaluating root-only and expandable-child views, alongside richer joined task/artifact presentation and reviewer routing over Basic Tasks and Shared Decisions; reuse authorized profile/session/workspace views without making this UI a prerequisite of initial profile delegation.
+- [ ] D3. Design and implement the deferred task-list hierarchy presentation, covering the selected treatment of assistant-originated work in the default global list, root grouping and child visibility, alongside richer joined task/artifact presentation and reviewer routing over Basic Tasks and Shared Decisions; reuse authorized profile/session/workspace views without making this UI a prerequisite of initial profile delegation.
 - [ ] D5. Verify richer artifact/overnight-decision, human QA and independent bugfix/PR composition with an independent API consumer, consuming the transferred task-delegation acceptance; cover stale materials and revoked access without private-store coupling or first-party-ID privilege.
 - [ ] D6. Record shipped orchestration behavior and limits in feature.md, retain the transfer history, reconcile the umbrella and underlying owners without marking unfinished deliverables complete, and regenerate the index.
 - [ ] D7. Define and verify session/material visibility for cross-session work, preserving private conversation ownership and explicit selected-context access; integrate destination-session checks and current authorization for attachments, feedback, external imports and clients, including cross-administrator denial and revocation after reconnect.
 
 ## Sequence And Open Questions
 
-Basic Tasks is shipped. The selected flat delegation slice has its own Ready technical plan and
-explicit transfer record; the owner has not instructed starting its implementation. Refine this remaining artifact/human composition with its owners before separate Ready
+Basic Tasks and flat profile-based delegation have shipped. Their contracts supply task and execution data for these views. Refine this remaining artifact/human composition with its owners before separate Ready
 approval, then implement its complete feature on one branch/PR. Do not reopen basic task decisions.
 
 - Which joined views reuse existing navigation and panels?
