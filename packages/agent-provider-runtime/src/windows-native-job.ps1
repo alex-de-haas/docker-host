@@ -4,7 +4,7 @@ try {
     # Windows PowerShell and the .NET Framework are stock Windows components. No SDK, download,
     # account import or administrator configuration is performed by this launcher.
     $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'windows-native-job.cs') -Raw
-    Add-Type -TypeDefinition $source -ReferencedAssemblies @('System.dll', 'System.Core.dll', 'System.Runtime.Serialization.dll')
+    Add-Type -TypeDefinition $source -ReferencedAssemblies @('System.dll', 'System.Core.dll', 'System.Runtime.Serialization.dll', 'System.Xml.dll')
     exit ([HostyNativeJob]::Run($PipeName))
 }
 catch {

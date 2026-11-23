@@ -18,7 +18,7 @@ describe.skipIf(process.platform !== "win32")("actual Windows native Job Object 
     let output = "", errors = ""; child.stdout.setEncoding("utf8"); child.stdout.on("data", value => { output += value; }); child.stderr.on("data", value => { errors += value; });
     child.stdin.end(input); const code = await new Promise<number | null>(resolve => child.once("close", resolve));
     expect(errors).toBe(""); expect(code).toBe(0); expect(output).toBe(input);
-    expect(await f.tracked.evidence()).toMatchObject({ stopped: false, allClosed: true, reason: "sdk_stop_unconfirmed" });
+    expect(await f.tracked.stop()).toMatchObject({ stopped: false, allClosed: true, reason: "sdk_stop_unconfirmed" });
     await f.tracked.confirmSdkStop(); expect(await f.tracked.evidence()).toMatchObject({ stopped: true, allClosed: true });
     const folder = path.join(f.data, "native-processes", f.runId, f.generation), file = (await readdir(folder)).find(value => value !== "manifest.json" && value.endsWith(".json"))!;
     expect(JSON.parse(await readFile(path.join(folder, file), "utf8"))).toMatchObject({ mechanism: "windows-job.1", activeProcesses: 0, knownHandlesClosed: true });
@@ -38,10 +38,9 @@ describe.skipIf(process.platform !== "win32")("actual Windows native Job Object 
 [DllImport("kernel32",CharSet=CharSet.Unicode,SetLastError=true)][return:MarshalAs(UnmanagedType.Bool)]static extern bool CreateProcessW(string app,StringBuilder command,IntPtr pa,IntPtr ta,bool inherit,uint flags,IntPtr env,string cwd,ref SI info,out PI process);
 [DllImport("kernel32")]static extern bool CloseHandle(IntPtr handle);[DllImport("kernel32")]static extern uint WaitForSingleObject(IntPtr handle,uint timeout);
 public static string Run(string exe){var si=new SI{cb=(uint)Marshal.SizeOf(typeof(SI))};PI pi;bool ok=CreateProcessW(exe,new StringBuilder("\\\""+exe+"\\\" -e process.exit(0)"),IntPtr.Zero,IntPtr.Zero,false,0x01000000|0x08000000,IntPtr.Zero,null,ref si,out pi);int error=Marshal.GetLastWin32Error();if(ok){WaitForSingleObject(pi.process,5000);CloseHandle(pi.thread);CloseHandle(pi.process);return "escaped";}return "blocked:"+error;}}`;
-    const command = `$ErrorActionPreference='Stop';Add-Type -TypeDefinition @'\n${source}\n'@;[EscapeProbe]::Run('${process.execPath.replace(/'/g, "''")}')`;
+    const command = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';Add-Type -TypeDefinition @'\n${source}\n'@;[EscapeProbe]::Run('${process.execPath.replace(/'/g, "''")}')`;
     const encoded = Buffer.from(command, "utf16le").toString("base64"), powershell = path.join(f.env.SystemRoot!, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-    const native = `const{spawnSync}=require('node:child_process');const r=spawnSync(${JSON.stringify(powershell)},['-NoProfile','-NonInteractive','-EncodedCommand',${JSON.stringify(encoded)}],{encoding:'utf8'});process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??1);`;
-    const child = f.tracked.transport.spawnTool!(["-e", native], { cwd: f.data, env: f.env }); let output = "", errors = ""; child.stdout.on("data", value => { output += value; }); child.stderr.on("data", value => { errors += value; });
+    const child = f.tracked.transport.spawnCommand!(powershell, ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], { cwd: f.data, env: f.env }); let output = "", errors = ""; child.stdout.on("data", value => { output += value; }); child.stderr.on("data", value => { errors += value; });
     expect(await new Promise(resolve => child.once("close", resolve))).toBe(0); expect(errors).toBe(""); expect(output.trim()).toBe("blocked:5");
     await f.tracked.confirmSdkStop(); expect(await f.tracked.evidence()).toMatchObject({ stopped: true, allClosed: true });
   }, 30000);
