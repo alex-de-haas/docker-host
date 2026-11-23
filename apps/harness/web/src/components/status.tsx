@@ -1,38 +1,13 @@
-import { Circle, CircleAlert, Diamond, Loader2, TriangleAlert } from "lucide-react";
+import { Circle, CircleAlert, Diamond, Loader2 } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
-// Ported from Shell alongside the assistant panel, so the moved surface keeps the shapes an operator
-// already reads: one box for "something is wrong", one badge for a run state.
-
-export function InlineError({ message }: { message: string }) {
-  return (
-    <div className="min-w-0 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm wrap-anywhere text-destructive-foreground">
-      {message}
-    </div>
-  );
-}
-
-/** `error` means broken; `warning` means it needs attention but may still work. */
-export function Alert({ severity, title, detail }: { severity: "error" | "warning"; title: string; detail?: string }) {
-  const Icon = severity === "error" ? CircleAlert : TriangleAlert;
-  return (
-    <div
-      className={cn(
-        "flex items-start gap-2 rounded-md border px-3 py-2 text-xs",
-        severity === "error"
-          ? "border-destructive/30 bg-destructive/10 text-destructive-foreground"
-          : "border-warning-foreground/30 bg-warning-soft text-warning-foreground",
-      )}
-    >
-      {/* Decorative: the title and detail carry the meaning already. */}
-      <Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-      <div className="min-w-0 space-y-0.5">
-        <div className="font-medium">{title}</div>
-        {detail && <div className="wrap-anywhere">{detail}</div>}
-      </div>
-    </div>
-  );
+export function InlineError({ message, className, role = "alert" }: { message: string; className?: string; role?: "alert" | "none" }) {
+  return <Alert variant="destructive" role={role} className={className}>
+    <CircleAlert aria-hidden />
+    <AlertDescription>{message}</AlertDescription>
+  </Alert>;
 }
 
 export function StatusBadge({ value }: { value: string }) {

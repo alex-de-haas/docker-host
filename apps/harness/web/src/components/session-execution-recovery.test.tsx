@@ -15,14 +15,17 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 const render = () => act(async () => root.render(<SessionExecutionRecovery sessionId="chat" refreshKey="one" onRecovered={changed} />));
-it("requires explicit confirmation and retains the identical request after an uncertain response", async () => {
+it("uses the recovery button as explicit confirmation and retains the identical request after an uncertain response", async () => {
   await render();
-  expect(container.querySelector('button')!.disabled).toBe(true);
-  await act(async () => container.querySelector('input')!.click());
+  const button = container.querySelector("button")!;
+  expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+  expect(button.disabled).toBe(false);
+  expect(api.recoverExecution).not.toHaveBeenCalled();
   vi.mocked(api.recoverExecution).mockRejectedValueOnce(new Error("Connection lost"));
   await act(async () => container.querySelector('button')!.click());
   const input = vi.mocked(api.recoverExecution).mock.calls[0]![1];
   expect(input).toMatchObject({ runId: "run", expectedRevision: 5, consumerExitConfirmed: true });
+  expect(container.querySelector('[role="alert"] [data-slot="alert-description"]')?.textContent).toBe("Connection lost");
   expect(container.textContent).toContain("Retry recovery"); expect(changed).not.toHaveBeenCalled();
   await act(async () => container.querySelector('button')!.click());
   expect(api.recoverExecution).toHaveBeenLastCalledWith("chat", input);
@@ -31,7 +34,7 @@ it("requires explicit confirmation and retains the identical request after an un
 it("restores a server-retained confirmed request without inventing a new acknowledgement", async () => {
   const pending = { ...review, requestId: "retained", consumerExitConfirmed: true as const };
   vi.mocked(api.getExecutionRecovery).mockResolvedValue({ ...review, pending });
-  await render(); expect(container.querySelector('input')).toBeNull();
+  await render();
   await act(async () => container.querySelector('button')!.click());
   expect(api.recoverExecution).toHaveBeenCalledWith("chat", pending);
 });
@@ -39,14 +42,13 @@ it("shows no recovery action for an active or already stopped run", async () => 
   vi.mocked(api.getExecutionRecovery).mockResolvedValue(null); await render(); expect(container.textContent).toBe("");
   expect(api.recoverExecution).not.toHaveBeenCalled(); expect(changed).toHaveBeenCalledOnce();
 });
-it("describes an interrupted source admission without inventing a Worker receipt and still requires exit confirmation", async () => {
+it("describes an interrupted source admission and lets the recovery button record the exit confirmation", async () => {
   vi.mocked(api.getExecutionRecovery).mockResolvedValue({ ...review, sourceOnly: true });
   await render();
   expect(container.textContent).toContain("before a Worker execution receipt was recorded");
   expect(container.textContent).not.toContain("Retry Stop first");
-  expect(container.querySelector('button')!.disabled).toBe(true);
+  expect(container.querySelector('button')!.disabled).toBe(false);
   expect(api.recoverExecution).not.toHaveBeenCalled();
-  await act(async () => container.querySelector('input')!.click());
   await act(async () => container.querySelector('button')!.click());
   expect(api.recoverExecution).toHaveBeenCalledExactlyOnceWith("chat", expect.objectContaining({ runId: "run", consumerExitConfirmed: true }));
 });

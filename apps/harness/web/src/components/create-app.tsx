@@ -203,7 +203,7 @@ export function CreateApp({ session, busy, onChange, openOnMount = false, onOpen
             </FieldGroup>
             {storageError ? <p role="alert" className="text-sm text-destructive-foreground">{storageError}</p> : <p className="text-sm text-muted-foreground">Draft is saved in this browser as you edit. Close and reopen to continue.</p>}
             {draft.requestId && <p className="text-sm text-muted-foreground">{saved?.state === "observed" ? "App and workspace created locally. Continue to send the saved request to the assistant." : "Creation was submitted. Continue with the same details to check its result."}</p>}
-            {error && <div role="alert"><InlineError message={error} /></div>}
+            {error && <InlineError message={error} />}
             {step && <p role="status" className="text-sm text-muted-foreground">{step}</p>}
             {pending.length > 0 && !draft.requestId && <p className="text-sm text-muted-foreground">This session has pending creation work. Use Recover to continue it without creating another app.</p>}
           </DialogBody>

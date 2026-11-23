@@ -274,7 +274,10 @@ it("retains a visible draft and attachments while a source storage fence blocks 
   localStorage.setItem(draftKey, original.draftText); localStorage.setItem(attachmentsKey, JSON.stringify(original.attachments));
   await mount();
   expect(message().value).toBe(original.draftText); expect(message().readOnly).toBe(true); expect(attachment()).not.toBeNull();
-  expect(container.querySelector('[aria-label="Session storage recovery"]')?.textContent).toContain("Your draft is preserved");
+  const notice = container.querySelector('[aria-label="Session storage recovery"]');
+  expect(notice?.getAttribute("role")).toBe("status");
+  expect(notice?.closest<HTMLElement>('[role="region"][aria-label="Session notices"]')?.tabIndex).toBe(0);
+  expect(notice?.querySelector('[data-slot="alert-description"]')?.textContent).toContain("Your draft is preserved");
   expect(container.querySelector<HTMLButtonElement>('[aria-label="Send"]')?.disabled).toBe(true);
   await send(); await reload();
   expect(message().value).toBe(original.draftText); expect(localStorage.getItem(draftKey)).toBe(original.draftText);
@@ -288,10 +291,11 @@ it("opens source-only recovery and preserves the draft after an explicitly confi
   localStorage.setItem(draftKey, original.draftText); await mount();
   const field = message(); expect(field.readOnly).toBe(true);
   const panel = container.querySelector('[aria-label="Interrupted execution recovery"]')!;
-  expect(panel.textContent).toContain("before a Worker execution receipt was recorded");
+  expect(panel.getAttribute("role")).toBe("status");
+  expect(panel.querySelector('[data-slot="alert-description"]')?.textContent).toContain("before a Worker execution receipt was recorded");
+  expect(panel.querySelector('[data-slot="alert-action"] button')?.textContent).toBe("Recover stopped execution");
   expect(api.recoverExecution).not.toHaveBeenCalled();
   vi.mocked(api.getSession).mockResolvedValue({ ...session, sourceAdmission: undefined });
-  await act(async () => panel.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
   await act(async () => panel.querySelector<HTMLButtonElement>("button")!.click());
   expect(api.recoverExecution).toHaveBeenCalledExactlyOnceWith(session.id, expect.objectContaining({ runId: "interrupted-run", consumerExitConfirmed: true }));
   expect(message()).toBe(field); expect(message().value).toBe(original.draftText); expect(message().readOnly).toBe(false);
