@@ -232,7 +232,7 @@ export function TranscriptEvent({
       // as the failure styling — which would say the run is over when it is not.
       return <TranscriptNotice message={String(event.message ?? "")} />;
     case "error":
-      return <InlineError message={String(event.message ?? "Assistant error")} />;
+      return <InlineError role="none" message={String(event.message ?? "Assistant error")} />;
     default:
       return null;
   }
@@ -516,7 +516,7 @@ export function ApprovalCard({
             }} />
           <FieldDescription id={`${approvalId}-reason-hint`} className="text-xs">Sent to the assistant with your denial.</FieldDescription>
         </Field></FieldGroup>}
-        {error && <div role="alert"><InlineError message={error} /></div>}
+        {error && <InlineError message={error} />}
       </CardContent>
       <CardFooter className="flex-wrap justify-end gap-2 border-t px-3 py-3">
         {submitted ? <span role="status" className="mr-auto text-xs text-muted-foreground">Waiting for confirmation…</span> : <>
@@ -721,7 +721,7 @@ function QuestionCard({ questionId, questions, answers, cancelled, onAnswer }: {
           </Field>}
         </FieldSet>;
       })}</FieldGroup>
-      {error && <div className="mt-3" role="alert"><InlineError message={error} /></div>}
+      {error && <InlineError className="mt-3" message={error} />}
     </CardContent>
     <CardFooter className="justify-end border-t px-3 pt-3">
       {submitted ? <span role="status" className="mr-auto text-xs text-muted-foreground">Waiting for confirmation…</span>

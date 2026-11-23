@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-07
+updated: 2026-11-23
 summary: Exact-run operator recovery for interrupted Harness execution.
 components: [apps/harness]
 ---
@@ -16,9 +16,9 @@ claim through the normal completion path. It does not replay the prompt or comma
 
 After a Local Worker restart, older receipts do not identify surviving native processes reliably.
 The owning operator signs in through Core, opens the affected conversation, retries Stop and checks
-that the old agent and all commands it started have stopped. The interrupted-execution panel then
-requires an explicit checkbox before **Recover stopped execution**. Recovery records that operator
-attestation; it does not terminate processes, infer exit from a missing handle, delete the transcript
+that the old agent and all commands it started have stopped. Selecting **Recover stopped execution**
+submits the operator's exit confirmation. Recovery does not terminate processes,
+infer exit from a missing handle, delete the transcript
 or reset source files. A Worker that still owns the execution refuses attestation and requires Stop.
 This is cooperative recovery, not a per-session containment boundary.
 
@@ -96,8 +96,8 @@ Missing-receipt recovery covers current-generation review, explicit exit confirm
 refusal, late-admission conflicts and replay after a real service restart.
 Coordinator tests cover owner checks, unchanged history, source
 claim release, lost replies and failed Core cleanup without new prompt admission. HTTP tests require
-interactive authentication, ownership and same-origin requests. UI tests require explicit confirmation,
-retain the same request after uncertainty and restore server-retained requests.
+interactive authentication, ownership and same-origin requests. UI tests cover exit confirmation
+through the recovery button, exact retry after uncertainty and server-retained requests.
 Regression coverage delays both conversation preparation and Worker acceptance, checks admission
 failure without blocking the conversation queue, and preserves missing-receipt errors after restart.
 

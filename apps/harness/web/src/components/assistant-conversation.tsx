@@ -27,10 +27,11 @@ import { clearEditDraft, listPreservedDrafts, outboxFiles, preserveDraft, readEd
 import { AppMentionInput, type AppMentionInputHandle } from "@/components/app-mention-input";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { AppContextPicker, type AppContextPickerHandle } from "@/components/app-context-picker";
-import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, PanelLeft, Diamond, Pencil } from "lucide-react";
+import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, PanelLeft, Diamond, Pencil, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Alert, InlineError, StatusBadge } from "@/components/status";
+import { InlineError, StatusBadge } from "@/components/status";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Markdown } from "@/components/markdown";
 import { ChatAttachment } from "@/components/chat-attachment";
 import {
@@ -1298,7 +1299,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   return (
     <div className={`harness-conversation flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
       {fullPage && ready && <StorageRecoveryNotice />}
-      {fullPage && inventory.error && <p role="alert" className="border-b px-4 py-2 text-sm text-destructive-foreground">{inventory.error}</p>}
+      {fullPage && inventory.error && <div className="shrink-0 px-3 py-2"><InlineError message={inventory.error} /></div>}
       {!failuresInDetails && deletionFailures}
       <div ref={columnsRef} className="flex min-h-0 min-w-0 flex-1">
       {fullPage && <div inert={workspaceModal} style={{ "--navigation-width": `${columns.widths.navigation}px` } as CSSProperties} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} relative w-full shrink-0 border-r md:w-[var(--navigation-width)]`}><DevelopmentNavigation deletingSessionIds={deletingSessionIds} workspaceDeletion={workspaceDeletion} sessions={listedSessions} activeId={session?.id} activeWorkspaceId={workspace?.id} workspaces={inventory.workspaces}
@@ -1310,7 +1311,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       <main ref={conversationRef} tabIndex={-1} inert={workspaceModal} className={`${review ? "hidden" : fullPage && mobileSessions ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-1 flex-col`}>
 
       {fullPage && (!chatVisible || !session) && <div className={`shrink-0 items-center gap-2 border-b px-3 py-2 ${workspace ? "flex" : "flex md:hidden"}`}>{navigationToggle}<div className="ml-auto">{workspaceToggle}</div></div>}
-      {fullPage && (!chatVisible || !session) ? <div className="min-h-0 flex-1" aria-label="Workspace center">
+      {fullPage && (!chatVisible || !session) ? <div className="flex min-h-0 flex-1 flex-col" aria-label="Workspace center">
+        {error && <div className="shrink-0 px-3 py-2"><InlineError message={error} /></div>}
         {!workspace && <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
           <p>Choose a workspace or session, or create an app.</p>
           <Button variant="outline" disabled={!ready} onClick={() => void startNew()}>New session</Button>
@@ -1319,7 +1321,6 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           <p>No accessible chats in this workspace.</p>
           <Button variant="outline" disabled={workspaceActions.busy || workspaceActions.retry || !workspace.participation || !workflowIsActive(workspace.workflow)} onClick={() => void workspaceActions.command("new")}>New session in workspace</Button>
         </div>}
-        {error && <p role="alert" className="p-3 text-sm text-destructive-foreground">{error}</p>}
       </div> : <div id="workspace-chat" role="region" aria-label={sessionTitle || "Session conversation"} className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap shrink-0 items-center gap-2 border-b px-3 py-2">
         {navigationToggle}
@@ -1379,28 +1380,40 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           </>
         )}
       </header>
-      {!showSessions && !historyLoading && pendingDecision && <div className="flex shrink-0 items-center gap-2 border-b border-warning-foreground/25 bg-warning-soft px-3 py-2 text-sm text-warning-foreground"><Diamond className="size-4 shrink-0" /><span className="min-w-0 flex-1">Needs you · {pendingDecision.type === "approval_request" ? "Approval requested" : "Answer requested"}</span><Button size="sm" variant="outline" onClick={() => { decisionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); decisionCard.current?.focus(); }}>Review</Button></div>}
+      {!showSessions && !historyLoading && pendingDecision && <div className="shrink-0 px-3 pt-2">
+        <Alert variant="warning" role="status">
+          <Diamond aria-hidden />
+          <AlertTitle>Needs you · {pendingDecision.type === "approval_request" ? "Approval requested" : "Answer requested"}</AlertTitle>
+          <AlertAction><Button size="sm" variant="outline" onClick={() => { decisionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); decisionCard.current?.focus(); }}>Review</Button></AlertAction>
+        </Alert>
+      </div>}
 
       {!showSessions && session && <SessionCredentials key={`credentials-${session.id}`} sessionId={session.id} />}
       {!fullPage && !showSessions && session && <SessionSandboxes key={`sandbox-${session.id}`} sessionId={session.id} />}
       {!fullPage && !showSessions && session && <SessionWorkspaces key={`workspaces-${session.id}`} session={session} running={running} />}
-      {error && <div className="shrink-0 p-3" role="alert"><InlineError message={error} /></div>}
-      {storageBlocked && <section aria-label="Session storage recovery" role="status" className="shrink-0 space-y-1 border-b px-3 py-2 text-sm">
-        <p>{session?.storageRecovery?.message.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 500) || "This message's acceptance or execution outcome needs review."}</p>
-        <p>Your draft is preserved. Sending and queue changes remain blocked until recovery is complete.</p>
-      </section>}
-      {session && (session.workerRun || session.workerRecovery?.state === "pending" || session.sourceAdmission) && <SessionExecutionRecovery key={session.id}
-        sessionId={session.id} refreshKey={`${session.workerRun?.id ?? session.sourceAdmission?.runId ?? ""}:${session.sourceAdmission?.state ?? ""}:${status}:${error ?? ""}`} onRecovered={async () => {
-          const current = await getSession(session.id);
-          if (activeSessionId.current === session.id) {
-            const latest = sessionSnapshot.current;
-            onSessionChange(current);
-            if (!latest || activityTime(current) >= activityTime(latest) && (current.lastEventSeq ?? 0) >= (latest.lastEventSeq ?? 0)) setStatus(current.status);
-            setError(null);
-          }
-        }} />}
-
-
+      <div role="region" aria-label="Session notices" tabIndex={0} className="max-h-1/2 shrink-0 overflow-y-auto overscroll-contain empty:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring">
+        {error && <div className="shrink-0 px-3 pt-2"><InlineError message={error} /></div>}
+        {storageBlocked && <div className="shrink-0 px-3 pt-2">
+          <Alert aria-label="Session storage recovery" role="status" variant="warning">
+            <TriangleAlert aria-hidden />
+            <AlertTitle>Session needs recovery</AlertTitle>
+            <AlertDescription>
+              <p>{session?.storageRecovery?.message.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 500) || "This message's acceptance or execution outcome needs review."}</p>
+              <p>Your draft is preserved. Sending and queue changes remain blocked until recovery is complete.</p>
+            </AlertDescription>
+          </Alert>
+        </div>}
+        {session && (session.workerRun || session.workerRecovery?.state === "pending" || session.sourceAdmission) && <SessionExecutionRecovery key={session.id}
+          sessionId={session.id} refreshKey={`${session.workerRun?.id ?? session.sourceAdmission?.runId ?? ""}:${session.sourceAdmission?.state ?? ""}:${status}:${error ?? ""}`} onRecovered={async () => {
+            const current = await getSession(session.id);
+            if (activeSessionId.current === session.id) {
+              const latest = sessionSnapshot.current;
+              onSessionChange(current);
+              if (!latest || activityTime(current) >= activityTime(latest) && (current.lastEventSeq ?? 0) >= (latest.lastEventSeq ?? 0)) setStatus(current.status);
+              setError(null);
+            }
+          }} />}
+      </div>
 
       {showSessions ? (
         <SessionList
@@ -1422,7 +1435,13 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 <MessageScrollerContent className="mx-auto w-full max-w-[760px] gap-4 p-3 sm:p-4">
 
                   {health && !health.available && (
-                    <MessageScrollerItem messageId="unavailable"><Alert severity="warning" title="Assistant unavailable" detail={health.reason} /></MessageScrollerItem>
+                    <MessageScrollerItem messageId="unavailable">
+                      <Alert variant="warning" role="status">
+                        <TriangleAlert aria-hidden />
+                        <AlertTitle>Assistant unavailable</AlertTitle>
+                        {health.reason && <AlertDescription>{health.reason}</AlertDescription>}
+                      </Alert>
+                    </MessageScrollerItem>
                   )}
                   {ready && health?.available && events.length === 0 && !streamed && (
                     <MessageScrollerItem messageId="welcome"><p className="px-1 text-xs text-muted-foreground">
@@ -1484,13 +1503,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     </MessageScrollerItem>
                   )}
                   {session?.providerHistoryContact && <MessageScrollerItem messageId="provider-contact">
-                    <div role="status" className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
-                      <span>{session.providerHistoryContact.reason === "denied" ? "Provider history access denied."
-                        : session.providerHistoryContact.reason === "invalid" ? "Provider history needs reconciliation." : "Reconnecting to the provider."}
-                        {" "}Last observed {new Date(session.providerHistoryContact.observedAt).toLocaleString()}.</span>
-                      <Button variant="outline" size="sm" onClick={() => void refreshProviderHistory(session.id)
-                        .catch(error => setError(error instanceof Error ? error.message : String(error)))}>Refresh</Button>
-                    </div>
+                    <Alert role="status" variant="warning">
+                      <TriangleAlert aria-hidden />
+                      <AlertTitle>{session.providerHistoryContact.reason === "denied" ? "Provider history access denied."
+                        : session.providerHistoryContact.reason === "invalid" ? "Provider history needs reconciliation." : "Reconnecting to the provider."}</AlertTitle>
+                      <AlertDescription>Last observed {new Date(session.providerHistoryContact.observedAt).toLocaleString()}.</AlertDescription>
+                      <AlertAction><Button variant="outline" size="sm" onClick={() => void refreshProviderHistory(session.id)
+                        .catch(error => setError(error instanceof Error ? error.message : String(error)))}>Refresh</Button></AlertAction>
+                    </Alert>
                   </MessageScrollerItem>}
                   {!session?.providerHistoryContact && (running || stopping) && connection !== "disconnected" && <MessageScrollerItem messageId="current-activity">
                     <AssistantActivity status={status} activity={activity?.activity ?? null}
@@ -1517,13 +1537,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             }}
           >
             {session?.handoffDispatch && ["queued", "unknown"].includes(session.handoffDispatch.state) &&
-              <div role="status" className="text-sm text-muted-foreground">
-                {session.handoffDispatch.error || (session.handoffDispatch.state === "queued"
+              <Alert role="status" variant="warning" className="mb-2">
+                <TriangleAlert aria-hidden />
+                <AlertDescription>{session.handoffDispatch.error || (session.handoffDispatch.state === "queued"
                   ? "This request was accepted but has not started. Configure a provider if needed, then retry."
-                  : "The previous execution outcome is unknown. Review the conversation before sending another message.")}
-                {session.handoffDispatch.state === "queued" && <Button type="button" variant="outline" size="sm" disabled={sending}
-                  onClick={() => { setSending(true); void retryHandoff(session.id).then(attach).catch(cause => setError(String(cause))).finally(() => setSending(false)); }}>Retry starting</Button>}
-              </div>}
+                  : "The previous execution outcome is unknown. Review the conversation before sending another message.")}</AlertDescription>
+                {session.handoffDispatch.state === "queued" && <AlertAction><Button type="button" variant="outline" size="sm" disabled={sending}
+                  onClick={() => { setSending(true); void retryHandoff(session.id).then(attach).catch(cause => setError(String(cause))).finally(() => setSending(false)); }}>Retry starting</Button></AlertAction>}
+              </Alert>}
             <MessageQueue queue={queueSnapshot} outbox={messageQueue.outbox} transcriptRequestIds={transcriptRequestIds} busy={messageQueue.busy || storageBlocked} viewId={viewId}
               editingId={editing?.entryId} error={messageQueue.error} pendingOperation={!!queueOperation}
               legacySend={pendingSend} legacyBusy={sending} onLegacyRetry={() => void recoverSend()}
@@ -1554,9 +1575,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             {editing && <div className="mx-3 mb-2 flex items-center justify-between gap-2 text-xs text-muted-foreground" role="status">
               <span>Editing queued message</span><Button type="button" variant="ghost" size="sm" disabled={editSaving || messageQueue.busy || storageBlocked} onClick={() => void finishQueueEdit(false)}>Cancel edit</Button>
             </div>}
-            {suggestions.insertionError && <div className="mx-3 mb-2 text-xs" role="status">{suggestions.insertionError}
-              <Button type="button" size="sm" variant="ghost" disabled={suggestions.acting || !!input || !!editing || pending.length > 0 || uploaded.length > 0} onClick={() => void suggestions.retryInsertion()}>Retry insertion</Button>
-            </div>}
+            {suggestions.insertionError && <Alert variant="destructive" role="status" className="mb-2">
+              <AlertDescription>{suggestions.insertionError}</AlertDescription>
+              <AlertAction><Button type="button" size="sm" variant="outline" disabled={suggestions.acting || !!input || !!editing || pending.length > 0 || uploaded.length > 0} onClick={() => void suggestions.retryInsertion()}>Retry insertion</Button></AlertAction>
+            </Alert>}
             <InputGroup aria-label="Message and context" className="@container/composer">
               <AppMentionInput
                 ref={mentionInputRef}
@@ -1685,8 +1707,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     {sending ? <Loader2 className="motion-safe:animate-spin" /> : <Send />}
                   </Button>
                 </div>
-                {agentNotice?.sessionId === session?.id && agentNotice?.text && <p role="alert" className="text-xs text-destructive-foreground wrap-anywhere">{agentNotice.text}</p>}
-                {autonomyNotice?.sessionId === session?.id && autonomyNotice?.text && <p role="alert" className="text-xs text-destructive-foreground wrap-anywhere">{autonomyNotice.text}</p>}
+                {agentNotice?.sessionId === session?.id && agentNotice?.text && <InlineError message={agentNotice.text} />}
+                {autonomyNotice?.sessionId === session?.id && autonomyNotice?.text && <InlineError message={autonomyNotice.text} />}
               </InputGroupAddon>
             </InputGroup>
           </form>

@@ -1,6 +1,6 @@
 ---
 created: 2026-09-22
-updated: 2026-11-21
+updated: 2026-11-23
 summary: The chat components Harness uses for messages, code blocks, attachments, the composer and collapsible activity.
 components: [apps/harness]
 ---
@@ -16,7 +16,8 @@ Shell's [operation feedback](../shell-operation-feedback/feature.md) can open a 
 ## Component Sources
 
 `web/components.json` declares the ReUI `radix-vega` registry. Code Block is installed
-from `@reui/code-block`; Message Scroller and Attachment use the shadcn components
+from `@reui/code-block` and Alert is adapted from the ReUI Radix Vega Alert.
+Message Scroller and Attachment use the shadcn components
 referenced by ReUI's examples. These are local source files, with `@shadcn/react`
 providing scroll behavior and Shiki providing syntax highlighting.
 Imported components use the app's existing `cn` helper for Tailwind class merging.
@@ -30,6 +31,15 @@ clipboard failure feedback, and a scroll boundary that prevents code streaming f
 moving the surrounding conversation. Registry updates require reviewing these changes.
 Unknown highlight themes fall back to the matching light or dark default. Fold controls
 use source line numbers even when the displayed numbering starts at an offset.
+
+## Session Alerts
+
+The chat uses the ReUI Alert for session warnings and errors, including blocked storage,
+interrupted execution, unavailable provider history, and transcript errors. Warnings use the
+Hosty warning colors and announce status politely. Recovery failures use the destructive colors and
+an alert role. Transcript errors remain visible in their original conversation position. Recovery
+and retry controls are available inside their alerts, and long recovery notices scroll within the
+available conversation height.
 
 ## Conversation Scrolling
 
