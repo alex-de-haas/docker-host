@@ -415,6 +415,9 @@ export class ProviderHarnessRun implements HarnessRun {
       cancellationRequested = true;
       snapshot = await this.execution.read(false);
     }
+    if (snapshot.state !== "cancelled" && !(snapshot.state === "queued" && snapshot.stopConfirmed)
+      && Object.values(this.context.state.mutations ?? {}).some(request => request.operation === "runs.start" && request.runId === snapshot.ref.id))
+      await this.execution.acknowledgeObservedStart(snapshot);
     if (snapshot.stopConfirmed && !reservations().length
       && !Object.values(this.context.state.mutations ?? {}).some(request => request.operation === "runs.respond")) return this.acceptStop(snapshot);
     if (!cancellationRequested) {

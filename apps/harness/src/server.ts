@@ -916,7 +916,8 @@ async function route(
       return;
     }
     // Copy before discovery yields: an SSE update may mutate the live record in the meantime.
-    const current = { ...record, sourceAdmissionInFlight: manager.isSourceAdmissionInFlight(record) || undefined };
+    const current = { ...record, sourceAdmissionInFlight: manager.isSourceAdmissionInFlight(record) || undefined,
+      stopUnconfirmed: manager.isProviderStopUnconfirmed(record) || undefined };
     const appContext = await captureContext(providers, current.appIds ?? [], current.appContextRevision ?? 0, true);
     sendJson(response, 200, { ...current, appContext, ...(connections ? { providerLocked: await manager.sessionProviderLocked(current) } : {}) });
     return;
@@ -1088,7 +1089,7 @@ async function route(
     if (actor.via !== "app-session" || !credential)
       throw new AppContextError(403, "recovery_operator_required", "Sign in through Core as the owning operator to recover an execution.");
     response.setHeader("Cache-Control", "no-store");
-    if (method === "GET") sendJson(response, 200, await manager.executionRecovery(sessionId, actor.userId));
+    if (method === "GET") sendJson(response, 200, await manager.executionRecovery(sessionId, actor.userId, credential));
     else {
       await manager.recoverExecution(sessionId, actor.userId, await readJson(request), credential);
       sendJson(response, 200, { recovered: true });
@@ -1097,7 +1098,7 @@ async function route(
   }
 
   if (rest === "/cancel" && method === "POST") {
-    const cancelled = await manager.cancelSession(sessionId);
+    const cancelled = await manager.cancelSession(sessionId, actor.via === "app-session" ? readAppCredential(request) ?? undefined : undefined);
     sendJson(response, 200, { cancelled });
     return;
   }

@@ -261,7 +261,7 @@ describe("gateway", () => {
       expect((await fetch(`${origin}/api/sessions/${foreign.id}/execution-recovery`, { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(404);
       expect(recover).not.toHaveBeenCalled();
       expect((await fetch(origin + route, { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(200);
-      expect(inspect).toHaveBeenCalledWith(session.id, "user_admin");
+      expect(inspect).toHaveBeenCalledExactlyOnceWith(session.id, "user_admin", "hostyg_recovery");
       expect(recover).toHaveBeenCalledExactlyOnceWith(session.id, "user_admin", {}, "hostyg_recovery");
     } finally { await new Promise<void>(r => core.close(() => r())); }
   });

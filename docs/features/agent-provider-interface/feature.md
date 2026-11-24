@@ -1,6 +1,6 @@
 ---
 created: 2026-11-12
-updated: 2026-11-23
+updated: 2026-11-24
 summary: Independent Local agent apps expose installation-qualified HTTP/SSE execution with provider-owned native state and Core-scoped authority.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -366,6 +366,20 @@ and seven days after confirmed completion. Snapshot recovery replaces state and 
 expired replay returns an explicit reload requirement. Native context, pending questions and
 mutation tombstones have separate lifetimes; replay expiration does not purge them.
 
+Admission capacity counts the last committed state and conservatively counts a session whose
+failed write could have occupied a slot. Maintenance and run lookup isolate that session from
+other sessions, which continue within the remaining capacity. Affected run IDs retain their own
+storage error. An authorized status read verifies the previously committed aggregate byte
+for byte when a failed replacement left a separate temporary file. It can clear the write
+fence only with that evidence. A replacement whose outcome cannot be verified remains fenced.
+The provider logs the failed storage stage and a bounded error code without command contents.
+
+The committed aggregate owns run admission and Stop receipts. SQLite installation history is
+published separately using the aggregate's durable outbox. A publication failure preserves
+the aggregate and outbox, and maintenance or startup retries history without executing the
+request again. A confirmed cancellation fence for an unadmitted run returns a terminal
+`run_not_admitted` result tied to the original run ID and start digest.
+
 The optional `latestContext` snapshot field retains the latest root context-usage observation at
 its original public event sequence. Explicit null usage clears the previous measurement. Harness
 uses the same run-qualified identity for snapshot and live-event projection, so reconnect restores
@@ -707,7 +721,10 @@ working account. A synthetic protocol check does not establish real OpenAI accou
 - Provider tests cover lazy creation, strict resume, account/configuration compatibility, the fixed
   five-minute parking deadline with a controlled clock, revised next-turn delivery, lost
   admission/cancellation races, interrupted storage, decision delivery, process evidence and stdin
-  protocol preservation. Unknown native stop or tool effects keep the slot occupied.
+  protocol preservation. Unknown native stop or tool effects keep the slot occupied. Storage
+  tests exercise independent admission, attachment upload, streaming and Stop during a
+  retained write failure, along with exact request and history replay after SQLite publication
+  failure. The Windows managed fixture reproduces a failed replacement using a sharing lock.
 - Core authorizes fresh agent operations across a provider permission revision change using the
   same consumer grant. Old credentials and old run admissions remain fenced. The managed provider
   update test checks discovery and usage across an actual update with the same Harness process and grant.

@@ -44,6 +44,20 @@ exit. Recovery atomically writes a cancelled tombstone for that exact conversati
 normal source cleanup; a late submission cannot execute the recovered identity. Ordinary admission
 failures remain visible and are never inferred to be successful runs.
 
+## Unconfirmed Provider Sends And Stops
+
+Harness shows one current recovery notice when it cannot confirm a provider send or Stop.
+**Check status** reads the original provider run and updates the existing notice. It can settle
+the local send receipt and queue from a confirmed admission, or clear a Stop warning when the
+provider reports terminal exit. It sends no prompt, Stop or operator attestation. The draft and
+saved attachments remain available.
+
+A missing provider run alone leaves the original send unconfirmed. **Retry Stop** uses the
+original cancellation identity and asks the provider to fence the original start digest.
+When the provider confirms the request was fenced before admission, the queue marks that
+message safe to retry. An explicit retry uses a new attempt. Unconfirmed Stop leaves the queue
+paused and reports that the outcome is unknown.
+
 ## Verified Local Runtime
 
 On 2026-11-05, Harness 0.94.0 was verified on macOS in a parent-managed child Core 0.175.2
@@ -101,7 +115,9 @@ interactive authentication, ownership and same-origin requests. UI tests cover e
 through the recovery button, exact retry after uncertainty and server-retained requests.
 Regression coverage delays conversation preparation and provider acceptance, checks that healthy
 active runs have no recovery notice, and preserves unresolved admissions and drafts when review
-or recovery is needed.
+or recovery is needed. Provider recovery tests cover a lost successful start response, a send
+with no admitted run, exact Stop retry and a delayed stop confirmation. Component tests check a
+single notice, status checks without resending input and actionable recovery after reload.
 
 Runtime verification
 uses a Core-managed Local sandbox, normal password login and launch-code identity, with synthetic
