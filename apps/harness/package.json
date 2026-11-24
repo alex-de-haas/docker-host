@@ -1,6 +1,6 @@
 {
   "name": "@haas/hosty-harness",
-  "version": "0.108.3",
+  "version": "0.108.4",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",

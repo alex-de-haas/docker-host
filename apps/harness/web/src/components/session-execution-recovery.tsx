@@ -25,7 +25,7 @@ export function SessionExecutionRecovery({ sessionId, refreshKey, onRecovered }:
       if (value === null) { await refreshed.current(); return; }
       // A server-retained request is authoritative after a lost response or browser restart.
       if (value?.pending) setPending(value.pending);
-      else try {
+      else if (value.recoverable) try {
         const saved = JSON.parse(localStorage.getItem(key) ?? "null") as ExecutionRecoveryRequest | null;
         if (saved?.runId === value?.runId && saved?.generation === value?.generation && saved?.expectedRevision === value?.expectedRevision
           && typeof saved?.requestId === "string" && saved?.consumerExitConfirmed === true)
@@ -35,7 +35,7 @@ export function SessionExecutionRecovery({ sessionId, refreshKey, onRecovered }:
     return () => { cancelled = true; };
   }, [sessionId, refreshKey, key]);
   const recover = async () => {
-    if (!review || executing.current) return;
+    if (!review || (!review.recoverable && !pending) || executing.current) return;
     executing.current = true; setBusy(true); setError(null);
     const input = pending ?? { requestId: crypto.randomUUID(), runId: review.runId, generation: review.generation,
       expectedRevision: review.expectedRevision, consumerExitConfirmed: true as const };
@@ -65,9 +65,9 @@ export function SessionExecutionRecovery({ sessionId, refreshKey, onRecovered }:
           : "This execution was interrupted and its process exit is unconfirmed. Retry Stop first. Recover only after verifying that the old agent and all commands it started have stopped."}</p>
         <p>Recovery preserves this chat and its source files. It does not stop processes or repeat work.</p>
       </AlertDescription>
-      <AlertAction><Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void recover()}>
+      {(review.recoverable || pending) && <AlertAction><Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void recover()}>
         {busy ? "Recovering…" : pending ? "Retry recovery" : "Recover stopped execution"}
-      </Button></AlertAction>
+      </Button></AlertAction>}
     </Alert>}
     {error && <InlineError message={error} />}
   </div>;
