@@ -14,6 +14,17 @@ import { validateAgentControlReceipt, validateAgentRequest } from "@hosty-sdk/ap
 import type { AgentConnectionSelection, AgentConsumerAuthority } from "./types.js";
 
 export type AgentClientFactory = (selection: AgentConnectionSelection, authority: AgentConsumerAuthority) => AgentClient;
+export function providerStartWasFenced(snapshot: AgentRunSnapshot): boolean {
+  return snapshot.state === "cancelled" && snapshot.phase === "terminal" && snapshot.stopConfirmed
+    && snapshot.result?.status === "cancelled" && snapshot.result.error?.code === "run_not_admitted";
+}
+
+export function providerStartWasObserved(state: ProviderExecutionState, snapshot: AgentRunSnapshot): boolean {
+  return Object.values(state.settledMutations ?? {}).some(({ request, proof }) => request.operation === "runs.start"
+    && request.sessionId === snapshot.sessionId && request.runId === snapshot.ref.id
+    && proof.generation === snapshot.generation && proof.admissionObserved);
+}
+
 export type ProviderContinuation = {
   requestId: string; sourceRunId: string; run: AgentRunRef;
   state: NonNullable<AgentControlReceipt["continuation"]>["state"];
@@ -38,7 +49,8 @@ export type ProviderExecutionState = {
   continuations?: Record<string, ProviderContinuation>;
   /** A control acknowledgement does not end its run. Preserve the first cancellation's bytes. */
   cancellations?: Record<string, { request: AgentPreparedRequest<AgentControlReceipt>; receipt?: AgentControlReceipt }>;
-  settledMutations?: Record<string, { request: AgentPreparedRequest; proof: Pick<AgentRunSnapshot, "ref" | "generation" | "revision" | "observedAt"> }>;
+  settledMutations?: Record<string, { request: AgentPreparedRequest;
+    proof: Pick<AgentRunSnapshot, "ref" | "generation" | "revision" | "observedAt"> & { admissionObserved?: true } }>;
   /** Exact non-secret request bytes survive a lost admission response and consumer restart. */
   mutations?: Record<string, AgentPreparedRequest>;
 };
@@ -157,6 +169,8 @@ export class ProviderExecution {
         const next = structuredClone(this.state); delete next.mutations?.[this.key(prepared)];
         await this.save(next);
       });
+      if (providerStartWasFenced(snapshot))
+        throw new AgentApiError("run_not_admitted", "The original send was stopped before it ran.", 409);
       return snapshot;
     } finally { this.mutations.starting = false; }
   }
@@ -234,6 +248,21 @@ export class ProviderExecution {
   async retain(snapshot: AgentRunSnapshot): Promise<void> {
     this.runIdentity(snapshot);
     await this.change(() => this.save({ ...structuredClone(this.state), run: snapshot }));
+  }
+  /** Settle the start outbox using a read of the original run. Never send the saved body. */
+  async acknowledgeObservedStart(snapshot: AgentRunSnapshot): Promise<void> {
+    await this.change(async () => {
+      this.runIdentity(snapshot);
+      const next = structuredClone(this.state);
+      if (!next.run || BigInt(snapshot.revision) >= BigInt(next.run.revision)) next.run = structuredClone(snapshot);
+      for (const [key, request] of Object.entries(next.mutations ?? {})) {
+        if (request.operation !== "runs.start" || request.runId !== snapshot.ref.id || request.sessionId !== snapshot.sessionId) continue;
+        (next.settledMutations ??= {})[key] = { request, proof: { ref: snapshot.ref, generation: snapshot.generation,
+          revision: snapshot.revision, observedAt: snapshot.observedAt, admissionObserved: true } };
+        delete next.mutations![key];
+      }
+      await this.save(next);
+    });
   }
   /** An authoritative exit/fence settles only commands for that same public attempt. */
   async settleStopped(snapshot: AgentRunSnapshot): Promise<void> {

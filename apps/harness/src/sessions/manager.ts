@@ -69,7 +69,7 @@ import { providerDecisionCard, providerDecisionCardId, transcriptRunId, type Que
 import { reconcileHistoryProjection, type HistoryProjectionClock } from "../agent-providers/history-projection.js";
 import { createAgentRunProjection, historyMessages, projectHistoryFact, reduceAgentRunProjection, type AgentRunProjection } from "../agent-providers/projection.js";
 import { nativeAgentDetails, nativeAgentStatus, nativeAgentStatusIdentity, providerAgentKey, providerTranscriptSource, transcriptToolId, type NativeAgentStatusEvent } from "../agent-providers/transcript-source.js";
-import { ProviderExecution, type ProviderExecutionState } from "../agent-providers/execution.js";
+import { ProviderExecution, providerStartWasFenced, providerStartWasObserved, type ProviderExecutionState } from "../agent-providers/execution.js";
 import { readFile } from "node:fs/promises";
 import type { McpProxy, MintedToken } from "../mcp/proxy.js";
 
@@ -81,6 +81,8 @@ import type { McpProxy, MintedToken } from "../mcp/proxy.js";
  * process open indefinitely.
  */
 const DRAIN_DEADLINE_MS = 2_000;
+const QUEUE_STOPPING = "Queue paused while stopping the response.";
+const QUEUE_STOP_UNCONFIRMED = "Stop was not confirmed. Check status before resuming.";
 
 function isWorktreeBinding(value: unknown): value is DevelopmentWorkspace {
   return !!value && typeof value === "object" && "id" in value && typeof value.id === "string"
@@ -600,7 +602,9 @@ export class SessionManager {
       },
       unavailable: error => this.serialize(options.sessionId, async () => {
         if (session.record.providerRetirement || this.live.get(options.sessionId) !== session || this.providerStates.get(options.sessionId) !== state) return;
-        await this.append(options.sessionId, { type: "notice", message: error instanceof Error ? error.message : "Provider observation is unavailable. Reconnect to reconcile this run." });
+        const code = error instanceof AgentApiError || error instanceof AppContextError ? error.code : "provider_observation_unavailable";
+        await this.append(options.sessionId, { type: "notice", code,
+          message: error instanceof Error ? error.message : "Provider observation is unavailable. Reconnect to reconcile this run." });
         // Losing observation is not execution failure, cancellation or permission to release a lease.
       }),
     };
@@ -1176,7 +1180,8 @@ export class SessionManager {
         // dispatch queued native input, activate a workspace, or execute a reviewed control.
         if (session.record.status === status) return;
         session.record.status = status;
-        if (["cancelled", "failed"].includes(status) && session.record.messageQueue?.entries.length) {
+        const queue = session.record.messageQueue;
+        if (["cancelled", "failed"].includes(status) && queue?.entries.length && queue.reason !== QUEUE_STOPPING) {
           await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = "Execution stopped. Review the conversation and resume the queue."; });
           this.publishMessageQueue(session);
         }
@@ -1878,6 +1883,8 @@ export class SessionManager {
       const replay = typeof input.requestId === "string" && this.messageQueues.state(session.record).receipts[input.requestId.toLowerCase()];
       if (!replay) this.assertQueueSession(session.record);
       const command = input.command as { type?: unknown } | undefined;
+      if (!replay && (command?.type === "resume" || command?.type === "retry") && this.isProviderStopUnconfirmed(session.record))
+        throw new AppContextError(409, "stop_unconfirmed", QUEUE_STOP_UNCONFIRMED);
       if (!replay && ["enqueue", "resume", "retry"].includes(String(command?.type))) await this.assertQueueWorkspace(session, credential);
       if (credential) { session.workspaceCredential = credential; session.credential = credential; }
       const result = await this.messageQueues.command(session.record, input); this.publishMessageQueue(session); return result;
@@ -1933,6 +1940,11 @@ export class SessionManager {
       if (this.stopping) return;
       const session = await this.requireLive(id), queue = this.messageQueues.state(session.record), entry = queue.entries[0];
       if (!entry || queue.paused || session.record.providerRetirement || entry.state === "editing" || entry.state === "failed") return;
+      if (this.isProviderStopUnconfirmed(session.record)) {
+        await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = QUEUE_STOP_UNCONFIRMED; });
+        this.publishMessageQueue(session);
+        return;
+      }
       if (entry.attempt && ["sending", "unknown"].includes(entry.state)) {
         let receipt: StoredMessageReceipt | null;
         try { receipt = await this.store.readMessageReceipt(id, entry.attempt.clientRequestId); }
@@ -3534,6 +3546,16 @@ export class SessionManager {
       && this.live.get(record.id)?.sourceAdmissionInFlight?.id === record.sourceAdmission.runId;
   }
 
+  isProviderStopUnconfirmed(record: SessionRecord): boolean {
+    const execution = record.providerExecution, runId = execution?.runId;
+    if (!runId) return false;
+    const requested = record.providerStopRequestedRunId === runId;
+    const run = execution?.run, proof = record.providerStopProof;
+    if (run?.ref.id === runId && run.stopConfirmed && (run.phase === "terminal"
+      || !requested && proof?.runId === runId && proof.generation === run.generation && proof.revision === run.revision)) return false;
+    return requested || !!execution?.cancellations?.[runId];
+  }
+
   /** Retire a stopped provider run for explicit Delete while keeping its unresolved results unknown. */
   private async retireProviderForDeletion(session: LiveSession, stop: "pending" | "unconfirmed"): Promise<boolean> {
     const record = session.record, active = record.providerExecution;
@@ -3903,6 +3925,7 @@ export class SessionManager {
       if (session.record.providerExecution?.runId && !snapshot?.stopConfirmed)
         throw new WorkerError("exit_unconfirmed", "Provider execution is unconfirmed. Its resources remain owned by the provider.", 503);
       if (snapshot?.stopConfirmed) {
+        if (cancelling && session.record.providerStopRequestedRunId === snapshot.ref.id) delete session.record.providerStopRequestedRunId;
         if (cancelling && session.record.providerExecution) await this.projectProviderItem(session,
           { kind: "snapshot", snapshot }, { ...session.record.providerExecution, run: snapshot, cursor: snapshot.cursor }, false);
         session.record.providerStopProof = { runId: snapshot.ref.id, generation: snapshot.generation,
@@ -4020,7 +4043,8 @@ export class SessionManager {
       this.assertNotRetiring(session.record);
       if (session.record.sourceAdmission && !retryFamilyInput) throw new AppContextError(409, "source_admission_recovery_required", "An earlier message has an unresolved admission. Review execution recovery before starting another turn.");
       if (this.stopping) throw new AppContextError(503, "harness_stopping", "Harness is stopping; the saved message was not dispatched.");
-      if (this.connections?.remote && session.record.providerExecution?.runId && !session.record.providerExecution.run?.stopConfirmed)
+      if (this.connections?.remote && session.record.providerExecution?.runId
+        && (!session.record.providerExecution.run?.stopConfirmed || this.isProviderStopUnconfirmed(session.record)))
         throw new AppContextError(409, "stop_unconfirmed", "The original provider execution has not confirmed native exit. Reconcile or stop it before sending another turn.");
       if (this.connections?.remote && Object.values(session.record.providerExecution?.mutations ?? {}).some(request => ["runs.respond", "runs.cancel", "runs.control"].includes(request.operation))) {
         if (credential && actorUserId === session.record.createdBy) {
@@ -4834,18 +4858,55 @@ export class SessionManager {
     });
   }
 
-  async executionRecovery(id: string, actorId: string) {
+  async executionRecovery(id: string, actorId: string, credential?: string) {
     const session = await this.requireLive(id);
     if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
     if (!session.record.selection) throw new AppContextError(409, "provider_cutover_required", "Legacy sessions require the documented clean cutover; they cannot be imported or resumed.");
+    if (credential) session.workspaceCredential = session.credential = credential;
     // Observe the final admission checkpoint outside the conversation lane so Stop remains available.
     const admission = session.sourceAdmissionInFlight;
     if (admission && admission.id === session.record.sourceAdmission?.runId) await admission.settled;
     else await session.run?.waitForAdmission?.().catch(() => undefined);
     const retained = await this.store.readProviderExecution(id);
     if (!retained?.runId) return null;
+    const source = session.record.sourceAdmission;
     const { context, execution } = await this.publicExecution(session);
-    const snapshot = await execution.read(false);
+    let snapshot: AgentRunSnapshot;
+    try { snapshot = await execution.read(false); }
+    catch (error) {
+      if (error instanceof AgentApiError && error.code === "run_not_found"
+        && source?.runId === session.record.sourceAdmission?.runId
+        && this.canReviewProviderAdmission(session.record, retained, retained.runId))
+        throw new AppContextError(409, "provider_admission_unconfirmed",
+          "The provider has no record of this send. Retry Stop to prevent the original request from starting.");
+      throw error;
+    }
+    const reviewAdmission = !!source && this.canReviewProviderAdmission(session.record, retained, snapshot.ref.id)
+      && (snapshot.state !== "cancelled" || providerStartWasFenced(snapshot) || providerStartWasObserved(retained, snapshot));
+    const reviewStop = !session.record.taskExecutionId
+      && (session.record.providerStopRequestedRunId === snapshot.ref.id || !!retained.cancellations?.[snapshot.ref.id])
+      && snapshot.phase === "terminal" && snapshot.stopConfirmed;
+    if (reviewAdmission || reviewStop) {
+      const repaired = await this.serialize(id, async () => {
+        if (this.live.get(id) !== session || this.providerStates.get(id) !== execution.state
+          || session.record.sourceAdmission?.runId !== source?.runId || execution.state.runId !== snapshot.ref.id) return;
+        this.assertNotRetiring(session.record);
+        // A status check reads provider evidence and repairs only the local receipt and queue.
+        if (snapshot.stopConfirmed) await execution.settleStopped(snapshot);
+        else await execution.acknowledgeObservedStart(snapshot);
+        await this.projectProviderItem(session, { kind: "snapshot", snapshot }, execution.state, true, undefined, true);
+        if (reviewAdmission) await this.settleReviewedMessage(session, snapshot);
+        if (reviewStop) await this.finishQueueStop(id, "Response stopped. Resume the queue when ready.", QUEUE_STOP_UNCONFIRMED);
+        return true;
+      });
+      if (repaired && reviewAdmission && !snapshot.stopConfirmed && this.live.get(id) === session
+        && execution.state.runId === snapshot.ref.id && !execution.state.run?.stopConfirmed) {
+        // A lost admission response can leave the direct observer unstarted. Restore its read side
+        // outside the session lane, since its previous observation can still be recording the failure.
+        const handle = await this.ensureProviderRun(session, true);
+        await handle.observeConfirmedAdmission();
+      }
+    }
     const pending = session.record.providerRecovery?.state === "pending" ? session.record.providerRecovery : undefined;
     const needsReview = !snapshot.stopConfirmed
       && (snapshot.state === "unknown" || snapshot.phase === "interrupted" || snapshot.freshness !== "current");
@@ -4899,26 +4960,75 @@ export class SessionManager {
     });
   }
 
-  async cancelSession(id: string): Promise<boolean> {
+  private canReviewProviderAdmission(record: SessionRecord, state: ProviderExecutionState, runId: string): boolean {
+    const source = record.sourceAdmission;
+    return !!source?.clientRequestId && source.state === "dispatching" && source.previousProviderRunId !== runId
+      && state.runId === runId && state.lastRunInput?.runId === runId && !("decisionResponseRef" in state.lastRunInput.input.input)
+      && !record.taskExecutionId && !record.handoffDispatch && !source.subagentRunId;
+  }
+
+  private async settleReviewedMessage(session: LiveSession, snapshot: AgentRunSnapshot): Promise<void> {
+    const record = session.record, source = record.sourceAdmission, execution = record.providerExecution;
+    if (!execution || !this.canReviewProviderAdmission(record, execution, snapshot.ref.id)) return;
+    const receipt = await this.store.readMessageReceipt(record.id, source!.clientRequestId!);
+    if (receipt?.state !== "unknown" || receipt.actorUserId !== record.createdBy) return;
+    const fenced = providerStartWasFenced(snapshot);
+    if (snapshot.state === "cancelled" && !fenced && !providerStartWasObserved(execution, snapshot)) return;
+    const settled: StoredMessageReceipt = fenced ? { ...receipt, state: "rejected",
+      error: { code: "run_not_admitted", message: "The original send did not run. Retry when ready." } }
+      : { ...receipt, state: "accepted" };
+    const entry = record.messageQueue?.entries.find(candidate => candidate.attempt?.clientRequestId === receipt.clientRequestId);
+    // Leave the admission fence in place until both publications are durable. A crash cannot
+    // dispatch a retry while the original request remains unconfirmed.
+    if (entry) await this.messageQueues.settle(record, entry.id, this.publicMessageReceipt(settled, record.createdBy));
+    await this.store.saveMessageReceipt(record.id, settled);
+    delete record.sourceAdmission;
+    await this.store.saveRecord(record);
+    if (entry) this.publishMessageQueue(session);
+  }
+
+  async cancelSession(id: string, credential?: string): Promise<boolean> {
     try {
       if ((await this.getSession(id))?.subagentsPending) await this.subagents.cancelWaits(id);
       await this.serialize(id, async () => {
         const session = await this.requireLive(id);
+        if (credential) session.workspaceCredential = session.credential = credential;
+        const runId = session.record.providerExecution?.runId;
+        const retainStop = !!runId && session.record.providerStopRequestedRunId !== runId;
+        if (retainStop) session.record.providerStopRequestedRunId = runId;
         if (session.record.messageQueue?.entries.length) {
-          await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = "Response stopped. Resume the queue when ready."; });
+          await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = QUEUE_STOPPING; });
           this.publishMessageQueue(session);
-        }
+        } else if (retainStop) await this.store.saveRecord(session.record);
       });
       const session = this.live.get(id);
       if (session?.record.status === "suggesting") {
         if (session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued") this.mcpPolicy.cancel(id);
-        this.clearSuggestion(session); await this.endSuggestions(id); return true;
+        this.clearSuggestion(session); await this.endSuggestions(id);
+        await this.serialize(id, () => this.finishQueueStop(id, "Queue paused."));
+        return true;
       }
     } catch (error) {
       if (error instanceof SessionStorageError) return this.stopAfterStorageFailure(id, error);
       throw error;
     }
-    return this.serialize(id, () => this.cancelSessionLocked(id));
+    return this.serialize(id, async () => {
+      try {
+        const cancelled = await this.cancelSessionLocked(id);
+        await this.finishQueueStop(id, cancelled ? "Response stopped. Resume the queue when ready." : "Queue paused.");
+        return cancelled;
+      } catch (error) {
+        await this.finishQueueStop(id, QUEUE_STOP_UNCONFIRMED).catch(() => {});
+        throw error;
+      }
+    });
+  }
+
+  private async finishQueueStop(id: string, reason: string, expected = QUEUE_STOPPING): Promise<void> {
+    const session = this.live.get(id);
+    if (session?.record.messageQueue?.reason !== expected) return;
+    await this.messageQueues.change(session.record, next => { next.reason = reason; });
+    this.publishMessageQueue(session);
   }
 
   /** Stop retained execution even when its source mutation lane cannot record cancellation. */
@@ -4978,6 +5088,7 @@ export class SessionManager {
     // path that still mints app tokens.
     this.proxy?.unregister(id);
     this.developmentMcp.unregister(id);
+    if (action === "stop" && stopped) await this.settleReviewedMessage(session, stopped);
     const execution = session.record.providerExecution;
     const stoppedAssignmentParent = await this.rejectUnstartedChildAssignment(session.record);
     const alreadyFinished = execution && stopped?.stopConfirmed && (stopped.state === "succeeded" || stopped.state === "failed");
@@ -5615,7 +5726,9 @@ export class SessionManager {
       await this.finishExecution(session, session.record.workspaceActivation?.state === "queued" || session.record.workflowCompletion?.state === "queued");
     if (status === "running" && session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: false };
     session.record.status = status;
-    if (["failed", "cancelled", "abandoned"].includes(status) && session.record.messageQueue?.entries.length) {
+    const queue = session.record.messageQueue;
+    if (["failed", "cancelled", "abandoned"].includes(status) && queue?.entries.length && queue.reason !== QUEUE_STOPPING
+      && queue.entries[0]?.error?.code !== "run_not_admitted") {
       await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = "Execution stopped. Review the conversation and resume the queue."; });
       this.publishMessageQueue(session);
     }

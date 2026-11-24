@@ -208,7 +208,7 @@ export class ProviderController {
         const original = session.runs[old.reservedFor.runId]?.controls[old.reservedFor.requestId];
         if (original?.receipt.continuation?.state !== "awaiting_authorization") conflict("This decision continuation was superseded or admitted.", "decision_continuation_stale");
       } else if ("decisionResponseRef" in input.input) conflict("Use the provider-reserved continuation run identity.", "decision_continuation_missing");
-      const occupied = (await this.store.records()).filter(value => value.session.activeRun || Object.values(value.runs).some(run => run.reservedFor)).length;
+      const occupied = this.store.occupiedSlots();
       const ownReservation = Object.values(session.runs).some(run => run.reservedFor);
       if (!ownReservation && occupied >= this.capacity) conflict("Provider capacity is occupied, including executions whose stop is unconfirmed.", "provider_busy");
       const reservation = old?.reservedFor;
@@ -248,6 +248,7 @@ export class ProviderController {
         if (session.retirement) conflict("This native session has been retired.", "session_retired");
         const run = this.store.makeRun(session, runId, actor, body);
         run.hash = input.fenceIfNotAdmitted.startDigest; run.cancelFence = true;
+        this.store.markNotAdmitted(run);
         run.snapshot.state = "cancelled"; run.snapshot.phase = "terminal"; run.snapshot.stopConfirmed = true; run.completedAt = new Date().toISOString();
         this.store.lifecycle(run); session.runs[runId] = run; existing = { session, record: run };
       }

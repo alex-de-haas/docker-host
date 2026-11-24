@@ -3,7 +3,7 @@
   "id": "hosty.ollama-provider",
   "name": "Ollama Provider",
   "description": "Independent local Ollama agent execution with app-owned connections, native sessions and Hosty-authorized HTTP/SSE.",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",

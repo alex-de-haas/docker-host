@@ -5,7 +5,10 @@ hard-stop/crash, not a graceful SDK shutdown. Private evidence is observed only;
 no journal is seeded and no client assertion replaces provider-owned stop proof.
 """
 import collections
+from contextlib import contextmanager
+import hashlib
 import json
+import os
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -63,6 +66,120 @@ def _wait_crash_projection(read, target, minimum_revision, wait, say):
         # Bound diagnostics to state/identity metadata; never log messages, inputs or credentials.
         say('Crash public projection: '+json.dumps({'minimumRevision': minimum_revision, 'observed': observed}))
 
+
+
+@contextmanager
+def _deny_windows_replacement(path):
+    """Keep exact aggregate reads available while denying its atomic replacement."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    create.restype = wintypes.HANDLE
+    close = kernel.CloseHandle
+    close.argtypes = (wintypes.HANDLE,)
+    close.restype = wintypes.BOOL
+    # GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_EXISTING.
+    handle = create(str(path), 0x80000000, 0x3, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        yield
+    finally:
+        close(handle)
+
+
+def _check_windows_aggregate_replacement(context, app_origin, call, client, connection):
+    providers, wait, say = (context[key] for key in ('agentProviders', 'wait_for', 'say'))
+    provider_data = context['root']/'apps'/providers.entries['codex']['appId']/'data'
+    aggregates = provider_data/'agent-sessions'
+    assert aggregates.resolve().is_relative_to(context['root'].resolve())
+    old = call(app_origin, '/api/sessions', {'title': 'Windows aggregate replacement failure',
+        'connectionId': connection['id'], 'profileId': None})
+    old_route = '/api/sessions/'+old['id']
+    new = call(app_origin, '/api/sessions', {'title': 'Independent admission with an attachment',
+        'connectionId': connection['id'], 'profileId': None})
+    new_route = '/api/sessions/'+new['id']
+
+    def snapshot(route):
+        return (call(app_origin, route).get('providerExecution') or {}).get('run') or {}
+
+    def pending(route):
+        state = snapshot(route)
+        return state if any(item['kind'] == 'approval' for item in state.get('pending', [])) and not state['stopConfirmed'] else None
+
+    def send(route, attachments=()):
+        result = call(app_origin, route+'/messages', {'text': 'write', 'clientRequestId': str(uuid.uuid4()),
+            'attachments': list(attachments)})
+        assert result['state'] == 'accepted'
+
+    files = b'First message attachment from the isolated Windows fixture.'
+    upload = urllib.request.Request(app_origin + new_route + '/attachments/replacement-fixture.txt',
+        data=files, method='PUT', headers={'Origin': app_origin, 'Content-Type': 'application/octet-stream'})
+    with client.open(upload, timeout=30) as response:
+        assert response.status == 201
+        attachment = json.load(response)['attachment']['name']
+
+    send(old_route)
+    original = wait(lambda: pending(old_route), 90)
+    run_id = original['ref']['id']
+    aggregate = aggregates/(original['sessionId']+'.json')
+    approval_id = next(item['id'] for item in original['pending'] if item['kind'] == 'approval')
+
+    def linked_approval():
+        retained = json.loads(aggregate.read_bytes())
+        return retained['runs'][run_id].get('decisionLinks', {}).get(approval_id)
+
+    # Let the decision mirror finish its aggregate write before Stop is fault-injected.
+    wait(linked_approval, 90)
+    with _deny_windows_replacement(aggregate):
+        original_bytes = aggregate.read_bytes()
+        retained = json.loads(original_bytes)
+        assert retained['session']['activeRun']['id'] == run_id
+        control_ids = set(retained['runs'][run_id]['controls'])
+        temp_pattern = aggregate.name+'.*.tmp'
+        earlier_temps = set(aggregates.glob(temp_pattern))
+        try:
+            call(app_origin, old_route+'/cancel', {})
+        except urllib.error.HTTPError as error:
+            assert (error.code, json.load(error).get('code')) == (503, 'storage_uncertain')
+        else:
+            raise AssertionError('Stop must report unconfirmed storage when Windows denies replacing its aggregate')
+        attempted, = set(aggregates.glob(temp_pattern)) - earlier_temps
+        command_id, = set(json.loads(attempted.read_text(encoding='utf-8'))['runs'][run_id]['controls']) - control_ids
+
+        send(new_route, (attachment,))
+        independent = wait(lambda: pending(new_route), 90)
+        assert independent['sessionId'] != original['sessionId'] and independent['ref']['id'] != run_id
+        assert call(app_origin, new_route+'/cancel', {}) == {'cancelled': True}
+        finished = wait(lambda: state if (state := snapshot(new_route)).get('stopConfirmed') else None, 90)
+        assert finished['ref'] == independent['ref'] and finished['state'] == 'cancelled'
+        committed = json.loads((aggregates/(independent['sessionId']+'.json')).read_text(encoding='utf-8'))
+        provider_file, = committed['runs'][independent['ref']['id']]['input']['input']['attachments']
+        assert provider_file['name'] == attachment and provider_file['sizeBytes'] == len(files)
+        assert provider_file['digest'] == hashlib.sha256(files).hexdigest()
+
+        # The exact prior commit proves that the attempted Stop was never admitted. The status
+        # read can reopen the session from that evidence, without publishing the failed write.
+        review = call(app_origin, old_route+'/execution-recovery')
+        assert review is None or (review['runId'] == run_id and not review['recoverable'])
+        current = snapshot(old_route)
+        assert current['ref'] == original['ref'] and current['generation'] == original['generation']
+        assert current['stopConfirmed'] is False
+        assert aggregate.read_bytes() == original_bytes, 'A status read must not retry Stop or publish its temporary file'
+        assert set(aggregates.glob(temp_pattern)) == earlier_temps | {attempted}
+
+    assert call(app_origin, old_route+'/cancel', {}) == {'cancelled': True}
+    stopped = wait(lambda: state if (state := snapshot(old_route)).get('stopConfirmed') else None, 90)
+    assert stopped['ref'] == original['ref'] and stopped['state'] == 'cancelled'
+    committed = json.loads(aggregate.read_text(encoding='utf-8'))
+    assert set(committed['runs'][run_id]['controls']) - control_ids == {command_id}
+    assert committed['session'].get('activeRun') is None
+    say('PASS: Windows denied one provider aggregate replacement while another chat accepted a file, streamed and stopped. '
+        'Checking status never replayed Stop. After unlock, the original Stop reached the provider exactly once.')
 
 def check(context, app, app_origin, call, timed, link, client):
     providers, wait, say = (context[key] for key in ('agentProviders', 'wait_for', 'say'))
@@ -362,6 +479,8 @@ def check(context, app, app_origin, call, timed, link, client):
         for entry in call(app_origin, workspace_route+'/participants')['sessions'])
     assert fresh_current()['id'] == fresh['id'], 'Deleting the stopped session must keep other conversations'
     say('PASS: one authenticated Delete retires a previously retained proven-stopped run, preserves unknown evidence and deletes only its Harness conversation')
+    if os.name == 'nt':
+        _check_windows_aggregate_replacement(context, app_origin, call, client, connection)
     return {'before': before_crash, 'after': after_crash, 'afterConsumer': after_consumer,
         'quiescentStopped': cancelled_proof, 'quiescentResumed': resumed_proof, 'retired': retired,
         'completedChatId': fresh['id'], 'otherChatId': session['id'], 'retainedTree': tree}

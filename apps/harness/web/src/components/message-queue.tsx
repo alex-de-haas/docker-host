@@ -19,15 +19,22 @@ function QueueAttachments({ names }: { names: string[] }) {
   return names.length ? <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground" title={names.join(", ")}
     aria-label={`${names.length} attachment${names.length === 1 ? "" : "s"}: ${names.join(", ")}`}><Paperclip className="size-3" aria-hidden />{names.length}</span> : null;
 }
-export function MessageQueue({ queue, outbox, transcriptRequestIds, busy, editingId, viewId, error, pendingOperation, legacySend, legacyBusy, onLegacyRetry,
+export function MessageQueue({ queue, outbox, transcriptRequestIds, busy, editingId, viewId, error, pendingOperation, recovery, legacySend, legacyBusy, onLegacyRetry,
   onCommand, onEdit, onRetryLocal, onRecoverLocal, onRetryOperation, onRefresh }: {
   queue: QueueSnapshot | null; outbox: OutboxEntry[]; transcriptRequestIds?: ReadonlySet<string>; busy: boolean; editingId?: string; viewId: string;
-  error: string | null; pendingOperation: boolean; legacySend: PendingSend | null; legacyBusy: boolean;
+  error: string | null; pendingOperation: boolean; recovery?: { requestId?: string }; legacySend: PendingSend | null; legacyBusy: boolean;
   onCommand: (command: QueueCommand) => void; onEdit: (entry: QueueEntry, recover: boolean) => void;
   onRefresh: () => void; onRetryLocal: (id: string) => void; onRecoverLocal: (id: string) => void; onRetryOperation: () => void; onLegacyRetry: () => void;
 }) {
   const visible = queue?.entries ?? [];
   const local = outbox.filter(row => !visible.some(entry => entry.id === row.id));
+  const recoveryEntry = recovery?.requestId ? visible.find(entry => entry.attempt?.clientRequestId === recovery.requestId
+    && entry.error?.code !== "run_not_admitted") : undefined;
+  const waiting = queue?.waiting?.code === "source_admission_recovery_required" && recovery ? undefined : queue?.waiting?.message;
+  const reason = recovery && (queue?.reason === "Response stopped. Resume the queue when ready."
+    || queue?.reason === "Stop was not confirmed. Check status before resuming." || queue?.reason === recoveryEntry?.error?.message)
+    ? undefined : queue?.reason;
+  const queueStatus = waiting ?? (reason === "Queue paused" ? undefined : reason);
   const list = useRef<HTMLOListElement>(null);
   const drag = useRef<QueueDrag | null>(null);
   const [drop, setDrop] = useState<QueueDrag | null>(null);
@@ -74,7 +81,7 @@ export function MessageQueue({ queue, outbox, transcriptRequestIds, busy, editin
         {queue?.paused ? <Play /> : <Pause />}{queue?.paused ? "Resume queue" : "Pause queue"}
       </Button>}
     </div>
-    {(queue?.waiting?.message || (queue?.reason && queue.reason !== "Queue paused")) && <p role="status" className="truncate px-3 py-1 text-xs text-muted-foreground" title={queue.waiting?.message ?? queue.reason}>{queue.waiting?.message ?? queue.reason}</p>}
+    {queueStatus && <p role="status" className="truncate px-3 py-1 text-xs text-muted-foreground" title={queueStatus}>{queueStatus}</p>}
     <ol ref={list} className="max-h-56 overflow-y-auto overscroll-contain divide-y" aria-label="Queued messages">
       {legacySend && <li className="flex min-w-0 items-center gap-2 px-3 py-1" aria-label="Previous send awaiting confirmation">
         {legacyBusy && <Loader2 className="size-4 shrink-0 motion-safe:animate-spin" aria-hidden />}
@@ -115,12 +122,12 @@ export function MessageQueue({ queue, outbox, transcriptRequestIds, busy, editin
               const offset = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
               if (offset) { event.preventDefault(); cancelDrag(); const target = visible[index + offset]; if (target) move(entry.id, target.id); }
             }}><GripVertical /></Button>
-          {entry.state === "sending" && <Loader2 className="size-3.5 shrink-0 motion-safe:animate-spin" aria-label="Sending message" />}
+          {entry !== recoveryEntry && entry.state === "sending" && <Loader2 className="size-3.5 shrink-0 motion-safe:animate-spin" aria-label="Sending message" />}
           <p className="min-w-0 flex-[3_1_0%] truncate">{inTranscript ? "Message in conversation" : entry.text || "Attachments"}</p>
           {!inTranscript && <QueueAttachments names={entry.attachments.map(file => file.displayName ?? queueFileLabel(file.name))} />}
-          {status && <span className="min-w-0 max-w-28 flex-[1_1_0%] truncate text-xs text-muted-foreground" title={status}>{status}</span>}
-          {entry.error && <span role="alert" className="shrink-0 text-destructive-foreground" title={entry.error.message}><CircleAlert className="size-4" aria-hidden /><span className="sr-only">{entry.error.message}</span></span>}
-          {(entry.state === "failed" || entry.state === "unknown") && <Button type="button" variant="ghost" size="sm" className="size-7 p-0 text-xs @sm/queue:w-auto @sm/queue:px-1.5" title="Retry" disabled={busy || pendingOperation} onClick={() => onCommand({ type: "retry", entryId: entry.id })}><RotateCcw /><span className="sr-only @sm/queue:not-sr-only">Retry</span></Button>}
+          {entry !== recoveryEntry && status && <span className="min-w-0 max-w-28 flex-[1_1_0%] truncate text-xs text-muted-foreground" title={status}>{status}</span>}
+          {entry !== recoveryEntry && entry.error && <span role="alert" className="shrink-0 text-destructive-foreground" title={entry.error.message}><CircleAlert className="size-4" aria-hidden /><span className="sr-only">{entry.error.message}</span></span>}
+          {entry !== recoveryEntry && (entry.state === "failed" || entry.state === "unknown") && <Button type="button" variant="ghost" size="sm" className="size-7 p-0 text-xs @sm/queue:w-auto @sm/queue:px-1.5" title="Retry" disabled={busy || pendingOperation} onClick={() => onCommand({ type: "retry", entryId: entry.id })}><RotateCcw /><span className="sr-only @sm/queue:not-sr-only">Retry</span></Button>}
           {otherEditor && <Button type="button" size="sm" className="h-7 px-1.5 text-xs" variant="ghost" disabled={busy || pendingOperation || !!editingId} onClick={() => onEdit(entry, true)}>Recover edit</Button>}
           {editable && <div className="flex shrink-0 items-center gap-0.5 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/queue-row:opacity-100 [@media(hover:hover)]:group-focus-within/queue-row:opacity-100">
             <Button type="button" size="icon-sm" className="size-7" variant="ghost" disabled={busy || pendingOperation || !!editingId} aria-label={`Edit queued message ${index + 1}`} title="Edit message" onClick={() => onEdit(entry, false)}><Pencil /></Button>
