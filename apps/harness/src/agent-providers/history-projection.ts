@@ -86,6 +86,8 @@ export function reconcileHistoryProjection(current: AgentRunSnapshot, prior: His
     if (!ahead && !usable && !counter) return;
     // The reducer needs an earlier frontier to read an independently positioned fact.
     const base = ahead ? current : { ...current, lastSequence: String(at - 1n), revision: event.revision };
+    // Restore later context after reduction, once the snapshot has its current watermark again.
+    if (!ahead && base.latestContext && BigInt(base.latestContext.sequence) >= at) delete base.latestContext;
     next = reduceAgentRunProjection(createAgentRunProjection(base), item, true).snapshot;
     if (event.type.startsWith("decision.") && at <= BigInt(clock.lifecycle)) next.pending = current.pending;
     if (key && usable) clock.changes[key] = sequence;

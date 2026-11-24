@@ -99,3 +99,72 @@ it.each(["full snapshot", "earlier detail events"] as const)(
       await f.close(); vi.restoreAllMocks();
     }
   }, 15000);
+
+it("fills a delayed history range after a newer context observation has arrived live", async () => {
+  const f = await publicProviderFixture(true);
+  const allowRange = gate(), allowLive = gate();
+  try {
+    const chat = await f.manager.createSession({ createdBy: f.owner });
+    await f.manager.postMessage(chat.id, "Run the task", f.credential, [], { clientRequestId: randomUUID(), actorUserId: f.owner });
+    await vi.waitFor(() => expect(f.activeHistoryStreams()).toBe(1));
+    const { sessionId, runId } = f.starts[0]!, initial = f.snapshot(runId);
+    f.disconnectHistory();
+
+    const executionUsage = { sequence: "8", activeMs: 1250, unknown: false };
+    const usage = { usedTokens: 45, maxTokens: 1000, estimated: false, observedAt: "2026-11-24T10:00:00Z" };
+    const elapsed = f.emit(runId, "usage.updated", { execution: executionUsage });
+    const reply = f.emit(runId, "message.completed", { messageId: "reply", text: "Recovered reply" });
+    const context = f.emit(runId, "context.updated", { usage });
+    const latestContext = { sequence: context.sequence, usage };
+    const items: AgentWatchItem[] = [
+      { kind: "snapshot", snapshot: initial },
+      ...[elapsed, reply, context].map(event => ({ kind: "event" as const, cursor: "cursor-" + event.sequence, event })),
+    ];
+    const epoch = "test-history";
+    const records: AgentHistoryObservation[] = items.map((item, index) => ({
+      sessionId, runId, userId: f.owner, principalId: f.owner, generation: initial.generation,
+      item, epoch, sessionPosition: index + 1, cursor: "installation-" + (index + 1),
+    }));
+    const range = vi.fn(async (_through: string, _session: string, _epoch: string, from: number, to: number) => {
+      await allowRange.wait;
+      return { observations: records.slice(from - 1, to), nextPosition: null };
+    });
+    vi.spyOn(CoreAgentBackend.prototype, "liveHistory").mockResolvedValue({
+      observe: async function* (_cursor, ready, signal) {
+        await ready("before-live-context");
+        await allowLive.wait;
+        if (signal.aborted) return;
+        yield records[3]!;
+        if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+      },
+      states: async through => ({ through, nextSession: null, sessions: [{
+        sessionId, epoch, userId: f.owner, principalId: f.owner, snapshot: initial, head: 3,
+      }] }),
+      range,
+    });
+
+    await vi.waitFor(() => expect(range).toHaveBeenCalledWith("before-live-context", sessionId, epoch, 1, 3), { timeout: 5000 });
+    allowLive.release();
+    await vi.waitFor(async () => {
+      expect((await f.store.readProviderExecution(chat.id))?.run).toMatchObject({ latestContext, lastSequence: context.sequence });
+      expect((await f.store.readRecord(chat.id))?.providerHistoryGaps).toMatchObject([{ from: 1, to: 3 }]);
+    }, { timeout: 5000 });
+
+    allowRange.release();
+    await vi.waitFor(async () => {
+      const record = await f.store.readRecord(chat.id);
+      expect(record?.providerHistoryGaps ?? []).toEqual([]);
+      expect(record?.providerHistoryContact).toBeUndefined();
+      expect((await f.store.readProviderExecution(chat.id))?.run).toMatchObject({
+        state: "running", lastSequence: context.sequence, cursor: "cursor-" + context.sequence, latestContext, executionUsage,
+      });
+    }, { timeout: 5000 });
+    const events = await f.store.readEvents(chat.id);
+    expect(events.filter(event => event.type === "assistant_text").map(event => event.text)).toEqual(["Recovered reply"]);
+    expect(f.controls).toHaveLength(0);
+    expect(f.starts).toHaveLength(1);
+  } finally {
+    allowRange.release(); allowLive.release();
+    await f.close(); vi.restoreAllMocks();
+  }
+}, 15000);
