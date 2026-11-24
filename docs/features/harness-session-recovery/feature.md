@@ -1,6 +1,6 @@
 ---
 created: 2026-11-03
-updated: 2026-11-23
+updated: 2026-11-24
 summary: Exact-run operator recovery for interrupted Harness execution.
 components: [apps/harness]
 ---
@@ -34,10 +34,11 @@ fresh Hosty authority after Worker acknowledgement. Pending cleanup prevents new
 Only a completed cleanup closes the recovery request. Files and history remain available for a
 later explicit continuation; recovery itself sends no new prompt.
 
-Recovery review waits for serialized conversation setup and the new Worker's durable acceptance
-before reading its receipt. A freshly submitted prompt therefore does not display a missing-run
-error while its journal record is still being created. The wait covers acceptance only, not the
-agent's response or coordinator event callbacks. A retained run whose acceptance receipt is missing receives a separate recovery review bound to
+Recovery review waits for the durable message admission outcome before reading the provider run.
+The conversation keeps the draft and temporarily blocks sending while admission is in progress.
+Current queued, running and waiting executions have no interruption notice. An uncertain exit
+keeps its recovery notice, and recovery actions require provider support or a retained recovery
+request. A retained run whose acceptance receipt is missing receives a separate recovery review bound to
 the current Worker generation. The owning interactive operator must still explicitly confirm native
 exit. Recovery atomically writes a cancelled tombstone for that exact conversation/run before
 normal source cleanup; a late submission cannot execute the recovered identity. Ordinary admission
@@ -98,8 +99,9 @@ Coordinator tests cover owner checks, unchanged history, source
 claim release, lost replies and failed Core cleanup without new prompt admission. HTTP tests require
 interactive authentication, ownership and same-origin requests. UI tests cover exit confirmation
 through the recovery button, exact retry after uncertainty and server-retained requests.
-Regression coverage delays both conversation preparation and Worker acceptance, checks admission
-failure without blocking the conversation queue, and preserves missing-receipt errors after restart.
+Regression coverage delays conversation preparation and provider acceptance, checks that healthy
+active runs have no recovery notice, and preserves unresolved admissions and drafts when review
+or recovery is needed.
 
 Runtime verification
 uses a Core-managed Local sandbox, normal password login and launch-code identity, with synthetic

@@ -39,6 +39,7 @@ export type AssistantSession = {
   workerRecovery?: { state: "pending" | "completed" };
   storageRecovery?: { state: "required"; code: string; message: string };
   sourceAdmission?: { clientRequestId?: string; runId?: string; state: "preparing" | "dispatching" };
+  sourceAdmissionInFlight?: true;
   agentProfile?: import("../../../src/profiles/types").AgentProfile | null;
   profileLocked?: boolean;
   taskExecutionId?: string;

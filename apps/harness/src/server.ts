@@ -738,7 +738,8 @@ async function route(
   }
 
   if (url.pathname === "/api/sessions" && method === "GET") {
-    const records = (await manager.listSessions()).filter(record => record.createdBy === actor.userId);
+    const records = (await manager.listSessions()).filter(record => record.createdBy === actor.userId)
+      .map(record => ({ ...record, sourceAdmissionInFlight: manager.isSourceAdmissionInFlight(record) || undefined }));
     const roster = records.some(record => record.appIds?.length)
       ? await readContextApps(providers).catch(() => null) : [];
     sendJson(response, 200, { sessions: records.map(record => ({
@@ -915,7 +916,7 @@ async function route(
       return;
     }
     // Copy before discovery yields: an SSE update may mutate the live record in the meantime.
-    const current = { ...record };
+    const current = { ...record, sourceAdmissionInFlight: manager.isSourceAdmissionInFlight(record) || undefined };
     const appContext = await captureContext(providers, current.appIds ?? [], current.appContextRevision ?? 0, true);
     sendJson(response, 200, { ...current, appContext, ...(connections ? { providerLocked: await manager.sessionProviderLocked(current) } : {}) });
     return;

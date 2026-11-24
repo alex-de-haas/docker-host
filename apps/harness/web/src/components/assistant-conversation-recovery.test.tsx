@@ -58,7 +58,7 @@ async function reload() { await act(async () => root.unmount()); root = createRo
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); localStorage.clear(); sessionStorage.clear(); vi.resetAllMocks();
-  delete session.storageRecovery; delete session.sourceAdmission; session.status = "idle";
+  delete session.storageRecovery; delete session.sourceAdmission; delete session.sourceAdmissionInFlight; session.status = "idle";
   vi.mocked(api.getStorageRecovery).mockResolvedValue({ issues: [] }); vi.mocked(api.getExecutionRecovery).mockResolvedValue(null);
   vi.mocked(api.recoverExecution).mockResolvedValue();
   vi.mocked(api.stopSession).mockResolvedValue();
@@ -283,6 +283,37 @@ it("retains a visible draft and attachments while a source storage fence blocks 
   expect(message().value).toBe(original.draftText); expect(localStorage.getItem(draftKey)).toBe(original.draftText);
   expect(queueApi.commandMessageQueue).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled();
   expect(api.recoverExecution).not.toHaveBeenCalled();
+});
+
+it("keeps both recovery notices hidden while a new turn is being admitted", async () => {
+  session.status = "running";
+  session.sourceAdmission = { state: "dispatching", runId: "normal-run" };
+  session.sourceAdmissionInFlight = true;
+  let finishReview!: (value: null) => void;
+  vi.mocked(api.getExecutionRecovery).mockImplementationOnce(() => new Promise(resolve => { finishReview = resolve; }));
+  localStorage.setItem(draftKey, original.draftText);
+  await mount();
+  expect(container.querySelector("header")?.textContent).toContain("running");
+  expect(message().readOnly).toBe(true);
+  expect(container.querySelector('[aria-label="Session storage recovery"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Interrupted execution recovery"]')).toBeNull();
+
+  vi.mocked(api.getSession).mockResolvedValue({ ...session, sourceAdmission: undefined, sourceAdmissionInFlight: undefined });
+  await act(async () => finishReview(null));
+  expect(message().readOnly).toBe(false);
+  expect(message().value).toBe(original.draftText);
+  expect(container.querySelector('[aria-label="Session storage recovery"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Interrupted execution recovery"]')).toBeNull();
+});
+
+it("shows an interrupted run without a recovery button when the provider cannot reconcile it", async () => {
+  session.sourceAdmission = { state: "dispatching", runId: "interrupted-run" };
+  vi.mocked(api.getExecutionRecovery).mockResolvedValue({ recoverable: false, runId: "interrupted-run", generation: "provider", expectedRevision: "1" });
+  await mount();
+  const panel = container.querySelector('[aria-label="Interrupted execution recovery"]');
+  expect(panel?.textContent).toContain("process exit is unconfirmed");
+  expect(panel?.querySelector("button")).toBeNull();
+  expect(container.querySelector('[aria-label="Stop"]')).not.toBeNull();
 });
 
 it("opens source-only recovery and preserves the draft after an explicitly confirmed recovery without sending it", async () => {

@@ -27,12 +27,23 @@ it("waits for public admission without holding the lane needed by Stop", async (
   let release!: () => void; f.behavior.startGate = new Promise(resolve => { release = resolve; });
   const posted = f.manager.postMessage(session.id, "Admit once", f.credential, [], { actorUserId: f.owner, clientRequestId: randomUUID() });
   await vi.waitFor(() => expect(f.authorizations.some(request => request.operation === "runs.start")).toBe(true));
+  expect(f.manager.isSourceAdmissionInFlight((await f.manager.getSession(session.id))!)).toBe(true);
   const review = f.manager.executionRecovery(session.id, f.owner);
   const stopping = f.manager.cancelSession(session.id);
   release(); await posted; await stopping;
-  expect(await review).toMatchObject({ runId: f.starts[0]!.runId, recoverable: false });
+  expect(await review).toBeNull();
+  expect(f.manager.isSourceAdmissionInFlight((await f.manager.getSession(session.id))!)).toBe(false);
   expect(f.starts).toHaveLength(1);
   expect(f.controls.filter(control => control.path.endsWith("/cancel"))).toHaveLength(1);
+});
+
+it.each([
+  ["queued", "preparing"], ["running", "executing"], ["waiting_for_input", "waiting"],
+] as const)("does not report a current %s execution as interrupted", async (state, phase) => {
+  const f = await fixture();
+  f.update(f.runId, { state, phase });
+  await expect(f.manager.executionRecovery(f.session.id, f.owner)).resolves.toBeNull();
+  expect(f.controls).toEqual([]);
 });
 
 it("does not offer reconcile when the provider has not declared authoritative recovery", async () => {
@@ -90,6 +101,9 @@ it("cancels an admitted lost-response start without retransmitting its immutable
   await expect(f.manager.postMessage(session.id, "May have started exactly once", f.credential, [], { actorUserId: f.owner, clientRequestId: requestId })).rejects.toThrow();
   expect(f.starts).toHaveLength(1);
   expect(await f.manager.messageReceipt(session.id, requestId, f.owner)).toMatchObject({ state: "unknown" });
+  const current = (await f.manager.getSession(session.id))!;
+  expect(current.sourceAdmission).toBeDefined();
+  expect(f.manager.isSourceAdmissionInFlight(current)).toBe(false);
   await f.manager.cancelSession(session.id);
   expect(f.starts).toHaveLength(1);
   expect(f.controls.filter(control => control.path.endsWith("/cancel"))).toHaveLength(1);

@@ -1393,7 +1393,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       {!fullPage && !showSessions && session && <SessionWorkspaces key={`workspaces-${session.id}`} session={session} running={running} />}
       <div role="region" aria-label="Session notices" tabIndex={0} className="max-h-1/2 shrink-0 overflow-y-auto overscroll-contain empty:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring">
         {error && <div className="shrink-0 px-3 pt-2"><InlineError message={error} /></div>}
-        {storageBlocked && <div className="shrink-0 px-3 pt-2">
+        {(session?.storageRecovery || session?.sourceAdmission && !session.sourceAdmissionInFlight) && <div className="shrink-0 px-3 pt-2">
           <Alert aria-label="Session storage recovery" role="status" variant="warning">
             <TriangleAlert aria-hidden />
             <AlertTitle>Session needs recovery</AlertTitle>

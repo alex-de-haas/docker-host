@@ -141,6 +141,7 @@ function projectedIds(events: StoredEvent[]): Set<string> {
 }
 
 interface LiveSession {
+  sourceAdmissionInFlight?: { id: string; settled: Promise<void> };
   subagentRunId?: string;
   suggestionAllowed?: boolean;
   suggestionContext?: string;
@@ -3528,6 +3529,11 @@ export class SessionManager {
     return record ? this.runtimeProjection(record) : null;
   }
 
+  isSourceAdmissionInFlight(record: SessionRecord): boolean {
+    return !!record.sourceAdmission
+      && this.live.get(record.id)?.sourceAdmissionInFlight?.id === record.sourceAdmission.runId;
+  }
+
   /** Retire a stopped provider run for explicit Delete while keeping its unresolved results unknown. */
   private async retireProviderForDeletion(session: LiveSession, stop: "pending" | "unconfirmed"): Promise<boolean> {
     const record = session.record, active = record.providerExecution;
@@ -3993,7 +3999,8 @@ export class SessionManager {
     })).digest("hex") : undefined;
     if (this.live.get(id)?.record.status === "suggesting" && (!clientRequestId || !await this.store.readMessageReceipt(id, clientRequestId))) await this.endSuggestions(id);
     const admission: { current?: { promise: Promise<void>; receipt?: StoredMessageReceipt; sourceId: string } } = {};
-    const result = await this.serialize(id, async () => {
+    let settleSourceAdmission: (() => void) | undefined;
+    const preparation = this.serialize(id, async () => {
       const session = await this.requireLive(id);
       const retryFamilyInput = this.beforeSubagentStart(session.record, context.subagentRunId);
       if (clientRequestId) {
@@ -4202,6 +4209,13 @@ export class SessionManager {
         if (this.connections?.remote && !session.record.providerPlatformContext)
           session.record.providerPlatformContext = await platformSkillContext();
         const admissionRunId = randomUUID();
+        const settled = new Promise<void>(resolve => {
+          settleSourceAdmission = () => {
+            if (session.sourceAdmissionInFlight?.id === admissionRunId) delete session.sourceAdmissionInFlight;
+            resolve();
+          };
+        });
+        session.sourceAdmissionInFlight = { id: admissionRunId, settled };
         session.record.sourceAdmission = { ...(clientRequestId ? { clientRequestId } : {}), runId: admissionRunId, state: "preparing",
           ...(this.connections?.remote && context.subagentRunId ? { subagentRunId: context.subagentRunId } : {}),
           ...(this.connections?.remote && session.record.providerExecution?.runId ? { previousProviderRunId: session.record.providerExecution.runId } : {}) };
@@ -4373,23 +4387,25 @@ export class SessionManager {
         throw error;
       } finally { release?.(); }
     });
-    if (!admission.current) return result;
-    // Admission can upload/authorize over the network. Leave the conversation lane free for Stop;
-    // projection has its own replay transaction and cannot block this acknowledgement.
-    await admission.current.promise;
-    const admitted = admission.current;
-    return this.serialize(id, async () => {
-      const session = await this.requireLive(id);
-      if (admitted.receipt) {
-        const accepted: StoredMessageReceipt = { ...admitted.receipt, state: "accepted" };
-        await this.store.saveMessageReceipt(id, accepted);
+    return preparation.then(async result => {
+      const admitted = admission.current;
+      if (!admitted) return result;
+      // Admission can upload/authorize over the network. Leave the conversation lane free for Stop;
+      // projection has its own replay transaction and cannot block this acknowledgement.
+      await admitted.promise;
+      return this.serialize(id, async () => {
+        const session = await this.requireLive(id);
+        if (admitted.receipt) {
+          const accepted: StoredMessageReceipt = { ...admitted.receipt, state: "accepted" };
+          await this.store.saveMessageReceipt(id, accepted);
+          if (session.record.sourceAdmission?.runId === admitted.sourceId) delete session.record.sourceAdmission;
+          await this.store.saveRecord(session.record);
+          return this.publicMessageReceipt(accepted, actorUserId!);
+        }
         if (session.record.sourceAdmission?.runId === admitted.sourceId) delete session.record.sourceAdmission;
         await this.store.saveRecord(session.record);
-        return this.publicMessageReceipt(accepted, actorUserId!);
-      }
-      if (session.record.sourceAdmission?.runId === admitted.sourceId) delete session.record.sourceAdmission;
-      await this.store.saveRecord(session.record);
-    });
+      });
+    }).finally(() => settleSourceAdmission?.());
   }
 
   /**
@@ -4822,18 +4838,22 @@ export class SessionManager {
     const session = await this.requireLive(id);
     if (session.record.createdBy !== actorId) throw new AppContextError(404, "session_not_found", "Session not found.");
     if (!session.record.selection) throw new AppContextError(409, "provider_cutover_required", "Legacy sessions require the documented clean cutover; they cannot be imported or resumed.");
-    // Preparation/admission has its own durable request. Waiting here never occupies the
-    // conversation lane, so Stop can fence that exact request while this review is pending.
-    await session.run?.waitForAdmission?.().catch(() => undefined);
+    // Observe the final admission checkpoint outside the conversation lane so Stop remains available.
+    const admission = session.sourceAdmissionInFlight;
+    if (admission && admission.id === session.record.sourceAdmission?.runId) await admission.settled;
+    else await session.run?.waitForAdmission?.().catch(() => undefined);
     const retained = await this.store.readProviderExecution(id);
     if (!retained?.runId) return null;
-    const { execution } = await this.publicExecution(session);
+    const { context, execution } = await this.publicExecution(session);
     const snapshot = await execution.read(false);
     const pending = session.record.providerRecovery?.state === "pending" ? session.record.providerRecovery : undefined;
-    if (snapshot.stopConfirmed && !pending) return null;
-    const capabilities = await (await this.publicExecution(session)).context.client.capabilities();
+    const needsReview = !snapshot.stopConfirmed
+      && (snapshot.state === "unknown" || snapshot.phase === "interrupted" || snapshot.freshness !== "current");
+    if (!needsReview && !pending) return null;
+    const recoverable = snapshot.state === "unknown" && !snapshot.stopConfirmed
+      && (await context.client.capabilities()).capabilities.includes("runs.reconcile");
     return { runId: snapshot.ref.id, generation: snapshot.generation, expectedRevision: snapshot.revision,
-      recoverable: capabilities.capabilities.includes("runs.reconcile") && snapshot.state === "unknown" && !snapshot.stopConfirmed,
+      recoverable,
       pending: pending && { requestId: pending.input.requestId, runId: pending.runId,
         generation: pending.input.expectedGeneration, expectedRevision: pending.input.expectedRevision, consumerExitConfirmed: true as const } };
   }
