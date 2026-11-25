@@ -47,7 +47,8 @@ export async function startAgentProvider<C extends EngineConnections>(options: {
     } else writerScope = await probeWriterScope(data);
   }
   const capabilities = structuredClone(options.engine.capabilities);
-  if (writerScope && !capabilities.capabilities.includes(writerCapability)) capabilities.capabilities.push(writerCapability);
+  capabilities.capabilities = capabilities.capabilities.filter(capability => capability !== writerCapability);
+  if (writerScope) capabilities.capabilities.push(writerCapability);
   if (options.engine.managedNativeScopes && !writerScope) {
     capabilities.capabilities = capabilities.capabilities.filter(capability => capability !== "subagents.native");
     capabilities.capabilities.push("scope.restricted-native-tools");

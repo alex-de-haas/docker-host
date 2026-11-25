@@ -7,6 +7,7 @@ import path from "node:path";
 import type { AgentConnections } from "./internal/connections/registry.js";
 import type { ProviderAuthority } from "./core.js";
 import { ProviderController, type ExecutionDriver } from "./controller.js";
+import { projectReceipt } from "./projection.js";
 import { ProviderStore, type VerifiedOperation } from "./store.js";
 
 const directories: string[] = [];
@@ -46,12 +47,41 @@ it("closes the driver before waiting for an accepted cancellation blocked on nat
     await vi.waitFor(() => expect(f.driver.close).toHaveBeenCalledOnce(), { timeout: 100 });
     await closing;
     const { record } = await f.store.run(runId);
-    expect(record.controls[request.requestId]?.receipt.state).toBe("applied");
-    // Draining a control is not process proof: only the real driver may publish confirmed exit.
+    expect(record.controls[request.requestId]?.receipt.state).toBe("accepted");
+    // Only authoritative closure completes the Stop receipt.
     expect(record.snapshot.stopConfirmed).toBe(false);
     expect(record.snapshot.phase).toBe("cancelling");
     expect(f.driver.synchronize).toHaveBeenCalled();
   } finally { nativeStopped.resolve(); await closing; }
+});
+
+it("commits existing Stop receipts with proven closure, survives late command failure and preserves a finished outcome", async () => {
+  const f = await fixture(), paused = deferred();
+  vi.mocked(f.driver.cancel).mockImplementation(async () => { await paused.promise; throw new Error("Late driver failure"); });
+  const runId = randomUUID(), input = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start" as const, input: { text: "Hello" } };
+  await f.controller.startRun(f.sessionId, runId, input, JSON.stringify(input), actor);
+  const request = { requestId: randomUUID() }, stop = () => f.controller.cancel(runId, request, JSON.stringify(request), actor);
+  expect((await stop()).state).toBe("accepted");
+  await vi.waitFor(() => expect(f.driver.cancel).toHaveBeenCalledOnce());
+  const outcome = { status: "succeeded" as const, text: "The finished answer" };
+  try {
+    await f.store.exclusive(async () => {
+      const { record, session } = await f.store.run(runId);
+      record.snapshot.state = "succeeded"; record.snapshot.phase = "terminal"; record.snapshot.result = outcome;
+      f.store.lifecycle(record);
+      expect(record.controls[request.requestId]?.receipt.state).toBe("accepted");
+      record.snapshot.stopConfirmed = true; f.store.lifecycle(record); await f.store.save(session);
+    });
+    expect((await stop()).state).toBe("applied");
+  } finally { paused.resolve(); await f.controller.close(); }
+  const next = { requestId: randomUUID() };
+  expect((await f.controller.cancel(runId, next, JSON.stringify(next), actor)).state).toBe("applied");
+  const { record, session } = await f.store.run(runId);
+  expect(record.controls[request.requestId]?.receipt.state).toBe("applied");
+  projectReceipt(f.store, session, record, { runId, revision: 8, generation: record.snapshot.generation,
+    state: "completed", exitConfirmed: true, conversationId: session.id, selection: { model: null, reasoningEffort: null },
+    createdAt: record.snapshot.observedAt, updatedAt: record.snapshot.observedAt });
+  expect(record.snapshot).toMatchObject({ state: "succeeded", stopConfirmed: true, result: outcome });
 });
 
 it("drains rejected background operations after driver shutdown without inventing success", async () => {

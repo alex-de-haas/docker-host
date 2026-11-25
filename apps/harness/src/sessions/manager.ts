@@ -1174,14 +1174,16 @@ export class SessionManager {
         providerEventId: identity, providerGeneration: snapshot.generation });
       seen.add(identity);
     };
-    if (specific && position && (specific.type === "message.delta" || specific.type === "tool.output")) {
+    const messageBoundary = specific?.type === "message.started" && specific.data.text === "" ? "start"
+      : specific?.type === "message.completed" && specific.data.text === undefined ? "complete" : undefined;
+    if (specific && position && (specific.type === "message.delta" || specific.type === "tool.output" || messageBoundary)) {
       const { type, data, source, sequence } = specific;
       const tool = type === "tool.output";
       const target = tool ? runId + ":output:" + source.agentId + ":" + String(data.toolCallId)
         : runId + ":message:" + source.agentId + ":" + String(data.messageId);
       if (!tool || typeof data.name === "string" && data.name !== "unknown" && shouldRetainToolOutput(data.name)) {
         await append("fragment:" + sequence, { type: "provider_fragment", target, sourceSequence: sequence,
-          text: String(tool ? data.output ?? "" : data.text ?? ""),
+          text: String(tool ? data.output ?? "" : data.text ?? ""), ...(messageBoundary ? { messageBoundary } : {}),
           ...(tool ? { toolUseId: transcriptToolId(runId, source, String(data.toolCallId)) } : {}) }, source);
       }
     }

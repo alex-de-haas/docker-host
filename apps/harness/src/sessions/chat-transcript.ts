@@ -1,5 +1,6 @@
 import { closeSync, lstatSync, openSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { applyProviderHistoryContent } from "../agent-providers/history-content.js";
 import type { StoredEvent } from "./store.js";
 import type { HistoryReceipt } from "../agent-providers/history-coverage.js";
 import { providerIdentityParts } from "../../shared/provider-reference.js";
@@ -29,6 +30,8 @@ export class ChatTranscript {
       CREATE TABLE admissions (run TEXT PRIMARY KEY, reference TEXT NOT NULL);
       CREATE TABLE delivery_origins (run TEXT PRIMARY KEY, provider TEXT NOT NULL, session TEXT NOT NULL, reference TEXT NOT NULL);
       CREATE TABLE transcript (seq INTEGER PRIMARY KEY, body TEXT NOT NULL);
+      CREATE INDEX transcript_content ON transcript(json_extract(body,'$.target'),seq)
+        WHERE json_extract(body,'$.type') IN ('provider_fragment','provider_history_order');
       CREATE TABLE streams (id TEXT PRIMARY KEY, provider TEXT NOT NULL, session TEXT NOT NULL, epoch TEXT NOT NULL,
         received INTEGER NOT NULL DEFAULT 0, acknowledged INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE incoming (stream TEXT NOT NULL, ordinal INTEGER NOT NULL, body TEXT NOT NULL,
@@ -83,8 +86,17 @@ export class ChatTranscript {
   }
 
   read(after: number) {
-    return this.database(db => db.prepare("SELECT body FROM transcript WHERE seq>? ORDER BY seq").all(after)
-      .map(row => JSON.parse(String(row.body)) as StoredEvent));
+    return this.database(db => {
+      const decode = (row: { body?: unknown }) => JSON.parse(String(row.body)) as StoredEvent;
+      const events = db.prepare("SELECT body FROM transcript WHERE seq>? ORDER BY seq").all(after).map(decode);
+      const targets = after > 0 ? events.filter(event => event.type === "assistant_text" || event.type === "tool_result")
+        .map(event => event.providerEventId).filter(id => typeof id === "string") : [];
+      if (!targets.length) return applyProviderHistoryContent(events);
+      // A reconnect cursor can fall within an already stored answer. Read its earlier content by target.
+      const prior = db.prepare(`SELECT body FROM transcript WHERE json_extract(body,'$.type') IN ('provider_fragment','provider_history_order')
+        AND json_extract(body,'$.target') IN (SELECT value FROM json_each(?)) AND seq<=? ORDER BY seq`).all(JSON.stringify(targets), after).map(decode);
+      return applyProviderHistoryContent([...prior, ...events]).slice(prior.length);
+    });
   }
 
   /** Commit the complete incoming transcript item and its contiguous delivery cursor together.

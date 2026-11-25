@@ -796,10 +796,8 @@ export class SessionStore {
   async readEvents(id: string, afterSeq = 0): Promise<StoredEvent[]> {
     return this.serialize(id, async () => {
       if (await this.deleted(id)) return [];
-      const events = await this.hasProviderTranscript(id)
-        ? new ChatTranscript(path.join(this.sessionDir(id), "chat.sqlite")).read(afterSeq)
-        : (await this.journal(id)).events.filter(event => event.seq > afterSeq);
-      return applyProviderHistoryContent(events);
+      if (await this.hasProviderTranscript(id)) return new ChatTranscript(path.join(this.sessionDir(id), "chat.sqlite")).read(afterSeq);
+      return applyProviderHistoryContent((await this.journal(id)).events.filter(event => event.seq > afterSeq));
     });
   }
   async deleteSession(id: string): Promise<void> {

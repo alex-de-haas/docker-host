@@ -168,7 +168,7 @@ function partialHistory(rows: AssistantEvent[]): AssistantEvent[] {
       result.push(item);
     }
     if (row.toolUseId) item.output = (String(item.output) + String(row.text ?? "")).slice(0, 32768);
-    else item.text = String(item.text) + String(row.text ?? "");
+    else item.text = (row.messageBoundary === "start" ? "" : String(item.text)) + String(row.text ?? "");
   }
   return result;
 }

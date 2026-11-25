@@ -380,6 +380,14 @@ export class ProviderStore {
     }
     const revision = record.snapshot.revision; record.snapshot.revision = increment(revision);
     try { this.emit(record, "run.updated", {}); } catch (error) { record.snapshot.revision = revision; throw error; }
+    // Observers can read this transaction before the supervisor's command loop returns.
+    // The closure and every waiting Stop receipt must agree at that same commit.
+    if (record.snapshot.stopConfirmed && record.snapshot.phase === "terminal") for (const control of Object.values(record.controls)) {
+      if (!control.stop || control.receipt.state !== "accepted" && control.receipt.state !== "unknown") continue;
+      control.receipt.state = "applied"; control.receipt.revision = record.snapshot.revision;
+      delete control.receipt.error;
+      this.emit(record, "control.updated", { requestId: control.receipt.requestId, receipt: control.receipt });
+    }
   }
   cursor(generation: string, sequence: string): string { return Buffer.from(JSON.stringify([generation, sequence])).toString("base64url"); }
   decodeCursor(value: string): { generation: string; sequence: string } {

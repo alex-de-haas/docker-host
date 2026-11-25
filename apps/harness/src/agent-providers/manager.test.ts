@@ -34,6 +34,38 @@ describe("SessionManager public provider integration", () => {
     expect(f.controls).toHaveLength(0);
   });
 
+  it("reopens one exact near-1-MiB reply from chat.sqlite after receiving a different streamed draft and a clipped summary", async () => {
+    const f = await publicProviderFixture(true); fixtures.push(f);
+    const record = await chat(f), runId = f.starts[0]!.runId;
+    await vi.waitFor(() => expect(f.activeHistoryStreams()).toBe(1));
+    const messageId = "message", left = "🙂".repeat(125000), right = "b".repeat(540000) + " end";
+    const expected = left + right;
+    f.emit(runId, "message.delta", { messageId, text: "Earlier draft which the model replaced." });
+    f.emit(runId, "message.started", { messageId, text: "" });
+    f.emit(runId, "message.delta", { messageId, text: left });
+    f.emit(runId, "message.delta", { messageId, text: right });
+    const completion = f.emit(runId, "message.completed", { messageId });
+    f.complete(runId, "Clipped summary");
+    await vi.waitFor(async () => expect((await f.store.readRecord(record.id))?.status).toBe("idle"), { timeout: 8000 });
+    // A second delivery of the completion can arrive after the terminal summary.
+    f.publishHistory(f.starts[0]!.sessionId, runId, f.owner, { kind: "event", event: completion, cursor: "cursor-" + completion.sequence });
+    await f.manager.shutdown();
+    const restored = f.makeManager();
+    await restored.manager.recoverProviderRuns();
+    await vi.waitFor(async () => {
+      const events = await restored.store.readEvents(record.id);
+      const messages = events.filter(event => event.type === "assistant_text");
+      expect(messages).toHaveLength(1);
+      expect(typeof messages[0]?.text === "string" && messages[0].text === expected).toBe(true);
+      const boundaries = events.filter(event => event.type === "provider_fragment" && event.messageBoundary === "complete");
+      expect(boundaries).toHaveLength(1);
+      const tail = await restored.store.readEvents(record.id, messages[0]!.seq - 1);
+      const reconnected = tail.filter(event => event.type === "assistant_text");
+      expect(reconnected).toHaveLength(1);
+      expect(reconnected[0]?.text === expected).toBe(true);
+    }, { timeout: 8000 });
+  }, 20000);
+
   it.each(["denied", "timeout"] as const)("recovers a disconnected legacy observer after %s and imports the native outcome once", async issue => {
     const f = await fixture(); f.behavior.legacyHistoryRoute = true;
     const record = await chat(f), runId = f.starts[0]!.runId;

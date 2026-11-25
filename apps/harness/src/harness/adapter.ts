@@ -72,7 +72,7 @@ export type HarnessEvent = (
   | { type: "activity"; activity: import("./activity.js").HarnessActivity }
   /** The harness-native session id became known; persisted for resume-after-restart. */
   | { type: "harness_session"; harnessSessionId: string }
-  | { type: "provider_fragment"; target: string; text: string; sourceSequence: string; toolUseId?: string }
+  | { type: "provider_fragment"; target: string; text: string; sourceSequence: string; toolUseId?: string; messageBoundary?: "start" | "complete" }
   | { type: "assistant_delta"; text: string }
   | { type: "assistant_text"; text: string; incomplete?: boolean }
   /** Bounded tool content for the expandable transcript; separate from command metadata. */

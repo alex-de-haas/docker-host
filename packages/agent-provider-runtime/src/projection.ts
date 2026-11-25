@@ -54,6 +54,13 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
   record.nativeSequence = frame.sequence;
   const event = frame.event, snapshot = record.snapshot, source = publicSource(event.source), child = source.agentId !== "root";
   const emit = (type: Parameters<ProviderStore["emit"]>[1], data: Record<string, unknown>) => store.emit(record, type, data, source);
+  const emitTextParts = (id: string | undefined, value: string) => {
+    // The incoming native frame is at most 1 MiB. Both parts fit with the public envelope.
+    let split = Math.floor(value.length / 2);
+    if (split && value.charCodeAt(split) >= 0xdc00 && value.charCodeAt(split) <= 0xdfff) split--;
+    emit("message.delta", { messageId: id, text: value.slice(0, split) });
+    emit("message.delta", { messageId: id, text: value.slice(split) });
+  };
   const truncated = (kind: "messages" | "tools") => {
     const coverage = snapshot.coverage ??= { messages: "complete", tools: "complete" };
     if (coverage[kind] === "truncated") return;
@@ -118,10 +125,7 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
       try { emit("message.delta", { messageId, text: event.text }); }
       catch (error) {
         if (!(error instanceof AgentApiError) || error.code !== "event_budget") throw error;
-        let split = Math.floor(event.text.length / 2);
-        if (split && event.text.charCodeAt(split) >= 0xdc00 && event.text.charCodeAt(split) <= 0xdfff) split--;
-        emit("message.delta", { messageId, text: event.text.slice(0, split) });
-        emit("message.delta", { messageId, text: event.text.slice(split) });
+        emitTextParts(messageId, event.text);
       }
       break;
     }
@@ -130,9 +134,11 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
       try { emit("message.completed", { messageId, text: event.text }); }
       catch (error) {
         if (!(error instanceof AgentApiError) || error.code !== "event_budget") throw error;
-        emit("message.completed", { messageId, text: block.text, truncated: true });
-        emit("warning", { code: "message_delivery_truncated", messageId, originalBytes: Buffer.byteLength(event.text),
-          message: "The complete native message exceeds the public event size limit. This delivery contains a shortened message." });
+        // The final native text replaces any streamed draft. The explicit empty start, both
+        // deltas and one value-less completion share a message ID and one durable transaction.
+        emit("message.started", { messageId, text: "" });
+        emitTextParts(messageId, event.text);
+        emit("message.completed", { messageId });
       }
       break;
     }
@@ -186,6 +192,7 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
 }
 export function projectReceipt(store: ProviderStore, session: SessionRecord, record: RunRecord, receipt: WorkerReceipt): void {
   const snapshot = record.snapshot;
+  const closedState = snapshot.stopConfirmed && snapshot.phase === "terminal" ? snapshot.state : undefined;
   const hadUnresolvedAtExit = snapshot.stopConfirmed && snapshot.effects.unresolvedCallIds.length > 0;
   const before = valueHash([snapshot.state, snapshot.phase, snapshot.stopConfirmed, snapshot.pending, snapshot.effects, snapshot.selection, snapshot.agents]);
   record.nativeRevision = receipt.revision; record.nativeGeneration = receipt.generation;
@@ -201,8 +208,8 @@ export function projectReceipt(store: ProviderStore, session: SessionRecord, rec
   snapshot.pending = snapshot.pending.filter(value => value.delivery === "next_turn" || record.proxyDecisions?.includes(value.id) || pendingIds.has(value.id));
   if (snapshot.pending.some(value => record.proxyDecisions?.includes(value.id)) && receipt.state === "running") { snapshot.state = "waiting_for_input"; snapshot.phase = "waiting"; }
   snapshot.effects = { certainty: receipt.state === "interrupted" || Object.values(receipt.effects ?? {}).some(value => value === "unknown" || receipt.exitConfirmed) ? "unknown" : "known", unresolvedCallIds: Object.keys(receipt.effects ?? {}).map(publicEffectId) };
-  if (snapshot.stopConfirmed && receipt.state !== "parked" && record.decisionsFenced) {
-    snapshot.state = "cancelled"; snapshot.phase = "terminal"; snapshot.freshness = "current";
+  if (snapshot.stopConfirmed && record.decisionsFenced) {
+    snapshot.state = closedState ?? "cancelled"; snapshot.phase = "terminal"; snapshot.freshness = "current";
   }
   if (record.decisionsFenced) {
     snapshot.pending = [];

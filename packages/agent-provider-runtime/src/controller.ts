@@ -327,8 +327,12 @@ export class ProviderController {
       this.store.lifecycle(run);
       if (run.reservedFor) this.supersedeReservations(session);
       for (const control of Object.values(run.controls)) if (control.receipt.continuation?.state === "awaiting_authorization") this.supersedeReservations(session);
-      if (run.snapshot.stopConfirmed) receipt.state = "applied";
-      else { run.snapshot.phase = "cancelling"; this.store.lifecycle(run); }
+      if (run.snapshot.stopConfirmed) {
+        receipt.state = "applied";
+        if (run.snapshot.phase === "parked") {
+          run.snapshot.state = "cancelled"; run.snapshot.phase = "terminal"; this.store.lifecycle(run);
+        }
+      } else { run.snapshot.phase = "cancelling"; this.store.lifecycle(run); }
       receipt.revision = run.snapshot.revision; run.controls[input.requestId] = { hash, receipt, stop: true }; this.store.emit(run, "control.updated", { requestId: input.requestId, receipt });
       await this.store.save(session); return { receipt, execute: receipt.state !== "applied" };
     });
@@ -472,6 +476,7 @@ export class ProviderController {
     try { await apply(); await this.driver.synchronize(id); } catch (caught) { error = caught; }
     await this.store.exclusive(async () => {
       const { session, record } = await this.store.run(id), control = record.controls[requestId]; if (!control) return;
+      if (control.stop && (control.receipt.state === "applied" || !error && !record.snapshot.stopConfirmed)) return;
       if (error instanceof AgentApiError && ["core_unavailable", "core_response_invalid", "stop_in_progress"].includes(error.code)) return;
       control.receipt.state = error ? error instanceof AgentApiError && error.status >= 400 && error.status < 500 ? "rejected" : "unknown" : "applied";
       projectAppliedDecisionControls(this.store, record);

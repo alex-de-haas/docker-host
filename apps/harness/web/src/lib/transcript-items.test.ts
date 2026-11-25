@@ -189,3 +189,15 @@ it("renders sparse partial input in its original item until final content replac
   expect(orderedHistory([...chunks, { seq: 3, ts: "", type: "assistant_text", providerEventId: "run:message:child:a", text: "Final" }]))
     .toMatchObject([{ type: "assistant_text", text: "Final" }]);
 });
+
+it("recovers a replaced draft in one row only after the complete range arrives", () => {
+  const target = "run:message:root:msg";
+  const fragment = (seq: number, sourceSequence: string, text: string, messageBoundary?: "start" | "complete") =>
+    event(seq, "provider_fragment", { target, sourceSequence, text, messageBoundary });
+  const draft = fragment(1, "20", "obsolete"), reset = fragment(3, "21", "", "start");
+  const summary = event(2, "assistant_text", { providerEventId: target, text: "excerpt" });
+  const right = fragment(4, "23", "reply"), end = fragment(5, "24", "", "complete");
+  expect(orderedHistory([draft, summary, reset, right, end]).map(row => row.text)).toEqual(["excerpt"]);
+  const left = fragment(6, "22", "new ");
+  expect(orderedHistory([draft, summary, reset, right, end, left, left]).map(row => row.text)).toEqual(["new reply"]);
+});

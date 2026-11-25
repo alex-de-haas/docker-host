@@ -457,23 +457,33 @@ it("delivers the original native message independently of its clipped snapshot, 
 });
 
 
-it("preserves near-limit delta bytes and identifies the single shortened completion when its public envelope cannot fit", async () => {
+it("replays the exact near-limit final on its original ID after a different streamed draft", async () => {
   const store = await openStore(), { session, run } = await admitted(store);
   const frame = { runId: run.snapshot.ref.id, generation: run.snapshot.generation, sequence: 1, event: { type: "assistant_delta" as const, text: "" } };
   const limit = 1024 * 1024;
   frame.event.text = "x".repeat(limit - Buffer.byteLength(JSON.stringify(frame)) - 3) + "α";
   expect(Buffer.byteLength(JSON.stringify(frame))).toBeLessThanOrEqual(limit);
   projectEvent(store, session, run, frame);
-  projectEvent(store, session, run, { ...frame, sequence: 2, event: { type: "assistant_text", text: frame.event.text } });
+  const original = "z" + frame.event.text.slice(1);
+  projectEvent(store, session, run, { ...frame, sequence: 2, event: { type: "assistant_text", text: original } });
   await store.save(session);
-  const page = store.history.page(alice, undefined, undefined, 40);
-  const events = page.observations.flatMap(({ item }) => item.kind === "event" ? [item.event] : []);
-  const deltas = events.filter(e => e.type === "message.delta");
-  expect(deltas).toHaveLength(2);
-  expect(deltas.map(e => e.data.text).join("") === frame.event.text).toBe(true);
+  let page = store.history.page(alice, undefined, undefined, 40);
+  const observations = [...page.observations];
+  while (page.nextCursor) {
+    page = store.history.page(alice, page.nextCursor, page.through, 40);
+    observations.push(...page.observations);
+  }
+  const events = observations.flatMap(({ item }) => item.kind === "event" ? [item.event] : []);
   const finals = events.filter(e => e.type === "message.completed");
   expect(finals).toHaveLength(1);
-  expect(finals[0]?.data).toMatchObject({ messageId: deltas[0]!.data.messageId, truncated: true });
-  expect(events.filter(e => e.type === "warning" && e.data.code === "message_delivery_truncated")).toHaveLength(1);
+  const same = events.filter(e => e.data.messageId === finals[0]!.data.messageId);
+  let result = "";
+  for (const event of same) {
+    if (event.type === "message.started" && typeof event.data.text === "string") result = event.data.text;
+    if (event.type === "message.delta") result += String(event.data.text);
+    if (event.type === "message.completed" && typeof event.data.text === "string") result = event.data.text;
+  }
+  expect(result === original).toBe(true);
+  expect(same.filter(event => event.type === "message.started" && event.data.text === "")).toHaveLength(1);
   expect(events.every(e => Buffer.byteLength(JSON.stringify(e)) <= limit)).toBe(true);
 });

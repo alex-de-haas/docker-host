@@ -58,3 +58,13 @@ it("keeps a missing canonical chat database missing on reads and imports", async
   expect(() => chat.receive(provider, observation(1))).toThrow();
   await expect(stat(file)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+it("resumes a transcript after its fragments and returns the complete final at the requested cursor", async () => {
+  const { chat, file } = await create();
+  const target = "run:message:root:m";
+  const fragments = [["start", ""], [undefined, "exact "], [undefined, "reply"], ["complete", ""]] as const;
+  for (const [index, [messageBoundary, text]] of fragments.entries())
+    chat.append({ seq: index + 1, ts: "", type: "provider_fragment", target, sourceSequence: String(index + 1), messageBoundary, text });
+  chat.append({ seq: 5, ts: "", type: "assistant_text", providerEventId: target, text: "excerpt" });
+  expect(new ChatTranscript(file).read(4)).toMatchObject([{ seq: 5, type: "assistant_text", text: "exact reply" }]);
+});
