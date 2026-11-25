@@ -180,8 +180,16 @@ export class NativeExecution implements ExecutionDriver {
   async cancel(id: string, requestId: string): Promise<void> {
     this.mcp.close(id);
     const native = await this.journal.load(id).catch(error => { if (error instanceof WorkerApiError && error.status === 404) return null; throw error; });
-    if (native) await this.engine.cancel(id, requestId);
-    else await this.failBeforeStart(id, "Cancelled before native admission.", true);
+    if (native) {
+      const receipt = await this.engine.cancel(id, requestId);
+      if (receipt.state === "interrupted" && !receipt.exitConfirmed && !this.engine.ownsExecution(id)) {
+        // Stop can revisit durable proof that was unavailable when the provider reopened the run.
+        try { await this.reconcileOwnedStop(id); }
+        catch (error) {
+          if (!(error instanceof AgentApiError && ["exit_unconfirmed", "effects_unconfirmed"].includes(error.code))) throw error;
+        }
+      }
+    } else await this.failBeforeStart(id, "Cancelled before native admission.", true);
     // A preparing start observes the durable cancelling phase before native admission.
   }
   async respond(id: string, input: AgentResponseInput): Promise<void> {

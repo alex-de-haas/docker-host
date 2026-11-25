@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-23
+updated: 2026-11-24
 summary: Harness combines conversations and workspace groups in Sessions, with shared navigation, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -209,7 +209,7 @@ and disallows selection and further actions. Harness emits the terminal event af
 the stored conversation. It waits up to 45 seconds for the DELETE response and, after a lost
 response, up to eight seconds to check the session through its authenticated API. A confirmed
 missing session clears its row and draft. A refusal or unconfirmed outcome restores row actions
-and displays the error so the user can retry.
+and displays a dismissible toast so the user can retry.
 
 Manageable workspace rows offer a trailing trash shortcut with the same hover, keyboard-focus and
 touch reachability as conversation deletion. It opens the existing workspace deletion dialog for

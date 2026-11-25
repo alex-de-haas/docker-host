@@ -44,7 +44,9 @@ async function retainedNativeRun() {
   const f = await fixture();
   const session = await f.store.load(f.sessionId);
   const id = randomUUID();
-  const run = f.store.makeRun(session, id, f.actor, "{}");
+  const text = "Previously accepted turn";
+  const input: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start", input: { text } };
+  const run = f.store.makeRun(session, id, f.actor, JSON.stringify(input), input);
   run.snapshot.state = "unknown";
   run.snapshot.phase = "interrupted";
   session.runs[id] = run;
@@ -55,7 +57,7 @@ async function retainedNativeRun() {
     binding: { connectionId: "account", connectionRevision: 1, harnessKind: "fixture-engine" },
     selection: { model: null, reasoningEffort: null },
     resource: { kind: "conversation", id: f.sessionId },
-    input: "Previously accepted turn", options: {}, autoAllowedPrefixes: [],
+    input: text, options: {}, autoAllowedPrefixes: [],
   });
   const processes = await TrackedNativeProcesses.create(f.directory, id, run.snapshot.generation);
   return { f, id, processes };
@@ -395,6 +397,28 @@ describe("native authority renewal and stop reconciliation", () => {
     await processes.confirmSdkStop();
     expect(await reconcile(f, id)).toMatchObject({ state: "applied" });
     expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true); expect((await f.store.load(f.sessionId)).session.activeRun).toBeNull();
+  });
+
+  it.each(["confirmed", "missing SDK stop", "unknown effects"] as const)("checks retained stop evidence on cancellation (%s)", async evidence => {
+    const { f, id, processes } = await retainedNativeRun();
+    if (evidence === "unknown effects")
+      await f.driver.engine.journal.append(id, { type: "native_effect", id: "external-call", state: "unknown" });
+    await f.driver.engine.journal.update(id, "interrupted");
+    await processes.stop();
+    if (evidence !== "missing SDK stop") await processes.confirmSdkStop();
+    const snapshot = await f.controller.snapshot(id);
+    expect(snapshot).toMatchObject({ state: "unknown", stopConfirmed: false });
+
+    const input = { requestId: randomUUID(), expectedGeneration: snapshot.generation, expectedRevision: snapshot.revision };
+    await f.controller.cancel(id, input, JSON.stringify(input), f.actor);
+    await vi.waitFor(async () => expect((await f.store.run(id)).record.controls[input.requestId]?.receipt.state).toBe("applied"));
+
+    const confirmed = evidence === "confirmed";
+    expect(await f.controller.snapshot(id)).toMatchObject({ state: confirmed ? "cancelled" : "unknown", stopConfirmed: confirmed });
+    expect((await f.store.load(f.sessionId)).session.activeRun?.id ?? null).toBe(confirmed ? null : id);
+    if (confirmed) expect(f.authority.workspace).toHaveBeenCalledExactlyOnceWith("original-admission", "release_all", expect.any(Object));
+    else expect(f.authority.workspace).not.toHaveBeenCalled();
+    expect(f.starts).not.toHaveBeenCalled();
   });
 
   it("retires the exact completed run with unresolved effects across restart and workspace cleanup retry", async () => {

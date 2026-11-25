@@ -1,6 +1,6 @@
 ---
 created: 2026-11-12
-updated: 2026-11-23
+updated: 2026-11-24
 summary: Independent Local agent apps expose installation-qualified HTTP/SSE execution with provider-owned native state and Core-scoped authority.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -535,10 +535,12 @@ the same cleanup. Ordinary cancellation, message admission and task completion s
 `stopConfirmed`.
 
 Before launching a child, the provider durably records its intent. Durable SDK-stop confirmation,
-matching child receipts and a sealed/exited producer support reconciliation after restart. Missing
-proof stays `unknown`; a client-supplied stopped flag or a saved PID does not establish it. Automatic provider recovery
-never terminates processes by PIDs loaded from receipt files. Workspace release uses the original
-admission and begins after the provider confirms stop or accepts retirement.
+matching child receipts and a sealed/exited producer support reconciliation after restart. Stop
+also rechecks this evidence for an interrupted run whose native handle has already been released.
+Missing proof stays `unknown`. A client-supplied stopped flag or a saved PID does not establish it.
+Automatic provider recovery never terminates processes by PIDs loaded from receipt files.
+Workspace release uses the original admission and begins after the provider confirms stop or
+accepts retirement.
 
 Codex protocol acknowledgments have a 30-second deadline, with a two-second polite interrupt
 budget and independently bounded metadata diagnostics. These bound RPC acknowledgments rather
