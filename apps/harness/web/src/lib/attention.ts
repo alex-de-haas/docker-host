@@ -15,6 +15,15 @@ export function observedSessionStatus(session: Pick<AssistantSession, "status" |
   return session.providerStatusContact ? "unknown" : session.status;
 }
 
+export type LastSeen = { status: string; observedAt?: string | null };
+export function lastSeenStatus(session: Pick<AssistantSession, "status" | "providerStatusContact">): LastSeen | undefined {
+  return session.providerStatusContact ? { status: session.status, observedAt: session.providerStatusContact.observedAt } : undefined;
+}
+export function lastSeenText(seen: LastSeen) {
+  const date = new Date(seen.observedAt ?? "");
+  return "Last seen " + seen.status.replaceAll("_", " ") + " · " + (Number.isFinite(date.getTime()) ? date.toLocaleString() : "time unavailable");
+}
+
 export type Listed = Pick<AssistantSession, "id" | "status" | "providerStatusContact" | "createdAt" | "updatedAt">;
 
 export function activityTime(value: { updatedAt?: string | null; createdAt?: string | null }): number {

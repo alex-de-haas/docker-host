@@ -6,6 +6,7 @@ import { AgentApiError, type AgentHistoryObservation, type AgentHistorySessionSt
 import { CoreAgentBackend } from "./core.js";
 import { ProviderHistoryCoverage, type HistoryReceipt, type ProviderHistoryGap } from "./history-coverage.js";
 import { followLiveHistory } from "./live-history.js";
+import { ChatTranscript } from "../sessions/chat-transcript.js";
 import { SessionStore } from "../sessions/store.js";
 
 const folders: string[] = [];
@@ -104,6 +105,53 @@ it("resumes both durable holes while new live records and other owners continue 
     live.open(); first.open(); second.open(); stop.abort(); await done;
   }
 }, 60000);
+
+it("repairs fourteen scoped live writes after a single chat disk fills while another owner stays live", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "harness-disk-repair-")); folders.push(root);
+  const store = new SessionStore(root), [first, , second] = chats;
+  const book = new ProviderHistoryCoverage(store, async () => {});
+  const anchor = path.join(root, "anchor.json"), stop = new AbortController();
+  const facts = Array.from({ length: 14 }, (_, i) => record(first!, i + 1));
+  const journal = (id: string) => new ChatTranscript(path.join(root, id + ".sqlite"));
+  journal(first!.sessionId).create(); journal(second!.sessionId).create();
+  let full = true;
+  const peer = vi.fn(async function* (_cursor, ready, signal) {
+    await ready("before");
+    for (const fact of facts) yield fact;
+    yield record(second!, 1);
+    await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+  });
+  const backend = new CoreAgentBackend({ coreOrigin: "http://core.test", appId: "consumer", serviceToken: "test" });
+  vi.spyOn(backend, "liveHistory").mockResolvedValue({
+    observe: peer, states: async through => ({ through, sessions: [], nextSession: null }),
+    range: async (_through, id, _epoch, from, to) => {
+      expect(id).toBe(first!.sessionId);
+      return { observations: facts.slice(from - 1, to), nextPosition: null };
+    }
+  });
+  const source = followLiveHistory(backend, provider, anchor, stop.signal, book, {
+    match: (session, user) => chats.find(chat => chat.sessionId === session && chat.userId === user)?.sessionId,
+    bindings: () => [], ready: async () => {}, state: async () => {}, invalid: async () => {},
+    receive: async (id, fact) => {
+      if (id === first!.sessionId && full) throw Object.assign(new Error("chat disk full"), { code: "ENOSPC" });
+      await book.accept(id, provider, fact, async () => {
+        const chat = journal(id), input = chat.receive(provider, fact);
+        if (!input) return;
+        chat.append({ seq: fact.sessionPosition!, ts: new Date(0).toISOString(), type: "received", providerEventId: fact.cursor, item: fact.item });
+        chat.projected(input);
+      });
+    }
+  }).catch(error => { if (!stop.signal.aborted) throw error; });
+  try {
+    await vi.waitFor(() => expect(journal(second!.sessionId).read(0)).toHaveLength(1));
+    expect(journal(first!.sessionId).read(0)).toEqual([]);
+    full = false;
+    await vi.waitFor(() => expect(journal(first!.sessionId).read(0).map(row => [row.providerEventId, row.item]))
+      .toEqual(facts.map(fact => [fact.cursor, fact.item])), { timeout: 5000 });
+    expect(journal(first!.sessionId).acknowledgements(provider)).toMatchObject([{ through: 14 }]);
+    expect(peer).toHaveBeenCalledOnce();
+  } finally { stop.abort(); await source; }
+});
 
 it("replays an overlapping page after a crash between the transcript commit and the coverage receipt", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "harness-history-receipt-")); folders.push(root);

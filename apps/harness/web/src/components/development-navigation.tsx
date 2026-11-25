@@ -132,9 +132,11 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, removals
       <div className="relative"><Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" /><Input aria-label={`Search ${title.toLowerCase()}`} placeholder="Search…" className="pl-8" value={query} onChange={event => setQuery(event.target.value)} /></div>
       <div className="flex flex-wrap gap-1" aria-label="Activity filters">{statusFilters.map(({ key, label, Icon, tone }) => {
         const count = key === "all" ? items.length : items.reduce((sum, item) => sum + item.counts[key], 0);
+        const lastRunning = key === "working" ? items.flatMap(item => item.counts.lastSeen ?? []).filter(last => last.status === "running") : [];
         return <Button key={key} size="sm" variant={stateFilter === key ? "secondary" : "ghost"} aria-pressed={stateFilter === key} className="h-7 gap-1 rounded-full px-2 text-xs" onClick={() => setStateFilter(key)}>
           <span aria-hidden="true" className={cn("inline-flex shrink-0", tone, key === "working" && count > 0 && "motion-safe:animate-spin")}><Icon className="size-3.5" /></span>
           {label}<span className="font-mono text-xs font-normal tabular-nums text-muted-foreground">{count}</span>
+          {!!lastRunning.length && <span className="text-muted-foreground">· {lastRunning.length} last seen running</span>}
         </Button>;
       })}</div>
     </div>
@@ -164,7 +166,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, removals
         (deleteTrigger.current?.isConnected ? deleteTrigger.current : newButton.current)?.focus();
       }}>
         <DialogHeader><DialogTitle>Delete session?</DialogTitle>
-          <DialogDescription>Delete the session “{deleting ? sessionLabel(deleting) : "Untitled session"}” and its conversation history? This cannot be undone. The session is stopped and detached. Shared source and other conversations are retained. Any unreported tool outcomes stay unknown.</DialogDescription>
+          <DialogDescription>Permanently delete “{deleting ? sessionLabel(deleting) : "Untitled session"}” and its conversation history? Harness stops any active run and detaches this chat. Workspace files and other conversations stay available.</DialogDescription>
         </DialogHeader>
       <DialogFooter>
           <Button variant="outline" onClick={() => setDeleting(null)}>Keep session</Button>

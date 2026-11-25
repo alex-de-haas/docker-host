@@ -2,8 +2,8 @@ using HostySdk.App;
 
 namespace Haas.Hosty.Core;
 
-internal sealed record CoreAgentCleanupRequest(string AdmissionRef, HostyProviderRef Provider, string Operation,
-    string Method, string Path, string BodyHash, string? SessionId = null, string? RunId = null);
+internal sealed record CoreAgentCleanupRequest(string? AdmissionRef, HostyProviderRef Provider, string Operation,
+    string Method, string Path, string BodyHash, string? SessionId = null, string? RunId = null, string? ActorUserId = null);
 internal sealed record CoreAgentCleanupToken(string AdmissionRef, string Operation, string Method, string Path,
     string BodyHash, long Expires);
 
@@ -13,7 +13,18 @@ internal sealed partial class CoreAgentExecution
 
     internal async Task<CoreAgentBinding> AuthorizeReplay(AppRecord consumer, CoreAgentCleanupRequest input, CancellationToken ct)
     {
-        var receipt = await store.Get(input.AdmissionRef, ct);
+        var reference = input.AdmissionRef;
+        if (reference is null) {
+            if (input.Operation != "runs.start" || string.IsNullOrEmpty(input.ActorUserId)
+                || !Guid.TryParse(input.SessionId, out _) || !Guid.TryParse(input.RunId, out _)) throw DenyCleanup();
+            reference = OriginalStartId(consumer, input.ActorUserId, CoreCapabilityAuthorization.AppPrincipal(consumer),
+                input.Provider, input.SessionId!, input.RunId!);
+        }
+        CoreAgentAuthorization receipt;
+        try { receipt = await store.Get(reference, ct); }
+        catch (CoreProviderException error) when (input.AdmissionRef is null && error.Status == 404) {
+            throw new CoreProviderException("original_authorization_not_found", "The exact command has no retained original grant.", 404);
+        }
         var original = receipt.Request;
         if (receipt.CallerAppId != consumer.Id || receipt.CallerInstallation != consumer.InstalledAt
             || original.Operation is not ("runs.start" or "runs.respond" or "runs.control" or "sessions.create" or "sessions.configure" or "attachments.write")
@@ -25,11 +36,12 @@ internal sealed partial class CoreAgentExecution
         var until = clock.UtcNow.AddMinutes(2);
         if (until > receipt.ExpiresAt) until = receipt.ExpiresAt;
         return new(original.Provider, Descriptor(provider, original.Provider).Url!,
-            SignToken(Prefix, new CoreAgentToken(receipt.Id, until.ToUnixTimeSeconds())), until, receipt.Id, receipt.ExpiresAt, []);
+            SignToken(Prefix, new CoreAgentToken(receipt.Id, until.ToUnixTimeSeconds(), receipt.GrantEpoch)), until, receipt.Id, receipt.ExpiresAt, []);
     }
 
     internal async Task<CoreAgentBinding> AuthorizeCleanup(AppRecord consumer, CoreAgentCleanupRequest input, CancellationToken ct)
     {
+        if (input.AdmissionRef is null) throw DenyCleanup();
         var admission = await store.Get(input.AdmissionRef, ct);
         var original = admission.Request;
         if (consumer.Id != admission.CallerAppId || consumer.InstalledAt != admission.CallerInstallation

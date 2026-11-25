@@ -11,7 +11,7 @@ internal sealed record WorkspaceDiscardPlan(string WorkspaceId, string Name, lon
     DateTimeOffset ExpiresAt, WorkspaceDiscardTree[] Trees, WorkspaceDiscardResource[] Resources, string[] Blockers, string[]? RemovedTrees = null, string[]? Warnings = null, WorkspaceDeleteReturn[]? ReturnTargets = null);
 internal sealed record WorkspaceDiscardItem(string Id, string State, string? Kind = null);
 internal sealed record WorkspaceDiscardProgress(string WorkspaceId, string RequestId, string State, WorkspaceDiscardApply Command,
-    WorkspaceDiscardItem[] Trees, WorkspaceDiscardItem[] Resources, string? Error = null, WorkspaceDeleteActivity[]? Activity = null);
+    WorkspaceDiscardItem[] Trees, WorkspaceDiscardItem[] Resources, string? Error = null, WorkspaceDeleteActivity[]? Activity = null, string? AttachedChatDelivery = null);
 internal sealed record WorkspaceDiscardReview(string Actor, WorkspaceOwner Owner, WorkspaceDiscardPlan Plan);
 internal sealed record WorkspaceDiscardJournal(string Actor, string WorkspaceId, WorkspaceDiscardApply Command,
     string State, WorkspaceOwner? Owner, WorkspaceDiscardPlan? Plan, DevelopmentWorkspace[]? Snapshots,
@@ -19,7 +19,11 @@ internal sealed record WorkspaceDiscardJournal(string Actor, string WorkspaceId,
     string? Error = null, bool SourceRemoved = false, string[]? RelatedRequests = null, string[]? ReviewDigests = null, bool Direct = false, WorkspaceDeleteActivity[]? Activity = null,
     WorkspaceDeleteOwner? DeleteOwner = null, string[]? SelectedSessions = null, bool SessionsAccepted = false, WorkspaceWriterStop[]? Writers = null)
 {
-    internal WorkspaceDiscardProgress Progress() => new(WorkspaceId, Command.RequestId, State, Command, Trees, Resources, Error, Activity);
+    internal WorkspaceDiscardProgress Progress()
+    {
+        var delivery = SessionsAccepted ? "accepted" : SelectedSessions is { Length: > 0 } ? "pending" : null;
+        return new(WorkspaceId, Command.RequestId, State, Command, Trees, Resources, Error, Activity, delivery);
+    }
 }
 
 internal sealed partial class DevelopmentWorkspaceService

@@ -309,6 +309,7 @@ export class SessionManager {
   private readonly environmentCreations = new Map<string, { active: number; settled: number }>();
   private environmentSequence = 0;
   private readonly live = new Map<string, LiveSession>();
+  private readonly loadingSessions = new Map<string, Promise<LiveSession>>();
   private readonly suggestionEpoch = randomUUID();
   private readonly suggestionPreferenceGenerations = new Map<string, number>();
   private readonly providerProjections = new Map<string, AgentRunProjection>();
@@ -856,7 +857,21 @@ export class SessionManager {
         const context = await this.providerContext(state.selection, { sessionId: id, cwd: this.workDir, onEvent: () => {} });
         for (const prepared of Object.values(state.mutations ?? {})) {
           signal.throwIfAborted();
-          const binding = await this.store.withTranscript(id, db => db.authorization(prepared));
+          let binding = await this.store.withTranscript(id, db => db.authorization(prepared));
+          if (!binding && prepared.operation === "runs.start" && session.record.sourceAdmission?.clientRequestId
+            && !this.isSourceAdmissionInFlight(session.record) && !session.record.taskDispatch && !session.record.taskExecutionId) {
+            try {
+              binding = await this.agentBackend!.recoverStartAuthorization(provider, prepared, session.record.createdBy, signal);
+              const recovered = binding;
+              await this.store.withTranscript(id, db => db.authorize(recovered.request, recovered.reference, provider));
+            } catch (error) {
+              if (error instanceof AgentApiError && (error.code === "original_authorization_not_found" || [401, 403].includes(error.status))) {
+                session.record.sourceAdmission.needsAuthority = true;
+                await this.store.saveRecord(session.record);
+              }
+              throw error;
+            }
+          }
           if (!binding) continue;
           const replay = new ProviderExecution(this.agentBackend!.replayClient(provider, binding, signal), state, context.persistence);
           const projectDecision = async (control: import("@hosty-sdk/app/agent").AgentControlReceipt) => {
@@ -1731,13 +1746,13 @@ export class SessionManager {
     return this.historyIndex;
   }
 
-  private readonly pendingStops = new Set<string>();
+  private readonly pendingStops = new Map<string, number>();
   private stopRecovery?: Promise<void>;
 
   async reconcilePendingStops() {
     if (this.stopRecovery) return this.stopRecovery;
     this.stopRecovery = (async () => {
-      const ids = [...this.pendingStops];
+      const ids = [...this.pendingStops].filter(([, due]) => due <= Date.now()).map(([id]) => id);
       const work = async () => {
         let id: string | undefined;
         while (!this.stopping && (id = ids.shift())) {
@@ -1749,7 +1764,17 @@ export class SessionManager {
                 this.pendingStops.delete(target);
                 return;
               }
-              await this.cancelSessionLocked(target);
+              const runId = record.providerStopRequestedRunId;
+              try { await this.cancelSessionLocked(target); }
+              catch (error) {
+                const failures = 1 + (record.providerStopRetry?.runId === runId ? record.providerStopRetry.failures : 0);
+                const backoff = Math.min(60_000, 2000 * 2 ** Math.min(5, failures - 1));
+                const due = Date.now() + Math.round(backoff * (0.75 + Math.random() * 0.5));
+                record.providerStopRetry = { runId, failures, due, code: error instanceof AgentApiError ? error.code : "stop_unavailable" };
+                this.pendingStops.set(target, due);
+                await this.store.saveRecord(record);
+                return;
+              }
               await this.finishQueueStop(target, "Response stopped. Resume the queue when ready.", QUEUE_STOP_UNCONFIRMED);
               this.pendingStops.delete(target);
             });
@@ -1761,10 +1786,34 @@ export class SessionManager {
     return this.stopRecovery;
   }
 
+  private async recoverUnpreparedDraft(id: string) {
+    await this.serialize(id, async () => {
+      const session = await this.requireLive(id), record = session.record, source = record.sourceAdmission;
+      if (!source?.draft || !source.clientRequestId || this.isSourceAdmissionInFlight(record) || record.providerStopRequestedRunId) return;
+      const state = await this.store.readProviderExecution(id);
+      if (Object.values(state?.mutations ?? {}).some(request => request.operation === "runs.start") ||
+        state?.runId && state.runId !== source.previousProviderRunId) return;
+      const receipt = await this.store.readMessageReceipt(id, source.clientRequestId);
+      if (receipt?.state === "accepted") return;
+      // Paid submission always journals runs.start first. No run was prepared for this input.
+      const entry = record.messageQueue?.entries.find(row => row.attempt?.clientRequestId === source.clientRequestId);
+      const rejected = { clientRequestId: source.clientRequestId, state: "rejected" as const, error: {
+        code: "draft_not_accepted", message: "Your message was saved before execution was authorized. It is ready to review and send." } };
+      if (receipt) await this.store.saveMessageReceipt(id, { ...receipt, ...rejected });
+      if (entry) await this.messageQueues.settle(record, entry.id, rejected);
+      else record.handoffDraft = source.draft;
+      delete record.sourceAdmission;
+      if (record.status === "running" && (!state?.run || state.run.stopConfirmed)) record.status = "idle";
+      await this.store.saveRecord(record);
+    });
+  }
+
   async recoverProviderRuns(): Promise<void> {
     await this.indexInstallationHistory();
     for (const record of await this.store.listRecords()) {
-      if (record.providerStopRequestedRunId) this.pendingStops.add(record.id);
+      if (record.providerStopRequestedRunId) this.pendingStops.set(record.id,
+        record.providerStopRetry?.runId === record.providerStopRequestedRunId ? record.providerStopRetry.due : 0);
+      if (record.sourceAdmission?.draft && !record.storageRecovery) await this.recoverUnpreparedDraft(record.id).catch(() => {});
     }
     void this.reconcilePendingStops();
     for (const record of await this.store.listRecords()) if (record.selection && record.taskDispatch && record.taskExecutionId && !record.storageRecovery) {
@@ -2218,7 +2267,7 @@ export class SessionManager {
       session.credential = session.workspaceCredential = credential;
       const { context, execution } = await this.publicExecution(session);
       const prepared = Object.values(context.state.mutations ?? {}).find(item => item.operation === "runs.start" && item.runId === context.state.runId);
-      if (!prepared || !await this.store.withTranscript(id, db => db.authorization(prepared)))
+      if (!prepared)
         throw new AppContextError(409, "message_changed", "The original operation is unavailable.");
       const receipt = await execution.reconcileMutation(prepared) as AgentRunSnapshot;
       await this.projectProviderItem(session, { kind: "snapshot", snapshot: receipt }, context.state, true);
@@ -3750,8 +3799,13 @@ export class SessionManager {
       try {
         const writers = await this.development.writerStops();
         // Stop only the admitted writer, even if this chat has already moved to a new attempt.
-        await Promise.allSettled(writers.map(writer =>
-          backend.cleanupClient(writer.provider, writer.admissionRef).stop(writer.runId, writer.runId, { signal: AbortSignal.timeout(8000) })));
+        const pending = writers.values();
+        await Promise.all(Array.from({ length: Math.min(writers.length, 4) }, async () => {
+          for (const writer of pending) {
+            try { await backend.cleanupClient(writer.provider, writer.admissionRef).stop(writer.runId, writer.runId, { signal: AbortSignal.timeout(8000) }); }
+            catch { /* Continue the other writers. Core redelivers this admission while its lease is held. */ }
+          }
+        }));
       } catch { /* The Core journal retains each request until the owning provider releases its lease. */ }
     }
   }
@@ -4150,6 +4204,7 @@ export class SessionManager {
             session.runEpoch = undefined;
             session.record.providerStopProof = { runId, generation: closure.generation, revision: closure.revision, observedAt: new Date().toISOString() };
             delete session.record.providerStopRequestedRunId;
+            delete session.record.providerStopRetry;
             if (session.record.taskExecutionId) session.record.taskRun = { started: true, exitConfirmed: true };
             if (session.record.agentRunId) await this.observations.confirmStopped(session.record.agentRunId);
             await this.store.saveRecord(session.record);
@@ -4184,7 +4239,10 @@ export class SessionManager {
       if (session.record.providerExecution?.runId && !snapshot?.stopConfirmed)
         throw new WorkerError("exit_unconfirmed", "Provider execution is unconfirmed. Its resources remain owned by the provider.", 503);
       if (snapshot?.stopConfirmed) {
-        if (session.record.providerStopRequestedRunId === snapshot.ref.id) delete session.record.providerStopRequestedRunId;
+        if (session.record.providerStopRequestedRunId === snapshot.ref.id) {
+          delete session.record.providerStopRequestedRunId;
+          delete session.record.providerStopRetry;
+        }
         if (cancelling && session.record.providerExecution) await this.projectProviderItem(session,
           { kind: "snapshot", snapshot }, { ...session.record.providerExecution, run: snapshot, cursor: snapshot.cursor }, false);
         session.record.providerStopProof = { runId: snapshot.ref.id, generation: snapshot.generation,
@@ -4418,7 +4476,7 @@ export class SessionManager {
         // Resolved before anything is written, so a name that is not a stored name fails the whole
         // message rather than leaving a user_message event that names a file the harness never got.
         await this.messageQueues.retainAcceptedAttachments(session.record, attachments);
-        const attached: Array<{ name: string; path: string }> = [];
+        const attached: Array<{ name: string; path: string; size: number }> = [];
         for (const name of attachments) {
           const file = this.store.attachmentPath(id, name);
           if (file === null) {
@@ -4431,7 +4489,7 @@ export class SessionManager {
           if (info === null || !info.isFile()) {
             throw new Error(`attachment not found: ${name}`);
           }
-          attached.push({ name, path: file });
+          attached.push({ name, path: file, size: info.size });
         }
         if (context.workspaceCredential !== undefined) {
           session.workspaceCredential = context.workspaceCredential;
@@ -4500,6 +4558,9 @@ export class SessionManager {
         });
         session.sourceAdmissionInFlight = { id: admissionRunId, settled };
         session.record.sourceAdmission = { ...(clientRequestId ? { clientRequestId } : {}), runId: admissionRunId, state: "preparing",
+          ...(this.connections?.remote && clientRequestId && !context.subagentInput && !context.taskDispatch &&
+            !context.feedback && !context.decisionContinuation && !context.taskContinuation
+            ? { draft: { text, attachments: attached.map(({ name, size }) => ({ name, size })) } } : {}),
           ...(this.connections?.remote && context.subagentRunId ? { subagentRunId: context.subagentRunId } : {}),
           ...(this.connections?.remote && session.record.providerExecution?.runId ? { previousProviderRunId: session.record.providerExecution.runId } : {}) };
         await this.store.saveRecord(session.record);
@@ -5143,7 +5204,10 @@ export class SessionManager {
     await this.store.saveMessageReceipt(record.id, settled);
     delete record.sourceAdmission;
     await this.store.saveRecord(record);
-    if (entry) this.publishMessageQueue(session);
+    if (entry) {
+      this.publishMessageQueue(session);
+      if (settled.state === "accepted") this.wakeMessageQueue(record.id);
+    }
   }
 
   async cancelSession(id: string, credential?: string): Promise<boolean> {
@@ -5159,7 +5223,7 @@ export class SessionManager {
           await this.messageQueues.change(session.record, next => { next.paused = true; next.reason = QUEUE_STOPPING; });
           this.publishMessageQueue(session);
         } else if (retainStop) await this.store.saveRecord(session.record);
-        if (runId) this.pendingStops.add(id);
+        if (runId) this.pendingStops.set(id, 0);
       });
       const session = this.live.get(id);
       if (session?.record.status === "suggesting") {
@@ -5418,7 +5482,9 @@ export class SessionManager {
     let receipt: StoredMessageReceipt | null;
     try { receipt = await this.store.readMessageReceipt(record.id, admission.clientRequestId); }
     catch { return; } // Keep the fence and allow read-only recovery/queue diagnostics.
-    if (receipt && receipt.state !== "unknown") {
+    if (receipt && receipt.state !== "unknown" && record.sourceAdmission === admission) {
+      if (receipt.error?.code === "draft_not_accepted" && admission.draft &&
+        !record.messageQueue?.entries.some(row => row.attempt?.clientRequestId === receipt.clientRequestId)) record.handoffDraft = admission.draft;
       // Settling source metadata cannot replay input; native exit remains governed by its run.
       delete record.sourceAdmission; await this.store.saveRecord(record);
     }
@@ -5436,6 +5502,14 @@ export class SessionManager {
       return existing;
     }
 
+    const loading = this.loadingSessions.get(id);
+    if (loading) return loading;
+    const first = this.loadLive(id);
+    this.loadingSessions.set(id, first);
+    try { return await first; } finally { if (this.loadingSessions.get(id) === first) this.loadingSessions.delete(id); }
+  }
+
+  private async loadLive(id: string): Promise<LiveSession> {
     // A session created before the last gateway restart: rehydrate the record; the harness run
     // itself restarts lazily on the next message (with resume when possible).
     const record = await this.store.readRecord(id);

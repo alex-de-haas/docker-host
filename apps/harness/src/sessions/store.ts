@@ -47,7 +47,7 @@ export interface SessionRecord {
   /** Immutable admitted input versions remain available independently of working-file cache. */
   sourceAttachments?: import("./message-queue.js").StoredQueueAttachment[];
   /** Unsettled durable input never authorizes a new physical execution after reopening. */
-  sourceAdmission?: { clientRequestId?: string; subagentRunId?: string; previousProviderRunId?: string; needsAuthority?: true; runId: string; state: "preparing" | "dispatching" };
+  sourceAdmission?: { clientRequestId?: string; subagentRunId?: string; previousProviderRunId?: string; needsAuthority?: true; draft?: { text: string; attachments: { name: string; size: number }[] }; runId: string; state: "preparing" | "dispatching" };
   storageRecovery?: { state: "required"; code: SessionStorageError["code"]; message: string };
   messageQueue?: import("./message-queue.js").MessageQueueRecord;
   suggestionHistoryVersion?: 1;
@@ -145,6 +145,7 @@ export interface SessionRecord {
   providerUploads?: Record<string, string>;
   providerStopProof?: { runId: string; generation: string; revision: string; observedAt: string };
   providerStopRequestedRunId?: string;
+  providerStopRetry?: { runId: string; failures: number; due: number; code: string };
   providerLocked?: boolean;
   title: string | null;
   /**

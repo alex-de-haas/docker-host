@@ -70,7 +70,7 @@ import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, draftStorageText, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
 import { forgetPendingSend, readPendingSend, PENDING_SEND_PREFIX, PENDING_SEND_CHANGED, withPendingSendLock, retryPendingSend, type PendingSend } from "@/lib/pending-send";
 import { useSessionListRefresh } from "@/lib/use-session-list-refresh";
-import { activityTime, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
+import { activityTime, lastSeenStatus, lastSeenText, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import {
   createSession,
   getHealth,
@@ -1422,7 +1422,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
               {fullPage ? <>{session && renamingSessionId === session.id ? <SessionTitleInput key={session.id} title={sessionTitle ?? ""} onCommit={async title => { setRenamingSessionId(null); await rename(session.id, title); }} onCancel={() => setRenamingSessionId(null)} /> : <><h1 className="min-w-0 truncate text-sm font-medium">{session ? sessionTitle || "Untitled session" : "New session"}</h1>{session && <Button variant="ghost" size="icon-sm" aria-label="Rename session" onClick={() => setRenamingSessionId(session.id)}><Pencil className="size-3.5" /></Button>}</>}</> : <HostyNavigationBoundary><Sparkles className="h-4 w-4 shrink-0" aria-hidden /><span className="text-sm font-medium">Assistant</span></HostyNavigationBoundary>}
             </div>
             <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
-              {status !== "idle" && <span title={session?.providerStatusContact ? "Last observed " + status + " · " + new Date(session.providerStatusContact.observedAt).toLocaleString() : undefined}><StatusBadge value={displayedStatus} /></span>}
+              {(status !== "idle" || session?.providerStatusContact) && <StatusBadge value={displayedStatus}
+                label={session?.providerStatusContact ? lastSeenText(lastSeenStatus(session)!) : undefined} />}
               {composerBlocked && (running || stopping || session?.sourceAdmission || session?.workerRun) && <Button type="button" variant="ghost" size="icon-sm" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
                 {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
               </Button>}

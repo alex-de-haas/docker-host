@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ChatTranscript } from "./chat-transcript.js";
@@ -49,4 +49,12 @@ it("rolls back transcript intake and the delivery cursor together after a write 
   chat.receive(provider, observation(1));
   expect(chat.pending()[0]?.fact).toEqual(observation(1));
   expect(chat.acknowledgements(provider)[0]?.through).toBe(1);
+});
+
+it("keeps a missing canonical chat database missing on reads and imports", async () => {
+  const { chat, file } = await create();
+  await rm(file);
+  expect(() => chat.read(0)).toThrow();
+  expect(() => chat.receive(provider, observation(1))).toThrow();
+  await expect(stat(file)).rejects.toMatchObject({ code: "ENOENT" });
 });

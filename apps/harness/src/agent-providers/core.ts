@@ -58,6 +58,14 @@ export class CoreAgentBackend implements AgentDirectoryBackend {
     } });
   }
 
+  async recoverStartAuthorization(provider: AgentProviderRef, prepared: AgentAuthorizationRequest, actorUserId: string, signal: AbortSignal) {
+    const { operation, method, path, bodyHash, sessionId, runId } = prepared;
+    const request = { operation, method, path, bodyHash, sessionId, runId };
+    const original = await this.core<AgentOperationAuthorization>("/agent/replay/token", null, { provider, actorUserId, ...request }, signal);
+    if (!original.admissionRef) throw new AgentApiError("invalid_replay_receipt", "Core did not identify the original authorization.", 502);
+    return { request, reference: original.admissionRef };
+  }
+
   replayClient(provider: AgentProviderRef, binding: { request: AgentAuthorizationRequest; reference: string }, signal: AbortSignal): AgentClient {
     return new AgentClient({ provider, fetch: (input, init) => this.fetcher(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal }),
       authorize: async request => {

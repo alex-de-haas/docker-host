@@ -10,6 +10,35 @@ namespace HostySdk.App.Tests;
 public sealed class HostyAgentExecutionClientTests
 {
     [Fact]
+    public async Task StopIsRevisionIndependentAndDiscardRequiresTheExactReceipt()
+    {
+        var provider = new HostyProviderRef("independent.agent", "installation-2", "native");
+        var runId = Guid.NewGuid().ToString();
+        var requestId = Guid.NewGuid();
+        var stop = HostyAgentExecutionClient.PrepareStop(runId, requestId);
+        Assert.Equal("PUT", stop.Authorization.Method);
+        Assert.Equal($"/runs/{runId}/stop", stop.Authorization.Path);
+        using var body = JsonDocument.Parse(stop.Body);
+        Assert.Equal(requestId, body.RootElement.GetProperty("requestId").GetGuid());
+        Assert.Single(body.RootElement.EnumerateObject());
+
+        var replyRun = runId;
+        using var handler = new Handler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new StringContent(JsonSerializer.Serialize(new { runId = replyRun, requestId, state = "discarded" }), Encoding.UTF8, "application/json")
+        }));
+        using var http = new HttpClient(handler);
+        var client = new HostyAgentExecutionClient(http, provider, (request, _) => {
+            Assert.Equal("runs.discard", request.Operation);
+            Assert.Equal($"/runs/{runId}/discard", request.Path);
+            return Task.FromResult(new HostyAgentAuthorization(provider, "http://agent.test/api/agent/v2", "cleanup",
+                DateTimeOffset.UtcNow.AddMinutes(1), "original-admission", DateTimeOffset.UtcNow.AddMinutes(2)));
+        });
+        Assert.Equal(requestId, (await client.DiscardDeliveryAsync(runId, requestId)).RequestId);
+        replyRun = Guid.NewGuid().ToString();
+        await Assert.ThrowsAsync<HostyProviderException>(() => client.DiscardDeliveryAsync(runId, requestId));
+    }
+
+    [Fact]
     public async Task PreparedMutationRetriesKeepExactBytesAndOnlyScopedTokenReachesProvider()
     {
         var provider = new HostyProviderRef("independent.agent", "opaque-installation", "native");

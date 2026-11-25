@@ -55,7 +55,7 @@ export async function publicProviderFixture(installationHistory = false, impleme
     loseNextResponse?: boolean; revokeReplay?: boolean;
     sessionLookupGate?: Promise<void>; failSessionLookup?: boolean; failHistoryTokenOnce?: boolean; rejectHistoryStream?: boolean; legacyWorkflowCore?: boolean;
     legacyHistoryRoute?: boolean; capabilitiesTimeoutAfterStart?: boolean; snapshotIssue?: "denied" | "timeout";
-    loseNextStartResponse?: boolean; refuseNextStart?: boolean; keepReservationAfterCancel?: boolean; deferPredictions?: boolean; beforeCancel?: (runId: string) => void;
+    loseStartAuthorizationResponse?: boolean; withholdStartAuthorization?: boolean; loseNextStartResponse?: boolean; refuseNextStart?: boolean; keepReservationAfterCancel?: boolean; deferPredictions?: boolean; beforeCancel?: (runId: string) => void;
     connectionRevision: string } = { cancel: "confirmed", reconcile: "confirmed", connectionRevision: "1" };
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const error = (code: string, message: string, status = 409) => json({ error: { code, message, retryable: false } }, status);
@@ -98,11 +98,13 @@ export async function publicProviderFixture(installationHistory = false, impleme
       }
       if (url.pathname.endsWith("/agent/replay/token")) {
         if (behavior.revokeReplay) return error("authority_expired", "The current grant is no longer available.", 403);
-        const { admissionRef, provider: target, ...request } = JSON.parse(body);
+        const { admissionRef, actorUserId, provider: target, ...request } = JSON.parse(body);
         const grant = grants.get(JSON.stringify([request.method, request.path, request.bodyHash]));
-        if (!grant || grant.reference !== admissionRef || grant.request.operation !== request.operation || grant.request.sessionId !== request.sessionId || grant.request.runId !== request.runId ||
+        if (!admissionRef && (!grant || request.operation !== "runs.start" || runOwners.get(request.runId) !== actorUserId))
+          return error("original_authorization_not_found", "Original admission is absent.", 404);
+        if (!grant || admissionRef && grant.reference !== admissionRef || grant.request.operation !== request.operation || grant.request.sessionId !== request.sessionId || grant.request.runId !== request.runId ||
           new Headers(init?.headers).has("X-Hosty-User-Token")) return error("permission_denied", "Wrong replay scope.", 403);
-        return json({ provider: target, baseUrl: "http://provider.test/api/agent/v2/coding", token: "exact-operation-fixture", expiresAt: new Date(Date.now() + 60000).toISOString() });
+        return json({ provider: target, admissionRef: grant.reference, baseUrl: "http://provider.test/api/agent/v2/coding", token: "exact-operation-fixture", expiresAt: new Date(Date.now() + 60000).toISOString() });
       }
       if (url.pathname.endsWith("/agent/cleanup/token")) {
         const request = JSON.parse(body);
@@ -124,8 +126,14 @@ export async function publicProviderFixture(installationHistory = false, impleme
         }
         const { provider: target, ...request } = JSON.parse(body);
         const key = JSON.stringify([request.method, request.path, request.bodyHash]);
+        if (request.operation === "runs.start" && behavior.withholdStartAuthorization) {
+          delete behavior.withholdStartAuthorization; throw new TypeError("Disconnected before Core authorization");
+        }
         if (request.method !== "GET" && !grants.has(key)) grants.set(key, {
           request, reference: request.operation === "runs.start" ? admissionRefs.get(request.runId)! : randomUUID() });
+        if (request.operation === "runs.start" && behavior.loseStartAuthorizationResponse) {
+          delete behavior.loseStartAuthorizationResponse; throw new TypeError("Lost Core authorization response");
+        }
         return json({ provider: target, baseUrl: "http://provider.test/api/agent/v2/coding", token: "exact-operation-fixture",
           expiresAt: new Date(Date.now() + 60000).toISOString(), admissionRef: grants.get(key)?.reference,
           ...(behavior.legacyWorkflowCore ? {} : { supportedWorkflowCapabilities: [AGENT_CAPABILITIES.sessionSubagents, AGENT_CAPABILITIES.profileManagement] }) });

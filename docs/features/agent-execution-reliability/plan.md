@@ -100,12 +100,16 @@ Qualify a vertical slice on a disposable Core first. Exercise send, real native 
 
 - [x] D1. Specify and implement the new attempt, decision, effect and command contracts in both SDKs with an executable reference model. Prove idempotent Start/Stop, exact targeting, snapshot/cursor consistency and incompatible-peer refusal.
 - [ ] D2. Replace the Worker and adapter execution lifecycle with the shared supervisor and gated launch. Integrate qualified native/isolated scope proofs, per-engine final-result semantics and race-safe effect tracking. Verify each supported OS and the pending-approval Stop case.
-- [ ] D3. Implement durable user intent and owner-driven reconciliation in Harness and providers. Demonstrate unattended send/stop/wait/decision recovery after losing replies or restarting any owner, with current grants and zero duplicate dispatches.
+- [x] D3. Implement durable user intent and owner-driven reconciliation in Harness and providers. Demonstrate unattended send/stop/wait/decision recovery after losing replies or restarting any owner, with current grants and zero duplicate dispatches.
 - [ ] D4. Implement transactional execution and chat storage, independent live/history delivery, indexed capacity and bounded retention/reclamation including old and partial build generations. Implement durable receive/acknowledge and pending child correlation. Test exact content completeness, backlog, fairness and resource budgets with healthy concurrent work.
-- [ ] D5. Implement server-owned confirmed removal across Harness and Core, with frozen selections, logical deletion, late-event fencing and verified physical cleanup. Cover active workspace consumers, self-hosted transitions, resource locks, partitions and browser disconnect.
-- [ ] D6. Replace the recovery UI and stale controls with one current owner-projected operation, actionable authority requests, dismissible historical outcomes and restart-safe continuation. Drive the chat header, workspace panel and global counts from the same attempt summary.
+- [x] D5. Implement server-owned confirmed removal across Harness and Core, with frozen selections, logical deletion, late-event fencing and verified physical cleanup. Cover active workspace consumers, self-hosted transitions, resource locks, partitions and browser disconnect.
+- [x] D6. Replace the recovery UI and stale controls with one current owner-projected operation, actionable authority requests, dismissible historical outcomes and restart-safe continuation. Drive the chat header, workspace panel and global counts from the same attempt summary.
 - [ ] D7. Qualify the public contracts and selected packaged profiles across platforms, including authority changes, model/service discovery, upgrades, independently implemented consumers/providers and packaging failures found in the inventory.
 - [ ] D8. Pass the incident-driven release suite, rehearse a scoped clean cutover, retire superseded production code/handlers and reconcile remaining work with its owning plans. Document measured recovery guarantees, limitations and release versions.
+
+## Stop semantics under consideration
+
+The owner accepts partial file changes and a detached background command surviving ordinary Stop for a short period. The release decision under discussion is whether ordinary native workspace editing remains available on hosts with process-group cleanup only. Verified kernel containment is a separate capability for operations that require physical exclusivity. The implementation currently requires that capability for mutable worktree admission. The owner requested an explanation of the tradeoff before choosing the shipping behavior.
 
 ## Verification and approval
 

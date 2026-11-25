@@ -28,7 +28,40 @@ async function readAncestry(file: string): Promise<Ancestry> {
   return { generation: randomUUID() };
 }
 
-type Job = { id: string; sessionId: string; userId: string; epoch: string; from: number; to: number; through: string; due?: number; failures?: number };
+type Job = { liveRetry?: true; id: string; sessionId: string; userId: string; epoch: string; from: number; to: number; through: string; due?: number; failures?: number };
+
+function localStorageUnavailable(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const cause = error as NodeJS.ErrnoException;
+  return ["ENOENT", "ENOSPC", "EDQUOT", "EROFS", "EIO", "EACCES", "EPERM", "EMFILE", "ENFILE"].includes(cause.code ?? "")
+    || cause.code === "ERR_SQLITE_ERROR" || cause.code === "session_storage_corrupt" || cause.code === "session_storage_uncertain";
+}
+
+class RangeQueue {
+  readonly jobs: Job[] = [];
+  private changed = new AbortController();
+
+  add(job: Job) {
+    const pending = job.liveRetry && this.jobs.find(other => other.liveRetry && other.id === job.id && other.epoch === job.epoch && other.sessionId === job.sessionId);
+    if (pending) {
+      pending.from = Math.min(job.from, pending.from);
+      if (job.to > pending.to) { pending.to = job.to; pending.through = job.through; }
+    } else this.jobs.push(job);
+    this.changed.abort();
+    this.changed = new AbortController();
+  }
+
+  async take(signal: AbortSignal): Promise<Job> {
+    for (;;) {
+      signal.throwIfAborted();
+      const now = Date.now(), ix = this.jobs.findIndex(job => !job.due || job.due <= now);
+      if (ix >= 0) return this.jobs.splice(ix, 1)[0]!;
+      const wake = AbortSignal.any([signal, this.changed.signal]);
+      const due = this.jobs.reduce((first, job) => Math.min(first, job.due!), now + 3_600_000);
+      await delay(Math.max(1, due - now), undefined, { signal: wake, ref: false }).catch(() => {});
+    }
+  }
+}
 
 /** A slow history page can retry from the same fixed boundary while SSE continues delivering. */
 const retryable = (error: unknown) => error instanceof TypeError || error instanceof Error && error.name === "TimeoutError"
@@ -47,8 +80,7 @@ async function readPage<T>(read: () => Promise<T>, signal: AbortSignal): Promise
 }
 
 async function backfill(connection: Connection, provider: AgentProviderRef, through: string, generation: string,
-  signal: AbortSignal, stop: AbortController, coverage: ProviderHistoryCoverage, delivery: Delivery) {
-  const jobs: Job[] = [];
+  signal: AbortSignal, stop: AbortController, coverage: ProviderHistoryCoverage, delivery: Delivery, queue: RangeQueue) {
   const listed = new Set<string>();
   let afterSession: string | undefined;
   do {
@@ -69,7 +101,7 @@ async function backfill(connection: Connection, provider: AgentProviderRef, thro
         return head ? [{ from: 1, to: head, unavailable: false }] : [];
       });
       for (const gap of gaps) {
-        if (!gap.unavailable && gap.from <= head) jobs.push({ id, userId, sessionId, epoch, from: gap.from, to: Math.min(gap.to, head), through });
+        if (!gap.unavailable && gap.from <= head) queue.add({ id, userId, sessionId, epoch, from: gap.from, to: Math.min(gap.to, head), through });
       }
     }
     afterSession = page.nextSession ?? undefined;
@@ -78,19 +110,12 @@ async function backfill(connection: Connection, provider: AgentProviderRef, thro
     if (listed.has(sessionId) || delivery.match(sessionId, userId) !== id) continue;
     signal.throwIfAborted();
     for (const gap of await coverage.unlisted(id, provider, sessionId, generation))
-      jobs.push({ id, userId, sessionId, epoch: gap.epoch, from: gap.from, to: gap.to, through: gap.through ?? through });
+      queue.add({ id, userId, sessionId, epoch: gap.epoch, from: gap.from, to: gap.to, through: gap.through ?? through });
   }
 
   const work = async () => {
-    while (jobs.length) {
-      signal.throwIfAborted();
-      const now = Date.now(), ix = jobs.findIndex(candidate => !candidate.due || candidate.due <= now);
-      if (ix < 0) {
-        const next = jobs.reduce((earliest, candidate) => Math.min(earliest, candidate.due!), Infinity);
-        await delay(Math.min(1000, Math.max(1, next - now)), undefined, { signal, ref: false });
-        continue;
-      }
-      const job = jobs.splice(ix, 1)[0]!;
+    while (!signal.aborted) {
+      const job = await queue.take(signal);
       const { id, sessionId, epoch, userId, to, from, through: cut } = job;
       if (delivery.match(sessionId, userId) !== id) continue;
       try {
@@ -102,20 +127,20 @@ async function backfill(connection: Connection, provider: AgentProviderRef, thro
             throw new AgentApiError("history_owner_invalid", "Range history changed its destination.", 502);
           await delivery.receive(id, { ...observation, recoveryGeneration: generation, replayed: true });
         }
-        if (page.nextPosition !== null) jobs.push({ ...job, from: page.nextPosition, due: undefined, failures: 0 });
+        if (page.nextPosition !== null) queue.add({ ...job, from: page.nextPosition, due: undefined, failures: 0 });
       } catch (error) {
         signal.throwIfAborted();
         if (error instanceof AgentApiError && error.status === 410 && error.code === "history_range_unavailable")
           await coverage.unavailable(id, provider, { sessionId, epoch, generation }, from, to);
-        else if (retryable(error)) {
+        else if (retryable(error) || localStorageUnavailable(error)) {
           const failures = (job.failures ?? 0) + 1;
-          jobs.push({ ...job, failures, due: Date.now() + Math.min(30000, 250 * 2 ** Math.min(failures - 1, 7)) });
+          queue.add({ ...job, failures, due: Date.now() + Math.min(30000, 250 * 2 ** Math.min(failures - 1, 7)) });
         } else throw error;
       }
     }
   };
   // Independent intervals can complete in either order. A failure wakes sibling requests.
-  const workers = Array.from({ length: Math.min(4, jobs.length) }, work);
+  const workers = Array.from({ length: 4 }, work);
   try { await Promise.all(workers); }
   catch (error) {
     stop.abort(error);
@@ -130,6 +155,7 @@ export async function followLiveHistory(backend: CoreAgentBackend, provider: Age
   grant?: Awaited<ReturnType<CoreAgentBackend["historyOptions"]>>): Promise<void> {
   const lifetime = new AbortController(), combined = AbortSignal.any([signal, lifetime.signal]);
   const connection = await backend.liveHistory(provider, combined, grant);
+  const queue = new RangeQueue();
   let ancestry = await readAncestry(ancestryFile), ready = false, repair: Promise<void> | undefined, repairFailure: unknown;
   const handshake = setTimeout(() => lifetime.abort(new DOMException("Provider live handshake timed out.", "TimeoutError")), 15000);
   const onReady = async (through: string) => {
@@ -138,7 +164,7 @@ export async function followLiveHistory(backend: CoreAgentBackend, provider: Age
     ancestry = { ...ancestry, cursor: through };
     await durableWriteFile(ancestryFile, JSON.stringify(ancestry));
     await delivery.ready();
-    repair = backfill(connection, provider, through, ancestry.generation, combined, lifetime, coverage, delivery)
+    repair = backfill(connection, provider, through, ancestry.generation, combined, lifetime, coverage, delivery, queue)
       .catch(error => { repairFailure = error; lifetime.abort(error); });
   };
   try {
@@ -152,7 +178,16 @@ export async function followLiveHistory(backend: CoreAgentBackend, provider: Age
         await durableWriteFile(ancestryFile, JSON.stringify(ancestry));
         coverage.activate(id, provider, { sessionId: observation.sessionId, epoch: observation.epoch, generation: ancestry.generation });
       }
-      await delivery.receive(id, { ...observation, recoveryGeneration: ancestry.generation });
+      try { await delivery.receive(id, { ...observation, recoveryGeneration: ancestry.generation }); }
+      catch (error) {
+        if (!localStorageUnavailable(error)) throw error;
+        // The provider owns every unacknowledged position. A full destination disk cannot
+        // stall a different subscriber or require another live frame after space is available.
+        if (observation.epoch && observation.sessionPosition) queue.add({ id, sessionId: observation.sessionId,
+          userId: observation.userId, epoch: observation.epoch, from: observation.sessionPosition, to: observation.sessionPosition,
+          through: observation.cursor, liveRetry: true });
+        await delivery.invalid(id, observation.sessionId).catch(() => {});
+      }
     }
     throw new AgentApiError("stream_closed", "The provider closed its live history stream.", 503, true);
   } catch (error) {

@@ -26,7 +26,9 @@ internal sealed class WorkspaceDeletionReturns(CoreDataPaths paths, AppRegistryS
             if (active.UserId != user || active.WorkspaceId != workspaceId || !trees.Any(t => t.Id == active.CoreWorktreeId)) continue;
             var target = active.CoreReturnTarget ?? WorkspaceActivationReturn.ImmediateTarget(active);
             if (active.PreviousExecutable is null || target.Executable is null || target.ExecutableHash is null || WorkspaceActivationReturn.ExecutableHash(target.Executable) != target.ExecutableHash ||
-                target.Launch.ProjectPath is { } project && trees.Any(t => DevelopmentWorkspaceService.IsUnder(t.Path, project))) continue;
+                trees.Any(t => DevelopmentWorkspaceService.IsUnder(t.Path, target.Executable) ||
+                    target.Launch.ProjectPath is { } project && DevelopmentWorkspaceService.IsUnder(t.Path, project) ||
+                    target.Launch.GenerationPath is { } generation && DevelopmentWorkspaceService.IsUnder(t.Path, generation))) continue;
             result.Add(new(DevelopmentWorkspaceService.Hash(active.Id + "\n" + CoreJson.Text(target)), "core", "Core", active.Id,
                 target.Launch.ProjectPath ?? "installed release"));
         }

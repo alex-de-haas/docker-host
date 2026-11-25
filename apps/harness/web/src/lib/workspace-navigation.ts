@@ -1,10 +1,11 @@
 import type { AssistantSession } from "./assistant-api";
 import type { DevelopmentWorkspace, WorkspaceParticipation } from "./development-api";
-import { activityTime, isWaiting, observedSessionStatus, orderSessions } from "./attention";
+import { activityTime, isWaiting, lastSeenStatus, observedSessionStatus, orderSessions, type LastSeen } from "./attention";
 
-export type ActivityCounts = { working: number; waiting: number; failed: number; unknown: number };
+export type ActivityCounts = { working: number; waiting: number; failed: number; unknown: number; lastSeen?: LastSeen[] };
 export const emptyCounts = (): ActivityCounts => ({ working: 0, waiting: 0, failed: 0, unknown: 0 });
-export function countStatus(counts: ActivityCounts, status: string) {
+export function countStatus(counts: ActivityCounts, status: string, lastSeen?: LastSeen) {
+  if (lastSeen) (counts.lastSeen ??= []).push(lastSeen);
   if (status === "running") counts.working++;
   else if (isWaiting(status)) counts.waiting++;
   else if (status === "failed") counts.failed++;
@@ -35,15 +36,17 @@ export function workspaceActivityRows(workspace: DevelopmentWorkspace, sessions:
     const observed = Date.parse(binding.activityAt ?? "");
     const active = !["idle", "failed", "cancelled", "completed"].includes(binding.status);
     const status = own ? observedSessionStatus(own) : active && (!Number.isFinite(observed) || now - observed > 45_000) ? "unknown" : binding.status;
-    return { binding, status, counted: binding.kind === "execution" || !linked };
+    const lastSeen = own ? lastSeenStatus(own) : status === "unknown" && binding.status !== "unknown"
+      ? { status: binding.status, observedAt: binding.activityAt } : undefined;
+    return { binding, status, lastSeen, counted: binding.kind === "execution" || !linked };
   });
 }
 export function workspaceCounts(workspace: DevelopmentWorkspace, sessions: readonly AssistantSession[], now = Date.now()): ActivityCounts {
   const counts = emptyCounts();
   if (workspace.participation) {
-    for (const row of workspaceActivityRows(workspace, sessions, now)) if (row.counted) countStatus(counts, row.status);
+    for (const row of workspaceActivityRows(workspace, sessions, now)) if (row.counted) countStatus(counts, row.status, row.lastSeen);
   } else {
-    for (const session of workspaceChats(workspace, sessions)) countStatus(counts, observedSessionStatus(session));
+    for (const session of workspaceChats(workspace, sessions)) countStatus(counts, observedSessionStatus(session), lastSeenStatus(session));
   }
   return counts;
 }
@@ -62,7 +65,7 @@ export function navigationItems(workspaces: readonly DevelopmentWorkspace[], ses
   });
   for (const session of sessions) {
     if (represented.has(session.id)) continue;
-    const counts = emptyCounts(); countStatus(counts, observedSessionStatus(session));
+    const counts = emptyCounts(); countStatus(counts, observedSessionStatus(session), lastSeenStatus(session));
     const label = session.title?.trim() || "Untitled session";
     items.push({ key: `session:${session.id}`, label, session, counts, at: activityTime(session), matches: [],
       search: [label, ...session.contextApps?.map(a => a.displayName) ?? [], ...session.appIds ?? []].join(" ").toLowerCase() });

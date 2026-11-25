@@ -4,14 +4,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AssistantConversation } from "./assistant-conversation";
 import * as api from "@/lib/assistant-api";
+import type { DevelopmentWorkspace } from "@/lib/development-api";
 
-const controls = vi.hoisted(() => ({ ui: { reportSurfaceState: vi.fn(), getNavigation: () => ({ entries: [] }), navigate: vi.fn() } }));
+const controls = vi.hoisted(() => ({ workspaces: [] as DevelopmentWorkspace[], ui: { reportSurfaceState: vi.fn(), getNavigation: () => ({ entries: [] }), navigate: vi.fn() } }));
 vi.mock("@hosty-sdk/app/ui/react", () => ({ useHostyUi: () => controls.ui }));
 vi.mock("@/lib/assistant-api", async original => ({ ...await original<object>(),
   getHealth: vi.fn(), refreshProviderHistory: vi.fn(), stopSession: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), listAppNames: vi.fn(),
   listAgentConnections: vi.fn(), getSuggestionPreference: vi.fn(), streamEvents: vi.fn(), postMessage: vi.fn(), resolveApproval: vi.fn(), resolveQuestion: vi.fn(),
 }));
-vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), useDevelopmentInventory: () => ({ workspaces: [], loading: false, error: "", refresh: vi.fn() }) }));
+vi.mock("@/lib/development-api", async original => ({ ...await original<object>(), useDevelopmentInventory: () => ({ workspaces: controls.workspaces, loading: false, error: "", refresh: vi.fn() }) }));
 vi.mock("./speech-input", () => ({ SpeechInput: () => null }));
 vi.mock("./session-credentials", () => ({ SessionCredentials: () => null }));
 vi.mock("./session-autonomy", () => ({ SessionAutonomy: () => null }));
@@ -37,6 +38,7 @@ const settle = () => act(async () => { await new Promise(resolve => setTimeout(r
 const mount = () => act(async () => root.render(<AssistantConversation fullPage />));
 
 beforeEach(() => {
+  controls.workspaces = [];
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.resetAllMocks(); localStorage.clear(); sessionStorage.clear(); streams.clear();
   vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("min-width: 1100px"), addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
@@ -70,6 +72,34 @@ afterEach(async () => {
   await act(async () => root.unmount()); container.remove();
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollTo;
   vi.restoreAllMocks(); vi.unstubAllGlobals();
+});
+
+it("keeps three old workspace rosters and the selected header in sync through a status-only disconnect and recovery with no transcript events", async () => {
+  const chats: api.AssistantSession[] = [...sessions, { ...sessions[1]!, id: "history-three", title: "Third conversation" }]
+    .map(chat => ({ ...chat, status: "running", lastEventSeq: 8, createdBy: "viewer" }));
+  controls.workspaces = chats.map(chat => ({ id: "work-" + chat.id, name: "Workspace " + chat.title, state: "active",
+    owner: { kind: "assistant", label: "Assistant", reference: chat.id }, workflow: { state: "in-progress", revision: 1 }, worktrees: [],
+    participation: { id: "work-" + chat.id, revision: 1, role: "owner", viewerUserId: "viewer", members: [], eligibleUsers: [],
+      sessions: [{ appId: "chat", sessionId: chat.id, userId: "viewer", title: chat.title!, attached: true, canOpen: true,
+        viewerPath: null, status: "idle", activityAt: "2020-01-01T00:00:00Z" }] } }));
+  vi.mocked(api.getSession).mockResolvedValue(chats[0]!);
+  vi.mocked(api.listSessions).mockResolvedValue(chats);
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  await mount(); await connect(); await settle();
+  const verify = (status: string, count: number) => {
+    expect(container.querySelector("header [data-slot=badge]")?.textContent).toContain(status);
+    expect(container.querySelector('[aria-label="Activity filters"]')?.textContent).toContain("Working" + count);
+    expect(container.querySelector('[aria-label="Workspace sessions"] li')?.textContent).toContain(" · " + status);
+  };
+  verify("running", 3);
+  const contact = { runId: "first-run", observedAt: "2026-11-25T08:00:00Z", reason: "unavailable" } as const;
+  vi.mocked(api.listSessions).mockResolvedValue([{ ...chats[0]!, providerStatusContact: contact }, ...chats.slice(1)]);
+  await act(async () => window.dispatchEvent(new Event("focus"))); await settle();
+  verify("Last seen running · ", 2);
+  expect(container.querySelector('[aria-label="Activity filters"]')?.textContent).toContain("1 last seen running");
+  vi.mocked(api.listSessions).mockResolvedValue(chats);
+  await act(async () => window.dispatchEvent(new Event("focus"))); await settle();
+  verify("running", 3);
 });
 
 it("waits for the full replay before mounting the real scroller and initially positions it without smooth animation", async () => {

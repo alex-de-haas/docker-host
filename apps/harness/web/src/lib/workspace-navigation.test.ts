@@ -29,7 +29,8 @@ it("counts each current participant once across simultaneous work, attention, an
 });
 it("expires active observations while retaining terminal failures and never infers external activity from leases", () => {
   const space = workspace([participant("work", "running"), participant("failed", "failed"), participant("waiting", "awaiting_question"), participant("stopping", "stopping")]);
-  expect(workspaceCounts(space, [], now + 50_000)).toEqual({ working: 0, waiting: 0, failed: 1, unknown: 3 });
+  expect(workspaceCounts(space, [], now + 50_000)).toEqual({ working: 0, waiting: 0, failed: 1, unknown: 3,
+    lastSeen: ["running", "awaiting_question", "stopping"].map(status => ({ status, observedAt: new Date(now).toISOString() })) });
   expect(workspaceCounts({ ...space, participation: undefined, owner: { kind: "external", label: "Codex", reference: "task" } }, [], now)).toEqual({ working: 0, waiting: 0, failed: 0, unknown: 0 });
 });
 it("uses newer authorized own-session changes without aliasing a foreign session with the same id", () => {

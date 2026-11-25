@@ -41,8 +41,8 @@ public record HostyAgentHistoryBinding(string Token, DateTimeOffset ExpiresAt, s
 public record HostyAgentHistoryOwner(string CallerAppId, string CallerInstallation, HostyProviderRef Provider, DateTimeOffset ExpiresAt, bool Acknowledge = false);
 internal record HostyAgentHistorySelection(HostyProviderRef Provider, bool Acknowledge = false);
 /// <summary>An exact stored Core authorization and immutable operation metadata for recovery.</summary>
-public record HostyAgentRecoveryRequest(string AdmissionRef, HostyProviderRef Provider, string Operation,
-    string Method, string Path, string BodyHash, string? SessionId = null, string? RunId = null);
+public record HostyAgentRecoveryRequest(string? AdmissionRef, HostyProviderRef Provider, string Operation,
+    string Method, string Path, string BodyHash, string? SessionId = null, string? RunId = null, string? ActorUserId = null);
 internal record HostyAgentHistoryIntrospection(string Token, string Key);
 internal record HostyAgentAuthorize(HostyProviderRef Provider, string Operation, string Method, string Path, string BodyHash,
     HostyAgentResource[]? Resources, string? SessionId, string? RunId, string? ConfigurationDigest, HostyAgentAuthorityCeiling? Ceiling, HostyAgentTaskAuthority? Authority, HostyAgentConversation? Conversation);

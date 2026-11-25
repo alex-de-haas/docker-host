@@ -1,4 +1,4 @@
-import { closeSync, openSync } from "node:fs";
+import { closeSync, lstatSync, openSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import type { StoredEvent } from "./store.js";
 import type { HistoryReceipt } from "../agent-providers/history-coverage.js";
@@ -13,6 +13,8 @@ export class ChatTranscript {
   constructor(private readonly file: string) {}
 
   private database<T>(action: (db: DatabaseSync) => T) {
+    if (!lstatSync(this.file).isFile())
+      throw Object.assign(new Error("The retained conversation database is not a regular file."), { code: "session_storage_corrupt" });
     const db = new DatabaseSync(this.file);
     try {
       db.exec("PRAGMA synchronous=FULL; PRAGMA secure_delete=ON");
@@ -33,15 +35,6 @@ export class ChatTranscript {
         PRIMARY KEY(stream,ordinal));
       CREATE INDEX pending_acks ON streams(received,acknowledged) WHERE received>acknowledged;
     `));
-  }
-
-  bindAdmission(runId: string, reference: string) {
-    this.database(db => {
-      db.prepare("INSERT OR IGNORE INTO admissions(run,reference) VALUES (?,?)").run(runId, reference);
-      if (db.prepare("SELECT reference FROM admissions WHERE run=?").get(runId)?.reference !== reference)
-        throw new Error("The admission for this attempt is immutable.");
-    });
-    return true;
   }
 
   authorize(request: AgentAuthorizationRequest, reference: string, provider: AgentProviderRef) {

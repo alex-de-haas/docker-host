@@ -350,7 +350,12 @@ export class MessageQueue {
     await this.change(record, next => {
       const entry = next.entries.find(e => e.id === entryId);
       if (!entry || entry.attempt?.clientRequestId !== receipt.clientRequestId) return;
-      if (receipt.state === "accepted") { next.entries = next.entries.filter(e => e.id !== entryId); delete next.waiting; }
+      if (receipt.state === "accepted") {
+        if (entry.state === "unknown" && entry.error?.message === next.reason) { next.paused = false; delete next.reason; }
+        next.entries = next.entries.filter(e => e.id !== entryId); delete next.waiting;
+      } else if (receipt.state === "unknown" && record.selection && record.sourceAdmission?.clientRequestId === receipt.clientRequestId) {
+        entry.state = "sending"; delete entry.error;
+      }
       else { entry.state = receipt.state === "unknown" ? "unknown" : "failed"; entry.error = receipt.error ?? { code: "message_outcome_unknown", message: "The send outcome is unknown. Retry checks its original receipt." }; next.paused = true; next.reason = entry.error.message; }
     });
   }

@@ -1,6 +1,6 @@
 import { CircleAlert, CircleHelp, Diamond, Loader2 } from "lucide-react";
 import type { AssistantSession } from "@/lib/assistant-api";
-import { activityTime, isWaiting } from "@/lib/attention";
+import { activityTime, isWaiting, lastSeenText, lastSeenStatus } from "@/lib/attention";
 
 function statusLabel(status: string) {
   const labels: Record<string, string> = { idle: "Idle", completed: "Completed", running: "Working", failed: "Failed",
@@ -20,11 +20,13 @@ export function SessionActivityIndicator({ status }: { status: string }) {
 }
 
 export function SessionRowStatus({ session, now }: { session: AssistantSession; now: number }) {
-  const at = session.providerStatusContact ? Date.parse(session.providerStatusContact.observedAt) : activityTime(session);
+  const last = lastSeenStatus(session);
+  if (last) return <span className="block truncate text-xs text-muted-foreground" title={lastSeenText(last)}>{lastSeenText(last)}</span>;
+  const at = activityTime(session);
   const seconds = Math.max(0, Math.floor((now - at) / 1000));
   const relative = seconds < 60 ? "Just now" : seconds < 3600 ? `${Math.floor(seconds / 60)} min ago`
     : seconds < 86400 ? `${Math.floor(seconds / 3600)} h ago` : `${Math.floor(seconds / 86400)} d ago`;
-  const label = session.providerStatusContact ? "Last observed " + statusLabel(session.status).toLowerCase() : statusLabel(session.status);
+  const label = statusLabel(session.status);
   return <span className="block truncate text-xs font-normal leading-5 text-muted-foreground">
     {label}<span aria-hidden> · </span>{at > 0
       ? <time dateTime={new Date(at).toISOString()} title={`Last activity: ${new Date(at).toLocaleString()}`}>{relative}</time>

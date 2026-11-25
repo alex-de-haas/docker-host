@@ -49,6 +49,20 @@ public sealed class CoreAgentProviderHttpTests
         await Assert.ThrowsAsync<AppIdentityException>(() => service.Introspect(provider, new(binding.Token, input.Operation, input.Method, input.Path, new string('0', 64)), default));
         await Assert.ThrowsAsync<AppIdentityException>(() => service.Renew(provider, binding.AdmissionRef, default));
         await Assert.ThrowsAsync<AppIdentityException>(() => service.Introspect(provider with { Id = "other.provider" }, new(binding.Token, input.Operation, input.Method, input.Path, input.BodyHash), default));
+        var preAdmissionRun = Guid.NewGuid().ToString();
+        var pending = input with { RunId = preAdmissionRun, Path = $"/sessions/{session}/runs/{preAdmissionRun}" };
+        var priorLogin = await BrowserAuthorityFixture.Grant(host, consumer.Id, "owner", "prior-browser");
+        var beforeLogin = await service.Authorize(consumer, priorLogin.AccessToken, pending, default);
+        var freshLogin = await BrowserAuthorityFixture.Grant(host, consumer.Id, "owner", "fresh-browser");
+        await service.Authorize(consumer, freshLogin.AccessToken, pending, default);
+        var oldRequest = new CoreAgentIntrospection(beforeLogin.Token, pending.Operation, pending.Method, pending.Path, pending.BodyHash);
+        Assert.Equal(preAdmissionRun, (await service.Introspect(provider, oldRequest, default)).RunId);
+        await host.Services.GetRequiredService<AppSessionGrantStore>().RevokeByAuthorizingSessionAsync("prior-browser", now);
+        var afterLogin = await service.Authorize(consumer, freshLogin.AccessToken, pending, default);
+        Assert.Equal(beforeLogin.AdmissionRef, afterLogin.AdmissionRef);
+        var exact = new CoreAgentIntrospection(afterLogin.Token, pending.Operation, pending.Method, pending.Path, pending.BodyHash);
+        Assert.Equal(preAdmissionRun, (await service.Introspect(provider, exact, default)).RunId);
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.Introspect(provider, exact with { Token = beforeLogin.Token }, default));
         var cleanup = new CoreAgentCleanupRequest(binding.AdmissionRef, input.Provider, "runs.cancel", "PUT",
             $"/runs/{run}/stop", new string('c', 64), SessionId: session, RunId: run);
         using var serviceClient = host.CreateClient();
@@ -70,6 +84,15 @@ public sealed class CoreAgentProviderHttpTests
         var exactStop = new CoreAgentIntrospection(cleanupBinding.Token, "runs.cancel", "PUT", cleanup.Path, cleanup.BodyHash);
         var stoppedOwner = await service.Introspect(provider, exactStop, default);
         Assert.Equal(run, stoppedOwner.RunId);
+        var recoverStart = new CoreAgentCleanupRequest(null, input.Provider, "runs.start", input.Method, input.Path, input.BodyHash,
+            input.SessionId, input.RunId, stoppedOwner.UserId);
+        var recovered = await service.AuthorizeReplay(consumer, recoverStart, default);
+        Assert.Equal(binding.AdmissionRef, recovered.AdmissionRef);
+        var missing = await Assert.ThrowsAsync<CoreProviderException>(() => service.AuthorizeReplay(consumer,
+            recoverStart with { ActorUserId = "another-owner" }, default));
+        Assert.Equal("original_authorization_not_found", missing.Error.Code);
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.AuthorizeReplay(consumer,
+            recoverStart with { BodyHash = new string('c', 64) }, default));
         Assert.Equal(input.BodyHash, stoppedOwner.OriginalStartDigest);
         Assert.True(stoppedOwner.CleanupOnly);
         var discard = cleanup with { Operation = "runs.discard", Path = $"/runs/{run}/discard" };

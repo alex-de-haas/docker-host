@@ -368,8 +368,8 @@ owns its native adapter and records progress. Restarting HTTP reconnects to the 
 A supervisor that dies releases the lock. The process that acquires it recovers the attempt
 from its durable records and owned containment evidence.
 
-The run stores an outbox for installation-history delivery. Publishing to that journal can retry
-after a storage failure without starting the run again. Stop received before admission records
+The execution database commits each run transition and its installation-history facts in one
+transaction. A storage failure leaves both at the last committed revision. Stop received before admission records
 a fence. The exact late submission resolves to a terminal `run_not_admitted` result for its
 original UUID and digest. Another submission cannot reuse the UUID with different input bytes.
 

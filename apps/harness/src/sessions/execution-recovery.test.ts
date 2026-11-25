@@ -75,6 +75,42 @@ it.each([true, false])("recovers exact preauthorized send without a browser, adm
   expect((await restarted.store.readRecord(session.id))?.sourceAdmission).toBeUndefined();
 });
 
+it.each(["committed", "absent"] as const)("recovers a lost Core authorization response whose original grant is %s", async original => {
+  const f = await publicProviderFixture(true); fixtures.push(f);
+  const session = await f.manager.createSession({ createdBy: f.owner }), requestId = randomUUID();
+  if (original === "committed") f.behavior.loseStartAuthorizationResponse = true; else f.behavior.withholdStartAuthorization = true;
+  await expect(f.manager.postMessage(session.id, "Exact authorized message", f.credential, [], { actorUserId: f.owner, clientRequestId: requestId })).rejects.toThrow();
+  expect(f.starts).toHaveLength(0);
+  await f.manager.shutdown();
+  const restarted = f.makeManager();
+  await restarted.manager.recoverProviderRuns();
+  if (original === "absent") {
+    await vi.waitFor(async () => expect((await restarted.store.readRecord(session.id))?.sourceAdmission?.needsAuthority).toBe(true));
+    expect(f.starts).toHaveLength(0);
+    await restarted.manager.authorizePendingMessage(session.id, f.owner, requestId, f.credential);
+  }
+  await vi.waitFor(async () => expect(await restarted.manager.messageReceipt(session.id, requestId, f.owner)).toMatchObject({ state: "accepted" }));
+  expect(f.starts).toHaveLength(1);
+  expect(f.requests.filter(r => r.path.endsWith("/agent/replay/token")).every(r => !r.body.includes("Exact authorized message") && !r.userToken)).toBe(true);
+});
+
+it("restores the exact paid input as an unsent draft when Harness crashed before preparing a provider start", async () => {
+  const f = await publicProviderFixture(true); fixtures.push(f);
+  const chat = await f.manager.createSession({ createdBy: f.owner }), request = randomUUID();
+  const draft = { text: "Retain this input", attachments: [{ name: "original.txt", size: 42 }] };
+  await f.manager.shutdown();
+  const record = (await f.store.readRecord(chat.id))!;
+  record.sourceAdmission = { clientRequestId: request, runId: randomUUID(), state: "dispatching", draft };
+  await f.store.saveRecord(record);
+  await f.store.saveMessageReceipt(chat.id, { clientRequestId: request, actorUserId: f.owner, fingerprint: "a".repeat(64), state: "unknown" });
+  const restarted = f.makeManager();
+  await restarted.manager.recoverProviderRuns();
+  expect(await restarted.store.readRecord(chat.id)).toMatchObject({ status: "idle", handoffDraft: draft });
+  expect((await restarted.store.readRecord(chat.id))?.sourceAdmission).toBeUndefined();
+  expect(await restarted.manager.messageReceipt(chat.id, request, f.owner)).toMatchObject({ state: "rejected", error: { code: "draft_not_accepted" } });
+  expect(f.starts).toEqual([]);
+});
+
 it("marks a revoked scope on the retained send without dispatch or a replacement UUID", async () => {
   const f = await publicProviderFixture(true); fixtures.push(f);
   const session = await f.manager.createSession({ createdBy: f.owner }), requestId = randomUUID();
@@ -137,6 +173,28 @@ it("keeps an unadmitted send uncertain until the same Stop request durably fence
   expect(f.starts).toEqual([]);
 });
 
+it("keeps the automatic Stop retry deadline and reason across Harness restart", async () => {
+  const f = await fixture(undefined, true);
+  f.behavior.cancel = "unavailable";
+  await f.manager.cancelSession(f.session.id, f.credential);
+  await f.manager.reconcilePendingStops();
+  const retry = (await f.store.readRecord(f.session.id))!.providerStopRetry!;
+  expect(retry).toMatchObject({ runId: f.runId, failures: 1 });
+  expect(retry.code).toBeTruthy(); expect(retry.due).toBeGreaterThan(Date.now());
+  const attempts = () => f.controls.filter(control => control.path.endsWith("/stop")).length;
+  const before = attempts();
+  await f.manager.shutdown();
+  const restarted = f.makeManager();
+  await restarted.manager.recoverProviderRuns();
+  await restarted.manager.reconcilePendingStops();
+  expect(attempts()).toBe(before);
+  f.behavior.cancel = "confirmed";
+  await vi.waitFor(() => expect(Date.now()).toBeGreaterThanOrEqual(retry.due), { timeout: 5000 });
+  await restarted.manager.reconcilePendingStops();
+  expect((await restarted.store.readRecord(f.session.id))?.providerStopRetry).toBeUndefined();
+  expect(f.snapshot(f.runId)).toMatchObject({ state: "cancelled", stopConfirmed: true });
+}, 10000);
+
 it("shows an unconfirmed Stop in a paused queue and enables retry after admission is fenced", async () => {
   const f = await publicProviderFixture(); fixtures.push(f);
   const session = await f.manager.createSession({ createdBy: f.owner }), entryId = randomUUID();
@@ -147,12 +205,13 @@ it("shows an unconfirmed Stop in a paused queue and enables retry after admissio
     requestId: randomUUID(), expectedRevision: (await f.manager.messageQueue(session.id, f.owner)).revision,
     command: { type: "enqueue", entryId, text: "Keep the original queue message", attachments: [] },
   }, f.credential);
-  await vi.waitFor(async () => expect((await f.manager.messageQueue(session.id, f.owner)).entries[0]?.state).toBe("unknown"));
+  await vi.waitFor(() => expect(f.behavior.refuseNextStart).toBeUndefined());
+  expect((await f.manager.messageQueue(session.id, f.owner)).entries[0]?.state).toBe("sending");
   f.behavior.cancel = "unavailable";
   await expect(f.manager.cancelSession(session.id, f.credential)).resolves.toBe(false);
   expect(await f.manager.messageQueue(session.id, f.owner)).toMatchObject({
     paused: true, reason: "Waiting for the provider to confirm Stop.",
-    entries: [{ id: entryId, state: "unknown" }],
+    entries: [{ id: entryId, state: "sending" }],
   });
   await expect(f.manager.messageQueueCommand(session.id, f.owner, {
     requestId: randomUUID(), expectedRevision: (await f.manager.messageQueue(session.id, f.owner)).revision,

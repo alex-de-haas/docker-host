@@ -108,8 +108,17 @@ public sealed class SessionRetentionHttpTests
         using (var recovery = new WorkspaceDeletionRecovery(services.GetRequiredService<WorkspaceCleanupService>(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkspaceDeletionRecovery>.Instance))
         {
-            await recovery.StartAsync(default);
-            await recovery.ExecuteTask!;
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await recovery.StartAsync(deadline.Token);
+            try
+            {
+                while ((await workspaces.ListAsync(legacyOwner, true, deadline.Token)).Workspaces.Any())
+                    await Task.Delay(TimeSpan.FromMilliseconds(20), deadline.Token);
+            }
+            finally
+            {
+                await recovery.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+            }
         }
         Assert.Empty((await workspaces.ListAsync(legacyOwner, true, default)).Workspaces);
         Assert.False(Directory.Exists(legacy.Path));

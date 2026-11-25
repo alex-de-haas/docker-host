@@ -552,21 +552,22 @@ describe("SessionManager public provider integration", () => {
     expect(f.starts).toHaveLength(1);
   });
 
-  it.each(["running", "failed-and-reattached"])("projects a stopped snapshot's tool output before cancellation without reopening %s", async mode => {
+  it.each(["running", "status-lost-and-reattached"])("projects a stopped snapshot's tool output before cancellation without reopening %s", async mode => {
     const f = await fixture(), record = await chat(f), runId = f.starts[0]!.runId;
     let { manager, store } = f;
     await waitForStream(f, runId);
     const tool = { id: "native-command", source: { agentId: "root" }, name: "Bash", input: { command: "node harmless-timer.mjs" }, state: "running" as const };
     f.update(runId, { tools: [tool] });
     await vi.waitFor(async () => expect((await f.store.readEvents(record.id)).filter(event => event.type === "tool_use")).toHaveLength(1));
-    if (mode === "failed-and-reattached") {
+    if (mode === "status-lost-and-reattached") {
       f.update(runId, { state: "unknown", phase: "interrupted", freshness: "last_known", effects: { certainty: "unknown", unresolvedCallIds: [tool.id] } });
-      await vi.waitFor(async () => expect((await store.readRecord(record.id))!.status).toBe("failed"));
+      await vi.waitFor(async () => expect(await store.readRecord(record.id)).toMatchObject({ status: "running", providerStatusContact: { runId } }));
       await manager.shutdown(); ({ manager, store } = f.makeManager());
       await manager.refreshSessionCredentials(record.id, f.owner, f.credential);
       f.update(runId, { tools: [{ ...tool, state: "unknown", output: "Command interrupted", command: { status: "unknown" } }] });
       await vi.waitFor(async () => expect((await store.readProviderExecution(record.id))!.cursor).toBe(f.snapshot(runId).cursor));
-      expect((await store.readEvents(record.id)).filter(event => ["tool_result", "command_result"].includes(event.type))).toEqual([]);
+      const recovered = (await store.readEvents(record.id)).filter(event => ["tool_result", "command_result"].includes(event.type));
+      expect(recovered.every(event => event.status === "unknown")).toBe(true);
     }
     // These SSE observations queue behind the manager's Stop lane. Its synchronous
     // public read already contains the terminal output before the observer catches up.
@@ -577,6 +578,8 @@ describe("SessionManager public provider integration", () => {
     const events = await store.readEvents(record.id), call = events.find(event => event.type === "tool_use")!;
     const output = events.find(event => event.type === "tool_result")!, command = events.find(event => event.type === "command_result")!;
     const cancelled = events.find(event => event.type === "session_status" && event.status === "cancelled")!;
+    expect(events.filter(event => event.type === "tool_result" && event.toolUseId === call.toolUseId)).toHaveLength(1);
+    expect(events.filter(event => event.type === "command_result" && event.toolUseId === call.toolUseId)).toHaveLength(1);
     expect(output).toMatchObject({ toolUseId: call.toolUseId, status: "unknown", output: "Command interrupted" });
     expect(command).toMatchObject({ toolUseId: call.toolUseId, status: "unknown" }); expect(command).not.toHaveProperty("exitCode");
     expect(output.seq).toBeLessThan(cancelled.seq); expect(command.seq).toBeLessThan(cancelled.seq);

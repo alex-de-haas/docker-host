@@ -5,6 +5,7 @@ import { Loader2, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { lastSeenText } from "@/lib/attention";
 import { workspaceActivityRows } from "@/lib/workspace-navigation";
 import { WorkspaceSessionControls } from "./workspace-session-controls";
 import { WorkspaceSectionHeading } from "./workspace-section-heading";
@@ -30,7 +31,7 @@ export function WorkspaceSessions({ workspace, chats = [], now, sessionId, runni
     <WorkspaceSectionHeading actions={participation && <WorkspaceSessionControls key={`${participation.viewerUserId}:${workspace.id}`} workspace={workspace} actions={sessionActions} disabled={deletionLocked} />} informationLabel="About workspace sessions" information="Attached chats share workspace files. Task executions show the profile used for that attempt; owners and private conversations retain their access rules.">Sessions</WorkspaceSectionHeading>
     {!!execution.summary?.roots.length && <nav aria-label="Workspace root tasks" className="space-y-1">{execution.summary.roots.map(root => <a key={root.taskRef.id} href={root.path} className="block text-primary underline">{root.number} · {root.title}</a>)}</nav>}
     {execution.error && <p role="status" className="text-muted-foreground">Task attribution is unavailable. {execution.error}</p>}
-    {rows.length ? <ul className="space-y-1">{rows.map(({ binding: s, status }) => {
+    {rows.length ? <ul className="space-y-1">{rows.map(({ binding: s, status, lastSeen }) => {
       const selected = s.canOpen && s.sessionId === sessionId;
       const deletingRow = s.canOpen && isDeleting(s.sessionId);
       const inactive = ["idle", "failed"].includes(s.status) && status !== "unknown" && !(selected && running);
@@ -39,7 +40,7 @@ export function WorkspaceSessions({ workspace, chats = [], now, sessionId, runni
       const description = <><span className="block truncate">{label ?? s.title ?? "Untitled session"}</span>
         {label && <span className="block truncate text-muted-foreground">{s.title || attribution?.title || "Untitled session"}</span>}
         {deletingRow ? <span role="status" className="flex items-center gap-1 text-muted-foreground"><Loader2 className="size-3 motion-safe:animate-spin" aria-hidden />Deleting…</span>
-          : <span className="block truncate text-muted-foreground">{participation?.members.find(m => m.userId === s.userId)?.name ?? "Participant"} · {status.replaceAll("_", " ")}{status === "unknown" ? " (not confirmed)" : ""}</span>}</>;
+          : <span className="block truncate text-muted-foreground">{participation?.members.find(m => m.userId === s.userId)?.name ?? "Participant"} · {lastSeen ? lastSeenText(lastSeen) : status.replaceAll("_", " ")}</span>}</>;
       return <li key={`${s.appId}:${s.userId}:${s.sessionId}`} className={`flex items-center gap-1 rounded-md pr-1 ${selected ? "bg-accent" : ""}`}>
         {s.canOpen && !deletingRow ? <Button type="button" variant="ghost" className="h-auto min-w-0 flex-1 justify-start px-2 py-2 text-left text-xs font-normal" aria-label={`Open session ${s.title || "Untitled session"}`} aria-current={selected ? "page" : undefined} disabled={!onPick || workspaceDeleting} onClick={() => onPick?.(s.sessionId)}><span className="min-w-0 flex-1">{description}</span></Button>
           : <div className="min-w-0 flex-1 px-2 py-2">{description}</div>}
@@ -60,7 +61,7 @@ export function WorkspaceSessions({ workspace, chats = [], now, sessionId, runni
     </div>)}
     <Dialog open={deleting !== null} onOpenChange={open => { if (!open) setDeleting(null); }}>
       <DialogContent onCloseAutoFocus={event => { event.preventDefault(); section.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus(); }}>
-        <DialogHeader><DialogTitle>Delete session?</DialogTitle><DialogDescription>Delete “{deleting?.title}” and its conversation history? This cannot be undone. The session is detached; workspace files and other conversations are retained. Any unreported tool outcomes stay unknown.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Delete session?</DialogTitle><DialogDescription>Permanently delete “{deleting?.title}” and its conversation history? Harness stops any active run and detaches this chat. Workspace files and other conversations stay available.</DialogDescription></DialogHeader>
         <DialogFooter><Button variant="outline" onClick={() => setDeleting(null)}>Keep session</Button>
           <Button variant="destructive" disabled={deletionLocked || busy || retry} onClick={async () => {
             if (!deleting || !onDelete || deletionLocked) return;

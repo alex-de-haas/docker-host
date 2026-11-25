@@ -118,8 +118,12 @@ public sealed partial class CoreLifecycleServiceTests
         var journal = await f.Service.ReadDiscardAsync(f.Tree.WorkspaceId, request, f.Owner.UserId, default);
         await f.Service.FinishDiscardAsync(f.Owner, f.Owner.UserId, journal!.Command, default);
         Assert.Single(await cleanup.ChatRemovalsAsync(f.Owner.AppId, installation, default));
+        var sourceRemoved = await cleanup.DeleteStatusAsync(f.Tree.WorkspaceId, f.Owner.UserId, null, request, default);
+        Assert.Equal("removed", sourceRemoved.State);
+        Assert.Equal("pending", sourceRemoved.AttachedChatDelivery);
         Assert.True(await cleanup.AcceptChatRemovalsAsync(f.Owner.AppId, installation, f.Tree.WorkspaceId, request, default));
         Assert.Empty(await cleanup.ChatRemovalsAsync(f.Owner.AppId, installation, default));
+        Assert.Equal("accepted", (await cleanup.DeleteStatusAsync(f.Tree.WorkspaceId, f.Owner.UserId, null, request, default)).AttachedChatDelivery);
     }
 
     [Theory]
