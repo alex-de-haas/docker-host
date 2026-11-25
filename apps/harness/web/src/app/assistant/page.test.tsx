@@ -212,9 +212,9 @@ it("preserves the draft after a failed stop and permits retry", async () => {
   vi.mocked(api.stopSession).mockRejectedValueOnce(new Error("Connection lost"));
   await render(); await type("Keep this draft");
   await act(async () => button("Stop")!.click());
-  const notice = container.querySelector('[role="status"][aria-label="Session recovery"]');
+  const notice = container.querySelector('[role="status"][aria-label="Execution status"]');
   expect(notice?.textContent).toContain("Connection lost");
-  expect(notice?.textContent).toContain("Check status");
+  expect(notice?.textContent).toContain("Dismiss");
   expect(input().value).toBe("Keep this draft");
   expect(button("Stop")?.disabled).toBe(false);
   await act(async () => button("Stop")!.click());

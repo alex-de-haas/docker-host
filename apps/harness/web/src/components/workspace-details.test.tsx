@@ -187,12 +187,10 @@ it("keeps Delete and its linked-session option available when a pending lifecycl
   const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Delete")!;
   expect(confirm.disabled).toBe(false);
   await act(async () => document.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
-  vi.mocked(developmentRequest).mockResolvedValueOnce({ sessions: [{ sessionId: "session", attached: true, canOpen: true }] })
-    .mockResolvedValueOnce({ workspaceId: "workspace", requestId: "delete-request", state: "removed", trees: [], resources: [] });
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ workspaceId: "workspace", requestId: "delete-request", state: "removed", trees: [], resources: [] });
   await act(async () => confirm.click());
-  expect(developmentRequest).toHaveBeenCalledWith("/workspace/participants");
-  expect(developmentRequest).toHaveBeenCalledWith("/workspace/delete", { requestId: expect.any(String) });
-  expect(remove).toHaveBeenCalledExactlyOnceWith("session");
+  expect(developmentRequest).toHaveBeenCalledWith("/workspace/delete", { requestId: expect.any(String), removeAttachedSessions: true });
+  expect(remove).not.toHaveBeenCalled();
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
 

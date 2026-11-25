@@ -18,13 +18,13 @@ const pinnedRun: AgentMcpPolicy = { default: "ask", tools: {
 } };
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
-function fixture() {
+function fixture(writerScope = false) {
   const notify = vi.fn(async (_run: string, _event: { approvalId: string }) => {});
   const settled = vi.fn(async () => {});
   const credential = { url: "http://unrelated.invalid/mcp", token: "test-only-token", expiresAt: "2099-01-01T00:00:00Z" };
   const mint = vi.fn(async () => credential);
   const authority = { mcp: mint } as unknown as ProviderAuthority;
-  const mcp = new ProviderMcp(authority, () => "http://provider.invalid", notify, settled), runs = new Set<string>();
+  const mcp = new ProviderMcp(authority, () => "http://provider.invalid", notify, settled, undefined, writerScope), runs = new Set<string>();
   cleanups.push(() => { for (const run of runs) mcp.close(run); });
   const configure = async (run: string, targets: NonNullable<AgentMcpSelection["targets"]>, autonomous = false) => {
     runs.add(run);
@@ -131,4 +131,17 @@ it("does not restore removed exceptions through concurrent catalog publication",
   const discovery = f.catalog(key!);
   await replacement; await discovery;
   expect(await f.mode(key!, "write")).toBe("ask"); expect(await f.mode(key!, "blocked")).toBe("ask");
+});
+
+
+it("requires an owned writer scope for both Core workspace acquisition tools", async () => {
+  for (const writerScope of [false, true]) {
+    const f = fixture(writerScope), run = randomUUID();
+    const [core, app] = await f.configure(run, [{ target }, { target: other }]);
+    for (const tool of ["prepare_workspace", "acquire_workspace_lease"]) {
+      expect(f.mcp.proxy.allowedTool!(run, core!, tool)).toBe(writerScope);
+      expect(f.mcp.proxy.allowedTool!(run, app!, tool)).toBe(true);
+    }
+    expect(f.mcp.proxy.allowedTool!(run, core!, "get_workspace_diff")).toBe(true);
+  }
 });

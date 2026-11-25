@@ -4,7 +4,6 @@ import { AgentApiError } from "@hosty-sdk/app/agent";
 import { AgentClient, prepareAgentControl } from "@hosty-sdk/app/agent/client";
 import { publicProviderFixture, type PublicProviderFixture } from "../agent-providers/test-fixture.js";
 import { DevelopmentClient } from "./development.js";
-import { AgentSessionService } from "../agent-sessions/service.js";
 import * as appSession from "../app-session.js";
 
 const fixtures: PublicProviderFixture[] = [];
@@ -29,70 +28,11 @@ it("waits for public admission without holding the lane needed by Stop", async (
   const posted = f.manager.postMessage(session.id, "Admit once", f.credential, [], { actorUserId: f.owner, clientRequestId: randomUUID() });
   await vi.waitFor(() => expect(f.authorizations.some(request => request.operation === "runs.start")).toBe(true));
   expect(f.manager.isSourceAdmissionInFlight((await f.manager.getSession(session.id))!)).toBe(true);
-  const review = f.manager.executionRecovery(session.id, f.owner);
   const stopping = f.manager.cancelSession(session.id);
   release(); await posted; await stopping;
-  expect(await review).toBeNull();
   expect(f.manager.isSourceAdmissionInFlight((await f.manager.getSession(session.id))!)).toBe(false);
   expect(f.starts).toHaveLength(1);
-  expect(f.controls.filter(control => control.path.endsWith("/cancel"))).toHaveLength(1);
-});
-
-it.each([
-  ["queued", "preparing"], ["running", "executing"], ["waiting_for_input", "waiting"],
-] as const)("does not report a current %s execution as interrupted", async (state, phase) => {
-  const f = await fixture();
-  f.update(f.runId, { state, phase });
-  await expect(f.manager.executionRecovery(f.session.id, f.owner)).resolves.toBeNull();
-  expect(f.controls).toEqual([]);
-});
-
-it("does not offer reconcile when the provider has not declared authoritative recovery", async () => {
-  const f = await fixture(); await f.interrupt();
-  f.capabilities.capabilities = f.capabilities.capabilities.filter(capability => capability !== "runs.reconcile");
-  expect(await f.manager.executionRecovery(f.session.id, f.owner)).toMatchObject({ runId: f.runId, recoverable: false });
-  expect(f.controls).toEqual([]);
-  expect((await f.store.readProviderExecution(f.session.id))?.run?.stopConfirmed).toBe(false);
-});
-
-it("binds review and recovery to the exact public run generation and decimal revision", async () => {
-  const f = await fixture(); await f.interrupt();
-  const review = await f.manager.executionRecovery(f.session.id, f.owner);
-  expect(review).toMatchObject({ runId: f.runId, generation: f.snapshot(f.runId).generation, expectedRevision: f.snapshot(f.runId).revision, recoverable: true });
-  const input = { ...review!, requestId: randomUUID(), consumerExitConfirmed: true };
-  f.update(f.runId, { observedAt: new Date().toISOString() });
-  await expect(f.manager.recoverExecution(f.session.id, f.owner, input, f.credential)).rejects.toMatchObject({ code: "recovery_stale" });
-  expect(f.controls).toEqual([]);
-  expect(f.starts).toHaveLength(1);
-});
-
-it("keeps the original execution fenced when client attestation lacks provider-owned exit evidence", async () => {
-  const f = await fixture(); await f.interrupt(); f.behavior.reconcile = "unavailable";
-  const review = await f.manager.executionRecovery(f.session.id, f.owner);
-  const input = { ...review!, requestId: randomUUID(), consumerExitConfirmed: true };
-  await expect(f.manager.recoverExecution(f.session.id, f.owner, input, f.credential)).rejects.toMatchObject({ code: "exit_unconfirmed" });
-  const record = await f.store.readRecord(f.session.id);
-  expect(record?.providerRecovery).toMatchObject({ state: "pending", runId: f.runId, input: { requestId: input.requestId } });
-  expect((await f.store.readProviderExecution(f.session.id))?.run?.stopConfirmed).toBe(false);
-  await expect(f.manager.postMessage(f.session.id, "Never replace an unknown process", f.credential)).rejects.toThrow();
-  expect(f.starts).toHaveLength(1);
-  expect((await f.store.readEvents(f.session.id)).filter(event => event.type === "user_message")).toHaveLength(1);
-});
-
-it("retries the exact retained recovery after a lost completion write without another execution", async () => {
-  const f = await fixture(); await f.interrupt();
-  const review = await f.manager.executionRecovery(f.session.id, f.owner), input = { ...review!, requestId: randomUUID(), consumerExitConfirmed: true };
-  const save = f.store.saveRecord.bind(f.store); let lost = false;
-  vi.spyOn(f.store, "saveRecord").mockImplementation(async record => {
-    if (!lost && record.providerRecovery?.state === "completed") { lost = true; throw new Error("Lost completion checkpoint"); }
-    return save(record);
-  });
-  await expect(f.manager.recoverExecution(f.session.id, f.owner, input, f.credential)).rejects.toThrow("Lost completion checkpoint");
-  await f.manager.recoverExecution(f.session.id, f.owner, input, f.credential);
-  expect((await f.store.readRecord(f.session.id))?.providerRecovery).toMatchObject({ state: "completed", input: { requestId: input.requestId } });
-  expect(f.controls.filter(control => control.input.command === "reconcile")).toHaveLength(1);
-  expect(f.starts).toHaveLength(1);
-  expect((await f.store.readEvents(f.session.id)).some(event => event.text === "Original immutable input")).toBe(true);
+  expect(f.controls.filter(control => control.path.endsWith("/stop"))).toHaveLength(1);
 });
 
 it("cancels an admitted lost-response start without retransmitting its immutable input", async () => {
@@ -107,26 +47,70 @@ it("cancels an admitted lost-response start without retransmitting its immutable
   expect(f.manager.isSourceAdmissionInFlight(current)).toBe(false);
   await f.manager.cancelSession(session.id);
   expect(f.starts).toHaveLength(1);
-  expect(f.controls.filter(control => control.path.endsWith("/cancel"))).toHaveLength(1);
+  expect(f.controls.filter(control => control.path.endsWith("/stop"))).toHaveLength(1);
   expect((await f.store.readRecord(session.id))?.sourceAdmission).toBeUndefined();
   await expect(f.manager.postMessage(session.id, "May have started exactly once", f.credential, [], { actorUserId: f.owner, clientRequestId: requestId })).resolves.toMatchObject({ state: "accepted" });
   expect(f.starts).toHaveLength(1);
 });
 
-it("repairs an admitted send receipt from Check status without a new start or Stop", async () => {
-  const f = await publicProviderFixture(); fixtures.push(f);
+it.each([true, false])("recovers exact preauthorized send without a browser, admitted=%s", async admitted => {
+  const f = await publicProviderFixture(true); fixtures.push(f);
   const session = await f.manager.createSession({ createdBy: f.owner }), requestId = randomUUID();
-  f.behavior.loseNextStartResponse = true;
-  await expect(f.manager.postMessage(session.id, "Accepted before the response was lost", f.credential, [],
+  if (admitted) f.behavior.loseNextStartResponse = true;
+  else f.behavior.refuseNextStart = true;
+  await expect(f.manager.postMessage(session.id, "Exact retained input", f.credential, [],
     { actorUserId: f.owner, clientRequestId: requestId })).rejects.toThrow();
-  expect(await f.manager.messageReceipt(session.id, requestId, f.owner)).toMatchObject({ state: "unknown" });
-  await expect(f.manager.executionRecovery(session.id, f.owner, f.credential)).resolves.toBeNull();
-  expect(await f.manager.messageReceipt(session.id, requestId, f.owner)).toMatchObject({ state: "accepted" });
-  expect((await f.store.readRecord(session.id))?.sourceAdmission).toBeUndefined();
+  const requests = f.requests.length;
+  await f.manager.shutdown();
+  const restarted = f.makeManager();
+  await restarted.manager.recoverProviderRuns();
+  await vi.waitFor(async () => expect(await restarted.manager.messageReceipt(session.id, requestId, f.owner)).toMatchObject({ state: "accepted" }));
   expect(f.starts).toHaveLength(1);
   expect(f.controls).toEqual([]);
-  f.complete(f.starts[0]!.runId);
-  await vi.waitFor(async () => expect((await f.manager.getSession(session.id))?.status).toBe("idle"));
+  const recovered = f.requests.slice(requests);
+  expect(recovered.some(r => r.path.endsWith("/agent/replay/token"))).toBe(!admitted);
+  expect(recovered.every(r => !r.userToken)).toBe(true);
+  expect((await restarted.store.readRecord(session.id))?.sourceAdmission).toBeUndefined();
+});
+
+it("marks a revoked scope on the retained send without dispatch or a replacement UUID", async () => {
+  const f = await publicProviderFixture(true); fixtures.push(f);
+  const session = await f.manager.createSession({ createdBy: f.owner }), requestId = randomUUID();
+  f.behavior.refuseNextStart = true;
+  await expect(f.manager.postMessage(session.id, "Private input", f.credential, [], { actorUserId: f.owner, clientRequestId: requestId })).rejects.toThrow();
+  await f.manager.shutdown();
+  f.behavior.revokeReplay = true;
+  const restarted = f.makeManager();
+  await restarted.manager.recoverProviderRuns();
+  await vi.waitFor(async () => expect((await restarted.store.readRecord(session.id))?.sourceAdmission).toMatchObject({ clientRequestId: requestId, needsAuthority: true }));
+  expect(f.starts).toEqual([]);
+  expect(f.requests.filter(r => r.path.endsWith("/agent/replay/token")).every(r => !r.body.includes("Private input") && !r.userToken)).toBe(true);
+  await expect(restarted.manager.authorizePendingMessage(session.id, f.owner, randomUUID(), f.credential)).rejects.toMatchObject({ code: "message_changed" });
+  await restarted.manager.authorizePendingMessage(session.id, f.owner, requestId, f.credential);
+  expect(f.starts).toHaveLength(1);
+  expect(await restarted.manager.messageReceipt(session.id, requestId, f.owner)).toMatchObject({ state: "accepted" });
+});
+
+it("settles a lost decision response from the original receipt after a consumer restart", async () => {
+  const f = await fixture(undefined, true), decision = { id: "permission", revision: "1", kind: "approval" as const, delivery: "continue_run" as const,
+    toolName: "Bash", toolCallId: "cmd", source: { agentId: "root" } };
+  f.runs.get(f.runId)!.pending = [decision];
+  f.emit(f.runId, "decision.requested", { decisionId: decision.id, decision });
+  const card = await vi.waitFor(async () => {
+    const row = (await f.store.readEvents(f.session.id)).find(item => item.type === "approval_request");
+    expect(row).toBeDefined(); return String(row!.approvalId);
+  });
+  f.behavior.loseNextResponse = true;
+  await expect(f.manager.resolveApproval(f.session.id, card, "allow", undefined, f.owner)).rejects.toThrow();
+  const sent = f.controls.filter(c => c.path.endsWith("/responses"));
+  expect(sent).toHaveLength(1);
+  await f.manager.shutdown();
+  const restarted = f.makeManager(), requests = f.requests.length;
+  await restarted.manager.recoverProviderRuns();
+  await vi.waitFor(async () => expect((await restarted.store.readEvents(f.session.id)).filter(row => row.type === "approval_decision"))
+    .toMatchObject([{ approvalId: card, decision: "allow" }]));
+  expect(f.controls.filter(c => c.path.endsWith("/responses"))).toHaveLength(1);
+  expect(f.requests.slice(requests).every(r => !r.userToken)).toBe(true);
 });
 
 it("keeps an unadmitted send uncertain until the same Stop request durably fences it", async () => {
@@ -135,10 +119,9 @@ it("keeps an unadmitted send uncertain until the same Stop request durably fence
   f.behavior.refuseNextStart = true;
   await expect(f.manager.postMessage(session.id, "Never admitted", f.credential, [],
     { actorUserId: f.owner, clientRequestId: requestId })).rejects.toThrow();
-  await expect(f.manager.executionRecovery(session.id, f.owner, f.credential)).rejects.toMatchObject({ code: "provider_admission_unconfirmed" });
   expect(f.controls).toEqual([]);
   f.behavior.cancel = "unavailable";
-  await expect(f.manager.cancelSession(session.id, f.credential)).rejects.toMatchObject({ code: "storage_uncertain" });
+  await expect(f.manager.cancelSession(session.id, f.credential)).resolves.toBe(false);
   expect(await f.manager.messageReceipt(session.id, requestId, f.owner)).toMatchObject({ state: "unknown" });
   f.behavior.cancel = "confirmed";
   await expect(f.manager.cancelSession(session.id, f.credential)).resolves.toBe(true);
@@ -164,9 +147,9 @@ it("shows an unconfirmed Stop in a paused queue and enables retry after admissio
   }, f.credential);
   await vi.waitFor(async () => expect((await f.manager.messageQueue(session.id, f.owner)).entries[0]?.state).toBe("unknown"));
   f.behavior.cancel = "unavailable";
-  await expect(f.manager.cancelSession(session.id, f.credential)).rejects.toMatchObject({ code: "storage_uncertain" });
+  await expect(f.manager.cancelSession(session.id, f.credential)).resolves.toBe(false);
   expect(await f.manager.messageQueue(session.id, f.owner)).toMatchObject({
-    paused: true, reason: "Stop was not confirmed. Check status before resuming.",
+    paused: true, reason: "Waiting for the provider to confirm Stop.",
     entries: [{ id: entryId, state: "unknown" }],
   });
   await expect(f.manager.messageQueueCommand(session.id, f.owner, {
@@ -180,27 +163,20 @@ it("shows an unconfirmed Stop in a paused queue and enables retry after admissio
   });
 });
 
-it.each(["read", "cancel"] as const)("retains an unconfirmed Stop after a failed %s and observes eventual exit without another Stop", async stage => {
+it("restarts an outstanding Stop without a user credential or another browser request", async () => {
   const f = await fixture();
-  if (stage === "read") f.behavior.snapshotIssue = "denied";
-  else f.behavior.cancel = "unavailable";
-  await expect(f.manager.cancelSession(f.session.id, f.credential)).rejects.toMatchObject({ code: stage === "read" ? "permission_denied" : "exit_unconfirmed" });
-  delete f.behavior.snapshotIssue;
-  expect(f.manager.isProviderStopUnconfirmed((await f.manager.getSession(f.session.id))!)).toBe(true);
-  await expect(f.manager.executionRecovery(f.session.id, f.owner, f.credential)).resolves.toBeNull();
-  expect(f.manager.isProviderStopUnconfirmed((await f.manager.getSession(f.session.id))!)).toBe(true);
-  await f.manager.messageQueueCommand(f.session.id, f.owner, {
-    requestId: randomUUID(), expectedRevision: (await f.manager.messageQueue(f.session.id, f.owner)).revision,
-    command: { type: "enqueue", entryId: randomUUID(), text: "Save for after Stop", attachments: [] },
-  }, f.credential);
-  await vi.waitFor(async () => expect(await f.manager.messageQueue(f.session.id, f.owner)).toMatchObject({
-    paused: true, reason: "Stop was not confirmed. Check status before resuming.", entries: [{ state: "queued" }],
-  }));
-  f.update(f.runId, { state: "cancelled", phase: "terminal", stopConfirmed: true });
-  await expect(f.manager.executionRecovery(f.session.id, f.owner, f.credential)).resolves.toBeNull();
-  expect(f.manager.isProviderStopUnconfirmed((await f.manager.getSession(f.session.id))!)).toBe(false);
-  expect((await f.store.readRecord(f.session.id))?.providerStopProof?.runId).toBe(f.runId);
-  expect(f.controls.filter(control => control.path.endsWith("/cancel"))).toHaveLength(stage === "read" ? 0 : 1);
+  f.behavior.cancel = "unavailable";
+  await expect(f.manager.cancelSession(f.session.id, f.credential)).resolves.toBe(false);
+  expect((await f.store.readRecord(f.session.id))?.providerStopRequestedRunId).toBe(f.runId);
+  await f.manager.shutdown();
+  f.behavior.cancel = "confirmed";
+  const restarted = f.makeManager();
+  const requests = f.requests.length;
+  await restarted.manager.recoverProviderRuns();
+  await vi.waitFor(async () => expect((await restarted.store.readRecord(f.session.id))?.providerStopProof?.runId).toBe(f.runId));
+  expect(f.requests.slice(requests).every(r => !r.userToken)).toBe(true);
+  expect(new Set(f.controls.filter(c => c.path.endsWith("/stop")).map(c => c.path + JSON.stringify(c.input))).size).toBe(1);
+  expect(f.starts).toHaveLength(1);
 });
 
 it("clears the Stop request when the provider already confirmed exit at a parked checkpoint", async () => {
@@ -212,14 +188,6 @@ it("clears the Stop request when the provider already confirmed exit at a parked
   expect(f.manager.isProviderStopUnconfirmed(stopped)).toBe(false);
   await expect(f.manager.postMessage(f.session.id, "Continue after confirmed Stop", f.credential, [],
     { actorUserId: f.owner, clientRequestId: randomUUID() })).resolves.toMatchObject({ state: "accepted" });
-});
-
-it("rejects another actor before reading or controlling the provider execution", async () => {
-  const f = await fixture(); await f.interrupt(); const reads = f.requests.length;
-  await expect(f.manager.executionRecovery(f.session.id, "another-user")).rejects.toMatchObject({ code: "session_not_found" });
-  await expect(f.manager.recoverExecution(f.session.id, "another-user", { requestId: randomUUID(), consumerExitConfirmed: true })).rejects.toMatchObject({ code: "session_not_found" });
-  expect(f.requests).toHaveLength(reads);
-  expect(f.controls).toEqual([]);
 });
 
 it.each(["succeeded", "failed", "cancelled"] as const)("deletes a %s conversation after provider reinstall without contacting its replacement", async outcome => {
@@ -234,14 +202,14 @@ it.each(["succeeded", "failed", "cancelled"] as const)("deletes a %s conversatio
   f.provider.installationId = "replacement-installation";
   const { manager, store } = f.makeManager();
   const authorizations = f.authorizations.length, controls = f.controls.length;
-  await expect(manager.deleteSession(f.session.id, "another-owner", f.credential, true)).rejects.toMatchObject({ code: "session_not_found" });
-  await expect(manager.deleteSession(f.session.id, f.owner, f.credential, true)).resolves.toBe(true);
+  await expect(manager.deleteSession(f.session.id, "another-owner", f.credential)).rejects.toMatchObject({ code: "session_not_found" });
+  await expect(manager.deleteSession(f.session.id, f.owner, f.credential)).resolves.toBe(true);
   expect(await store.readRecord(f.session.id)).toBeNull();
   expect(f.authorizations).toHaveLength(authorizations);
   expect(f.controls).toHaveLength(controls);
 });
 
-it("can delete a settled chat on the same Harness instance after Stop fails to reach its original provider", async () => {
+it("uses retained physical closure for Stop and Delete when the original provider is unavailable", async () => {
   const f = await fixture();
   f.complete(f.runId);
   await vi.waitFor(async () => expect((await f.store.readRecord(f.session.id))?.providerStopProof?.runId).toBe(f.runId));
@@ -251,29 +219,24 @@ it("can delete a settled chat on the same Harness instance after Stop fails to r
   const before = await store.readProviderExecution(f.session.id);
   const reads = vi.spyOn(AgentClient.prototype, "run").mockRejectedValue(
     new AgentApiError("provider_unavailable", "The provider installation changed.", 503));
-  await expect(manager.cancelSession(f.session.id)).rejects.toMatchObject({ code: "provider_unavailable" });
+  await expect(manager.cancelSession(f.session.id)).resolves.toBe(false);
   expect(await store.readProviderExecution(f.session.id)).toEqual(before);
   const calls = reads.mock.calls.length;
-  await expect(manager.deleteSession(f.session.id, f.owner, f.credential, true)).resolves.toBe(true);
+  await expect(manager.deleteSession(f.session.id, f.owner, f.credential)).resolves.toBe(true);
   expect(reads).toHaveBeenCalledTimes(calls);
   expect(f.controls).toEqual([]);
   expect(await store.readRecord(f.session.id)).toBeNull();
 });
 
-it("deletes after owner sign-in when a cold retention sweep could not verify an already stopped conversation", async () => {
+it("retains the original terminal proof across restart and applies retention without owner sign-in", async () => {
   const f = await fixture();
   f.complete(f.runId);
   await vi.waitFor(async () => expect((await f.store.readRecord(f.session.id))?.providerStopProof?.runId).toBe(f.runId));
   await f.manager.shutdown();
   f.provider.installationId = "replacement-installation";
   const { manager, store } = f.makeManager();
-  const before = await store.readProviderExecution(f.session.id);
-  expect(await manager.sweepRetention(new Date("2100-01-01T00:00:00Z"), f.session.id)).toEqual([]);
-  expect((await store.readRecord(f.session.id))?.retention).toMatchObject({ state: "blocked", message: expect.stringContaining("Refresh Hosty sign-in") });
-  expect(await store.readProviderExecution(f.session.id)).toEqual(before);
-  await manager.refreshSessionCredentials(f.session.id, f.owner, f.credential);
   const authorizations = f.authorizations.length;
-  expect(await manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
+  expect(await manager.sweepRetention(new Date("2100-01-01T00:00:00Z"), f.session.id)).toEqual([f.session.id]);
   expect(f.authorizations).toHaveLength(authorizations);
   expect(f.controls).toEqual([]);
   expect(await store.readRecord(f.session.id)).toBeNull();
@@ -303,178 +266,57 @@ it.each(["control", "continuation", "snapshot reservation", "admission"] as cons
   await f.store.saveProviderExecution(f.session.id, state);
   f.provider.installationId = "replacement-installation";
   const { manager, store } = f.makeManager();
-  await expect(manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toMatchObject({ code: "provider_changed" });
+  await expect(manager.deleteSession(f.session.id, f.owner, f.credential)).rejects.toMatchObject({ code: "provider_changed" });
   expect(await store.readRecord(f.session.id)).toBeTruthy();
   expect(await store.readProviderExecution(f.session.id)).toMatchObject(state);
   expect(f.controls).toEqual([]);
 });
 
-it("retires a retained stopped run only on explicit owner Delete and detaches without deleting the workspace", async () => {
-  const core = new DevelopmentClient("http://core.invalid", "unrelated.consumer", "fixture-service");
-  const call = vi.spyOn(core, "call").mockResolvedValue({});
-  const f = await fixture(core); await f.interrupt(); f.behavior.retire = "confirmed";
-  call.mockClear();
-  const other = await f.manager.createSession({ createdBy: f.owner });
-  const existing = (await f.manager.getSession(f.session.id))!;
-  existing.workspaceAssociation = { id: "shared-source", revision: 2 };
-  existing.developmentLease = randomUUID();
-  existing.developmentLeaseState = "stopped";
-  existing.workspaceActivitySequence = 7;
-  await f.store.saveRecord(existing);
-  await f.manager.shutdown();
-  const { manager } = f.makeManager({ development: core });
-  const retention = vi.spyOn(core, "retention")
-    .mockResolvedValueOnce({ kind: "workspace", workflow: { state: "in-progress", revision: 4 }, resourcesFinished: true })
-    .mockResolvedValueOnce({ kind: "chat", workflow: null, resourcesFinished: true, sessionDetached: true });
-  const activity = vi.spyOn(core, "activity").mockResolvedValue({ workspaceId: "shared-source", revision: 2, state: "active", stopRequested: false });
-  call.mockResolvedValue({ workspace: { id: "shared-source", revision: 3 } });
-
-  expect(await manager.sweepRetention(new Date("2100-01-01T00:00:00Z"), f.session.id)).toEqual([]);
-  expect(f.controls).toEqual([]);
-  await expect(manager.deleteSession(f.session.id, "another-user", f.credential, true)).rejects.toMatchObject({ code: "session_not_found" });
-  expect(f.controls).toEqual([]);
-
-  const actor = { userId: f.owner, principalId: "owner", hostRole: "host.admin" as const };
-  const observer = new AgentSessionService(manager, f.provider);
-  const visible = await observer.list(actor, { provider: f.provider, conversation: { provider: f.provider, id: f.session.id } });
-  const attached = visible.sessions.find(session => session.activeRuns.some(run => run.id === existing.agentRunId))!;
-  expect(attached).toBeDefined();
-  const observation = attached.activeRuns.find(run => run.id === existing.agentRunId)!;
-
-  const before = f.snapshot(f.runId);
-  expect(await manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
-  expect(f.controls).toEqual([{ runId: f.runId, path: `/runs/${f.runId}/controls`,
-    input: { command: "retire", requestId: expect.any(String), expectedGeneration: before.generation, expectedRevision: before.revision } }]);
-  expect(activity).toHaveBeenCalledWith(f.session.id, f.credential,
-    { status: "idle", stopped: true, leaseId: existing.developmentLease, sequence: 8 });
-  expect(call).toHaveBeenCalledExactlyOnceWith(f.session.id, f.credential, "detach",
-    expect.objectContaining({ workspaceId: "shared-source", expectedRevision: 2 }));
-  expect(retention.mock.calls.every(([, , cleanup]) => !cleanup)).toBe(true);
-  expect(await f.store.readRecord(f.session.id)).toBeNull();
-  expect(await f.store.readRecord(other.id)).not.toBeNull();
-  expect(await observer.getSession(actor, attached.ref)).toMatchObject({ activeRuns: [], conversation: null });
-  const retired = await observer.getRun(actor, observation);
-  expect(retired).toMatchObject({ state: "unknown", stopConfirmed: false, conversation: null });
-  await expect(observer.cancel(actor, { run: observation, expectedRevision: retired.revision, requestId: randomUUID() }, async () => {}))
-    .rejects.toMatchObject({ code: "run_retired" });
-  expect(f.controls).toHaveLength(1);
-  expect(f.snapshot(f.runId)).toMatchObject({ stopConfirmed: false, effects: { certainty: "unknown", unresolvedCallIds: ["command"] } });
-  expect(f.starts).toHaveLength(1);
-});
-
-it("replays the exact owner retirement after a lost response and restart without sending again", async () => {
-  const f = await fixture(); await f.interrupt();
-  f.behavior.retire = "confirmed"; f.behavior.loseNextRetireResponse = true;
-  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toThrow("lost the retirement response");
-  const retirement = (await f.store.readRecord(f.session.id))?.providerRetirement;
-  expect(retirement).toMatchObject({ runId: f.runId, state: "pending" });
+it("keeps a confirmed chat hidden across provider loss and Harness restart, then finishes without the browser", async () => {
+  const f = await fixture();
+  const sibling = await f.manager.createSession({ createdBy: f.owner });
+  await f.interrupt();
+  f.behavior.cancel = "unavailable";
+  const requestId = randomUUID();
+  expect(await f.manager.confirmSessionRemoval(f.session.id, "another-owner", requestId)).toBe(false);
+  expect(await f.manager.confirmSessionRemoval(f.session.id, f.owner, requestId, f.credential)).toBe(true);
+  expect(await f.manager.getSession(f.session.id)).toBeNull();
+  expect(await f.manager.listSessions()).toEqual([expect.objectContaining({ id: sibling.id })]);
+  expect(f.manager.removalStatus(f.session.id, "another-owner")).toBeUndefined();
+  await vi.waitFor(() => expect(f.manager.removalStatus(f.session.id, f.owner)).toMatchObject({ state: "pending", reason: "exit_unconfirmed", requestId }));
   await f.manager.shutdown();
   const next = f.makeManager();
-  await expect(next.manager.postMessage(f.session.id, "Late input", f.credential)).rejects.toMatchObject({ code: "session_deletion_pending" });
-  await expect(next.manager.deleteSession(f.session.id, f.owner, f.credential)).rejects.toMatchObject({ code: "session_deletion_pending" });
-  expect(await next.manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
-  const attempts = f.requests.filter(request => request.method === "POST" && request.path.endsWith(`/runs/${f.runId}/controls`));
-  expect(attempts.map(request => request.body)).toEqual([retirement?.request.body, retirement?.request.body]);
-  expect(f.controls.filter(control => control.input.command === "retire")).toHaveLength(1);
-  expect(f.starts).toHaveLength(1);
-  expect(await next.store.readRecord(f.session.id)).toBeNull();
-});
-
-it("preserves delayed history while Delete awaits retry or sandbox cleanup without reopening execution", async () => {
-  const core = new DevelopmentClient("http://core.invalid", "unrelated.consumer", "fixture-service");
-  vi.spyOn(core, "call").mockResolvedValue({});
-  const retention = vi.spyOn(core, "retention").mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: false });
-  const f = await fixture(core, true);
-  const other = await f.manager.createSession({ createdBy: f.owner });
-  await f.manager.postMessage(other.id, "Second conversation", f.credential);
-  await f.interrupt();
-  f.behavior.retire = "confirmed";
-  f.behavior.loseNextRetireResponse = true;
-  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toThrow("lost the retirement response");
-  await f.manager.refreshSessionCredentials(f.session.id, f.owner, f.credential);
-  await f.manager.refreshProviderHistory(f.session.id, f.owner, f.credential);
-  f.emit(f.runId, "message.completed", { messageId: "delayed", text: "Delayed historical detail" });
-  await vi.waitFor(async () => expect(await f.store.readEvents(f.session.id)).toContainEqual(expect.objectContaining({
-    text: "Delayed historical detail", providerHistoryEarlier: true,
-  })));
-
-  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toMatchObject({ code: "resource_retained" });
-  const decision = { id: "late-approval", kind: "approval" as const, revision: "1", delivery: "continue_run" as const, toolName: "Bash" };
-  f.update(f.runId, { pending: [decision] });
-  f.complete(f.runId, "Late observer output");
-  f.complete(f.starts[1]!.runId, "Retained conversation output");
-  await vi.waitFor(async () => {
-    expect(await f.store.readEvents(other.id)).toContainEqual(expect.objectContaining({ text: "Retained conversation output" }));
-    const history = await f.store.readEvents(f.session.id);
-    expect(history).toContainEqual(expect.objectContaining({ text: "Late observer output", providerHistoryEarlier: true }));
-    const card = history.find(e => e.type === "approval_request" && e.providerHistoryEarlier === true);
-    expect(card).toBeDefined();
-    await expect(f.manager.resolveApproval(f.session.id, String(card!.approvalId), "allow")).rejects.toMatchObject({ code: "session_deletion_pending" });
-  });
-  expect((await f.store.readProviderExecution(f.session.id))?.run).toMatchObject({ state: "unknown", stopConfirmed: false, pending: [] });
-  expect(f.starts).toHaveLength(2);
-  expect(f.controls.map(c => c.input.command)).toEqual(["retire"]);
-  retention.mockResolvedValue({ kind: "chat", workflow: null, resourcesFinished: true });
-  expect(await f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
-  f.emit(f.runId, "message.completed", { messageId: "deleted", text: "After deletion" });
-  f.emit(f.starts[1]!.runId, "message.completed", { messageId: "other", text: "Bound chat still receives history" });
-  await vi.waitFor(async () => expect(await f.store.readEvents(other.id)).toContainEqual(expect.objectContaining({ text: "Bound chat still receives history" })));
-  expect(await f.store.readRecord(f.session.id)).toBeNull();
-  expect(f.activeHistoryStreams()).toBe(1);
-});
-
-it("reads retained snapshots without attaching a legacy run observer during retirement", async () => {
-  const f = await fixture(); await f.interrupt();
-  f.behavior.retire = "confirmed"; f.behavior.loseNextRetireResponse = true;
-  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toThrow("lost the retirement response");
-  f.complete(f.runId, "Legacy observer detail");
-  await f.manager.refreshProviderHistory(f.session.id, f.owner, f.credential);
-  expect(await f.store.readEvents(f.session.id)).toContainEqual(expect.objectContaining({ text: "Legacy observer detail", providerHistoryEarlier: true }));
-  expect((await f.manager.getSession(f.session.id))?.providerExecution?.run).toMatchObject({ state: "unknown", stopConfirmed: false });
-  await f.manager.shutdown();
-  const { manager, store } = f.makeManager();
-  const snapshot = f.snapshot(f.runId);
-  f.update(f.runId, { messages: [...snapshot.messages ?? [], { id: "last", role: "assistant", state: "complete", text: "Retained snapshot detail" }] });
-  const previous = f.requests.length;
-  await manager.refreshProviderHistory(f.session.id, f.owner, f.credential);
-  expect(await store.readEvents(f.session.id)).toContainEqual(expect.objectContaining({ text: "Retained snapshot detail", providerHistoryEarlier: true }));
-  expect((await store.readProviderExecution(f.session.id))?.run).toMatchObject({ state: "unknown", stopConfirmed: false });
-  expect(f.requests.slice(previous).some(request => request.path.includes("/runs/") && request.path.includes("/events"))).toBe(false);
-  expect(f.starts).toHaveLength(1);
-  expect(f.controls.map(c => c.input.command)).toEqual(["retire"]);
-});
-
-it("uses the same Delete confirmation when Stop leaves unresolved effects", async () => {
-  const f = await fixture();
-  f.behavior.cancel = "unresolved"; f.behavior.retire = "confirmed";
-  expect(await f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
-  expect(f.controls.map(control => control.input.command ?? "cancel")).toEqual(["cancel", "retire"]);
-  expect(await f.store.readRecord(f.session.id)).toBeNull();
+  expect(await next.manager.confirmSessionRemoval(f.session.id, f.owner, randomUUID())).toBe(true);
+  f.emit(f.runId, "message.completed", { messageId: "late", text: "Late provider delivery" });
+  expect(await next.store.readEvents(f.session.id)).toEqual([]);
+  f.behavior.cancel = "confirmed";
+  f.behavior.snapshotIssue = "denied";
+  await vi.waitFor(() => {
+    next.manager.wakeRemovalCleanup();
+    expect(next.manager.removalStatus(f.session.id, f.owner)).toMatchObject({ state: "removed", requestId });
+  }, { timeout: 5000, interval: 50 });
+  expect(f.requests.some(request => request.path.endsWith(`/runs/${f.runId}/closure`))).toBe(true);
+  expect(f.requests.filter(request => request.path.endsWith("/agent/cleanup/token")).every(request => request.userToken === null)).toBe(true);
+  expect(await next.store.readRecord(sibling.id)).not.toBeNull();
   expect(f.starts).toHaveLength(1);
 });
 
-it("identifies the original provider to update after Stop leaves unresolved tool outcomes", async () => {
+it("removes a confirmed chat after physical Stop with unresolved tool effects and no retirement control", async () => {
   const f = await fixture();
   f.capabilities.capabilities = f.capabilities.capabilities.filter(value => value !== "runs.retire");
   f.behavior.cancel = "unresolved";
-  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toMatchObject({
-    code: "retirement_unsupported", status: 409, message: expect.stringContaining(f.provider.appId),
-  });
-  expect(f.controls.map(control => control.input.command ?? "cancel")).toEqual(["cancel"]);
-  expect((await f.store.readEvents(f.session.id)).some(event => event.text === "Original immutable input")).toBe(true);
-  expect(f.snapshot(f.runId)).toMatchObject({ stopConfirmed: false, effects: { unresolvedCallIds: ["command"] } });
-
-  f.capabilities.capabilities.push("runs.retire");
-  f.behavior.retire = "confirmed";
-  expect(await f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
-  expect(f.controls.map(control => control.input.command ?? "cancel")).toEqual(["cancel", "retire"]);
+  expect(await f.manager.confirmSessionRemoval(f.session.id, f.owner, randomUUID(), f.credential)).toBe(true);
+  expect(await f.manager.getSession(f.session.id)).toBeNull();
+  await vi.waitFor(() => expect(f.manager.removalStatus(f.session.id, f.owner)?.state).toBe("removed"));
+  expect(f.controls.map(control => control.path)).toEqual([`/runs/${f.runId}/stop`]);
+  expect(await f.store.readRecord(f.session.id)).toBeNull();
   expect(f.starts).toHaveLength(1);
 });
 
 it("deletes through confirmed Stop when the original provider lacks retirement support", async () => {
   const f = await fixture(); await f.interrupt();
   f.capabilities.capabilities = f.capabilities.capabilities.filter(value => value !== "runs.retire");
-  expect(await f.manager.deleteSession(f.session.id, f.owner, f.credential, true)).toBe(true);
+  expect(await f.manager.deleteSession(f.session.id, f.owner, f.credential)).toBe(true);
   expect(f.controls.map(control => control.input.command ?? "cancel")).toEqual(["cancel"]);
 });
 
@@ -490,29 +332,29 @@ it("removes a session when provider reads fail after its Stop was confirmed", as
 
   await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential)).resolves.toBe(true);
   expect(retention).toHaveBeenCalledOnce();
-  expect(f.controls.filter(control => control.path.endsWith("/cancel"))).toHaveLength(1);
+  expect(f.controls.filter(control => control.path.endsWith("/stop"))).toHaveLength(1);
   expect(await f.store.readRecord(f.session.id)).toBeNull();
 });
 
-it.each([true, false])("keeps a run with unverified exit when Stop fails (interactive owner %s)", async interactive => {
+it("keeps the physical payload while a run has unverified exit", async () => {
   const f = await fixture(); await f.interrupt(); f.behavior.cancel = "unavailable";
-  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential, interactive)).rejects.toMatchObject({ code: "exit_unconfirmed" });
-  expect(f.controls.filter(control => control.input.command === "retire")).toHaveLength(interactive ? 1 : 0);
-  expect(f.controls.filter(control => control.path.endsWith("/cancel"))).toHaveLength(1);
+  await expect(f.manager.deleteSession(f.session.id, f.owner, f.credential)).rejects.toMatchObject({ code: "exit_unconfirmed" });
+  expect(f.controls.filter(control => control.input.command === "retire")).toHaveLength(0);
+  expect(f.controls.filter(control => control.path.endsWith("/stop"))).toHaveLength(1);
   expect((await f.store.readRecord(f.session.id))?.providerRetirement).toBeUndefined();
   expect((await f.store.readEvents(f.session.id)).some(event => event.text === "Original immutable input")).toBe(true);
 });
 
 it.each(["admitting", undefined] as const)("retains a separate Harness lease with %s stop evidence", async state => {
   const f = await fixture(); await f.interrupt();
-  f.behavior.retire = "confirmed"; f.behavior.cancel = "unavailable";
+  f.behavior.cancel = "unavailable";
   const existing = (await f.manager.getSession(f.session.id))!;
   existing.developmentLease = randomUUID();
   existing.developmentLeaseState = state;
   await f.store.saveRecord(existing);
   await f.manager.shutdown();
   const { manager } = f.makeManager();
-  await expect(manager.deleteSession(f.session.id, f.owner, f.credential, true)).rejects.toMatchObject({ code: "exit_unconfirmed" });
+  await expect(manager.deleteSession(f.session.id, f.owner, f.credential)).rejects.toMatchObject({ code: "exit_unconfirmed" });
   expect(f.controls.map(control => control.input.command ?? "cancel")).toEqual(["cancel"]);
   expect((await f.store.readRecord(f.session.id))?.developmentLease).toBe(existing.developmentLease);
 });

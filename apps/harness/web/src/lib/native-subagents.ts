@@ -129,7 +129,7 @@ export function nativeAgentTranscript(events: AssistantEvent[], streams: Record<
   for (const event of events) {
     const source = transcriptSource(event);
     if (!source) continue;
-    if (nativeSource(event)) remember(source); else rootAgents.add(nativeAgentKey(source));
+    if (nativeSource(event)) remember(source); else if (source.agentId === "root") rootAgents.add(nativeAgentKey(source));
     if (event.type === "tool_use" && typeof event.toolUseId === "string") tools.set(toolKey(source, event.toolUseId), event);
   }
   for (const { source } of Object.values(streams)) remember(source);
@@ -159,7 +159,7 @@ export function nativeAgentTranscript(events: AssistantEvent[], streams: Record<
     }
     const run = nativeRunKey(source), count = (counts.get(run) ?? 0) + 1;
     counts.set(run, count);
-    agent = { key, source, label: `Subagent ${count}`, parentLabel: "Main agent", events: [], lastAction: "No activity recorded", streamed: "" };
+    agent = { key, source, label: `Subagent ${count}`, parentLabel: source.parentAgentId === "root" ? "Main agent" : "Parent unconfirmed", events: [], lastAction: "No activity recorded", streamed: "" };
     agents.set(key, agent); group.agents.push(agent);
     return agent;
   };
@@ -173,8 +173,9 @@ export function nativeAgentTranscript(events: AssistantEvent[], streams: Record<
       (add(launch, event).launchEvents ??= []).push(event);
       continue;
     }
-    if (!source || !nativeSource(event)) { root.push(event); continue; }
-    const agent = add(sources.get(nativeAgentKey(source))!, event);
+    const child = source && sources.get(nativeAgentKey(source));
+    if (!child) { root.push(event); continue; }
+    const agent = add(child, event);
     if (event.type === "native_agent_details") {
       const updates = details.get(agent.key);
       if (updates) updates.push(event); else details.set(agent.key, [event]);

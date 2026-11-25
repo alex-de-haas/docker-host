@@ -180,3 +180,12 @@ it("never shows hidden setup output or assigns a hidden duplicate identity to a 
   expect(transcriptItems([visible, hidden, output], new Set())[0]).toMatchObject({ toolResults: {} });
   expect(transcriptItems([{ ...hidden, toolName: "mcp__hosty-workspaces__environment_setup" }, output], new Set())).toHaveLength(1);
 });
+
+it("renders sparse partial input in its original item until final content replaces it", () => {
+  const fragment = (seq: number, position: number, text: string) => ({ seq, ts: "", type: "provider_fragment", target: "run:message:child:a",
+    providerEventId: "run:fragment:" + position, providerHistoryPosition: { sessionId: "s", epoch: "e", position }, text });
+  const chunks = [fragment(1, 2, "world"), fragment(2, 1, "Hello ")];
+  expect(orderedHistory(chunks)).toMatchObject([{ type: "assistant_text", text: "Hello world", incomplete: true }]);
+  expect(orderedHistory([...chunks, { seq: 3, ts: "", type: "assistant_text", providerEventId: "run:message:child:a", text: "Final" }]))
+    .toMatchObject([{ type: "assistant_text", text: "Final" }]);
+});

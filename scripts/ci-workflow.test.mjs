@@ -65,7 +65,15 @@ test('provider CI installs one isolated closure and runs the common suite once',
 
 
 test('provider current-source and historical fallback shell is valid before either branch executes', () => {
-  const block = jobs['agent-providers'].match(/        run: \|\n([\s\S]*)/)[1].replace(/^ {10}/gm, '');
-  const result = spawnSync('bash', ['-n'], { input: block, encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr);
+  const providerJob = jobs['agent-providers'];
+  const blocks = providerJob.split('        run: |\n').slice(1)
+    .map(value => value.split('\n      - name:')[0].replace(/^ {10}/gm, ''));
+  assert.equal(blocks.length, 2);
+  for (const block of blocks) {
+    const result = spawnSync('bash', ['-n'], { input: block, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  assert.match(providerJob, /os: \[ubuntu-latest, windows-latest\]/);
+  assert.match(blocks[1], /Delegate=yes/);
+  assert.equal((providerJob.match(/writer-scope-acceptance\.mjs required/g) ?? []).length, 2);
 });

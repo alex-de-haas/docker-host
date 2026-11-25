@@ -31,7 +31,7 @@ public sealed class CoreTaskSessionWorkflowHttpTests
                 ["tasks"] = [new("source", "api", "/tasks/v1", 1, ["markdown"])] } };
         var provider = Record("unrelated.native", now) with { RuntimeState = "running", ConfirmedRoles = ["agent"], GrantedCorePermissions = [],
             Endpoints = [new("api", "http", "http://native.invalid", true)],
-            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/agent/v1", 1, [])] } };
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/agent/v2", 2, [])] } };
         await apps.UpsertAppAsync(consumer); await apps.UpsertAppAsync(provider);
         if (named)
         {
@@ -116,7 +116,7 @@ public sealed class CoreTaskSessionWorkflowHttpTests
         var provider = Record("independent.native", now) with { RuntimeState = "running", ConfirmedRoles = ["agent"],
             Endpoints = [new("api", "http", "http://native.invalid", true)],
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
-                ["agent"] = [new("native", "api", "/agent/v1", 1, [nativeCapability])] } };
+                ["agent"] = [new("native", "api", "/agent/v2", 2, [nativeCapability])] } };
         await apps.UpsertAppAsync(consumer); await apps.UpsertAppAsync(provider);
         if (named)
         {

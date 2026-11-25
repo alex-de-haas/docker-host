@@ -53,7 +53,7 @@ export abstract class AgentConnections {
   }
   protected queue: Promise<unknown> = Promise.resolve();
   protected syncErrors = new Map<string, string>();
-  protected syncTimer: ReturnType<typeof setInterval>;
+  protected syncTimer?: ReturnType<typeof setInterval>;
   constructor(
     protected readonly dataDir: string,
     protected readonly cacheDir: string | null,
@@ -62,6 +62,9 @@ export abstract class AgentConnections {
     protected readonly applicationMode?: "native" | "docker",
   ) {
     this.usageCache = new ConnectionUsage(path.join(dataDir, "connection-usage"));
+    // The public service owns installation-wide credential maintenance. Attempt processes only
+    // open their pinned connection and must not replace settings from a private cached registry.
+    if (process.argv[2] === "--hosty-attempt") return;
     this.syncTimer = setInterval(() => {
       void this.syncCredentials();
     }, 5000);
@@ -573,7 +576,7 @@ export abstract class AgentConnections {
   async cancelLogin(_id: string): Promise<void> { throw new ConnectionError(404, "login_not_found", "This login attempt expired. Start sign-in again."); }
   async shutdown(): Promise<void> {
     clearInterval(this.syncTimer); await Promise.allSettled([...this.usageUpdates]); await this.usageCache.close();
-    await this.closeConnections(); await this.syncCredentials();
+    await this.closeConnections(); if (this.syncTimer) await this.syncCredentials();
   }
 }
 /** The execution runtime depends only on this structural application-owned connection surface. */

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { openSync, closeSync, writeFileSync, fsyncSync, renameSync } from 'node:fs';
+import { openSync, closeSync, writeFileSync, readFileSync, rmdirSync, fsyncSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const anchorMode = process.argv[2] === '--anchor';
@@ -81,7 +81,15 @@ if (process.platform === 'win32') {
     if (closing || !config) return; closing = true;
     let stopped = false;
     try {
-      if (!anchor?.pid) stopped = true;
+      if (config.cgroup) {
+        if (anchor?.connected) anchor.send({ exit: true });
+        const empty = () => /^populated 0$/m.test(readFileSync(path.join(config.cgroup, 'cgroup.events'), 'utf8'));
+        for (let n = 0; n < 5 && !empty(); n++) await delay(50);
+        if (!empty()) writeFileSync(path.join(config.cgroup, 'cgroup.kill'), '1');
+        for (let n = 0; n < 80 && !empty(); n++) await delay(50);
+        stopped = empty();
+        if (stopped) rmdirSync(config.cgroup);
+      } else if (!anchor?.pid) stopped = true;
       else if (alive()) {
         process.kill(-anchor.pid, 'SIGTERM');
         const deadline = Date.now() + 2000;
@@ -144,6 +152,8 @@ if (process.platform === 'win32') {
       });
       anchor.once('error', () => { exitCode = 127; void end(); });
       anchor.once('exit', () => { if (!closing) void end(); });
+      // The trusted anchor waits for this message. Its native child cannot run outside the owned cgroup.
+      if (config.cgroup) writeFileSync(path.join(config.cgroup, 'cgroup.procs'), String(anchor.pid));
       anchor.send({ version: 1, command: config.command, args: config.args, cwd: config.cwd });
     } catch { exitCode = 127; void end(); }
   });

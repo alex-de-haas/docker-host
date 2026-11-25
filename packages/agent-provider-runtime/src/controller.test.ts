@@ -108,8 +108,7 @@ it("confirms only the owner's prior native thread and promotes an unchanged conf
   expect(promoted.nativeId).toEqual(f.old.nativeId); expect(promoted.runs).toEqual({});
   expect(promoted.configurations["2"]?.pinRequestId).toBe(configure.requestId);
   expect(promoted.priorRunIds).toEqual([f.runId]);
-  const archives = path.join(f.store.directory, "prior-installations"), [directory] = await readdir(archives);
-  const archived = JSON.parse(await readFile(path.join(archives, directory!, sessionId + ".json"), "utf8"));
+  const archived = f.store.history.database(db => JSON.parse(String(db.prepare("SELECT body FROM archived_sessions WHERE id=?").get(sessionId)?.body)));
   expect(archived.runs[f.runId].snapshot.ref.provider).toEqual(provider);
   expect(archived.runs[f.runId].admissionRef).toBe(actor.admissionRef);
   const again = new ProviderStore(f.store.directory, f.newProvider); await again.initialize();
@@ -134,6 +133,10 @@ it("keeps missing, unavailable, changed-account and still-claimed native context
   await expect(controller.readSession(sessionId, currentActor)).rejects.toMatchObject({ code: "continuity_unavailable" });
   const old = await f.original.load(sessionId, actor);
   old.runs[f.runId]!.snapshot.effects = { certainty: "unknown", unresolvedCallIds: ["outcome"] };
+  await f.original.save(old);
+  await expect(controller.readSession(sessionId, currentActor)).resolves.toMatchObject({ nativeState: "available" });
+  old.runs[f.runId]!.workspaceRelease = { requestId: randomUUID(), state: "pending" };
+  old.runs[f.runId]!.startIntent = true;
   await f.original.save(old);
   await expect(controller.readSession(sessionId, currentActor)).rejects.toMatchObject({ code: "session_busy" });
   await expect(f.store.load(sessionId, currentActor)).rejects.toMatchObject({ code: "session_not_found" });

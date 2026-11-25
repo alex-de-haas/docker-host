@@ -66,6 +66,24 @@ def session_browser(context, app, app_origin, link):
         def harness(self, path, body=None, method=None, expected=200):
             return self.call(app_origin, '/api'+path, body, method, expected)
 
+        def delete_session(self, route, original_provider_replaced=False):
+            accepted = self.harness(route, method='DELETE', expected=(202, 200))
+            assert accepted['deleted'] and accepted['requestId'] and accepted['cleanup'] in ('pending', 'removed')
+            self.harness(route, expected=404)
+            if original_provider_replaced:
+                def pending_original_discard():
+                    progress = self.harness(route + '/deletion')
+                    return progress if progress['localErased'] and progress['reason'] else None
+                progress = context['wait_for'](pending_original_discard, 90)
+                assert progress['state'] == 'pending' and progress['requestId'] == accepted['requestId']
+                replay = self.harness(route, method='DELETE', expected=202)
+                assert replay['requestId'] == accepted['requestId'] and replay['cleanup'] == 'pending'
+                return replay
+            context['wait_for'](lambda: self.harness(route + '/deletion')['state'] == 'removed', 90)
+            replay = self.harness(route, method='DELETE')
+            assert replay == {'deleted': True, 'requestId': accepted['requestId'], 'cleanup': 'removed'}
+            return replay
+
     return Browser
 
 
@@ -239,8 +257,8 @@ def check(context):
     inventory = action(outsider, empty, 'workspace-inventory')
     assert any(item['id'] == workspace_id for item in inventory['workspaces'])
     assert (source/'owner-acceptance.txt').read_text() == 'owner edit\n'
-    member.harness('/sessions/'+second['id'], method='DELETE')
-    owner.harness('/sessions/'+first['id'], method='DELETE')
+    member.delete_session('/sessions/'+second['id'])
+    owner.delete_session('/sessions/'+first['id'])
     state = owner.harness(participants_path)
     assert not any(row['attached'] for row in state['sessions'])
     assert source.exists() and (source/'member-acceptance.txt').exists()
@@ -287,9 +305,9 @@ def check(context):
     state = owner.harness(external_participants)
     action(owner, internal_first, 'detach', workspaceId=external['workspaceId'], requestId=str(uuid.uuid4()), expectedRevision=state['revision'])
     assert action(owner, internal_first, 'list')['workspaces'] == []
-    owner.harness('/sessions/'+internal_second['id'], method='DELETE')
+    owner.delete_session('/sessions/'+internal_second['id'])
     assert action(member, internal_foreign, 'list')['workspaces'][0]['path'] == external['path']
-    member.harness('/sessions/'+internal_foreign['id'], method='DELETE')
+    member.delete_session('/sessions/'+internal_foreign['id'])
     assert external_file.read_text() == 'unfinished external work\n'
     assert lease in owner.harness(external_path+'/worktrees/'+external['id'])['leases']
     say('PASS: external allocation hosts independent idle chats; exact creation replay, shared dirty source, private routes and detach/delete preserve external lease and source')
@@ -321,14 +339,14 @@ def check(context):
     conditional = action(outsider, empty, 'delete-workspace', requestId=str(uuid.uuid4()), workspaceIds=selected)
     assert all(item['state'] == 'removed' for item in conditional['targets'])
     assert source.exists() and external_file.exists(), 'Conditional cleanup removed unfinished candidates'
-    owner.harness('/sessions/'+completed['id'], method='DELETE')
+    owner.delete_session('/sessions/'+completed['id'])
     say('PASS: completed-and-merged cleanup selects only verified completion and preserves unfinished/unknown candidates')
     if '--hold-ui' in context['sys'].argv:
         owner.harness('/sessions/'+third['id'], {'title': 'Implementation'}, method='PATCH')
         owner.harness('/sessions', {'title': 'Standalone chat'})
         retained = owner.harness('/sessions', {'title': 'Retained workspace', 'appIds': [app]})
         retained_tree = action(owner, retained, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')
-        owner.harness('/sessions/'+retained['id'], method='DELETE')
+        owner.delete_session('/sessions/'+retained['id'])
         state = owner.harness(participants_path)
         colleague = member.harness('/workspace-sessions', {'requestId': str(uuid.uuid4()), 'workspaceId': workspace_id, 'expectedRevision': state['revision']})
         member.harness('/sessions/'+colleague['id'], {'title': 'Private member review'}, method='PATCH')

@@ -1,19 +1,22 @@
 import { sameProvider } from "./provider-ref.js";
+import { needsSupervisor } from "./attempt-supervisor.js";
 import { createHash, randomUUID } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { closeSync, openSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { setTimeout as delay } from "node:timers/promises";
 import path from "node:path";
 import type { AgentConfiguration, AgentSession, AgentSessionCreate, AgentRunInput, AgentRunSnapshot, AgentEvent, AgentControlReceipt, AgentProviderRef, AgentPendingDecision, AgentWatchItem } from "@hosty-sdk/app/agent";
 import { AgentApiError } from "@hosty-sdk/app/agent";
 import type { AgentApprovalResponse, AgentQuestionResponse } from "@hosty-sdk/app/agent";
-import { durableMkdir, durableWriteFile, isUncertainWrite } from "./internal/persistence.js";
+import { durableMkdir } from "./internal/persistence.js";
 import { InstallationHistory } from "./history.js";
 
 export type Actor = { userId: string; principalId: string; callerAppId: string; callerInstallation: string };
-export type VerifiedOperation = Actor & { admissionRef: string; operation: string; provider: AgentProviderRef; sessionId?: string; runId?: string; configurationDigest?: string; ceiling?: unknown; expiresAt?: string };
+export type VerifiedOperation = Actor & { admissionRef: string; operation: string; originalStartDigest?: string; cleanupOnly?: boolean; provider: AgentProviderRef; sessionId?: string; runId?: string; configurationDigest?: string; ceiling?: unknown; expiresAt?: string };
 export type ConfigurationRecord = { configuration: AgentConfiguration; digest: string; skillPath?: string; snapshotId?: string; snapshotDigest?: string; pinRequestId?: string; binding?: import("./internal/connections/registry.js").ConnectionBinding; resolvedSkills: Array<{ skillId: string; digest: string }> };
-export type ControlRecord = { hash: string; receipt: AgentControlReceipt; decisionId?: string; decision?: AgentPendingDecision; response?: unknown };
+export type ControlRecord = { hash: string; receipt: AgentControlReceipt; stop?: true; command?: import("@hosty-sdk/app/agent").AgentRunControlInput; decisionId?: string; decision?: AgentPendingDecision; response?: unknown };
 export type RunRecord = {
-  historyVersion?: 1; historyOutbox?: AgentWatchItem[]; historyReceipt?: { sequence: string; kind: AgentWatchItem["kind"] }; historyPartial?: boolean;
+  historyOutbox?: AgentWatchItem[]; authorityExpiresAt?: string;
   hash: string; input?: AgentRunInput; admissionRef: string; snapshot: AgentRunSnapshot;
   retiredDecisionIds?: string[];
   decisionDeliveries?: Record<string, import("./decision-continuation.js").DecisionDelivery>;
@@ -39,209 +42,183 @@ const occupied = (record: SessionRecord) => !!record.session.activeRun || Object
 const notAdmitted = { status: "cancelled", error: {
   code: "run_not_admitted", message: "The original request was fenced before native admission.", retryable: false,
 } } as const;
-type DurableState = { digest: string; occupied: boolean };
-type UncertainWrite = {
-  owner: Actor; provider: AgentProviderRef; occupied: boolean; previousDigest?: string; attemptedRunIds: string[];
-};
-function logStorageFailure(sessionId: string, stage: "aggregate" | "history", error: unknown): void {
-  const cause = isUncertainWrite(error) ? error.cause : error;
-  const code = (cause as NodeJS.ErrnoException | null)?.code;
-  console.warn("[agent-provider] session storage operation failed", {
-    sessionId, stage, code: typeof code === "string" && /^[A-Z0-9_]{1,48}$/.test(code) ? code : "unknown",
-  });
+type StoredVersion = { version: number; runs: Map<string, string> };
+
+function maintenanceDue(record: SessionRecord): boolean {
+  return !!record.retirement || Object.values(record.runs).some(needsSupervisor);
 }
 
-/** One atomic session aggregate owns admission, its active slot, controls, events and snapshots. */
+/** Each installation commits its session, immutable run identities and public delivery together. */
 export class ProviderStore {
   history!: InstallationHistory;
-  private initialized = false;
+  readonly databasePath: string;
+  private readonly lockPath: string;
   private tail: Promise<unknown> = Promise.resolve();
-  private runs = new Map<string, string>();
-  readonly historicalRunIds = new Set<string>();
-  private readonly uncertain = new Map<string, UncertainWrite>();
-  private readonly durable = new Map<string, DurableState>();
-  private readonly historyPending = new Set<string>();
-  private readonly writing = new Map<string, Promise<void>>();
-  private listeners = new Map<string, Set<() => void>>();
-  constructor(readonly directory: string, readonly provider: AgentProviderRef, readonly maxReplayBytes = 64 * 1024 * 1024, readonly replayRetentionMs = 7 * 24 * 60 * 60 * 1000) {}
+  private readonly versions = new WeakMap<SessionRecord, StoredVersion>();
+  constructor(readonly directory: string, readonly provider: AgentProviderRef, readonly maxReplayBytes = 64 * 1024 * 1024, readonly replayRetentionMs = 7 * 24 * 60 * 60 * 1000) {
+    this.databasePath = path.join(directory, "execution-v2.sqlite");
+    this.lockPath = path.join(directory, "writer-v2.sqlite");
+  }
   async initialize(): Promise<void> {
     await durableMkdir(this.directory);
-    this.history = new InstallationHistory(path.join(this.directory, "installation-history.sqlite"), this.provider);
-    for (const file of await readdir(this.directory)) {
-      if (!file.endsWith(".json") || !safe(file.slice(0, -5))) continue;
-      const { record, bytes } = await this.readAggregate(file.slice(0, -5));
-      this.rememberDurable(record, bytes);
-      const retained = Object.keys(record.runs), historical = record.priorRunIds ?? [];
-      for (const id of historical) this.historicalRunIds.add(id);
-      const current = sameProvider(record.session.ref.provider, this.provider);
-      if (!current) for (const id of retained) this.historicalRunIds.add(id);
-      for (const id of [...historical, ...retained]) {
-        if (this.runs.has(id)) throw new Error("Duplicate retained provider run identity.");
-        this.runs.set(id, record.id);
-      }
-      if (!current) continue;
-      let changed = false;
-      for (const run of Object.values(record.runs)) {
-        // Adopt the available detailed replay before its independent TTL can expire.
-        if (!run.historyVersion || this.history.needsRecovery(record, run)) { this.stageRetainedHistory(run); changed = true; }
-        if (this.expireReplay(run)) changed = true;
-      }
-      if (changed) await this.save(record);
-      else this.publishHistory(record);
-    }
-    this.initialized = true;
+    this.history = new InstallationHistory(this.databasePath, this.provider);
+    closeSync(openSync(this.lockPath, "a", 0o600));
+    this.history.database(db => db.exec(`
+      CREATE TABLE IF NOT EXISTS execution_sessions (
+        id TEXT PRIMARY KEY, owner TEXT NOT NULL, installation TEXT NOT NULL, occupied INTEGER NOT NULL,
+        due INTEGER NOT NULL, revision INTEGER NOT NULL, body TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS occupied_sessions ON execution_sessions(installation,occupied);
+      CREATE INDEX IF NOT EXISTS due_sessions ON execution_sessions(installation,due);
+      CREATE INDEX IF NOT EXISTS owner_sessions ON execution_sessions(installation,owner);
+      CREATE TABLE IF NOT EXISTS execution_runs (
+        id TEXT PRIMARY KEY, session TEXT NOT NULL, due INTEGER NOT NULL, reserved_source TEXT, body TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS runs_by_session ON execution_runs(session);
+      CREATE INDEX IF NOT EXISTS due_runs ON execution_runs(session,due);
+      CREATE INDEX IF NOT EXISTS reservations ON execution_runs(session,reserved_source) WHERE reserved_source IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS archived_sessions (
+        installation TEXT NOT NULL, id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(installation,id)
+      );
+      CREATE TABLE IF NOT EXISTS stop_intents (
+        installation TEXT NOT NULL, owner TEXT NOT NULL, run TEXT NOT NULL, request TEXT NOT NULL,
+        generation TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY(installation,owner,run,request)
+      );
+      CREATE TABLE IF NOT EXISTS replay_expiry (run TEXT PRIMARY KEY, expires INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS expired_replays ON replay_expiry(expires);
+      CREATE TABLE IF NOT EXISTS archived_runs (id TEXT PRIMARY KEY);
+    `));
+    await this.reclaimExpiredReplay();
   }
-  private stageRetainedHistory(run: RunRecord): void {
-    run.historyVersion = 1;
-    const pending = run.historyOutbox ?? [];
-    delete run.historyOutbox;
-    delete run.historyReceipt;
-    const latest = structuredClone(run.snapshot);
-    // The crash receipt can still hold public events which the per-run replay has already compacted.
-    const events = new Map(run.events.map(event => [event.sequence, event]));
-    for (const item of pending) if (item.kind === "event") events.set(item.event.sequence, item.event);
-    const ordered = [...events.values()].sort((a, b) => Number(BigInt(a.sequence) - BigInt(b.sequence)));
-    const gap = BigInt(ordered.length) !== BigInt(latest.lastSequence);
-    if (gap) run.historyPartial = true;
-    if (latest.lastSequence !== "0" && (ordered[0]?.type !== "run.updated" || gap)) {
-      // A trimmed replay cannot identify the initial status; never backdate the current lifecycle.
-      const initial: AgentRunSnapshot = { ref: latest.ref, generation: latest.generation, sessionId: latest.sessionId,
-        revision: "0", configurationRevision: latest.configurationRevision, lastSequence: "0", cursor: this.cursor(latest.generation, "0"),
-        state: "unknown", phase: "interrupted", freshness: "unavailable", stopConfirmed: false,
-        observedAt: ordered[0]?.occurredAt ?? latest.observedAt, pending: [], effects: { certainty: "unknown", unresolvedCallIds: [] },
-        coverage: { messages: "truncated", tools: "truncated", decisions: "truncated" } };
-      this.history.stage(run, { kind: "snapshot", snapshot: initial });
-    }
-    for (const event of ordered)
-      this.history.stage(run, { kind: "event", event, cursor: this.cursor(event.generation, event.sequence) });
-    if (gap) latest.coverage = { messages: "truncated", tools: "truncated", decisions: "truncated" };
-    latest.cursor ||= this.cursor(latest.generation, latest.lastSequence);
-    this.history.stage(run, { kind: "snapshot", snapshot: latest });
+  private expiredIds(): string[] {
+    return this.history.database(db => db.prepare("SELECT run FROM replay_expiry WHERE expires<=? ORDER BY expires LIMIT 64")
+      .all(Date.now()).map(row => String(row.run)));
   }
-  exclusive<T>(action: () => Promise<T>): Promise<T> { const next = this.tail.catch(() => {}).then(action); this.tail = next; return next; }
-  private file(id: string) { if (!safe(id)) throw new AgentApiError("invalid_id", "Invalid resource identity.", 400); return path.join(this.directory, id + ".json"); }
-  private async readAggregate(id: string): Promise<{ record: SessionRecord; bytes: Buffer }> {
-    const file = this.file(id);
-    let bytes: Buffer, record: SessionRecord;
-    try { bytes = await readFile(file); record = JSON.parse(bytes.toString("utf8")) as SessionRecord; }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new AgentApiError("session_not_found", "Session not found.", 404);
-      throw new AgentApiError("storage_unavailable", "Retained provider state is unavailable; do not resubmit its identities.", 503);
-    }
-    if (!record || record.version !== 1 || record.id !== id || !record.owner || !record.session || !record.runs || !record.configurations)
-      throw new AgentApiError("storage_unavailable", "Invalid retained provider state.", 503);
-    return { record, bytes };
+  private async reclaimExpiredReplay(): Promise<void> {
+    for (const id of this.expiredIds()) await this.pruneReplay(id);
   }
-
-  async load(id: string, actor?: Actor): Promise<SessionRecord> {
-    for (;;) {
-      const uncertain = this.uncertain.get(id);
-      if (uncertain) {
-        if (actor && (!sameActor(uncertain.owner, actor) || !sameProvider(uncertain.provider, this.provider)))
+  private providerKey(provider = this.provider): string {
+    return JSON.stringify([provider.appId, provider.installationId, provider.key, provider.implementationId ?? null]);
+  }
+  private ownerKey(actor: Actor): string {
+    return JSON.stringify([actor.userId, actor.principalId, actor.callerAppId, actor.callerInstallation]);
+  }
+  /** An OS-released SQLite reservation serializes admission with independent supervisor processes. */
+  exclusive<T>(action: () => Promise<T>): Promise<T> {
+    const perform = async () => {
+      const db = new DatabaseSync(this.lockPath);
+      try {
+        const deadline = Date.now() + 30_000;
+        for (;;) {
+          try { db.exec("BEGIN IMMEDIATE"); break; }
+          catch (error) {
+            if ((error as { errcode?: number }).errcode !== 5) throw error;
+            if (Date.now() >= deadline) throw new AgentApiError("provider_busy", "The execution writer is busy.", 503, true);
+            await delay(20);
+          }
+        }
+        return await action();
+      } finally { db.close(); }
+    };
+    const next = this.tail.then(perform, perform);
+    this.tail = next.catch(() => {});
+    return next;
+  }
+  get historicalRunIds(): Pick<ReadonlySet<string>, "has"> {
+    return { has: id => this.history.database(db => !!db.prepare(
+      "SELECT 1 FROM archived_runs WHERE id=? UNION ALL SELECT 1 FROM execution_runs r JOIN execution_sessions s ON s.id=r.session WHERE r.id=? AND s.installation<>? LIMIT 1"
+    ).get(id, id, this.providerKey())) };
+  }
+  async load(id: string, actor?: Actor, attempt?: string): Promise<SessionRecord> {
+    if (!safe(id)) throw new AgentApiError("invalid_id", "Invalid session identity.", 400);
+    return this.history.database(db => {
+      db.exec("BEGIN");
+      try {
+        const row = db.prepare("SELECT revision,body,owner,installation FROM execution_sessions WHERE id=?").get(id);
+        if (!row || actor && (row.owner !== this.ownerKey(actor) || row.installation !== this.providerKey()))
           throw new AgentApiError("session_not_found", "Session not found.", 404);
-        throw new AgentApiError("storage_uncertain", "Retained provider state requires recovery.", 503, true);
-      }
-      const write = this.writing.get(id);
-      if (write) { await write; continue; }
-      const { record } = await this.readAggregate(id);
-      // Atomic publication can become visible before its directory sync. Only expose
-      // the resulting record once that save has committed or raised its recovery fence.
-      if (this.writing.has(id) || this.uncertain.has(id)) continue;
-      if (actor && (!sameActor(record.owner, actor) || !sameProvider(record.session.ref.provider, this.provider)))
-        throw new AgentApiError("session_not_found", "Session not found.", 404);
-      // Preserve the durable outbox across every read and subsequent save while publication is pending.
-      const published = this.initialized && !this.historyPending.has(id) && sameProvider(record.session.ref.provider, this.provider);
-      for (const run of Object.values(record.runs)) {
-        if (published) this.history.acknowledge(run);
-        if (run.cancelFence && run.snapshot.stopConfirmed && !run.snapshot.result) this.markNotAdmitted(run);
-      }
-      return record;
-    }
-  }
-
-  private rememberDurable(record: SessionRecord, bytes: string | Uint8Array): void {
-    this.durable.set(record.id, { digest: bytesHash(bytes), occupied: occupied(record) });
-  }
-
-  // The writer can preserve a separate temporary file, but only a byte-identical, previously
-  // committed target proves the attempted replacement was not admitted. Never promote a temp file.
-  async refreshUncertainSession(id: string, actor: Actor): Promise<void> {
-    const pending = this.uncertain.get(id);
-    if (!pending?.previousDigest || !sameActor(pending.owner, actor) || !sameProvider(pending.provider, this.provider)) return;
-    await this.exclusive(async () => {
-      if (this.uncertain.get(id) !== pending) return;
-      const retained = await this.readAggregate(id).catch(() => null);
-      if (!retained || bytesHash(retained.bytes) !== pending.previousDigest
-        || !sameActor(retained.record.owner, actor) || !sameProvider(retained.record.session.ref.provider, this.provider)) return;
-      for (const runId of pending.attemptedRunIds) this.runs.delete(runId);
-      this.uncertain.delete(id);
+        const record = JSON.parse(String(row.body)) as SessionRecord;
+        record.runs = {};
+        const runs = new Map<string, string>();
+        // An operation needs its addressed run, active writers, gates and their source receipts.
+        // The latest row is retained for exact session retirement even when no work is due.
+        const items = attempt === undefined
+          ? db.prepare("SELECT id,body FROM execution_runs WHERE session=? ORDER BY rowid").iterate(id)
+          : db.prepare(`SELECT id,body FROM execution_runs WHERE session=? AND id IN (
+              SELECT ? UNION SELECT id FROM execution_runs WHERE session=? AND due=1
+              UNION SELECT id FROM execution_runs WHERE session=? AND reserved_source IS NOT NULL
+              UNION SELECT reserved_source FROM execution_runs WHERE session=? AND reserved_source IS NOT NULL
+              UNION SELECT id FROM (SELECT id FROM execution_runs WHERE session=? ORDER BY rowid DESC LIMIT 1)
+            ) ORDER BY rowid`).iterate(id, attempt, id, id, id, id);
+        for (const item of items) {
+          const runId = String(item.id), bytes = String(item.body);
+          const run: RunRecord = JSON.parse(bytes);
+          record.runs[runId] = run;
+          runs.set(runId, bytesHash(bytes));
+        }
+        db.exec("COMMIT");
+        this.versions.set(record, { version: Number(row.revision), runs });
+        return record;
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
     });
   }
 
-  async refreshUncertainRun(id: string, actor: Actor): Promise<void> {
-    const sessionId = this.runs.get(id);
-    if (sessionId) await this.refreshUncertainSession(sessionId, actor);
-  }
-
-  private publishHistory(record: SessionRecord): void {
-    try { this.history.publish(record); }
-    catch (error) {
-      if (!this.historyPending.has(record.id)) logStorageFailure(record.id, "history", error);
-      this.historyPending.add(record.id);
-      return;
-    }
-    this.historyPending.delete(record.id);
-  }
-
-  async retryHistory(): Promise<void> {
-    if (!this.historyPending.size) return;
-    for (const id of [...this.historyPending]) {
-      if (this.uncertain.has(id)) continue;
-      await this.exclusive(async () => {
-        if (!this.historyPending.has(id) || this.uncertain.has(id)) return;
-        const retained = await this.readAggregate(id).catch(() => null);
-        if (retained) this.publishHistory(retained.record);
-      });
-    }
-  }
-  /** Preserve the previous installation's commands, receipts and qualified runs before rebinding the public session. */
   async archiveInstallation(record: SessionRecord): Promise<void> {
-    const directory = path.join(this.directory, "prior-installations", bytesHash(record.session.ref.provider.installationId));
-    await durableMkdir(directory);
-    await durableWriteFile(path.join(directory, path.basename(this.file(record.id))), await readFile(this.file(record.id)));
+    this.history.database(db => {
+      db.prepare("INSERT OR IGNORE INTO archived_sessions(installation,id,body) VALUES(?,?,?)")
+        .run(this.providerKey(record.session.ref.provider), record.id, JSON.stringify(record));
+    });
   }
-  async save(record: SessionRecord): Promise<void> {
-    if (this.uncertain.has(record.id)) throw new AgentApiError("storage_uncertain", "Retained provider state requires recovery.", 503, true);
-    let settle!: () => void;
-    this.writing.set(record.id, new Promise<void>(resolve => { settle = resolve; }));
+  async save(record: SessionRecord, discarded?: { run: string; admission: string; request: string }): Promise<void> {
+    const baseline = this.versions.get(record);
+    const revision = baseline?.version ?? 0;
+    const digests = new Map<string, string>();
+    const { runs, ...session } = record;
     try {
-      const bytes = JSON.stringify(record);
-      try { await durableWriteFile(this.file(record.id), bytes); }
-      catch (error) {
-        logStorageFailure(record.id, "aggregate", error);
-        if (!isUncertainWrite(error)) throw error;
-        const previous = this.durable.get(record.id);
-        const attemptedRunIds = Object.keys(record.runs).filter(id => !this.runs.has(id));
-        for (const id of attemptedRunIds) this.runs.set(id, record.id);
-        this.uncertain.set(record.id, {
-          owner: record.owner, provider: record.session.ref.provider, attemptedRunIds,
-          occupied: occupied(record) || previous?.occupied === true,
-          previousDigest: error.evidencePath !== error.target ? previous?.digest : undefined,
-        });
-        throw new AgentApiError("storage_uncertain", "Retained provider state requires recovery.", 503, true);
-      }
-      this.rememberDurable(record, bytes);
-      // Indexed execution and its control receipts belong to the committed aggregate, independently
-      // of the history projection. Returning success allows the original controller dispatch once.
-      for (const id of Object.keys(record.runs)) this.runs.set(id, record.id);
-      this.publishHistory(record);
-      for (const id of Object.keys(record.runs)) for (const listener of this.listeners.get(id) ?? []) {
-        try { listener(); } catch { /* A committed observation cannot undo a write. */ }
-      }
-    } finally {
-      this.writing.delete(record.id);
-      settle();
+      this.history.commitSession(record, db => {
+        if (discarded) this.history.discardDelivery(db, record.owner, record.id, discarded.run, discarded.admission, discarded.request);
+        const existing = db.prepare("SELECT revision FROM execution_sessions WHERE id=?").get(record.id);
+        if (Number(existing?.revision ?? 0) !== revision)
+          throw new AgentApiError("state_changed", "The retained execution changed. Read its current revision.", 409, true);
+        db.prepare(`INSERT INTO execution_sessions(id,owner,installation,occupied,due,revision,body) VALUES(?,?,?,?,?,?,?)
+          ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,installation=excluded.installation,occupied=excluded.occupied,
+            due=excluded.due,revision=excluded.revision,body=excluded.body`)
+          .run(record.id, this.ownerKey(record.owner), this.providerKey(record.session.ref.provider),
+            Number(occupied(record)), Number(maintenanceDue(record)), revision + 1, JSON.stringify(session));
+        const update = db.prepare(`INSERT INTO execution_runs(id,session,due,reserved_source,body) VALUES(?,?,?,?,?)
+          ON CONFLICT(id) DO UPDATE SET body=excluded.body,due=excluded.due,reserved_source=excluded.reserved_source WHERE execution_runs.session=excluded.session`);
+        for (const [id, run] of Object.entries(runs)) {
+          const { historyOutbox: _pending, ...data } = run;
+          const bytes = JSON.stringify(data), digest = bytesHash(bytes);
+          digests.set(id, digest);
+          if (baseline?.runs.get(id) === digest) continue;
+          const completed = Date.parse(run.completedAt ?? "");
+          if (run.events.length && run.snapshot.stopConfirmed && Number.isFinite(completed)) {
+            const expires = Math.max(completed, Date.parse(run.snapshot.observedAt) || completed) + this.replayRetentionMs;
+            db.prepare("INSERT OR REPLACE INTO replay_expiry(run,expires) VALUES(?,?)").run(id, expires);
+          } else db.prepare("DELETE FROM replay_expiry WHERE run=?").run(id);
+          if (!update.run(id, record.id, Number(needsSupervisor(run)), run.reservedFor?.runId ?? null, bytes).changes)
+            throw new AgentApiError("request_conflict", "Run identity is already retained.", 409);
+        }
+        // Suppression now lives in the committed attempt, including its original command receipts.
+        for (const [id, run] of Object.entries(runs)) if (run.cancelFence)
+          db.prepare("DELETE FROM stop_intents WHERE installation=? AND owner=? AND run=?")
+            .run(this.providerKey(record.session.ref.provider), this.ownerKey(record.owner), id);
+        for (const id of baseline?.runs.keys() ?? []) {
+          if (digests.has(id)) continue;
+          db.prepare("INSERT OR IGNORE INTO archived_runs(id) VALUES(?)").run(id);
+          db.prepare("DELETE FROM replay_expiry WHERE run=?").run(id);
+          db.prepare("DELETE FROM execution_runs WHERE id=? AND session=?").run(id, record.id);
+        }
+      });
+    } catch (error) {
+      if (error instanceof AgentApiError) throw error;
+      console.warn("[agent-provider] execution commit failed", { sessionId: record.id, stage: "transaction",
+        code: (error as {errcode?: number}).errcode });
+      throw new AgentApiError("storage_unavailable", "The execution transaction could not be confirmed.", 503, true);
     }
+    this.versions.set(record, { version: revision + 1, runs: digests });
+
   }
   async create(id: string, actor: Actor, body: string, input: AgentSessionCreate, configuration: ConfigurationRecord, onFresh?: () => void): Promise<AgentSession> {
     return this.exclusive(async () => {
@@ -257,44 +234,41 @@ export class ProviderStore {
     });
   }
   async run(id: string, actor?: Actor): Promise<{ session: SessionRecord; record: RunRecord }> {
-    // Startup indexes the retained aggregates before accepting requests. A write indexes new
-    // identities only after it commits or records uncertainty. A raw disk scan could find an
-    // unpublished candidate while the authoritative write is still in progress.
-    const sessionId = this.runs.get(id);
-    if (!sessionId) throw new AgentApiError("run_not_found", "Run not found.", 404);
-    const session = await this.load(sessionId, actor); const record = session.runs[id];
+    const row = this.history.database(db => db.prepare("SELECT session FROM execution_runs WHERE id=?").get(id));
+    if (!row) throw new AgentApiError("run_not_found", "Run not found.", 404);
+    const session = await this.load(String(row.session), actor, id);
+    const record = session.runs[id];
     if (!record) throw new AgentApiError("run_not_found", "Run not found.", 404);
     return { session, record };
   }
-  async records(currentInstallationOnly = false, skipUncertain = false): Promise<SessionRecord[]> {
-    const result: SessionRecord[] = [];
-    for (const file of await readdir(this.directory)) if (file.endsWith(".json") && safe(file.slice(0, -5))) {
-      const record = await this.load(file.slice(0, -5)).catch(error => {
-        if (skipUncertain && error instanceof AgentApiError && error.code === "storage_uncertain") return null;
-        throw error;
-      });
-      if (record && (!currentInstallationOnly || sameProvider(record.session.ref.provider, this.provider))) result.push(record);
+  private async inventory(where: string, args: string[], skipUnavailable = false, onlyDue = false): Promise<SessionRecord[]> {
+    const ids = this.history.database(db => db.prepare("SELECT id FROM execution_sessions " + where).all(...args));
+    const records: SessionRecord[] = [];
+    for (const row of ids) {
+      try { records.push(await this.load(String(row.id), undefined, onlyDue ? "" : undefined)); }
+      catch (error) {
+        if (!skipUnavailable) throw error;
+        console.warn("[agent-provider] retained session unavailable", { sessionId: row.id });
+      }
     }
-    return result;
+    return records;
   }
-
+  records(currentInstallationOnly = false, skipUnavailable = false): Promise<SessionRecord[]> {
+    return currentInstallationOnly ? this.inventory("WHERE installation=?", [this.providerKey()], skipUnavailable)
+      : this.inventory("", [], skipUnavailable);
+  }
+  async recordsDue(): Promise<SessionRecord[]> {
+    await this.reclaimExpiredReplay();
+    return this.inventory("WHERE installation=? AND due=1", [this.providerKey()], true, true);
+  }
   occupiedSlots(): number {
-    let count = 0;
-    for (const [id, state] of this.durable) if (this.uncertain.get(id)?.occupied ?? state.occupied) count++;
-    for (const [id, attempt] of this.uncertain) if (!this.durable.has(id) && attempt.occupied) count++;
-    return count;
+    return this.history.database(db => Number(db.prepare("SELECT COUNT(*) AS n FROM execution_sessions WHERE installation=? AND occupied=1")
+      .get(this.providerKey())!.n));
   }
   async list(actor: Actor): Promise<AgentSession[]> {
-    const sessions: AgentSession[] = [];
-    for (const file of await readdir(this.directory)) {
-      if (!file.endsWith(".json") || !safe(file.slice(0, -5))) continue;
-      const record = await this.load(file.slice(0, -5));
-      if (record.deleted || !sameActor(record.owner, actor) || !sameProvider(record.session.ref.provider, this.provider)) continue;
-      const retirement = record.retirement;
-      if (retirement && record.runs[retirement.runId]?.controls[retirement.requestId]?.receipt.state === "applied") continue;
-      sessions.push(record.session);
-    }
-    return sessions.sort((a, b) => a.ref.id.localeCompare(b.ref.id));
+    const records = await this.inventory("WHERE installation=? AND owner=? ORDER BY id", [this.providerKey(), this.ownerKey(actor)]);
+    return records.filter(record => !record.deleted && (!record.retirement ||
+      record.runs[record.retirement.runId]?.controls[record.retirement.requestId]?.receipt.state !== "applied")).map(record => record.session);
   }
   private expireReplay(run: RunRecord, now = Date.now()): boolean {
     const completed = Date.parse(run.completedAt ?? ""), observed = Date.parse(run.snapshot.observedAt);
@@ -308,11 +282,35 @@ export class ProviderStore {
     if (!this.expireReplay(current.record)) return;
     await this.exclusive(async () => { const { session, record } = await this.run(id, actor); if (this.expireReplay(record)) await this.save(session); });
   }
+  pendingStops(id: string, actor: Actor): Array<{ request: string; generation: string; hash: string }> {
+    return this.history.database(db => db.prepare("SELECT request,generation,hash FROM stop_intents WHERE installation=? AND owner=? AND run=?")
+      .all(this.providerKey(), this.ownerKey(actor), id).map(row => ({ request: String(row.request), generation: String(row.generation), hash: String(row.hash) })));
+  }
+
+  async controlReceipt(id: string, actor: Actor, request: string): Promise<AgentControlReceipt> {
+    const pending = this.pendingStops(id, actor).find(stop => stop.request === request);
+    if (pending) return { requestId: request, run: { provider: this.provider, id }, generation: pending.generation, revision: "1", state: "applied" };
+    const { record } = await this.run(id, actor);
+    const control = record.controls[request];
+    if (!control) throw new AgentApiError("control_not_found", "Control not found.", 404);
+    return control.receipt;
+  }
+
+  stopBeforeAdmission(id: string, actor: Actor, request: string, hash: string): AgentControlReceipt {
+    const prior = this.pendingStops(id, actor);
+    const exact = prior.find(item => item.request === request);
+    if (exact && exact.hash !== hash) throw new AgentApiError("request_conflict", "Stop identity has different command bytes.", 409);
+    const generation = prior[0]?.generation ?? randomUUID();
+    if (!exact) this.history.database(db => db.prepare("INSERT INTO stop_intents(installation,owner,run,request,generation,hash) VALUES(?,?,?,?,?,?)")
+      .run(this.providerKey(), this.ownerKey(actor), id, request, generation, hash));
+    return { requestId: request, run: { provider: this.provider, id }, generation, revision: "1", state: "applied" };
+  }
+
   markNotAdmitted(run: RunRecord): void { run.snapshot.result = notAdmitted; }
 
   makeRun(session: SessionRecord, id: string, actor: VerifiedOperation, body: string, input?: AgentRunInput): RunRecord {
-    if (this.runs.has(id)) throw new AgentApiError("request_conflict", "Run identity is already retained.", 409);
-    return { hash: bytesHash(body), admissionRef: actor.admissionRef, input, historyVersion: 1, events: [], firstSequence: "1", controls: {}, nativeSequence: 0, nativeRevision: -1,
+    if (this.history.database(db => !!db.prepare("SELECT id FROM execution_runs WHERE id=? UNION ALL SELECT id FROM archived_runs WHERE id=? LIMIT 1").get(id, id))) throw new AgentApiError("request_conflict", "Run identity is already retained.", 409);
+    return { hash: bytesHash(body), admissionRef: actor.admissionRef, input, events: [], firstSequence: "1", controls: {}, nativeSequence: 0, nativeRevision: -1,
       snapshot: { ref: { provider: this.provider, id }, sessionId: session.id, generation: randomUUID(), revision: "1", state: "queued", phase: "preparing", stopConfirmed: false,
         freshness: "current", observedAt: new Date().toISOString(), configurationRevision: session.session.configurationRevision, lastSequence: "0", cursor: "", pending: [],
         effects: { certainty: "known", unresolvedCallIds: [] }, messages: [], tools: [], decisions: [], coverage: { messages: "complete", tools: "complete", decisions: "complete" }, admissionRef: actor.admissionRef } };
@@ -384,5 +382,4 @@ export class ProviderStore {
     try { const v: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8")); if (!Array.isArray(v) || v.length !== 2 || typeof v[0] !== "string" || typeof v[1] !== "string" || !/^\d+$/.test(v[1])) throw new Error(); return { generation: v[0], sequence: v[1] }; }
     catch { throw new AgentApiError("invalid_cursor", "Invalid event cursor.", 400); }
   }
-  subscribe(id: string, listener: () => void): () => void { const set = this.listeners.get(id) ?? new Set(); set.add(listener); this.listeners.set(id, set); return () => { set.delete(listener); if (!set.size) this.listeners.delete(id); }; }
 }

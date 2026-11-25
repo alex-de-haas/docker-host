@@ -8,7 +8,7 @@ internal sealed record WorkspaceDiscardTree(string Id, string Repository, string
     string Fingerprint, string[] ChangedFiles, string[] UntrackedFiles, string[] IgnoredFiles, int UnmergedCommits);
 internal sealed record WorkspaceDiscardResource(string Id, string Kind, string Name, string? DataPath, string State, long Revision);
 internal sealed record WorkspaceDiscardPlan(string WorkspaceId, string Name, long Revision, string Digest,
-    DateTimeOffset ExpiresAt, WorkspaceDiscardTree[] Trees, WorkspaceDiscardResource[] Resources, string[] Blockers, string[]? RemovedTrees = null, string[]? Warnings = null);
+    DateTimeOffset ExpiresAt, WorkspaceDiscardTree[] Trees, WorkspaceDiscardResource[] Resources, string[] Blockers, string[]? RemovedTrees = null, string[]? Warnings = null, WorkspaceDeleteReturn[]? ReturnTargets = null);
 internal sealed record WorkspaceDiscardItem(string Id, string State, string? Kind = null);
 internal sealed record WorkspaceDiscardProgress(string WorkspaceId, string RequestId, string State, WorkspaceDiscardApply Command,
     WorkspaceDiscardItem[] Trees, WorkspaceDiscardItem[] Resources, string? Error = null, WorkspaceDeleteActivity[]? Activity = null);
@@ -16,7 +16,8 @@ internal sealed record WorkspaceDiscardReview(string Actor, WorkspaceOwner Owner
 internal sealed record WorkspaceDiscardJournal(string Actor, string WorkspaceId, WorkspaceDiscardApply Command,
     string State, WorkspaceOwner? Owner, WorkspaceDiscardPlan? Plan, DevelopmentWorkspace[]? Snapshots,
     WorkspaceDiscardItem[] Trees, WorkspaceDiscardItem[] Resources, WorkspaceCleanupResource[] Cleanup,
-    string? Error = null, bool SourceRemoved = false, string[]? RelatedRequests = null, string[]? ReviewDigests = null, bool Direct = false, WorkspaceDeleteActivity[]? Activity = null)
+    string? Error = null, bool SourceRemoved = false, string[]? RelatedRequests = null, string[]? ReviewDigests = null, bool Direct = false, WorkspaceDeleteActivity[]? Activity = null,
+    WorkspaceDeleteOwner? DeleteOwner = null, string[]? SelectedSessions = null, bool SessionsAccepted = false, WorkspaceWriterStop[]? Writers = null)
 {
     internal WorkspaceDiscardProgress Progress() => new(WorkspaceId, Command.RequestId, State, Command, Trees, Resources, Error, Activity);
 }
@@ -68,7 +69,19 @@ internal sealed partial class DevelopmentWorkspaceService
     }
     internal async Task SaveDiscardAsync(WorkspaceDiscardJournal value)
     {
-        await JsonStorage.WriteAsync(DiscardJournalPath(value.WorkspaceId, value.Command.RequestId), value, restrictToOwner: true);
+        var journal = DiscardJournalPath(value.WorkspaceId, value.Command.RequestId);
+        var marker = System.IO.Path.Combine(DiscardRoot, "pending", System.IO.Path.GetFileName(journal));
+        var pending = value.DeleteOwner is not null && (value.State == "pending" ||
+            !value.SessionsAccepted && value.SelectedSessions is { Length: > 0 });
+        if (value.DeleteOwner is not null)
+        {
+            RequireDiscardStorage(marker);
+            // Make durable work discoverable before writing its receipt. A surviving marker with
+            // no receipt has no authority and is ignored after a crash.
+            if (pending && !File.Exists(marker)) await JsonStorage.WriteAsync(marker, true, restrictToOwner: true);
+        }
+        await JsonStorage.WriteAsync(journal, value, restrictToOwner: true);
+        if (!pending && value.DeleteOwner is not null) DeleteMetadata(marker);
         observationState?.CatalogChanged();
     }
     internal async Task<WorkspaceDiscardJournal[]> PendingDiscardJournalsAsync(string actor, CancellationToken ct)
@@ -538,7 +551,9 @@ internal sealed partial class DevelopmentWorkspaceService
             if (id != requestId && journal.State == "pending")
                 throw Error("ownership_invalid", "A superseded removal request is unexpectedly active; metadata was preserved.");
             // Keep only actor-bound replay evidence, never source inventories or private grants.
-            await SaveDiscardAsync(journal with { State = "removed", Owner = null, Plan = null, Snapshots = null, Cleanup = [], Error = null,
+            await SaveDiscardAsync(journal with { State = "removed", Owner = null, Plan = null, Snapshots = null, Cleanup = [], Error = null, Writers = null,
+                DeleteOwner = journal.DeleteOwner is { } origin ? origin with { Authority = null,
+                    Returns = origin.Returns?.Select(t => t with { Name = "", Replacement = "", Operation = "", Installation = null }).ToArray() } : null,
                 Activity = journal.Activity?.Select(a => a.Kind == "lease" ? a with { State = "retired", Detail = "Lease retired by deletion; external process exit remains unknown." } : a).ToArray(),
                 Trees = journal.Trees.Select(t => t with { State = "removed" }).ToArray(), Resources = journal.Resources.Select(r => r with { State = "removed" }).ToArray() });
         }

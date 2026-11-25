@@ -34,12 +34,13 @@ export type AssistantSession = {
   parentSessionId?: string;
   subagents?: SessionSubagent[];
   providerHistoryGaps?: ProviderHistoryGap[];
+  providerStatusContact?: { runId: string; observedAt: string; reason: "unavailable" | "denied" | "invalid" };
   providerHistoryContact?: { runId: string; observedAt: string; reason: "denied" | "invalid" | "unavailable" };
   workerRun?: { id: string; sequence: number; generation?: string };
   workerRecovery?: { state: "pending" | "completed" };
   stopUnconfirmed?: true;
   storageRecovery?: { state: "required"; code: string; message: string };
-  sourceAdmission?: { clientRequestId?: string; runId?: string; state: "preparing" | "dispatching" };
+  sourceAdmission?: { needsAuthority?: true; clientRequestId?: string; runId?: string; state: "preparing" | "dispatching" };
   sourceAdmissionInFlight?: true;
   agentProfile?: import("../../../src/profiles/types").AgentProfile | null;
   profileLocked?: boolean;
@@ -402,6 +403,10 @@ export async function listAgentConnections(): Promise<{ connections: AgentConnec
 export async function setSessionProvider(id: string, connectionId: string, confirmLegacy = false): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(id)}/provider`, { method: "PUT", body: JSON.stringify({ connectionId, confirmLegacy }) })).json();
 }
+export async function authorizePendingMessage(id: string, clientRequestId: string): Promise<void> {
+  await call("/sessions/" + encodeURIComponent(id) + "/authorize-pending", { method: "POST", body: JSON.stringify({ clientRequestId }) });
+}
+
 export async function stopSession(id: string): Promise<void> {
   await call(`/sessions/${encodeURIComponent(id)}/cancel`, { method: "POST" });
 }
@@ -468,13 +473,4 @@ export async function getSessionModels(id: string): Promise<ModelCatalog> {
 }
 export async function setSessionModel(id: string, selection: NonNullable<AssistantSession["executionSelection"]>, expectedRevision: number): Promise<AssistantSession> {
   return (await call(`/sessions/${encodeURIComponent(id)}/model`, { method: "PUT", body: JSON.stringify({ selection, expectedRevision }) })).json() as Promise<AssistantSession>;
-}
-
-export type ExecutionRecoveryRequest = { requestId: string; runId: string; generation: string; expectedRevision: string | number; consumerExitConfirmed: true };
-export type ExecutionRecoveryReview = { runId: string; generation: string; expectedRevision: string | number; recoverable: boolean; sourceOnly?: boolean; pending?: ExecutionRecoveryRequest };
-export async function getExecutionRecovery(id: string): Promise<ExecutionRecoveryReview | null> {
-  return (await call(`/sessions/${encodeURIComponent(id)}/execution-recovery`)).json();
-}
-export async function recoverExecution(id: string, input: ExecutionRecoveryRequest): Promise<void> {
-  await call(`/sessions/${encodeURIComponent(id)}/execution-recovery`, { method: "POST", body: JSON.stringify(input) });
 }

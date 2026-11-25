@@ -1,5 +1,5 @@
 import { shouldRetainToolOutput } from "./tool-output-policy.js";
-import type { HarnessEvent, HarnessEventSource } from "@hosty/agent-provider-runtime/harness/adapter";
+import type { HarnessEvent, HarnessEventSource, NativeObservationCheckpoint } from "@hosty/agent-provider-runtime/harness/adapter";
 import { codexCommandResult, commandToolUseId } from "./command-result.js";
 import { toolResult } from "@hosty/agent-provider-runtime/harness/tool-result";
 
@@ -26,14 +26,49 @@ export class CodexChildren {
   private readonly activeAssignments = new Set<string>();
   private assignmentReads = 0;
   private warned = false;
+  private readonly unmatched = new Map<string, { child: string; parent: string; root: string; rootTurn: string; parentTurn: string; turn: number; id: string; kind: string }>();
+  private restored = false;
   constructor(private readonly runId: string, readonly sources: Map<string, HarnessEventSource>,
     private readonly read: (threadId: string) => Promise<unknown>, private readonly emit: (event: HarnessEvent) => void,
-    private readonly available: () => boolean, private readonly readCurrent?: (threadId: string) => Promise<unknown>) {}
+    private readonly available: () => boolean, private readonly readCurrent?: (threadId: string) => Promise<unknown>, private readonly checkpoint?: NativeObservationCheckpoint) {}
+
+  private restore(): void {
+    if (this.restored) return;
+    const saved = object(this.checkpoint?.read());
+    if (saved?.attempt === this.runId && Array.isArray(saved.items) && saved.items.length <= 256) {
+      for (const entry of saved.items) {
+        const e = object(entry);
+        if (e && [e.child, e.parent, e.root, e.rootTurn, e.parentTurn, e.id].every(identity)
+          && Number.isSafeInteger(e.turn) && ["interacted", "interrupted", "completed"].includes(String(e.kind))) {
+          const value = { child: String(e.child), parent: String(e.parent), root: String(e.root), rootTurn: String(e.rootTurn),
+            parentTurn: String(e.parentTurn), turn: Number(e.turn), id: String(e.id), kind: String(e.kind) };
+          this.unmatched.set(JSON.stringify([value.parent, value.parentTurn, value.id, value.kind, value.child]), value);
+        }
+      }
+    }
+    this.restored = true;
+  }
+  private savePending(): void {
+    this.checkpoint?.write({ attempt: this.runId, items: [...this.unmatched.values()] });
+  }
+  correlate(child: string, parent: string, parentTurn: string, turn: number): void {
+    this.restore();
+    if (!this.sources.has(child)) return;
+    let changed = false;
+    for (const [key, item] of this.unmatched) {
+      if (item.child !== child || item.parent !== parent || item.parentTurn !== parentTurn || item.turn !== turn) continue;
+      this.observeItem({ threadId: parent, turnId: parentTurn,
+        item: { type: "subAgentActivity", id: item.id, agentThreadId: child, kind: item.kind } }, item.root, item.rootTurn, turn, parentTurn);
+      this.unmatched.delete(key); changed = true;
+    }
+    if (changed) this.savePending();
+  }
 
   observe(params: Record<string, unknown>, rootThread: string, rootTurn: string, turn: number): void {
     this.observeItem(params, rootThread, rootTurn, turn);
   }
   private observeItem(params: Record<string, unknown>, rootThread: string, rootTurn: string, turn: number, verifiedParentTurn?: string): void {
+    this.restore();
     const item = object(params.item), parent = params.threadId;
     if (!item || item.type !== "subAgentActivity" || !identity(item.id) || !identity(item.agentThreadId)
       || !identity(parent) || !identity(params.turnId) || parent === rootThread && params.turnId !== rootTurn
@@ -41,8 +76,15 @@ export class CodexChildren {
       || !["started", "interacted", "interrupted", "completed"].includes(String(item.kind)) || this.closedTurns.has(turn)) return;
     const parentSource = this.sources.get(parent), expectedParent = parentSource?.agentId ?? "root";
     let source = this.sources.get(item.agentThreadId);
-    if (source && item.kind === "started" && source.parentAgentId !== expectedParent) { this.incomplete("Conflicting native child lineage was omitted."); return; }
-    if (!source && item.kind !== "started") { this.incomplete("A native child activity had no observed spawn lineage; coverage is partial."); return; }
+    if (source && source.parentAgentId !== expectedParent) { this.incomplete("Conflicting native child lineage was omitted."); return; }
+    if (!source && item.kind !== "started") {
+      const key = JSON.stringify([parent, params.turnId, item.id, item.kind, item.agentThreadId]);
+      if (this.unmatched.has(key)) return;
+      if (this.unmatched.size >= 256) { this.incomplete("Additional native child observations exceeded the bounded inventory."); return; }
+      this.unmatched.set(key, { parent, parentTurn: params.turnId, child: item.agentThreadId, id: item.id, kind: String(item.kind), root: rootThread, rootTurn, turn });
+      this.savePending();
+      return;
+    }
     const callId = commandToolUseId(this.runId, turn, item.id, params.turnId);
     if (!callId) return;
     if (!source) {
@@ -77,6 +119,7 @@ export class CodexChildren {
       this.emit({ type: "tool_use", toolUseId: callId, toolName: `Agent: ${name}`, input: { operation: item.kind }, ...(parentSource ? { source: parentSource } : {}) });
       this.emit({ ...toolResult(callId, "completed", `Native subagent ${String(item.kind)} observation.`), ...(parentSource ? { source: parentSource } : {}) });
     }
+    if (item.kind === "started") this.correlate(item.agentThreadId, parent, params.turnId, turn);
     if (item.kind === "completed") {
       // The pinned producer names its completed observation with the exact child turn
       // (core/agent/control/completion.rs). Never select an old turn by position/time.
@@ -179,12 +222,37 @@ export class CodexChildren {
   }
 
   async finish(turn: number): Promise<void> {
+    this.restore();
     const deadline = Date.now() + CODEX_CHILD_METADATA_TIMEOUT_MS;
+    // Query the exact parent turn once. A prior turn, sibling or foreign thread cannot establish this edge.
+    const parents = new Set<string>();
+    for (const item of [...this.unmatched.values()]) {
+      const key = JSON.stringify([item.parent, item.parentTurn]);
+      if (item.turn !== turn || parents.has(key) || parents.size >= 8) continue;
+      parents.add(key);
+      const task = this.read(item.parent).then(value => {
+        if (!this.available() || this.closedTurns.has(turn)) return;
+        const thread = object(object(value)?.thread);
+        if (thread?.id !== item.parent || !Array.isArray(thread.turns) || thread.turns.length > 128 || Buffer.byteLength(JSON.stringify(value)) > 2 * 1024 * 1024) return;
+        const selected = thread.turns.map(object).filter(t => t?.id === item.parentTurn);
+        const items = selected.length === 1 && selected[0]?.items;
+        if (!Array.isArray(items) || items.length > 512) return;
+        for (const raw of items) {
+          const spawn = object(raw);
+          if (spawn?.type === "subAgentActivity" && spawn.kind === "started"
+            && [...this.unmatched.values()].some(orphan => orphan.child === spawn.agentThreadId && orphan.parent === item.parent && orphan.parentTurn === item.parentTurn))
+            this.observeItem({ threadId: item.parent, turnId: item.parentTurn, item: spawn }, item.root, item.rootTurn, turn, item.parentTurn);
+        }
+      }).catch(() => {}).finally(() => this.pending.delete(task));
+      this.pending.add(task);
+    }
     while (this.pending.size && Date.now() < deadline) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([Promise.allSettled([...this.pending]), new Promise<void>(resolve => { timer = setTimeout(resolve, Math.max(1, deadline - Date.now())); })]);
       if (timer) clearTimeout(timer);
     }
+    if ([...this.unmatched.values()].some(value => value.turn === turn))
+      this.incomplete("The native history did not identify the launch of an observed child. Some child tool details are unavailable.");
     if (this.pending.size) this.incomplete("Native child metadata exceeded its bounded observation deadline; coverage is partial.");
     if ([...(this.spawned.get(turn) ?? [])].some(id => !this.verified.get(turn)?.has(id)))
       this.incomplete("An observed native child has no verified completed tool history; coverage is partial.");

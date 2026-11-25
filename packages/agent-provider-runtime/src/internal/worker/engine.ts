@@ -8,6 +8,7 @@ import { WorkerApiError, terminal, safeIdentity, validateRun, validateMcpServers
 const POLITE_INTERRUPT_TIMEOUT_MS = 2_000;
 
 export interface WorkerExecution {
+  launch?(id: string, action: () => void): Promise<boolean>;
   adapter(request: WorkerRunRequest): Promise<HarnessAdapter>;
   cwd(request: WorkerRunRequest): Promise<string>;
   validateSelection(request: WorkerRunRequest): Promise<void>;
@@ -91,13 +92,21 @@ export class WorkerEngine {
         }
         await this.journal.update(id, "running");
         const suggestions = request.options.promptSuggestions === true && adapter!.capabilities.promptSuggestions === true && !this.disabledSuggestions.has(id);
-        const run = adapter!.start({ ...request.options, skillExportId: request.skillExportId, promptSuggestions: suggestions, sessionId: request.conversationId, cwd, resource: request.resource, workerRunId: id,
-          ...request.selection,
-          isAutoAllowed: tool => request.autoAllowedPrefixes.some(prefix => tool.startsWith(prefix)),
-          onEvent: event => { void this.event(id, event).catch(error => console.warn("[worker] Provider event finalization remains unconfirmed.", { code: journalErrorCode(error) })); } });
-        const claim = release!; let released = false;
-        this.active.set(id, { run, request, suggestions, release: () => { if (!released) { released = true; claim(); } } }); release = undefined; started = true;
-        run.send(request.input);
+        const launch = () => {
+          const run = adapter!.start({ ...request.options, skillExportId: request.skillExportId, promptSuggestions: suggestions, sessionId: request.conversationId, cwd, resource: request.resource, workerRunId: id, nativeObservations: this.journal.observations(id),
+            ...request.selection,
+            isAutoAllowed: tool => request.autoAllowedPrefixes.some(prefix => tool.startsWith(prefix)),
+            onEvent: event => { void this.event(id, event).catch(error => console.warn("[worker] Provider event finalization remains unconfirmed.", { code: journalErrorCode(error) })); } });
+          const claim = release!; let released = false;
+          this.active.set(id, { run, request, suggestions, release: () => { if (!released) { released = true; claim(); } } }); release = undefined; started = true;
+          run.send(request.input);
+        };
+        if (this.execution.launch) {
+          if (!await this.execution.launch(id, launch)) {
+            await this.journal.update(id, "cancelled");
+            this.admitted.delete(id); release?.(); release = undefined;
+          }
+        } else launch();
       });
     } catch (error) {
       release?.();
@@ -286,7 +295,7 @@ export class WorkerEngine {
     try { await finalization; }
     finally { this.healthyCloseEffects.delete(id); this.healthyClosing.delete(id); if (this.failureFinalizations.get(id) === finalization) this.failureFinalizations.delete(id); }
   }
-  async respond(id: string, input: WorkerControl): Promise<WorkerReceipt> {
+  async respond(id: string, input: WorkerControl, dispatch?: (action: () => boolean | Promise<boolean>) => Promise<boolean>): Promise<WorkerReceipt> {
     if (!input || !Number.isSafeInteger(input.eventId) || !Number.isSafeInteger(input.expectedRevision) || typeof input.id !== "string"
       || !["approval", "question"].includes(input.kind)
       || input.kind === "approval" && (!["allow", "deny"].includes(input.decision) || input.message !== undefined && typeof input.message !== "string")
@@ -304,8 +313,9 @@ export class WorkerEngine {
       };
       const fresh = await this.journal.control(id, input.controlId, input, async () => {
         const run = this.active.get(id)!.run;
-        const accepted = await (input.kind === "approval" ? run.resolveApproval(input.id, input.decision, input.message)
-          : run.resolveQuestion(input.id, input.answers));
+        const answer = () => input.kind === "approval" ? run.resolveApproval(input.id, input.decision, input.message)
+          : run.resolveQuestion(input.id, input.answers);
+        const accepted = await (dispatch ? dispatch(answer) : answer());
         if (!accepted) throw new WorkerApiError(409, "stale_control", "Native request is no longer pending.");
       }, validate);
       return fresh ? this.journal.update(id, (await this.journal.load(id)).receipt.pending?.some(frame => frame.event.type === "approval_request" || frame.event.type === "question_request" && frame.event.blocking !== false) ? "awaiting_input" : "running") : (await this.journal.load(id)).receipt;

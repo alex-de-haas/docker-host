@@ -356,81 +356,19 @@ it("keeps attached sessions by default and brings them back into the list after 
   expect(document.activeElement).toBe(container.querySelector('[aria-label="New session"]'));
 });
 
-it.each(["all", "partial"])("handles %s session deletion after closing workspace confirmation immediately", async outcome => {
-  const binding = { appId: "hosty.harness", userId: "me", sessionId: "first", title: "First chat",
-    attached: true, canOpen: true, viewerPath: null, status: "idle", activityAt: null };
-  const participation: NonNullable<DevelopmentWorkspace["participation"]> = { id: "target", revision: 1, role: "owner", viewerUserId: "me",
-    members: [], eligibleUsers: [], sessions: [binding, { ...binding, sessionId: "moved", title: "Moved chat" }] };
-  const workspace = deletableWorkspace({ participation });
-  const verifiedParticipation = { ...participation, revision: 2, sessions: [
-    binding, { ...binding, sessionId: "second", title: "Newly attached chat" },
-    { ...binding, sessionId: "moved", title: "Moved chat", attached: false },
-    { ...binding, userId: "other", sessionId: "private", title: "Private chat", canOpen: false },
-  ] };
-  const onDelete = vi.fn().mockResolvedValue(undefined), onWorkspace = vi.fn();
-  if (outcome === "partial") onDelete.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("Provider could not stop"));
-  let finish!: () => void;
-  vi.mocked(developmentRequest).mockResolvedValueOnce(deletionDetails()).mockResolvedValueOnce(verifiedParticipation)
-    .mockImplementationOnce((_path, body) =>
-      new Promise(resolve => { finish = () => resolve(deletionProgress(body!.requestId as string, "removed") as never); }));
-  const render = (workspaces: DevelopmentWorkspace[]) => root.render(<DevelopmentNavigation sessions={[disposable]}
-    workspaces={workspaces} onPick={vi.fn()} onWorkspace={onWorkspace} onNew={vi.fn()} onDelete={onDelete} onRefresh={() => render([])} />);
-  await act(async () => render([workspace]));
-  await click("Delete workspace Target workspace");
-  await act(async () => document.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
-  await click("Delete");
-  expect(document.querySelector('[role="dialog"]')).toBeNull();
-  const row = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.includes("Target workspace"))!;
-  expect(row.disabled).toBe(true);
-  expect(row.querySelector('[role="status"]')?.textContent).toContain("Deleting…");
-  expect(container.querySelector('[aria-label="Delete workspace Target workspace"]')).toBeNull();
-  await act(async () => row.click());
-  expect(onWorkspace).not.toHaveBeenCalled();
-  expect(onDelete).not.toHaveBeenCalled();
-  expect(developmentRequest).toHaveBeenNthCalledWith(2, "/target/participants");
-  expect(developmentRequest).toHaveBeenLastCalledWith("/target/delete", { requestId: expect.any(String) });
-  expect(JSON.parse(localStorage.getItem("hosty.workspace.delete.target")!).sessionIds).toEqual(["first", "second"]);
-  await act(async () => finish());
-  expect(onDelete.mock.calls).toEqual([["first"], ["second"]]);
-  if (outcome === "partial") {
-    const receipt = JSON.parse(localStorage.getItem("hosty.workspace.delete.target")!);
-    expect(receipt.sessionIds).toEqual(["second"]);
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Provider could not stop");
-    vi.mocked(developmentRequest).mockResolvedValueOnce(deletionProgress(receipt.requestId, "removed"));
-    await click("Retry deletion");
-    expect(developmentRequest).toHaveBeenLastCalledWith("/target/delete", { requestId: receipt.requestId });
-    expect(vi.mocked(developmentRequest).mock.calls.filter(([path]) => path === "/target/participants")).toHaveLength(1);
-    expect(onDelete.mock.calls).toEqual([["first"], ["second"], ["second"]]);
-    expect(container.querySelector('[role="alert"]')).toBeNull();
-  }
-  expect(localStorage.getItem("hosty.workspace.delete.target")).toBeNull();
-});
-
-it("keeps the checked workspace deletion recoverable when current participation cannot be verified", async () => {
-  const workspace = deletableWorkspace({ owner: { kind: "assistant", appId: "hosty.harness", reference: "stale", label: "Target" } });
-  const onDelete = vi.fn().mockResolvedValue(undefined);
+it("commits the attached-chat selection in the same server request as workspace deletion", async () => {
+  const workspace = deletableWorkspace({ owner: { kind: "assistant", appId: "hosty.harness", reference: disposable.id, label: "Target" } });
+  const onDelete = vi.fn();
   vi.mocked(developmentRequest).mockResolvedValueOnce(deletionDetails())
-    .mockRejectedValueOnce(new Error("Roster unavailable"));
+    .mockImplementationOnce(async (_path, body) => deletionProgress(body!.requestId as string, "removed") as never);
   await act(async () => root.render(<DevelopmentNavigation sessions={[disposable]} workspaces={[workspace]}
     onPick={vi.fn()} onNew={vi.fn()} onDelete={onDelete} />));
-  await click("Delete workspace Target workspace");
-  await act(async () => document.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click());
-  await click("Delete");
-  expect(localStorage.getItem("hosty.workspace.delete.target")).toBeNull();
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Could not verify attached sessions");
-  expect(developmentRequest).toHaveBeenLastCalledWith("/target/participants");
-  expect(vi.mocked(developmentRequest).mock.calls.find(([path]) => path === "/target/delete")).toBeUndefined();
-  expect(onDelete).not.toHaveBeenCalled();
-
-  vi.mocked(developmentRequest).mockResolvedValueOnce(deletionDetails())
-    .mockResolvedValueOnce({ sessions: [{ sessionId: "current", attached: true, canOpen: true }] })
-    .mockImplementationOnce(async (_path, body) => deletionProgress(body!.requestId as string, "removed") as never);
   await click("Delete workspace Target workspace");
   const checkbox = document.querySelector<HTMLButtonElement>('[role="checkbox"]')!;
   expect(checkbox.getAttribute("aria-checked")).toBe("false");
   await act(async () => checkbox.click());
   await click("Delete");
-  expect(developmentRequest).toHaveBeenLastCalledWith("/target/delete", { requestId: expect.any(String) });
-  expect(onDelete).toHaveBeenCalledExactlyOnceWith("current");
-  expect(localStorage.getItem("hosty.workspace.delete.target")).toBeNull();
+  expect(developmentRequest).toHaveBeenLastCalledWith("/target/delete", { requestId: expect.any(String), removeAttachedSessions: true });
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(onDelete).not.toHaveBeenCalled();
 });

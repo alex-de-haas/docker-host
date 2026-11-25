@@ -52,7 +52,7 @@ it("serves real Ollama connection capabilities and content-revision model metada
   }));
   const client = new AgentClient({ provider, authorize: async request => {
     const token = randomUUID(); proofs.set(token, request);
-    return { provider, baseUrl: `${origin}/api/agent/v1`, token, expiresAt: new Date(Date.now() + 60000).toISOString() };
+    return { provider, baseUrl: `${origin}/api/agent/v2`, token, expiresAt: new Date(Date.now() + 60000).toISOString() };
   } });
   expect((await client.capabilities()).nativeTools).toEqual({ default: "provider_default", none: true });
   expect((await client.connections()).connections).toContainEqual(expect.objectContaining({ id: connection.id, revision: "1", ready: true }));

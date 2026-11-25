@@ -97,3 +97,15 @@ it("navigates and counts hosted chats in external workspaces without exposing fo
   expect(item.matches).toEqual([mine]); expect(item.search).toContain("review external changes");
   expect(item.counts).toEqual({ working: 1, waiting: 0, failed: 0, unknown: 0 });
 });
+
+it("counts three quiet attempts from the same owner despite stale Core participation and an archive outage", () => {
+  const bindings = ["one", "two", "three"].flatMap(id => [
+    { ...participant(id, "idle", true), activityGroup: id },
+    { ...participant("native-" + id, "idle"), kind: "execution" as const, activityGroup: id },
+  ]);
+  const sessions = ["one", "two", "three"].map(id => ({ id, title: id, createdBy: "me", createdAt: new Date(now).toISOString(), status: "running",
+    providerHistoryContact: { runId: id, reason: "unavailable" as const, observedAt: new Date(now).toISOString() } }));
+  const space = workspace(bindings);
+  expect(workspaceCounts(space, sessions, now + 120000).working).toBe(3);
+  expect(workspaceCounts(space, sessions.map((row, i) => i ? row : { ...row, providerStatusContact: row.providerHistoryContact }), now + 120000).working).toBe(2);
+});

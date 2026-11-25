@@ -63,7 +63,7 @@ it("recovers an old accepted discard using its request ID without another review
   expect(close).toHaveBeenCalledOnce();
 });
 it("retains only the original selection when retrying after a status read fails", async () => {
-  const original = { requestId, sessionIds: ["first"] };
+  const original = { requestId, captureSessions: true };
   localStorage.setItem("hosty.workspace.delete.workspace", JSON.stringify(original));
   vi.mocked(developmentRequest).mockRejectedValueOnce(new Error("Connection lost"));
   await render({ pendingRequestId: requestId, sessionIds: ["new-session"] });
@@ -72,16 +72,22 @@ it("retains only the original selection when retrying after a status read fails"
   await act(async () => button("Retry deletion").click());
   expect(submit).toHaveBeenCalledExactlyOnceWith(original);
 });
-it("keeps a completed source receipt available to retry its selected session cleanup", async () => {
-  const original = { requestId, sessionIds: ["first", "second"] };
-  localStorage.setItem("hosty.workspace.delete.workspace", JSON.stringify(original));
-  vi.mocked(developmentRequest).mockResolvedValueOnce(progress("removed"));
+it("leaves confirmed attached chat cleanup with its backend after source removal", async () => {
+  localStorage.setItem("hosty.workspace.delete.workspace", JSON.stringify({ requestId, captureSessions: true }));
+  vi.mocked(developmentRequest).mockResolvedValueOnce(progress("removed")).mockRejectedValueOnce(new Error("Workspace not found"));
   await render();
   expect(document.body.textContent).toContain("Workspace deleted");
-  expect(JSON.parse(localStorage.getItem("hosty.workspace.delete.workspace")!)).toEqual(original);
-  await act(async () => button("Retry session deletion").click());
-  expect(submit).toHaveBeenCalledExactlyOnceWith(original);
-  expect(close).toHaveBeenCalledOnce();
+  expect(localStorage.getItem("hosty.workspace.delete.workspace")).toBeNull();
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("includes only the inspected runtime replacements in the original confirmation", async () => {
+  const key = "ab".repeat(32);
+  vi.mocked(developmentRequest).mockResolvedValueOnce({ ...details(), returnTargets: [{ key, name: "Core", replacement: "installed release" }] });
+  await render();
+  expect(document.body.textContent).toContain("Core will return to installed release");
+  await act(async () => button("Delete").click());
+  expect(submit).toHaveBeenCalledExactlyOnceWith({ requestId: expect.any(String), returnTargets: [key] });
 });
 
 it.each(["delete", "discard"])("retires a completed %s receipt and offers a fresh Delete for a replacement allocation", async prefix => {
@@ -123,7 +129,7 @@ it("shows runtime blockers and explains Return before sending a deletion request
   const alert = document.querySelector('[role="alert"][aria-label="Workspace is in use"]');
   expect(alert?.textContent).toContain("The running Core uses this worktree.");
   expect(alert?.textContent).toContain("An application uses this workspace.");
-  expect(alert?.textContent).toContain("Switch Core and applications away from this workspace, or use Return, before deleting it.");
+  expect(alert?.textContent).toContain("No automatic replacement was verified for these consumers.");
   expect(button("Delete").disabled).toBe(false);
   expect(developmentRequest).toHaveBeenCalledTimes(1);
   expect(localStorage.getItem("hosty.workspace.delete.workspace")).toBeNull();

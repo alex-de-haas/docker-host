@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Hammer, Loader2, MessageSquarePlus, Trash2, Search, ListFilter, Diamond, CircleAlert, MessageSquare, PanelLeftClose, RotateCcw } from "lucide-react";
 import type { AssistantSession } from "@/lib/assistant-api";
-import type { DevelopmentWorkspace } from "@/lib/development-api";
+import type { DevelopmentWorkspace, WorkspaceRemoval } from "@/lib/development-api";
 import { observedSessionStatus } from "@/lib/attention";
 import { navigationItems, workspaceSessionIds } from "@/lib/workspace-navigation";
 import { WorkspaceRowStatus } from "./workspace-row-status";
@@ -31,8 +31,8 @@ export function WorkspaceDeletionFailures({ deletion, className }: { deletion: W
   </div>);
 }
 
-export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction, onClose, onRefresh, workspaceDeletion, deletingSessionIds }: {
-  onClose?: () => void; onRefresh?: () => void;
+export function DevelopmentNavigation({ sessions, activeId, workspaces, removals = [], onPick, onNew, onDelete, activeWorkspaceId, onWorkspace, createAppAction, onClose, onRefresh, workspaceDeletion, deletingSessionIds }: {
+  onClose?: () => void; onRefresh?: () => void; removals?: WorkspaceRemoval[];
   workspaceDeletion?: WorkspaceDeletion; deletingSessionIds?: ReadonlySet<string>;
   activeWorkspaceId?: string; onWorkspace?: (workspace: DevelopmentWorkspace, session?: AssistantSession) => void; createAppAction?: ReactNode;
   sessions: AssistantSession[]; activeId?: string; workspaces: DevelopmentWorkspace[];
@@ -43,7 +43,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const localDeletes = useRef(new Set<string>());
-  const localWorkspaceDeletion = useWorkspaceDeletion(onDelete, () => onRefresh?.());
+  const localWorkspaceDeletion = useWorkspaceDeletion(() => onRefresh?.());
   const workspaceRemovals = workspaceDeletion ?? localWorkspaceDeletion;
   const latestDeleteTarget = workspaces.find(workspace => workspace.id === workspaceToDelete?.id);
   const deletingWorkspace = latestDeleteTarget ?? workspaceToDelete;
@@ -147,6 +147,11 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
       {!!items.length && !visible.length && <p className="p-3 text-sm text-muted-foreground">No sessions match this search and filter.</p>}
       {!items.length && <div className="flex flex-col items-center gap-3 p-5 text-center"><HostyMark appId="hosty.harness" tile className="size-12" /><p className="text-sm text-muted-foreground">Start a new session or create an app.</p></div>}
     </div>
+    {removals.length > 0 && <details className="shrink-0 border-t px-3 py-2 text-sm">
+      <summary className="cursor-pointer">Cleanup in progress ({removals.length})</summary>
+      <ul className="mt-2 space-y-2">{removals.map(removal =>
+        <li key={removal.requestId}>{removal.name}{removal.reason && <p className="text-xs text-muted-foreground">{removal.reason}</p>}</li>)}</ul>
+    </details>}
     {deletingWorkspace && <WorkspaceDelete key={deletingWorkspace.id + ":" + (workspaceDeleteRequest?.id ?? "")}
       workspaceId={deletingWorkspace.id} name={workspaceDeleteName}
       sessionIds={latestDeleteTarget ? workspaceSessionIds(latestDeleteTarget) : undefined}

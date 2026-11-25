@@ -105,6 +105,7 @@ export function classifyPaths(paths, { versionOnlyPaths = [], nodeDependencyComp
       add("core-aot", reason("shared .NET build/toolchain input"));
     } else if (path.startsWith("packages/agent-provider-runtime/")) {
       add(AGENT_PROVIDERS, reason("shared local agent runtime"));
+      if (path === "packages/agent-provider-runtime/scripts/generation-use.mjs") add("harness", reason("shared local build generation ownership"));
     } else if (path.startsWith("packages/app-sdk/")) {
       add(NODE_COMPONENTS, reason("shared app SDK"));
     } else if (path.startsWith("packages/app-sdk-dotnet/")) {

@@ -66,6 +66,20 @@ export class DevelopmentClient {
     return result;
   }
 
+  async writerStops(): Promise<{ provider: import("@hosty-sdk/app/agent").AgentProviderRef; admissionRef: string; runId: string }[]> {
+    return this.inspection("", "/writer-stops") as ReturnType<DevelopmentClient["writerStops"]>;
+  }
+  async chatRemovals(): Promise<{ workspaceId: string; requestId: string; userId: string; sessionIds: string[] }[]> {
+    return await this.inspection("", "/chat-removals") as { workspaceId: string; requestId: string; userId: string; sessionIds: string[] }[];
+  }
+  async acknowledgeChatRemoval(workspaceId: string, requestId: string): Promise<void> {
+    await this.inspection("", "/" + encodeURIComponent(workspaceId) + "/chat-removals/" + encodeURIComponent(requestId) + "/ack", {});
+  }
+  async detachRemovedChat(sessionId: string, userId: string, requestId: string): Promise<void> {
+    await this.inspection("", `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/retention`,
+      { userId, detachRequestId: requestId }, true);
+  }
+
   async activity(sessionId: string, credential: string, input: { status: string; leaseId?: string; stopped?: boolean; title?: string; sequence?: number }): Promise<{ workspaceId: string | null; revision: number | null; stopRequested: boolean; state: string }> {
     return this.inspection(credential, `/api/internal/apps/${encodeURIComponent(this.appId)}/sessions/${encodeURIComponent(sessionId)}/workspace-activity`, input, true) as Promise<{ workspaceId: string | null; revision: number | null; stopRequested: boolean; state: string }>;
   }
@@ -98,7 +112,7 @@ export class DevelopmentClient {
     const route = absolute ? path : `/api/internal/apps/${encodeURIComponent(this.appId)}/workspace-inspection${path}`;
     const response = await fetch(new URL(route, this.origin!), { method: body ? "POST" : "GET", redirect: "error",
       headers: { authorization: `Bearer ${this.token}`, "X-Hosty-User-Token": credential, "content-type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(/\/previews\/[^/]+\/[^/]+\/run$/.test(path) ? 360_000 : 120_000) });
+      body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(/\/previews\/[^/]+\/[^/]+\/run$/.test(path) ? 360_000 : credential ? 120_000 : 8000) });
     let value: unknown;
     try { value = await response.json(); }
     catch {
@@ -134,11 +148,17 @@ export class DevelopmentClient {
     }
     if (!this.available) throw new AppContextError(503, "workspaces_unavailable", "Workspaces require a Core-managed assistant.");
     if (action === "workspace-inventory") return this.inspection(credential);
+    if (action === "status" && (input.deletionDetails || input.deletionRequestId)) {
+      if (typeof input.workspaceId !== "string" || !/^[a-f0-9]{64}$/.test(input.workspaceId))
+        throw new AppContextError(400, "workspace_invalid", "Supply the aggregate workspace ID.");
+      return this.inspection(credential, "/" + input.workspaceId + "/delete/" + (typeof input.deletionRequestId === "string"
+        ? "status?requestId=" + encodeURIComponent(input.deletionRequestId) : "details"));
+    }
     if (action === "delete-workspace") {
       if (input.workspaceId !== undefined) {
         if (typeof input.workspaceId !== "string" || !/^[a-f0-9]{64}$/.test(input.workspaceId) || input.all || input.workspaceIds)
           throw new AppContextError(400, "workspace_invalid", "Choose an aggregate workspaceId, workspaceIds or all.");
-        return this.inspection(credential, `/${input.workspaceId}/delete`, { requestId: input.requestId });
+        return this.inspection(credential, `/${input.workspaceId}/delete`, { requestId: input.requestId, returnTargets: input.returnTargets });
       }
       return this.inspection(credential, "/delete", input);
     }
@@ -305,7 +325,7 @@ const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   refresh: "Fetch the latest target branch without moving the session branch. Supply requestId.",
   merge: "Explicitly integrate the target branch into this worktree. Requires a clean tree, requestId, expectedHead, message and author identity. Reports conflicts without rewriting history.",
   "abort-merge": "Abort a pending local target integration. Supply requestId and expectedHead.",
-  "delete-workspace": "Delete logical workspaces including unfinished source and activity leases. Supply requestId and either aggregate workspaceId, workspaceIds or all:true. No Pause, Complete, commit or Core confirmation is required. Bulk acceptance fixes the targets; reuse the original request after uncertainty. MCP Ask/Run unprompted/Disabled controls dispatch. Core or ordinary apps using the workspace block deletion; explicitly switch them away first. Owned test environments are finished before source removal. Published remote work and ordinary app data are retained.",
+  "delete-workspace": "Delete logical workspaces including unfinished source and activity leases. Supply requestId and either aggregate workspaceId, workspaceIds or all:true. No Pause, Complete, commit or Core confirmation is required. Bulk acceptance fixes the targets; reuse the original request after uncertainty. MCP Ask/Run unprompted/Disabled controls dispatch. For live consumers inspect get_workspace with deletionDetails:true and include the reviewed returnTargets keys in a single-workspace deletion. Inspect progress with deletionRequestId. Owned test environments are finished before source removal. Published remote work and ordinary app data are retained.",
   "workspace-inventory": "List all registered workspaces available to this app and initiating user, including work created by other sessions, apps and credentials. No primary workspace is required.",
   references: "Attach HTTPS pull request links for session history; these links do not prove merge. Supply requestId and pullRequests.",
 };
@@ -327,7 +347,7 @@ const activationToolProperties = {
 export const DEVELOPMENT_PROVIDER = "hosty:development";
 export const DEVELOPMENT_IDENTITY = "hosty-development-v1";
 export const developmentTools = () => [...feedbackTools(), ...taskTools(), ...contextTools(), ...coreEnvironmentTools(), ...actions.filter(action => !action.startsWith("feedback-") && !action.startsWith("task-") && !action.startsWith("environment-") && !action.startsWith("context-")).map(action => ({ name: action.replaceAll("-", "_"), description: descriptions[action]!,
-  inputSchema: { type: "object", ...(action === "delete-workspace" ? { required: ["requestId"] } : {}), ...(action.startsWith("execution-") ? { required: action === "execution-select" ? ["appId", "requestId", "kind"] : ["appId", "requestId"] } : {}), ...(["prepare", "rename"].includes(action) ? { required: action === "prepare" ? ["appId", "requestId", "name"] : ["requestId", "name"] } : {}), properties: action === "delete-workspace" ? { requestId: { type: "string", format: "uuid" }, workspaceId: { type: "string", description: "Logical workspace ID from workspace_inventory." }, workspaceIds: { type: "array", items: { type: "string" } }, all: { type: "boolean" } } : action === "workspace-inventory" ? {} : action.startsWith("execution-") ? executionToolProperties : action.startsWith("activation-") ? activationToolProperties : action.startsWith("app-dev-") ? devToolProperties : toolProperties, additionalProperties: false },
+  inputSchema: { type: "object", ...(action === "delete-workspace" ? { required: ["requestId"] } : {}), ...(action.startsWith("execution-") ? { required: action === "execution-select" ? ["appId", "requestId", "kind"] : ["appId", "requestId"] } : {}), ...(["prepare", "rename"].includes(action) ? { required: action === "prepare" ? ["appId", "requestId", "name"] : ["requestId", "name"] } : {}), properties: action === "delete-workspace" ? { requestId: { type: "string", format: "uuid" }, workspaceId: { type: "string", description: "Logical workspace ID from workspace_inventory." }, workspaceIds: { type: "array", items: { type: "string" } }, all: { type: "boolean" }, returnTargets: { type: "array", items: { type: "string" } } } : action === "status" ? { ...toolProperties, deletionDetails: { type: "boolean" }, deletionRequestId: { type: "string", format: "uuid" } } : action === "workspace-inventory" ? {} : action.startsWith("execution-") ? executionToolProperties : action.startsWith("activation-") ? activationToolProperties : action.startsWith("app-dev-") ? devToolProperties : toolProperties, additionalProperties: false },
   annotations: { readOnlyHint: ["workspace-inventory", "execution-status", "activation-plan", "activation-status", "activation-list", "app-dev-status", "app-dev-plan", "remote-status", "app-local-status","app-creation-guide", "app-creation-status", "app-creation-capabilities", "workflow-status", "list", "status", "diff", "pr-list", "pr-status", "pr-connections"].includes(action), destructiveHint: ["delete-workspace", "execution-select", "activation-apply", "activation-return", "activation-resume", "app-dev-apply", "cleanup", "pr-merge"].includes(action), openWorldHint: false } }))];
 
 /** Session-key authenticated local MCP surface; Core credentials never enter the agent config. */
@@ -423,7 +443,7 @@ export function workspaceInstructions(workspaces: DevelopmentWorkspace[], coreCo
     "Give each workspace a short name describing its task when preparing it; use rename when the scope materially changes. Names are independent of session titles, branches and agent identity. " +
     "Read app_creation_guide overview and relevant topics on demand before creating or changing an app; refresh after Core version/revision changes. If MCP is disabled or refused, do not bypass it with a shell/CLI bridge; only an already authorized typed coordinator may retrieve the guide. For a new application, use app_create with the user-approved id and bootstrap commit consent before editing. No remote is required. Reuse the same child Core preview between turns; Finish preserves durable source. " +
     "A workspace can have multiple sessions and users editing concurrently. Use participants to inspect active work; reread files before edits and do not attribute the whole workspace diff to this chat. Chat history and approvals remain private. Managed commits require a selected-file review; native writes do not have automatic conflict protection. " +
-    "Workspace operation permissions cover all Core workspaces; allocation owners and sessions are attribution, not an access restriction. Use workspace_inventory without a primary workspace to find source requested by the user. Use delete_workspace for individual or explicit bulk deletion; it needs only the target and a stable requestId, without Commit, Pause, Complete, lease release or a Core confirmation. Core or ordinary apps using the workspace block deletion until explicitly switched away; owned test environments Finish automatically. Preserve any cleanup conditions the user requested. " +
+    "Workspace operation permissions cover all Core workspaces; allocation owners and sessions are attribution, not an access restriction. Use workspace_inventory without a primary workspace to find source requested by the user. Use delete_workspace for individual or explicit bulk deletion; it needs only the target and a stable requestId, without Commit, Pause, Complete, lease release or a Core confirmation. For a live consumer get_workspace with deletionDetails:true returns the replacement targets to confirm. Owned test environments Finish automatically. Preserve any cleanup conditions the user requested. " +
     "Work in registered worktrees relevant to the user's request. Do not access or modify original source checkouts. Use Core workspace tools for Git operations. " +
     "Use environment_create/start for a full child Core with separate users and data. No workspace is required; environment_api operates only on that child after explicit normal password setup. environment_finish deletes its temporary resources. " +
     "Test apps in a child Core using environment_create/start/setup/api with separate accounts and data. Use ordinary app installation and role APIs. Artifact QA does not need a workspace. Export needed results before environment_finish; preserve lifecycle request IDs through reconnects. " +

@@ -21,7 +21,7 @@ const SOCKET_PATH = "/api/event-stream";
 const TICKET_LIFETIME = 30_000;
 const STREAM_LIFETIME = 3_600_000;
 const QUEUE_LIMIT = 1_048_576;
-type Target = { kind: "usage"; connectionId: string } | { kind: "session"; sessionId: string; after: number } | { kind: "decisions" } | { kind: "tasks" } | { kind: "workspaces" } | { kind: "pullRequests"; subscriptionId: string };
+type Target = { kind: "summaries" } | { kind: "usage"; connectionId: string } | { kind: "session"; sessionId: string; after: number } | { kind: "decisions" } | { kind: "tasks" } | { kind: "workspaces" } | { kind: "pullRequests"; subscriptionId: string };
 type Ticket = { actor: AdminActor; credential: string; origin: string; target: Target; expires: number; deadline: number };
 const failure = (status: number, code: string, message: string): never => { throw new AppContextError(status, code, message); };
 const upgradeStatus = (error: unknown) => error instanceof AppContextError || error instanceof AgentApiError || error instanceof ConnectionError ? error.status : 503;
@@ -57,6 +57,7 @@ export class EventStreamTransport {
     const usage = /^\/api\/connections\/([A-Za-z0-9-]{1,128})\/usage\/events$/.exec(path);
     if (usage && this.connections) return { kind: "usage", connectionId: usage[1]! };
     if (path === "/api/tasks/v1/events" && this.tasks) return { kind: "tasks" };
+    if (path === "/api/session-summaries/events") return { kind: "summaries" };
     if (path === "/api/development-workspaces/events") return { kind: "workspaces" };
     if (path === "/api/decisions/events" && this.manager.decisions) return { kind: "decisions" };
     const pr = /^\/api\/pull-requests\/events\?subscriptionId=([a-f0-9]{32})$/.exec(path);
@@ -84,7 +85,7 @@ export class EventStreamTransport {
     return Number.isFinite(activeUntil) ? Math.min(this.now() + STREAM_LIFETIME, activeUntil) : this.now() + STREAM_LIFETIME;
   }
   private async admitted(target: Target, actor: AdminActor) {
-    if (target.kind === "tasks") return;
+    if (target.kind === "tasks" || target.kind === "summaries") return;
     if (target.kind === "usage") { await this.connections!.get(target.connectionId); return; }
     if (target.kind === "workspaces" || target.kind === "pullRequests" || target.kind === "decisions") {
       if (actor.via !== "app-session") failure(401, "reauth_required", "Open Harness through Core to inspect workspaces.");
@@ -194,6 +195,16 @@ export class EventStreamTransport {
             await this.validate(ticket.actor, ticket.credential, AbortSignal.timeout(5_000));
             return this.connections!.usage(id, false);
           }));
+      } else if (ticket.target.kind === "summaries") {
+        const release = this.manager.subscribeSessionSummaries(ticket.actor.userId, () => {
+          void send("event: sessions.changed\ndata: {}\n\n");
+        });
+        // Visible readers resample their owner-filtered inventory on initial open and reconnect.
+        unsubscribe = release;
+        await send("event: stream.ready\ndata: {}\n\n");
+        const keepAlive = setInterval(() => void send(": keepalive\n\n"), 20000);
+        unsubscribe = () => { clearInterval(keepAlive); release(); };
+        if (stopped) unsubscribe();
       } else if (ticket.target.kind === "tasks") {
         const release = await this.tasks!.subscribeEvents(async () => { await this.validate(ticket.actor, ticket.credential, abort.signal); },
           frame => { void send(frame); }, () => finish());

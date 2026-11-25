@@ -11,6 +11,6 @@ it("declares its agent and named speech interfaces", async () => {
   const choices = codexEngine.settings.authentication.filter(auth => auth.interfaceChoices?.length);
   expect(choices.map(auth => auth.id)).toEqual(["api-key"]);
   expect(choices[0]?.interfaceChoices?.map(choice => choice.label)).toEqual(["Provide speech to text", "Provide text to speech"]);
-  expect(codexEngine.capabilities.version).toBe(1);
+  expect(codexEngine.capabilities.version).toBe(2);
   expect(codexEngine.settings.authentication.length).toBeGreaterThan(0);
 });

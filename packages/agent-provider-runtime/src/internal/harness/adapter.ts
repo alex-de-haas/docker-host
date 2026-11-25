@@ -134,7 +134,9 @@ export type HarnessEvent = (
 /** Registry-owned durable history, separate from credential cache and per-run skill discovery. */
 export interface NativeHistoryHome { home: string; directories: Readonly<Record<string, string>> }
 
+export interface NativeObservationCheckpoint { read(): unknown; write(value: unknown): void }
 export interface HarnessStartOptions {
+  nativeObservations?: NativeObservationCheckpoint;
   nativeTools?: "provider_default" | "none";
   nativeConfigHome?: string;
   subagents?: { enabled: boolean; maxConcurrency?: number };

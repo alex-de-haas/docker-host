@@ -28,7 +28,7 @@ export class HarnessTaskExecutor {
   private queue: Promise<unknown> = Promise.resolve();
   private authorities = new Map<string, ExecutionAuthority>();
   constructor(private readonly manager: SessionManager, aggregate?: TaskStore) {
-    this.aggregate = aggregate ?? new TaskStore(manager.store.dataDir, { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", installationId: process.env.HOSTY_APP_INSTALLATION_ID ?? "standalone", key: "default" });
+    this.aggregate = aggregate ?? new TaskStore(manager.store.preferencesDir, { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", installationId: process.env.HOSTY_APP_INSTALLATION_ID ?? "standalone", key: "default" });
     this.configurations = new TaskConfigurations(this.aggregate, manager.profiles ?? undefined);
   }
   private serial<T>(fn: () => Promise<T>): Promise<T> { const p = this.queue.then(fn); this.queue = p.catch(() => {}); return p; }

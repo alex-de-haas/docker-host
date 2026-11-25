@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Hosty Agent Execution API",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "description": "Independent provider execution. Paths are relative to the current Core-declared interface base. Exact UTF-8 command bytes and stable mutation UUIDs are retained across retries. No Harness dependency or raw native session IDs."
   },
   "paths": {
@@ -42,6 +42,170 @@
                   "observation": {
                     "$ref": "#/components/schemas/LiveHistoryObservation"
                   }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/history/ack": {
+      "post": {
+        "operationId": "history.ack",
+        "security": [
+          {
+            "installationHistory": []
+          }
+        ],
+        "description": "Commit the receiver's contiguous durable session position. Requires explicit acknowledgement authority for the consuming installation.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,256}$"
+            },
+            "required": true
+          },
+          {
+            "name": "epoch",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          },
+          {
+            "name": "through",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Acknowledged contiguous position.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "through": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "through"
+                  ],
+                  "additionalProperties": false
                 }
               }
             }
@@ -2613,8 +2777,298 @@
         }
       }
     },
-    "/runs/{runId}/cancel": {
-      "post": {
+    "/runs/{runId}/closure": {
+      "get": {
+        "operationId": "runs.closure",
+        "security": [
+          {
+            "coreOperation": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,256}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized durable result.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Closure"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{runId}/discard": {
+      "put": {
+        "operationId": "runs.discard",
+        "security": [
+          {
+            "coreOperation": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,256}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscardInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized durable result.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscardReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured agent error; retryable never authorizes another mutation UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{runId}/stop": {
+      "put": {
         "operationId": "runs.cancel",
         "security": [
           {
@@ -3933,8 +4387,56 @@
         ],
         "additionalProperties": false
       },
+      "DiscardInput": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "requestId"
+        ],
+        "additionalProperties": false
+      },
+      "DiscardReceipt": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "const": "discarded"
+          }
+        },
+        "required": [
+          "requestId",
+          "runId",
+          "state"
+        ],
+        "additionalProperties": false
+      },
       "CancelInput": {
         "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "requestId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
           {
             "type": "object",
             "properties": {
@@ -5053,7 +5555,8 @@
           "principalId",
           "userId",
           "item",
-          "epoch"
+          "epoch",
+          "sessionPosition"
         ],
         "additionalProperties": false
       },
@@ -5444,6 +5947,92 @@
         ],
         "additionalProperties": true
       },
+      "Closure": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "$ref": "#/components/schemas/QualifiedRef"
+          },
+          "sessionId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,256}$"
+          },
+          "generation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]{0,39})$"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_for_input",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "unknown"
+            ]
+          },
+          "phase": {
+            "enum": [
+              "preparing",
+              "executing",
+              "waiting",
+              "finalizing",
+              "cancelling",
+              "parked",
+              "interrupted",
+              "terminal"
+            ]
+          },
+          "stopConfirmed": {
+            "type": "boolean"
+          },
+          "pendingContinuations": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "type": "object",
+              "properties": {
+                "requestId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "run": {
+                  "$ref": "#/components/schemas/QualifiedRef"
+                },
+                "state": {
+                  "enum": [
+                    "pending",
+                    "awaiting_authorization",
+                    "admitted",
+                    "superseded"
+                  ]
+                }
+              },
+              "required": [
+                "requestId",
+                "run",
+                "state"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "ref",
+          "sessionId",
+          "generation",
+          "revision",
+          "state",
+          "phase",
+          "stopConfirmed"
+        ],
+        "additionalProperties": false
+      },
       "ControlReceipt": {
         "type": "object",
         "properties": {
@@ -5683,7 +6272,7 @@
         "type": "object",
         "properties": {
           "version": {
-            "const": 1
+            "const": 2
           },
           "eventVersions": {
             "type": "array",

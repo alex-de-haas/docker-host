@@ -19,7 +19,7 @@ internal sealed record AppExecutionOperation(string AppId, AppExecutionTargetReq
     WorkspaceActivationActor Actor, DateTimeOffset Installation, string ExpectedBinding, string Fingerprint,
     string State = "running", string Phase = "pending", RuntimePreparation? Prepared = null,
     string? CandidateDigest = null, string? SourceHead = null, string? Code = null, string? Error = null,
-    InstallationPrepare? Review = null, string? OnlyWorkspaceId = null, string? PreviousRequestId = null, string? PreparationLeaseId = null);
+    InstallationPrepare? Review = null, string? OnlyWorkspaceId = null, string? PreviousRequestId = null, string? PreparationLeaseId = null, string? OnlyDevOperationId = null);
 internal sealed record WorkspaceExecutionResult(string AppId, string State, string? Code = null, string? Error = null,
     InstallationPrepare? Review = null);
 internal sealed record WorkspaceExecutionStatus(string RequestId, string State, WorkspaceExecutionResult[] Apps);

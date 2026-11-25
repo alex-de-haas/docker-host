@@ -2,7 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { assertCleanProviderCutover } from "./cutover.js";
+import { assertCleanProviderCutover, openProviderStore } from "./cutover.js";
 import { publicProviderFixture, type PublicProviderFixture } from "./test-fixture.js";
 
 const fixtures: PublicProviderFixture[] = [];
@@ -13,7 +13,7 @@ it("accepts an empty installation and new public consumer conversations", async 
   const f = await fixture();
   await expect(assertCleanProviderCutover(f.store)).resolves.toBeUndefined();
   const record = await f.manager.createSession({ createdBy: f.owner });
-  expect(record).toMatchObject({ agentConsumerVersion: 1, selection: f.selection });
+  expect(record).toMatchObject({ agentConsumerVersion: 2, selection: f.selection });
   await expect(assertCleanProviderCutover(f.store)).resolves.toBeUndefined();
 });
 
@@ -61,4 +61,29 @@ it("refuses a restored legacy record even after the installation cutover was ver
   expect(f.starts).toEqual([]);
   expect(await f.store.readEvents(id)).toEqual([]);
   expect((await f.store.readRecord(id))?.harnessSessionId).toBe("restored-native-session");
+});
+
+it("creates an empty v2 conversation namespace beside a drained v1 installation without altering its settings or chats", async () => {
+  const f = await fixture(), now = new Date().toISOString(), id = randomUUID(), root = f.store.dataDir;
+  await f.store.createSession({ id, status: "idle", createdAt: now, updatedAt: now, createdBy: f.owner,
+    harnessSessionId: null, title: "Archived", lastEventSeq: 0, context: null, retentionVersion: 1 });
+  await writeFile(path.join(root, "agent-consumer-format.json"), '{"version":1}');
+  await writeFile(path.join(root, "settings.json"), "existing-settings");
+  const oldFile = path.join(root, "sessions", id, "record.json"), before = await readFile(oldFile);
+  const store = await openProviderStore(root, null);
+  expect(store.dataDir).toBe(path.join(root, "execution-v2"));
+  expect(await store.listRecords()).toEqual([]);
+  expect(await readFile(oldFile)).toEqual(before);
+  expect(await readFile(path.join(root, "settings.json"), "utf8")).toBe("existing-settings");
+  expect((await openProviderStore(root, null)).dataDir).toBe(store.dataDir);
+});
+
+it("defers cutover of a marked v1 store until its recorded writer drains", async () => {
+  const f = await fixture(), now = new Date().toISOString(), id = randomUUID(), root = f.store.dataDir;
+  await f.store.createSession({ id, status: "running", createdAt: now, updatedAt: now, createdBy: f.owner,
+    harnessSessionId: null, title: "Still running", lastEventSeq: 0, context: null, retentionVersion: 1 });
+  await writeFile(path.join(root, "agent-consumer-format.json"), '{"version":1}');
+  await expect(openProviderStore(root, null)).rejects.toThrow("unconfirmed writer");
+  await expect(readFile(path.join(root, "execution-v2", "agent-consumer-format.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await f.store.readRecord(id))?.status).toBe("running");
 });

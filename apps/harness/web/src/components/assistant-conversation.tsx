@@ -75,8 +75,8 @@ import {
   getHealth,
   stopSession,
   getSession,
-  refreshProviderHistory,
   listAppNames,
+  authorizePendingMessage,
   listSessions,
   uploadAttachment,
   type StoredAttachment,
@@ -113,7 +113,7 @@ function isProviderRecoveryNotice(event: AssistantEvent) {
 
 function isExecutionSettled(record: AssistantSession) {
   return ["idle", "cancelled", "failed", "abandoned"].includes(record.status)
-    && !record.sourceAdmission && !record.storageRecovery && !record.stopUnconfirmed && !record.providerHistoryContact && !record.workerRun
+    && !record.sourceAdmission && !record.storageRecovery && !record.stopUnconfirmed && !record.workerRun
     && record.workerRecovery?.state !== "pending";
 }
 
@@ -171,6 +171,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [stoppingSession, setStoppingSession] = useState<string | null>(null);
+  const [hiddenHistoryNotice, setHiddenHistoryNotice] = useState<string>();
+  const historyNotice = JSON.stringify([session?.id, session?.providerHistoryContact?.runId, session?.providerHistoryContact?.reason]);
   const [stopFailure, setStopFailure] = useState<{ sessionId: string; issue: RecoveryIssue }>();
   const sendingRef = useRef(false);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
@@ -295,14 +297,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const composerHidden = workspaceReadOnly || inventory.loading;
   const storageBlocked = !!session?.storageRecovery || !!session?.sourceAdmission;
   const storageBlocker = session?.storageRecovery ?? (session?.sourceAdmission && !session.sourceAdmissionInFlight
-    ? { message: "This message's acceptance or execution outcome needs review." } : undefined);
+    ? { message: session.sourceAdmission.needsAuthority ? "Sign in again to authorize this message." : "Harness is checking whether the provider accepted this message." } : undefined);
   const localStopIssue = stopFailure?.sessionId === session?.id ? stopFailure?.issue : undefined;
   const stopIssue = localStopIssue ?? (session?.stopUnconfirmed ? { message: "Waiting for the provider to confirm that the response stopped." } : undefined);
   const recoveryVisible = !!storageBlocker || !!stopIssue || session?.workerRecovery?.state === "pending";
   const observedActivity = !!activity?.activity && connection === "connected" && !storageBlocker
     && !session?.stopUnconfirmed && session?.workerRecovery?.state !== "pending";
   const activityUnconfirmed = recoveryVisible && !observedActivity;
-  const displayedStatus = session?.providerHistoryContact || activityUnconfirmed && running ? "unknown" : status;
+  const displayedStatus = session?.providerStatusContact ? "unknown" : status;
   const composerBlocked = composerHidden || storageBlocked;
   const composerBlockedRef = useRef(composerBlocked);
   useLayoutEffect(() => { composerBlockedRef.current = composerBlocked; }, [composerBlocked]);
@@ -594,7 +596,6 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           return;
         }
         if (event.type === "session_activity") {
-          if (sessionSnapshot.current?.providerHistoryContact) return;
           const update = event as unknown as SessionActivity;
           setActivity(current => current?.epoch === update.epoch && current.revision >= update.revision ? current : update);
           return;
@@ -665,7 +666,6 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             ? { ...current, appIds: event.appIds as string[], appContextRevision: revision, lastEventSeq: event.seq, updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(current) ? event.ts : current.updatedAt } : current);
         }
         if (event.type === "assistant_delta") {
-          if (sessionSnapshot.current?.providerHistoryContact) return;
           setStreams(current => receiveTranscriptText(current, event));
           return;
         }
@@ -680,6 +680,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           if (Array.isArray(event.providerHistoryGaps)) setHistoryGaps(event.providerHistoryGaps as ProviderHistoryGap[]);
           setStatus(value);
           const applyStatus = (item: AssistantSession) => item.id === record.id ? { ...item, status: value,
+            ...("providerStatusContact" in event ? { providerStatusContact: event.providerStatusContact as AssistantSession["providerStatusContact"] ?? undefined } : {}),
             ...("providerHistoryContact" in event ? { providerHistoryContact: event.providerHistoryContact as AssistantSession["providerHistoryContact"] ?? undefined } : {}),
             lastEventSeq: Math.max(item.lastEventSeq ?? 0, event.seq),
             updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item;
@@ -688,10 +689,6 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           if (sessionSnapshot.current) {
             sessionSnapshot.current = applyStatus(sessionSnapshot.current);
             if (isExecutionSettled(sessionSnapshot.current)) setStopFailure(issue => issue?.sessionId === record.id ? undefined : issue);
-          }
-          if (event.providerHistoryContact) {
-            setActivity(null);
-            setStreams(emptyTranscriptStreams());
           }
           if (!["running", "awaiting_approval", "awaiting_question"].includes(String(event.status))) {
             setActivity(null);
@@ -798,8 +795,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     pendingDeletes.current.set(sessionId, { confirmation, result });
     return result;
   }, [detachDeleted]);
-  const workspaceDeletion = useWorkspaceDeletion(id => remove(id, false), inventory.refresh);
-  const deletingSessionIds = new Set([...deletingIds, ...[...workspaceDeletion.pending.values()].flatMap(command => command.sessionIds ?? [])]);
+  const workspaceDeletion = useWorkspaceDeletion(inventory.refresh);
+  const deletingSessionIds = deletingIds;
 
   const pickSession = (record: Pick<AssistantSession, "id">) => {
     if (deletingSessionIds.has(record.id)) return;
@@ -1112,8 +1109,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   // Overlay live status while retaining stream updates for previously selected sessions.
   const listedSessions = useMemo(
-    () => session ? sessions.map(record => record.id === session.id ? { ...record, status: displayedStatus, providerHistoryContact: session.providerHistoryContact } : record) : sessions,
-    [sessions, session, displayedStatus],
+    () => session ? sessions.map(record => record.id === session.id ? { ...record, status, providerStatusContact: session.providerStatusContact } : record) : sessions,
+    [sessions, session, status],
   );
 
   const appIconMetadata = useMemo(() => [...new Map([
@@ -1358,7 +1355,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       {fullPage && inventory.error && <div className="shrink-0 px-3 py-2"><InlineError message={inventory.error} /></div>}
       {!failuresInDetails && deletionFailures}
       <div ref={columnsRef} className="flex min-h-0 min-w-0 flex-1">
-      {fullPage && <div inert={workspaceModal} style={{ "--navigation-width": `${columns.widths.navigation}px` } as CSSProperties} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} relative w-full shrink-0 border-r md:w-[var(--navigation-width)]`}><DevelopmentNavigation deletingSessionIds={deletingSessionIds} workspaceDeletion={workspaceDeletion} sessions={listedSessions} activeId={session?.id} activeWorkspaceId={workspace?.id} workspaces={inventory.workspaces}
+      {fullPage && <div inert={workspaceModal} style={{ "--navigation-width": `${columns.widths.navigation}px` } as CSSProperties} className={`${review ? "hidden" : mobileSessions ? "block md:block" : "hidden md:block"} relative w-full shrink-0 border-r md:w-[var(--navigation-width)]`}><DevelopmentNavigation removals={inventory.removals} deletingSessionIds={deletingSessionIds} workspaceDeletion={workspaceDeletion} sessions={listedSessions} activeId={session?.id} activeWorkspaceId={workspace?.id} workspaces={inventory.workspaces}
         createAppAction={createAppAction} onRefresh={inventory.refresh} onClose={() => setMobileSessions(false)} onWorkspace={pickWorkspace} onNew={() => { setMobileSessions(false); void startNew(); }} onPick={pickSession} onDelete={remove} />
         <ColumnResizeHandle label={`Resize ${navigationTitle.toLowerCase()} list`} side="right" className="hidden md:block"
           width={columns.widths.navigation} min={COLUMN_MIN.navigation} max={columns.maximum.navigation} defaultWidth={COLUMN_DEFAULTS.navigation}
@@ -1393,7 +1390,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
               {fullPage ? <>{session && renamingSessionId === session.id ? <SessionTitleInput key={session.id} title={sessionTitle ?? ""} onCommit={async title => { setRenamingSessionId(null); await rename(session.id, title); }} onCancel={() => setRenamingSessionId(null)} /> : <><h1 className="min-w-0 truncate text-sm font-medium">{session ? sessionTitle || "Untitled session" : "New session"}</h1>{session && <Button variant="ghost" size="icon-sm" aria-label="Rename session" onClick={() => setRenamingSessionId(session.id)}><Pencil className="size-3.5" /></Button>}</>}</> : <HostyNavigationBoundary><Sparkles className="h-4 w-4 shrink-0" aria-hidden /><span className="text-sm font-medium">Assistant</span></HostyNavigationBoundary>}
             </div>
             <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
-              {status !== "idle" && <StatusBadge value={displayedStatus} />}
+              {status !== "idle" && <span title={session?.providerStatusContact ? "Last observed " + status + " · " + new Date(session.providerStatusContact.observedAt).toLocaleString() : undefined}><StatusBadge value={displayedStatus} /></span>}
               {composerBlocked && (running || stopping || session?.sourceAdmission || session?.workerRun) && <Button type="button" variant="ghost" size="icon-sm" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
                 {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
               </Button>}
@@ -1451,8 +1448,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         {error && <div className="shrink-0 px-3 pt-2"><InlineError message={error} /></div>}
         {session && (storageBlocker || stopIssue || session.workerRun || session.workerRecovery?.state === "pending" || session.sourceAdmission) && <SessionExecutionRecovery key={session.id}
           sessionId={session.id} refreshKey={`${session.workerRun?.id ?? session.sourceAdmission?.runId ?? ""}:${session.sourceAdmission?.state ?? ""}:${status}:${localStopIssue?.code ?? stopIssue?.message ?? ""}`}
-          blocker={storageBlocker} stopIssue={stopIssue} stopping={stopping} onRetryStop={stop}
-          onRecovered={includeQueue => refreshExecutionStatus(session.id, includeQueue)} />}
+          blocker={storageBlocker} stopIssue={stopIssue}
+          authorize={!stopIssue && session.sourceAdmission?.needsAuthority && session.sourceAdmission.clientRequestId ? async () => {
+            await authorizePendingMessage(session.id, session.sourceAdmission!.clientRequestId!);
+            await refreshExecutionStatus(session.id, true);
+          } : undefined} />}
       </div>
 
       {showSessions ? (
@@ -1503,7 +1503,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     </MessageScrollerItem>
                   ) : item.event.type === "native_agent_group" ? (
                     <MessageScrollerItem key={`native-${nativeTranscript.groups.get(item.event.seq)!.key}`} messageId={`native-${nativeTranscript.groups.get(item.event.seq)!.key}`}>
-                      <NativeSubagents group={nativeTranscript.groups.get(item.event.seq)!} unobservedRunId={session?.providerHistoryContact?.runId} connected={connection === "connected"} appNames={appNames} reviewContext={transcriptReviewContext} />
+                      <NativeSubagents group={nativeTranscript.groups.get(item.event.seq)!} unobservedRunId={session?.providerStatusContact?.runId} connected={connection === "connected"} appNames={appNames} reviewContext={transcriptReviewContext} />
                     </MessageScrollerItem>
                   ) : (
                     <MessageScrollerItem key={item.key} messageId={item.key}>
@@ -1542,17 +1542,14 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     </div>
                     </MessageScrollerItem>
                   )}
-                  {session?.providerHistoryContact && <MessageScrollerItem messageId="provider-contact">
-                    <Alert role="status" variant="warning">
-                      <TriangleAlert aria-hidden />
-                      <AlertTitle>{session.providerHistoryContact.reason === "denied" ? "Provider history access denied."
-                        : session.providerHistoryContact.reason === "invalid" ? "Provider history needs reconciliation." : "Reconnecting to the provider."}</AlertTitle>
-                      <AlertDescription>Last observed {new Date(session.providerHistoryContact.observedAt).toLocaleString()}.</AlertDescription>
-                      <AlertAction><Button variant="outline" size="sm" onClick={() => void refreshProviderHistory(session.id)
-                        .catch(error => setError(error instanceof Error ? error.message : String(error)))}>Refresh</Button></AlertAction>
-                    </Alert>
+                  {session?.providerHistoryContact && hiddenHistoryNotice !== historyNotice && <MessageScrollerItem messageId="provider-contact">
+                    <div role="status" className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
+                      <span>{session.providerHistoryContact.reason === "denied" ? "History access is unavailable."
+                        : "Synchronizing conversation history."}</span>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setHiddenHistoryNotice(historyNotice)}>Dismiss</Button>
+                    </div>
                   </MessageScrollerItem>}
-                  {!session?.providerHistoryContact && !activityUnconfirmed && (running || stopping) && connection !== "disconnected" && <MessageScrollerItem messageId="current-activity">
+                  {!session?.providerStatusContact && !activityUnconfirmed && (running || stopping) && connection !== "disconnected" && <MessageScrollerItem messageId="current-activity">
                     <AssistantActivity status={status} activity={activity?.activity ?? null}
                       connection={connection} stopping={stopping} appNames={appNames} />
                   </MessageScrollerItem>}

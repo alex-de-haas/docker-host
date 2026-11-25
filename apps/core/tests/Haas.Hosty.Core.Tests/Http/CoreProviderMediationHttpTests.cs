@@ -704,7 +704,7 @@ public sealed class CoreProviderMediationHttpTests
         var pendingRun = Guid.NewGuid().ToString(); // No native admission is needed to fence these exact retained start bytes.
         var cancelBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { requestId = Guid.NewGuid().ToString(),
             fenceIfNotAdmitted = new { sessionId, startDigest = request.BodyHash } }));
-        var stop = request with { Operation = "runs.cancel", Method = "POST", Path = $"/runs/{pendingRun}/cancel", RunId = pendingRun,
+        var stop = request with { Operation = "runs.cancel", Method = "PUT", Path = $"/runs/{pendingRun}/stop", RunId = pendingRun,
             BodyHash = CoreProviderMediation.Hash(cancelBytes), Ceiling = null };
         CoreAgentBinding? lastStop = null;
         foreach (var current in new[] { cancelled, cancelled with { Status = "Cancelled", Attempts = [cancelled.Attempts[0] with {
@@ -731,8 +731,8 @@ public sealed class CoreProviderMediationHttpTests
                 }
             }
             foreach (var denied in new[] { request,
-                stop with { Operation = "runs.respond", Path = $"/runs/{pendingRun}/responses" },
-                stop with { Operation = "runs.control", Path = $"/runs/{pendingRun}/controls" },
+                stop with { Operation = "runs.respond", Method = "POST", Path = $"/runs/{pendingRun}/responses" },
+                stop with { Operation = "runs.control", Method = "POST", Path = $"/runs/{pendingRun}/controls" },
                 stop with { Operation = "sessions.create", Method = "PUT", Path = "/sessions/" + sessionId, RunId = null } })
                 Assert.Equal(HttpStatusCode.Forbidden, (await consumerClient.PostAsJsonAsync(authorizeRoute, denied)).StatusCode);
             await Assert.ThrowsAsync<AppIdentityException>(() => agent.Admit(native, grant.AdmissionRef, default));
@@ -774,7 +774,7 @@ public sealed class CoreProviderMediationHttpTests
             "local", "installed", "running", null, null, [], new Dictionary<string, AppSettingValue>(), [], [], [], now, now)
         {
             ConfirmedRoles = [kind], Endpoints = [new("api", "http", "http://provider.invalid", true)],
-            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { [kind] = [new("custom", "api", "/v1", 1, capabilities)] },
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { [kind] = [new("custom", "api", "/v1", kind == "agent" ? 2 : 1, capabilities)] },
         };
         await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(app); return app;
     }

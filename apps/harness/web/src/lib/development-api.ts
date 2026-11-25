@@ -24,6 +24,7 @@ export type Worktree = { observationHealth?: string; observationRevision?: strin
   observation?: { at: string; state: string; conflict?: boolean; head?: string; ahead?: number; behind?: number; error?: string; sessionFiles?: string[];
     local?: { files: Change[]; truncated: boolean; lineStats?: { additions: number; deletions: number } } };
   detailError?: string; path?: string; hasSandboxConsumers?: boolean; consumers?: { kind: string; reference: string; name?: string; managementUrl?: string }[]; leases: string[]; };
+export type WorkspaceRemoval = { workspaceId: string; requestId: string; name: string; reason?: string | null };
 export type WorkspaceParticipation = {
   id: string; revision: number; role: "operator" | "owner" | "contributor"; viewerUserId?: string;
   members: { userId: string; name: string; role: string; worktreeIds: string[]; revoked: boolean }[];
@@ -48,6 +49,7 @@ export async function developmentRequest<T>(path = "", body?: Record<string, unk
   return value;
 }
 export function useDevelopmentInventory(enabled: boolean) {
+  const [removals, setRemovals] = useState<WorkspaceRemoval[]>([]);
   const [workspaces, setWorkspaces] = useState<DevelopmentWorkspace[]>([]);
   const [error, setError] = useState("");
   const [settled, setSettled] = useState(false);
@@ -59,8 +61,8 @@ export function useDevelopmentInventory(enabled: boolean) {
     const load = async () => {
       const current = ++generation;
       try {
-        const value = await developmentRequest<{ workspaces: DevelopmentWorkspace[] }>("", undefined, abort.signal);
-        if (!abort.signal.aborted && generation === current) { setWorkspaces(value.workspaces); setError(""); setSettled(true); }
+        const value = await developmentRequest<{ workspaces: DevelopmentWorkspace[]; removals?: WorkspaceRemoval[] }>("", undefined, abort.signal);
+        if (!abort.signal.aborted && generation === current) { setWorkspaces(value.workspaces); setRemovals(value.removals ?? []); setError(""); setSettled(true); }
       } catch (e) { if (!abort.signal.aborted && generation === current) { setError(e instanceof Error ? e.message : String(e)); setSettled(true); } return false; }
 
     };
@@ -69,7 +71,7 @@ export function useDevelopmentInventory(enabled: boolean) {
     });
     return () => { generation++; abort.abort(); unsubscribe(); };
   }, [enabled, revision]);
-  return { workspaces, error, loading: enabled && !settled, refresh };
+  return { workspaces, removals, error, loading: enabled && !settled, refresh };
 }
 export function repositoryName(repository: string) { return repository.replace(/\.git$/, "").split("/").filter(Boolean).pop() ?? repository; }
 export function changeTotals(files: Change[]) {

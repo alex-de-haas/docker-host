@@ -41,7 +41,7 @@ export class TaskService {
   readonly provider: TaskProviderRef;
   constructor(private readonly manager: SessionManager) {
     this.provider = { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", installationId: process.env.HOSTY_APP_INSTALLATION_ID ?? "standalone", key: "default" };
-    this.store = new TaskStore(manager.store.dataDir, this.provider);
+    this.store = new TaskStore(manager.store.preferencesDir, this.provider);
     this.executor = new HarnessTaskExecutor(manager, this.store);
     this.policies = new TaskPolicies(this.store);
     this.attention = new TaskAttention(this.store, (owner, task, execution) => manager.notifyTask(owner, task, execution));

@@ -2,6 +2,8 @@
 import http.server
 import json
 import pathlib
+import sqlite3
+from contextlib import closing
 import re
 import threading
 import urllib.parse
@@ -47,10 +49,18 @@ def check(context, app, app_origin, link, timed):
     connection = providers.configure_for_harness(app_origin, alice.call, 'codex', 'Installation history',
                                                 secret='synthetic-installation-history')
     assert 'installation-history' in connection['capabilities']
-    folder = context['root'] / 'apps' / app / 'data' / 'sessions'
+    folder = context['root'] / 'apps' / app / 'data' / 'execution-v2' / 'sessions'
     provider_folder = context['root'] / 'apps' / providers.entries['codex']['appId'] / 'data' / 'agent-sessions'
     markers = {uuid.uuid4().hex: threading.Event() for _ in range(3)}
-    source_marker = next(iter(markers))
+    writer_supported = 'scope.workspace-writers' in connection['capabilities']
+    source_marker = next(iter(markers)) if writer_supported else None
+    def run_rows(session_id):
+        with closing(sqlite3.connect((provider_folder / 'execution-v2.sqlite').as_uri() + '?mode=ro', uri=True)) as db:
+            return {key: json.loads(body) for key, body in db.execute(
+                'SELECT id,body FROM execution_runs WHERE session=?', (session_id,))}
+    def transcript(chat_id):
+        with closing(sqlite3.connect((folder / chat_id / 'chat.sqlite').as_uri() + '?mode=ro', uri=True)) as db:
+            return [json.loads(body) for body, in db.execute('SELECT body FROM transcript ORDER BY seq')]
     prepared = {}
     release = threading.Event()
 
@@ -100,36 +110,43 @@ def check(context, app, app_origin, link, timed):
                 raise AssertionError(f'Native gates before shutdown (chat, arrived, chat state, run state, error): {states}')
             identities = [json.loads((folder / chat_id / 'provider-execution.json').read_text()) for _, chat_id, _ in chats]
             assert len({row['runId'] for row in identities}) == 3
-            participants = '/development-workspaces/' + prepared['workspace'] + '/participants'
-            tree_route = '/development-workspaces/' + prepared['workspace'] + '/worktrees/' + prepared['worktree']
-            tree = alice.harness(tree_route)
-            source = pathlib.Path(tree['path']).resolve()
-            assert source.is_relative_to(context['root'].resolve())
-            dirty_file = source / ('history-' + source_marker + '.txt')
-            assert dirty_file.read_text() == source_marker
-            original_head = context['run'](['git', '-C', source, 'rev-parse', 'HEAD'])
-            def roster():
-                rows = alice.harness(participants)['sessions']
-                callers = [row for row in rows if row['canOpen']]
-                assert len(callers) == 1 and callers[0]['sessionId'] == chats[0][1] and callers[0]['viewerPath']
-                execution = [row for row in rows if row.get('kind') == 'execution']
-                assert len(execution) == 1 and not execution[0]['canOpen'] and execution[0]['sessionId'] == identities[0]['sessionId']
-                assert callers[0]['activityGroup'] == execution[0]['activityGroup']
-                assert not any(row['canOpen'] or row.get('viewerPath') for row in bob.harness(participants)['sessions'])
-            roster()
+            if writer_supported:
+                participants = '/development-workspaces/' + prepared['workspace'] + '/participants'
+                tree_route = '/development-workspaces/' + prepared['workspace'] + '/worktrees/' + prepared['worktree']
+                tree = alice.harness(tree_route)
+                source = pathlib.Path(tree['path']).resolve()
+                assert source.is_relative_to(context['root'].resolve())
+                dirty_file = source / ('history-' + source_marker + '.txt')
+                assert dirty_file.read_text() == source_marker
+                original_head = context['run'](['git', '-C', source, 'rev-parse', 'HEAD'])
+                def roster():
+                    rows = alice.harness(participants)['sessions']
+                    callers = [row for row in rows if row['canOpen']]
+                    assert len(callers) == 1 and callers[0]['sessionId'] == chats[0][1] and callers[0]['viewerPath']
+                    execution = [row for row in rows if row.get('kind') == 'execution']
+                    assert len(execution) == 1 and not execution[0]['canOpen'] and execution[0]['sessionId'] == identities[0]['sessionId']
+                    assert callers[0]['activityGroup'] == execution[0]['activityGroup']
+                    assert not any(row['canOpen'] or row.get('viewerPath') for row in bob.harness(participants)['sessions'])
+                roster()
             context['run']([context['cli'], '--data-root', context['root'], 'apps', 'stop', app])
             release.set()
 
             def finished(row):
-                provider_session = json.loads((provider_folder / (row['sessionId'] + '.json')).read_text())
-                run = provider_session['runs'][row['runId']]['snapshot']
+                run = run_rows(row['sessionId'])[row['runId']]['snapshot']
                 return run['state'] == 'succeeded' and run['stopConfirmed']
-            wait(lambda: all(finished(row) for row in identities), 90)
+            try:
+                wait(lambda: all(finished(row) for row in identities), 90)
+            except TimeoutError:
+                for row in identities:
+                    snapshot = run_rows(row['sessionId'])[row['runId']]['snapshot']
+                    result = snapshot.get('result') or {}
+                    print('History gate at consumer shutdown:', row['runId'], snapshot['state'], snapshot['phase'],
+                          snapshot['stopConfirmed'], (result.get('error') or {}).get('code'), flush=True)
+                raise
             timed('start')
 
             def answers(chat_id):
-                journal = (folder / chat_id / 'events.ndjson').read_text().splitlines()
-                return [event['text'] for event in map(json.loads, journal) if event.get('type') == 'assistant_text']
+                return [event['text'] for event in transcript(chat_id) if event.get('type') == 'assistant_text']
 
             # No browser traffic to Harness after the restart until every transcript is on disk.
             def recovered(chat_id, marker):
@@ -137,8 +154,7 @@ def check(context, app, app_origin, link, timed):
                 return record['status'] == 'idle' and 'Completed ' + marker in answers(chat_id)
             wait(lambda: all(recovered(chat_id, marker) for _, chat_id, marker in chats), 90)
             for identity in identities:
-                retained = json.loads((provider_folder / (identity['sessionId'] + '.json')).read_text())
-                assert set(retained['runs']) == {identity['runId']}, 'Catch-up must not start another native run'
+                assert set(run_rows(identity['sessionId'])) == {identity['runId']}, 'Catch-up must not start another native run'
             for owner, chat_id, marker in chats:
                 route = '/sessions/' + chat_id
                 assert [answer for answer in answers(chat_id) if answer.startswith('Completed ')] == ['Completed ' + marker]
@@ -151,19 +167,22 @@ def check(context, app, app_origin, link, timed):
             owner.harness(route + '/credentials', {})
             assert owner.harness(route + '/cancel', {}) == {'cancelled': False}
             assert owner.harness(route)['status'] == 'idle'
-            journal = [json.loads(line) for line in (folder / chat_id / 'events.ndjson').read_text().splitlines()]
+            journal = transcript(chat_id)
             assert not any(event.get('type') == 'session_status' and event.get('status') == 'cancelled' for event in journal)
             assert answers(chat_id).count('Completed ' + marker) == 1
-            native = json.loads((provider_folder / (identities[0]['sessionId'] + '.json')).read_text())
+            native = run_rows(identities[0]['sessionId'])
             run_id = identities[0]['runId']
-            assert set(native['runs']) == {run_id} and native['runs'][run_id]['snapshot']['state'] == 'succeeded'
+            assert set(native) == {run_id} and native[run_id]['snapshot']['state'] == 'succeeded'
             context['say']('PASS: Stop on an already completed turn preserved its result and original status in the HTTP response and conversation')
-            roster()
-            assert alice.harness(tree_route)['path'] == tree['path']
-            assert context['run'](['git', '-C', source, 'rev-parse', 'HEAD']) == original_head
-            assert dirty_file.read_text() == source_marker
-            assert dirty_file.name in context['run'](['git', '-C', source, 'status', '--porcelain', '--', dirty_file.name])
-            context['say']('PASS: native Core MCP preparation replayed the same worktree, linked only the originating chat, and preserved its execution row, private access and dirty source across Harness restart')
+            if writer_supported:
+                roster()
+                assert alice.harness(tree_route)['path'] == tree['path']
+                assert context['run'](['git', '-C', source, 'rev-parse', 'HEAD']) == original_head
+                assert dirty_file.read_text() == source_marker
+                assert dirty_file.name in context['run'](['git', '-C', source, 'status', '--porcelain', '--', dirty_file.name])
+                context['say']('PASS: native Core MCP preparation replayed the same worktree, linked only the originating chat, and preserved its execution row, private access and dirty source across Harness restart')
+            else:
+                context['say']('PROFILE: native workspace writers unavailable on this host; all three standalone chats were exercised.')
             context['say']('PASS: two password users, three chats, native completions while Docker Harness was stopped; all three results persisted exactly once before a browser returned, each visible only to its owner')
         finally:
             release.set()

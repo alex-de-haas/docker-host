@@ -28,17 +28,19 @@ async function readAncestry(file: string): Promise<Ancestry> {
   return { generation: randomUUID() };
 }
 
-type Job = { id: string; sessionId: string; userId: string; epoch: string; from: number; to: number; through: string };
+type Job = { id: string; sessionId: string; userId: string; epoch: string; from: number; to: number; through: string; due?: number; failures?: number };
 
 /** A slow history page can retry from the same fixed boundary while SSE continues delivering. */
+const retryable = (error: unknown) => error instanceof TypeError || error instanceof Error && error.name === "TimeoutError"
+  || error instanceof AgentApiError && error.status >= 500 && error.retryable;
+
 async function readPage<T>(read: () => Promise<T>, signal: AbortSignal): Promise<T> {
   for (let failures = 0; ; failures++) {
     signal.throwIfAborted();
     try { return await read(); }
     catch (error) {
       signal.throwIfAborted();
-      if (!(error instanceof TypeError || error instanceof Error && error.name === "TimeoutError" ||
-        error instanceof AgentApiError && error.status >= 500 && error.retryable)) throw error;
+      if (!retryable(error)) throw error;
       await delay(Math.min(30000, 250 * 2 ** Math.min(failures, 7)), undefined, { signal, ref: false });
     }
   }
@@ -80,29 +82,35 @@ async function backfill(connection: Connection, provider: AgentProviderRef, thro
   }
 
   const work = async () => {
-    let job: Job | undefined;
-    while ((job = jobs.shift())) {
-      const { id, sessionId, epoch, userId, to, through: cut } = job;
-      let { from } = job;
-      for (;;) {
-        signal.throwIfAborted();
-        if (delivery.match(sessionId, userId) !== id) break;
-        try {
-          const page = await readPage(() => connection.range(cut, sessionId, epoch, from, to), signal);
-          for (const observation of page.observations) {
-            signal.throwIfAborted();
-            if (delivery.match(observation.sessionId, observation.userId) !== id ||
-                observation.sessionId !== sessionId || observation.userId !== userId)
-              throw new AgentApiError("history_owner_invalid", "Range history changed its destination.", 502);
-            await delivery.receive(id, { ...observation, recoveryGeneration: generation, replayed: true });
-          }
-          if (page.nextPosition === null) break;
-          from = page.nextPosition;
-        } catch (error) {
-          if (!(error instanceof AgentApiError && error.status === 410 && error.code === "history_range_unavailable")) throw error;
-          await coverage.unavailable(id, provider, { sessionId, epoch, generation }, from, to);
-          break;
+    while (jobs.length) {
+      signal.throwIfAborted();
+      const now = Date.now(), ix = jobs.findIndex(candidate => !candidate.due || candidate.due <= now);
+      if (ix < 0) {
+        const next = jobs.reduce((earliest, candidate) => Math.min(earliest, candidate.due!), Infinity);
+        await delay(Math.min(1000, Math.max(1, next - now)), undefined, { signal, ref: false });
+        continue;
+      }
+      const job = jobs.splice(ix, 1)[0]!;
+      const { id, sessionId, epoch, userId, to, from, through: cut } = job;
+      if (delivery.match(sessionId, userId) !== id) continue;
+      try {
+        const page = await connection.range(cut, sessionId, epoch, from, to);
+        for (const observation of page.observations) {
+          signal.throwIfAborted();
+          if (delivery.match(observation.sessionId, observation.userId) !== id ||
+              observation.sessionId !== sessionId || observation.userId !== userId)
+            throw new AgentApiError("history_owner_invalid", "Range history changed its destination.", 502);
+          await delivery.receive(id, { ...observation, recoveryGeneration: generation, replayed: true });
         }
+        if (page.nextPosition !== null) jobs.push({ ...job, from: page.nextPosition, due: undefined, failures: 0 });
+      } catch (error) {
+        signal.throwIfAborted();
+        if (error instanceof AgentApiError && error.status === 410 && error.code === "history_range_unavailable")
+          await coverage.unavailable(id, provider, { sessionId, epoch, generation }, from, to);
+        else if (retryable(error)) {
+          const failures = (job.failures ?? 0) + 1;
+          jobs.push({ ...job, failures, due: Date.now() + Math.min(30000, 250 * 2 ** Math.min(failures - 1, 7)) });
+        } else throw error;
       }
     }
   };

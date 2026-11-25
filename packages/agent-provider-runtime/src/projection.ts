@@ -174,8 +174,14 @@ export function projectReceipt(store: ProviderStore, session: SessionRecord, rec
   const pendingIds = new Set((receipt.pending ?? []).map(frame => nativeDecision(frame)?.id));
   snapshot.pending = snapshot.pending.filter(value => value.delivery === "next_turn" || record.proxyDecisions?.includes(value.id) || pendingIds.has(value.id));
   if (snapshot.pending.some(value => record.proxyDecisions?.includes(value.id)) && receipt.state === "running") { snapshot.state = "waiting_for_input"; snapshot.phase = "waiting"; }
-  snapshot.effects = { certainty: receipt.state === "interrupted" || Object.values(receipt.effects ?? {}).includes("unknown") ? "unknown" : "known", unresolvedCallIds: Object.keys(receipt.effects ?? {}).map(publicEffectId) };
-  if (snapshot.effects.unresolvedCallIds.length && snapshot.stopConfirmed) { snapshot.stopConfirmed = false; snapshot.state = "unknown"; snapshot.phase = "interrupted"; snapshot.freshness = "last_known"; }
+  snapshot.effects = { certainty: receipt.state === "interrupted" || Object.values(receipt.effects ?? {}).some(value => value === "unknown" || receipt.exitConfirmed) ? "unknown" : "known", unresolvedCallIds: Object.keys(receipt.effects ?? {}).map(publicEffectId) };
+  if (snapshot.stopConfirmed && receipt.state !== "parked" && record.decisionsFenced) {
+    snapshot.state = "cancelled"; snapshot.phase = "terminal"; snapshot.freshness = "current";
+  }
+  if (record.decisionsFenced) {
+    snapshot.pending = [];
+    if (!snapshot.stopConfirmed) snapshot.phase = "cancelling";
+  }
   if (snapshot.stopConfirmed) {
     for (const agent of snapshot.agents ?? []) {
       const state = ["queued", "running", "waiting_for_input"].includes(agent.state) && receipt.state !== "parked"
@@ -187,7 +193,7 @@ export function projectReceipt(store: ProviderStore, session: SessionRecord, rec
       store.emit(record, "agent.updated", { agent: structuredClone(agent) }, source);
     }
   }
-  if (receipt.state === "parked" && snapshot.stopConfirmed) {
+  if (receipt.state === "parked" && snapshot.stopConfirmed && snapshot.effects.unresolvedCallIds.length === 0) {
     for (const decision of snapshot.pending) {
       const frame = receipt.pending?.find(frame => frame.event.type === "question_request" && frame.event.questionId === decision.id
         && frame.event.blocking !== false && String(frame.sequence) === decision.revision);
@@ -211,7 +217,7 @@ export function projectReceipt(store: ProviderStore, session: SessionRecord, rec
   if (before !== valueHash([snapshot.state, snapshot.phase, snapshot.stopConfirmed, snapshot.pending, snapshot.effects, snapshot.selection, snapshot.agents])) {
     if (receipt.exitConfirmed === true && snapshot.effects.unresolvedCallIds.length)
       store.emit(record, "warning", { code: "native_effect_outcomes_unresolved",
-        message: `The native process has stopped, but outcomes of ${snapshot.effects.unresolvedCallIds.length} native tool call(s) remain unresolved. This execution stays fenced until supported provider reconciliation.` });
+        message: `The native process has stopped, but outcomes of ${snapshot.effects.unresolvedCallIds.length} native tool call(s) remain unresolved. The provider retained the unknown outcomes.` });
     store.lifecycle(record);
   }
 }

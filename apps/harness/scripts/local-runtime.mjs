@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile, readdir, lstat, stat, copyFile, rename, rm, rmdir, readlink } from "node:fs/promises";
@@ -6,11 +7,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { cp } from "node:fs/promises";
 import { projectNpm } from "../../../scripts/npm-workspace.mjs";
 
+import { initializeGeneration, useGeneration, generationBuildEnvironment, reclaimGenerations } from "../../../packages/agent-provider-runtime/scripts/generation-use.mjs";
+
 export const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const inputs = [
   "package.json", "package-lock.json", "apps/harness/manifest.json", "apps/harness/package.json",
   "apps/harness/tsconfig.json", "apps/harness/scripts/local-runtime.mjs",
-  "apps/harness/scripts/build-local.mjs", "apps/harness/scripts/stage-runtime.mjs", "scripts/npm-workspace.mjs", "apps/harness/src", "apps/harness/shared",
+  "packages/agent-provider-runtime/scripts/generation-use.mjs", "apps/harness/scripts/build-local.mjs", "apps/harness/scripts/stage-runtime.mjs", "scripts/npm-workspace.mjs", "apps/harness/src", "apps/harness/shared",
   "apps/harness/web/package.json", "apps/harness/web/next.config.ts", "apps/harness/web/tsconfig.json",
   "apps/harness/web/postcss.config.mjs", "apps/harness/web/src", "apps/harness/web/public",
   "packages/app-sdk/package.json", "packages/app-sdk/src", "shared/web",
@@ -136,7 +139,7 @@ export function buildEnvironment() {
 
 export async function run(command, args, cwd, { boundedBuild = false } = {}) {
   await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env: { ...buildEnvironment(), ...(boundedBuild ? { HOSTY_HARNESS_BOUNDED_BUILD: "1" } : {}) }, stdio: "inherit",
+    const child = spawn(command, args, { cwd, env: { ...buildEnvironment(), ...generationBuildEnvironment(cwd), ...(boundedBuild ? { HOSTY_HARNESS_BOUNDED_BUILD: "1" } : {}) }, stdio: "inherit",
       shell: process.platform === "win32" && command === "npm" });
     child.once("error", reject);
     child.once("exit", (code, signal) => code === 0 ? resolve() :
@@ -212,6 +215,7 @@ export async function prepare({ root = repository, store = path.join(root, "apps
   await mkdir(store, { recursive: true });
   const release = await lock(store);
   try {
+    await reclaimGenerations(store, generation);
     if (await completeBundle(generation, key)) {
       log("[local-runtime] Reusing production bundle " + key.slice(0, 12) + " (" +
         Math.round(performance.now() - started) + " ms); no install or build.");
@@ -219,6 +223,7 @@ export async function prepare({ root = repository, store = path.join(root, "apps
     }
     const staging = path.join(store, ".build-" + randomUUID());
     await mkdir(staging);
+    initializeGeneration(staging);
     try {
       log("[local-runtime] Preparing production bundle " + key.slice(0, 12));
       for (const file of files) {
@@ -249,14 +254,18 @@ export async function start(service, root = repository) {
   if (service !== "api") throw new Error("Expected api; native execution belongs to an installed agent provider.");
   const key = await fingerprint(root, await sourceFiles(root));
   const generation = path.join(root, "apps/harness/.local-runtime", key);
-  if (!await completeBundle(generation, key))
-    throw new Error("Harness production bundle is absent or incomplete. Run node scripts/local-runtime.mjs prepare first.");
+  const release = await lock(path.dirname(generation));
+  try {
+    if (!await completeBundle(generation, key))
+      throw new Error("Harness production bundle is absent or incomplete. Run node scripts/local-runtime.mjs prepare first.");
+    useGeneration(generation);
+  } finally { await release(); }
   process.env.NODE_ENV = "production";
   process.env.HOSTY_HARNESS_WEB_OUTPUT = path.join(generation, "web");
   await import(pathToFileURL(path.join(generation, service + ".mjs")).href);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   try {
     if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Harness cached development requires Node.js 24 or newer.");
     if (process.argv[2] === "prepare") await prepare();

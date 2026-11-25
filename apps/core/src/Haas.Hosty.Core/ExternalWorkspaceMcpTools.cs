@@ -52,11 +52,16 @@ internal sealed class ExternalWorkspaceMcpTools
         }, authorization, accessor, cancellationToken);
 
     [McpServerTool(Name = "get_workspace", ReadOnly = true)]
-    [Description("Observe one registered workspace with current workspace authority, including uncommitted changes, branch/base and durable operations. Requires mcp:read and mcp:workspaces. After an uncertain mutation, inspect its operation using the original UUID; do not retry with a new request ID.")]
+    [Description("Observe one registered workspace with current workspace authority, including uncommitted changes, branch/base and durable operations. Requires mcp:read and mcp:workspaces. For an aggregate workspace ID use deletionDetails=true for the current runtime replacement keys or deletionRequestId for confirmed cleanup progress. After an uncertain mutation, inspect its operation using the original UUID; do not retry with a new request ID.")]
     public static Task<string> GetAsync(string workspaceId, ExternalWorkspaceMcpAuthorization authorization,
-        DevelopmentWorkspaceService workspaces, IHttpContextAccessor accessor, CancellationToken cancellationToken)
+        DevelopmentWorkspaceService workspaces, WorkspaceCleanupService cleanup, IHttpContextAccessor accessor, CancellationToken cancellationToken,
+        bool deletionDetails = false, string? deletionRequestId = null)
         => ExecuteAsync(async caller =>
         {
+            if (deletionRequestId is not null)
+                return CoreJson.Text(await cleanup.DeleteStatusAsync(workspaceId, caller.UserId, caller.App?.Id, deletionRequestId, cancellationToken));
+            if (deletionDetails)
+                return CoreJson.Text(await cleanup.DeleteDetailsAsync(workspaceId, caller.UserId, caller.App?.Id, cancellationToken));
             var actor = await OwnerAsync(workspaceId, caller, workspaces, cancellationToken);
             return CoreJson.Text(await workspaces.SessionProjectionAsync(await workspaces.ObserveAsync(workspaceId, actor, cancellationToken), actor, cancellationToken));
         },
@@ -138,18 +143,19 @@ internal sealed class ExternalWorkspaceMcpTools
             authorization, workspaces, accessor, audit, clock, cancellationToken);
 
     [McpServerTool(Name = "delete_workspace", ReadOnly = false, Destructive = true, Idempotent = true)]
-    [Description("Delete registered logical workspaces, including unfinished source, unmerged commits and activity leases. Requires current mcp:read and mcp:workspaces authority. Supply a UUID requestId and either workspaceId, workspaceIds, or all=true. No review or confirmation token is required. MCP Ask/Run unprompted/Disabled is the approval policy. Bulk targets are fixed on acceptance; retry the same request after uncertainty. Core or ordinary apps using the workspace block deletion; explicitly switch them away first. Owned test environments are finished before source removal. Remote published source and ordinary app data are retained.")]
+    [Description("Delete registered logical workspaces, including unfinished source, unmerged commits and activity leases. Requires current mcp:read and mcp:workspaces authority. Supply a UUID requestId and either workspaceId, workspaceIds, or all=true. No review or confirmation token is required. MCP Ask/Run unprompted/Disabled is the approval policy. Bulk targets are fixed on acceptance; retry the same request after uncertainty. For one workspace include the exact returnTargets keys from its inspected deletion details to authorize verified runtime replacements; unreviewed live consumers are preserved. Owned test environments are finished before source removal. Remote published source and ordinary app data are retained.")]
     public static Task<string> DeleteAsync(string requestId, ExternalWorkspaceMcpAuthorization authorization,
         DevelopmentWorkspaceService workspaces, WorkspaceCleanupService cleanup, IHttpContextAccessor accessor,
         AuditStore audit, IClock clock, CancellationToken cancellationToken, string? workspaceId = null,
-        string[]? workspaceIds = null, bool all = false)
+        string[]? workspaceIds = null, bool all = false, string[]? returnTargets = null)
         => ExecuteAsync(async caller =>
         {
             if (workspaceId is not null)
             {
                 if (all || workspaceIds is not null) throw DevelopmentWorkspaceService.Error("request_invalid", "Choose workspaceId, workspaceIds or all.");
-                return CoreJson.Text(await cleanup.ApplyDeleteAsync(workspaceId, caller.UserId, caller.App?.Id, new(requestId), cancellationToken));
+                return CoreJson.Text(await cleanup.ApplyDeleteAsync(workspaceId, caller.UserId, caller.App?.Id, new(requestId, ReturnTargets: returnTargets), cancellationToken, authority: caller.ActivationActor()));
             }
+            if (returnTargets is { Length: > 0 }) throw DevelopmentWorkspaceService.Error("request_invalid", "Confirm runtime replacements for one workspace at a time.");
             return CoreJson.Text(await cleanup.DeleteBatchAsync(caller.UserId, caller.App?.Id, new(requestId, workspaceIds, all), cancellationToken));
         }, authorization, accessor, cancellationToken);
 

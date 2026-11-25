@@ -18,7 +18,7 @@ const config = JSON.parse(input);
 input = "";
 const execute = promisify(execFile);
 const browser = await chromium.launch({ channel: process.env.HOSTY_HISTORY_BROWSER_CHANNEL || "chrome", headless: true });
-const archive = new DatabaseSync(path.join(config.root, "apps", config.provider, "data", "agent-sessions", "installation-history.sqlite"), { readOnly: true });
+const archive = new DatabaseSync(path.join(config.root, "apps", config.provider, "data", "agent-sessions", "execution-v2.sqlite"), { readOnly: true });
 archive.exec("PRAGMA busy_timeout=3000");
 const requests = new Map();
 const native = createServer((request, response) => {
@@ -208,8 +208,10 @@ try {
       return latest.providerExecution?.run?.stopConfirmed && latest.providerExecution.run;
     }, "final provider state");
     assert.equal(run.state, "succeeded");
-    const journal = await readFile(path.join(config.root, "apps", config.app, "data", "sessions", chat.id, "events.ndjson"), "utf8");
-    const persisted = journal.trimEnd().split("\n").map(line => JSON.parse(line))
+    const db = new DatabaseSync(path.join(config.root, "apps", config.app, "data", "execution-v2", "sessions", chat.id, "chat.sqlite"), { readOnly: true });
+    let events;
+    try { events = db.prepare("SELECT body FROM transcript ORDER BY seq").all().map(row => JSON.parse(row.body)); } finally { db.close(); }
+    const persisted = events
       .filter(event => event.type === "assistant_text" && event.text?.startsWith("GAP-CHECK-")).map(event => event.text);
     assert.deepEqual(persisted.sort(), [...chat.texts].sort(), "exactly one durable copy of each message for its chat owner");
   }

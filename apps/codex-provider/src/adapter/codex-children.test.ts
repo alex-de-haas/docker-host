@@ -53,7 +53,7 @@ it("ignores foreign/stale root activity and never infers a parent from agentPath
   f.observe({ ...activity("started"), item: { ...activity("started").item, type: "collabAgentToolCall", receiverAgents: [{ agentPath: "/root/foreign" }] } });
   f.observe(activity("completed"));
   await f.observer.finish(1);
-  expect(f.sources.size).toBe(0); expect(f.read).not.toHaveBeenCalled();
+  expect(f.sources.size).toBe(0); expect(f.read.mock.calls).toEqual([["root-thread"]]);
   expect(f.events.filter(event => event.type === "tool_use")).toEqual([]);
   expect(f.events).toContainEqual(expect.objectContaining({ type: "notice", incomplete: ["tools"] }));
 });
@@ -184,4 +184,30 @@ it("keeps active or previously observed unverified interrupted children partial"
   expect(f.events).toContainEqual(expect.objectContaining({ type: "notice", incomplete: ["tools"] }));
   expect(f.read).not.toHaveBeenCalled();
   expect(f.events.some(event => event.type === "command_result")).toBe(false);
+});
+
+it("correlates a retained completion after the adapter is reconstructed", async () => {
+  const firstEvents: HarnessEvent[] = [], events: HarnessEvent[] = [];
+  let saved: unknown;
+  const checkpoint = { read: () => saved, write: (value: unknown) => { saved = structuredClone(value); } };
+  const reader = vi.fn(async () => history());
+  const build = (sink: HarnessEvent[]) => new CodexChildren("attempt", new Map(), reader, event => sink.push(event), () => true, undefined, checkpoint);
+  build(firstEvents).observe(activity("completed"), "root-thread", "root-turn", 1);
+  expect(firstEvents).toEqual([]);
+  const successor = build(events);
+  successor.observe(activity("started"), "root-thread", "root-turn", 1);
+  await successor.finish(1);
+  expect(events.filter(event => event.type === "command_result")).toEqual([expect.objectContaining({ exitCode: 0, source: expect.objectContaining({ parentAgentId: "root" }) })]);
+  expect(events.filter(event => event.type === "notice")).toEqual([]);
+  expect(saved).toMatchObject({ items: [] });
+});
+
+it("recovers the missing start from the exact parent turn before reporting incomplete history", async () => {
+  const f = fixture();
+  f.read.mockImplementation(async thread => thread === "root-thread"
+    ? { thread: { id: thread, turns: [{ id: "root-turn", items: [activity("started").item] }] } } : history());
+  f.observe(activity("completed")); f.observe(activity("completed")); await f.observer.finish(1);
+  expect(f.read.mock.calls).toEqual([["root-thread"], ["child-thread"]]);
+  expect(f.events.filter(event => event.type === "command_result")).toHaveLength(1);
+  expect(f.events.filter(event => event.type === "notice")).toEqual([]);
 });

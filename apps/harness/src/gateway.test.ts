@@ -241,29 +241,12 @@ describe("gateway", () => {
     expect((await call(`/api/sessions/${healthy.id}`)).status).toBe(200);
   });
 
-  it("limits execution recovery to the owning interactive operator with same-origin writes", async () => {
+  it("does not expose a route to attest to native process exit", async () => {
     const session = await manager.createSession({ createdBy: "user_admin" });
-    const foreign = await manager.createSession({ createdBy: "someone_else" });
-    const inspect = vi.spyOn(manager, "executionRecovery").mockResolvedValue(null);
-    const recover = vi.spyOn(manager, "recoverExecution").mockResolvedValue();
-    const route = `/api/sessions/${session.id}/execution-recovery`;
-    expect((await call(route)).status).toBe(403);
-    expect((await call(route, { method: "POST", body: "{}" })).status).toBe(403);
-    const core = createServer((request, response) => { request.resume(); response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ active: true, userId: "user_admin", hostRole: "host.admin" })); });
-    await new Promise<void>(r => core.listen(0, r));
-    process.env.HOSTY_CORE_ORIGIN = `http://127.0.0.1:${(core.address() as AddressInfo).port}`;
-    process.env.HOSTY_APP_SERVICE_TOKEN = "fixture-service";
-    try {
-      const headers = { cookie: "hosty_harness_identity=hostyg_recovery", "content-type": "application/json" };
-      expect((await fetch(origin + route, { headers })).status).toBe(200);
-      expect((await fetch(origin + route, { method: "POST", headers, body: "{}" })).status).toBe(403);
-      expect((await fetch(`${origin}/api/sessions/${foreign.id}/execution-recovery`, { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(404);
-      expect(recover).not.toHaveBeenCalled();
-      expect((await fetch(origin + route, { method: "POST", headers: { ...headers, origin }, body: "{}" })).status).toBe(200);
-      expect(inspect).toHaveBeenCalledExactlyOnceWith(session.id, "user_admin", "hostyg_recovery");
-      expect(recover).toHaveBeenCalledExactlyOnceWith(session.id, "user_admin", {}, "hostyg_recovery");
-    } finally { await new Promise<void>(r => core.close(() => r())); }
+    const route = "/api/sessions/" + session.id + "/execution-recovery";
+    expect((await call(route)).status).toBe(404);
+    expect((await call(route, { method: "POST", body: JSON.stringify({ consumerExitConfirmed: true }) })).status).toBe(404);
+    expect((await manager.getSession(session.id))?.status).toBe("idle");
   });
 
   it("does not expose retired translation configuration or provider routes", async () => {
@@ -530,7 +513,9 @@ describe("gateway", () => {
     }, "result event");
 
     const deleted = await call(`/api/sessions/${record.id}`, { method: "DELETE" });
-    expect(deleted.status).toBe(200);
+    expect(deleted.status).toBe(202);
+    const receipt = await deleted.json() as { requestId: string };
+    expect(receipt.requestId).toEqual(expect.any(String));
 
     expect(await manager.getSession(record.id)).toBeNull();
     // The transcript is gone from disk, not merely unlisted: a deleted conversation that a later
@@ -539,7 +524,13 @@ describe("gateway", () => {
     expect((await call("/api/sessions", { method: "GET" }).then((r) => r.json())) as { sessions: unknown[] }).toEqual({
       sessions: [],
     });
-    expect((await call(`/api/sessions/${record.id}`, { method: "DELETE" })).status).toBe(404);
+    await waitFor(async () => {
+      const result = await call(`/api/sessions/${record.id}/deletion`);
+      return (await result.json() as { state: string }).state === "removed" ? true : null;
+    }, "physical conversation removal");
+    const replay = await call(`/api/sessions/${record.id}`, { method: "DELETE" });
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ requestId: receipt.requestId, cleanup: "removed" });
     // A stream opened for a session that is gone must refuse before committing a 200: the client
     // treats a clean EOF as a dropped connection and reconnects, so an empty 200 would loop.
     const stream = await fetch(`${origin}/api/sessions/${record.id}/events`, {

@@ -41,6 +41,7 @@ function matches(schema: unknown, value: unknown, depth = 0): boolean {
 /** Consumer business operations have their own explicit admission; they never mint Core MCP access. */
 export class ProviderWorkflow {
   readonly policy: McpToolPolicy;
+  dispatch?: <T>(runId: string, start: () => Promise<T>) => Promise<T>;
   private registrations = new Map<string, Registration>();
   private preferences: AssistantSettings = { systemPrompt: "", mcpProviders: {}, mcpAutoAllow: {}, mcpSkillDigests: {} };
   constructor(private readonly authority: ProviderAuthority,
@@ -116,7 +117,9 @@ export class ProviderWorkflow {
       if (!matches(tool.inputSchema, args) || !object(args) || !fields(args, ["input", "source"]) || !object(args.input)) throw new Error("Workflow arguments must match the declared bounded input and optional qualified source schema.");
       const dispatch = await this.policy.authorize(runId, registration.key, registration.identity, JSON.stringify([request.requestId, rpc.id]), tool.name, args, signal, guard);
       await dispatch();
-      const value = await this.authority.workflow(registration.admissionRef, tool.name.replaceAll("_", "-"), args.input, args.source as AgentSessionWorkflowRequest["source"]);
+      const source = args.source as AgentSessionWorkflowRequest["source"], input = args.input;
+      const invoke = () => this.authority.workflow(registration.admissionRef, tool.name.replaceAll("_", "-"), input, source);
+      const value = await (this.dispatch ? this.dispatch(runId, invoke) : invoke());
       const text = JSON.stringify(value); if (text === undefined || Buffer.byteLength(text) > 1024 * 1024) throw new Error("The workflow response exceeds its supported byte allowance.");
       return result({ content: [{ type: "text", text }] });
     } catch (error) { return { status: 200, body: { jsonrpc: "2.0", id: rpc.id, error: { code: -32001, message: error instanceof Error ? error.message : "Consumer workflow refused." } } }; }

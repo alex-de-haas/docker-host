@@ -14,7 +14,7 @@ import { ProviderStore, bytesHash, type VerifiedOperation } from "./store.js";
 import { AttachmentStore } from "./attachments.js";
 import { agentRoutes, json } from "./server.js";
 import { projectEvent } from "./projection.js";
-import * as persistence from "./internal/persistence.js";
+
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
@@ -33,6 +33,54 @@ async function fixture(capacity = 4, sessionId: string = randomUUID()) {
   await controller.createSession(sessionId, create, JSON.stringify(create), actor);
   return { dir, store, authority, connections, controller, driver, sessionId };
 }
+describe("attempt command interleavings", () => {
+  // The small reference machine has two durable facts: first submission and monotonic stop intent.
+  // Duplicates include lost HTTP replies, and each step uses a newly reopened provider database.
+  for (const sequence of ["stop start start stop", "start stop start stop", "stop stop start", "start start stop"]) {
+    it(sequence, async () => {
+      const f = await fixture(), id = randomUUID(), command = input("1"), bytes = JSON.stringify(command);
+      const stop = { requestId: randomUUID() };
+      let submitted = false, stopped = false, dispatches = 0, generation: string | undefined;
+      for (const operation of sequence.split(" ")) {
+        const store = new ProviderStore(f.store.directory, provider);
+        await store.initialize();
+        const controller = new ProviderController(store, f.authority, f.connections, fixtureCapabilities, 4);
+        controller.driver = f.driver;
+        if (operation === "start") {
+          const snapshot = await controller.startRun(f.sessionId, id, command, bytes, actor);
+          if (!submitted && !stopped) dispatches++;
+          submitted = true;
+          if (generation) expect(snapshot.generation).toBe(generation);
+          generation = snapshot.generation;
+          if (!dispatches) expect(snapshot).toMatchObject({ state: "cancelled", stopConfirmed: true });
+        } else {
+          const receipt = await controller.cancel(id, stop, JSON.stringify(stop), actor);
+          stopped = true;
+          if (generation) expect(receipt.generation).toBe(generation);
+          generation = receipt.generation;
+          if (!dispatches) expect(receipt.state).toBe("applied");
+        }
+        expect(f.driver.start).toHaveBeenCalledTimes(dispatches);
+        expect(store.occupiedSlots()).toBe(dispatches);
+      }
+    });
+  }
+  it("can close an authorized but undelivered start by run ID without exposing a foreign writer", async () => {
+    const f = await fixture(), id = randomUUID(), command = input("1"), bytes = JSON.stringify(command);
+    const stop = { requestId: randomUUID() };
+    await f.controller.cancel(id, stop, JSON.stringify(stop), { ...actor, userId: "foreign" });
+    const binding = { ...actor, sessionId: f.sessionId, originalStartDigest: bytesHash(bytes) };
+    const receipt = await f.controller.cancel(id, stop, JSON.stringify(stop), binding);
+    expect(await f.controller.startRun(f.sessionId, id, command, bytes, actor)).toMatchObject({ generation: receipt.generation, state: "cancelled", stopConfirmed: true });
+    expect(f.driver.start).not.toHaveBeenCalled();
+    await expect(f.store.run(id, { ...actor, userId: "foreign" })).rejects.toMatchObject({ status: 404 });
+    const other = randomUUID();
+    await f.controller.cancel(other, stop, JSON.stringify(stop), { ...actor, userId: "foreign" });
+    await f.controller.startRun(f.sessionId, other, command, bytes, actor);
+    expect(f.driver.start).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("independent provider admission", () => {
   it("creates durable metadata without starting an SDK and pins one immutable configuration", async () => {
     const f = await fixture(); expect(f.driver.start).not.toHaveBeenCalled(); expect(f.authority.admit).not.toHaveBeenCalled();
@@ -51,25 +99,19 @@ describe("independent provider admission", () => {
     expect(first.cursor).toBe(f.store.cursor(first.generation, first.lastSequence));
     expect((await f.store.run(runId)).record.events.at(-1)?.data.snapshot).toEqual(first);
   });
-  it("dispatches one committed admission and one Stop while history is unavailable", async () => {
-    const f = await fixture(), id = randomUUID(), command = input("1"), body = JSON.stringify(command);
-    const fault = vi.spyOn(f.store.history, "publish").mockImplementation(() => {
-      throw Object.assign(new Error("synthetic publication failure"), { code: "SQLITE_BUSY" });
-    });
-    const start = await f.controller.startRun(f.sessionId, id, command, body, actor);
-    expect(await f.controller.startRun(f.sessionId, id, command, body, actor)).toEqual(start);
+  it("rolls back admission and capacity if history cannot commit, and admits the exact retry once", async () => {
+    const f = await fixture(1), id = randomUUID(), command = input("1"), body = JSON.stringify(command);
+    const cursor = f.store.history.page(actor).through;
+    f.store.history.database(db => db.exec("CREATE TRIGGER fail_fact BEFORE INSERT ON history_facts BEGIN SELECT RAISE(ABORT,'disk full'); END"));
+    await expect(f.controller.startRun(f.sessionId, id, command, body, actor)).rejects.toMatchObject({ code: "storage_unavailable" });
+    await expect(f.store.run(id, actor)).rejects.toMatchObject({ code: "run_not_found" });
+    expect(f.store.history.page(actor, cursor).observations).toEqual([]);
+    expect(f.store.occupiedSlots()).toBe(0);
+    expect(f.driver.start).not.toHaveBeenCalled();
+    f.store.history.database(db => db.exec("DROP TRIGGER fail_fact"));
+    const run = await f.controller.startRun(f.sessionId, id, command, body, actor);
+    expect(await f.controller.startRun(f.sessionId, id, command, body, actor)).toEqual(run);
     expect(f.driver.start).toHaveBeenCalledOnce();
-    const cancel = { requestId: randomUUID(), expectedGeneration: start.generation, expectedRevision: start.revision };
-    await expect(f.controller.cancel(id, cancel, JSON.stringify(cancel), actor)).resolves.toMatchObject({ state: "accepted" });
-    await f.controller.close();
-    expect(f.driver.cancel).toHaveBeenCalledOnce();
-    expect((await f.store.run(id, actor)).record.controls[cancel.requestId]?.receipt.state).toBe("applied");
-    fault.mockRestore();
-    await f.store.retryHistory();
-    const history = f.store.history.page(actor);
-    expect(history.observations.filter(row => row.item.kind === "event" && row.item.event.type === "control.updated")).toHaveLength(2);
-    await f.store.retryHistory();
-    expect(f.store.history.page(actor)).toEqual(history);
   });
   it("a before-admission cancellation fences a delayed identical start without a native effect", async () => {
     const f = await fixture(), id = randomUUID(), command = input("1"), body = JSON.stringify(command);
@@ -82,67 +124,36 @@ describe("independent provider admission", () => {
     expect(f.driver.start).not.toHaveBeenCalled();
     expect((await f.store.load(f.sessionId)).session.activeRun).toBeNull();
   });
-  it("isolates an uncertain attempt, counts its slot and reopens only the verified preimage", async () => {
-    const f = await fixture(2), command = input("1"), uncertainRun = randomUUID(), body = JSON.stringify(command);
-    const other = randomUUID(), third = randomUUID();
+  it("keeps a healthy conversation writable while a different session's transaction fails", async () => {
+    const f = await fixture(2), other = randomUUID(), command = input("1"), body = JSON.stringify(command);
     await f.controller.createSession(other, create, JSON.stringify(create), actor);
-    await f.controller.createSession(third, create, JSON.stringify(create), actor);
-    const fault = vi.spyOn(persistence, "durableWriteFile").mockImplementationOnce(async (target, bytes) => {
-      const temp = target + ".failed-test.tmp";
-      await writeFile(temp, bytes);
-      throw new persistence.DurableWriteError(target, Object.assign(new Error("simulated locked target"), { code: "EBUSY" }), temp);
-    });
-    try {
-      await expect(f.controller.startRun(f.sessionId, uncertainRun, command, body, actor)).rejects.toMatchObject({ code: "storage_uncertain" });
-    } finally { fault.mockRestore(); }
-    expect(f.driver.start).not.toHaveBeenCalled();
-    await expect(f.store.run(uncertainRun, actor)).rejects.toMatchObject({ code: "storage_uncertain" });
-    await expect(f.store.run(uncertainRun, { ...actor, userId: "unrelated" })).rejects.toMatchObject({ code: "session_not_found" });
-    await expect(f.store.run(randomUUID(), actor)).rejects.toMatchObject({ code: "run_not_found" });
-
+    f.store.history.database(db => db.exec("CREATE TRIGGER fail_one BEFORE INSERT ON execution_runs WHEN NEW.session='" + f.sessionId + "' BEGIN SELECT RAISE(ABORT,'locked'); END"));
+    const id = randomUUID();
+    await expect(f.controller.startRun(f.sessionId, id, command, body, actor)).rejects.toMatchObject({ code: "storage_unavailable" });
     const { client, close } = await httpClient(f);
-    const abort = new AbortController();
     try {
-      const attachment = await client.uploadAttachment(randomUUID(), Buffer.from("An independent attachment"), { mediaType: "text/plain" });
-      const independent: AgentRunInput = { ...command, input: { text: "An independent chat", attachments: [attachment] } };
-      const started = await client.startRun(other, randomUUID(), independent);
-      expect(started.state).toBe("queued");
-      const stream = client.events(started.ref.id, { signal: abort.signal });
-      expect((await stream.next()).value?.event).toMatchObject({ type: "run.updated", data: { snapshot: { ref: started.ref } } });
-      abort.abort();
-      await stream.return(undefined);
-      expect((await f.store.records(true, true)).map(record => record.id)).toEqual(expect.arrayContaining([other, third]));
-      expect((await f.store.records(true, true)).map(record => record.id)).not.toContain(f.sessionId);
-      await expect(f.controller.startRun(third, randomUUID(), command, body, actor)).rejects.toMatchObject({ code: "provider_busy" });
-      const cancel = { requestId: randomUUID(), expectedGeneration: started.generation, expectedRevision: started.revision };
-      await expect(f.controller.cancel(started.ref.id, cancel, JSON.stringify(cancel), actor)).resolves.toMatchObject({ state: "accepted" });
-
-      await f.store.refreshUncertainRun(uncertainRun, { ...actor, userId: "unrelated" });
-      await expect(f.store.run(uncertainRun, actor)).rejects.toMatchObject({ code: "storage_uncertain" });
-      await expect(client.run(uncertainRun)).rejects.toMatchObject({ code: "run_not_found" });
-      const exact = await client.startRun(f.sessionId, uncertainRun, command);
-      expect(exact.state).toBe("queued");
-      expect((await client.startRun(f.sessionId, uncertainRun, command))).toEqual(exact);
+      const attachment = await client.uploadAttachment(randomUUID(), Buffer.from("Independent attachment"), { mediaType: "text/plain" });
+      const healthy = await client.startRun(other, randomUUID(), { ...command, input: { text: "another chat", attachments: [attachment] } });
+      expect((await client.run(healthy.ref.id)).ref).toEqual(healthy.ref);
+      await expect(client.run(id)).rejects.toMatchObject({ code: "run_not_found" });
+      f.store.history.database(db => db.exec("DROP TRIGGER fail_one"));
+      const admitted = await client.startRun(f.sessionId, id, command);
+      expect(await client.startRun(f.sessionId, id, command)).toEqual(admitted);
+      expect(f.store.occupiedSlots()).toBe(2);
       expect(f.driver.start).toHaveBeenCalledTimes(2);
-    } finally { abort.abort(); await close(); await f.controller.close(); }
+    } finally { await close(); }
   });
 
-  it("does not reopen a write with a possibly published aggregate until a new store observes it", async () => {
-    const f = await fixture(), command = input("1"), runId = randomUUID(), durableWrite = persistence.durableWriteFile;
-    const fault = vi.spyOn(persistence, "durableWriteFile").mockImplementationOnce(async (target, bytes) => {
-      await durableWrite(target, bytes);
-      throw new persistence.DurableWriteError(target, new Error("simulated directory sync failure"));
-    });
-    try {
-      await expect(f.controller.startRun(f.sessionId, runId, command, JSON.stringify(command), actor)).rejects.toMatchObject({ code: "storage_uncertain" });
-    } finally { fault.mockRestore(); }
-    await f.store.refreshUncertainRun(runId, actor);
-    await expect(f.store.run(runId, actor)).rejects.toMatchObject({ code: "storage_uncertain" });
-    expect(f.driver.start).not.toHaveBeenCalled();
-    const reopened = new ProviderStore(f.store.directory, provider);
-    await reopened.initialize();
-    try { expect((await reopened.run(runId, actor)).record.snapshot.state).toBe("queued"); }
-    finally { reopened.history.close(); }
+  it("rejects a stale write from an independently opened store and preserves the committed snapshot", async () => {
+    const f = await fixture(), other = new ProviderStore(f.store.directory, provider);
+    await other.initialize();
+    const stale = await other.load(f.sessionId);
+    const id = randomUUID(), command = input("1");
+    await f.controller.startRun(f.sessionId, id, command, JSON.stringify(command), actor);
+    await expect(other.save(stale)).rejects.toMatchObject({ code: "state_changed" });
+    expect((await other.run(id, actor)).record.snapshot.state).toBe("queued");
+    expect(other.occupiedSlots()).toBe(1);
+    other.history.close();
   });
 
   it("retains unknown-stop capacity after process restart", async () => {
@@ -176,7 +187,7 @@ async function httpClient(f: Awaited<ReturnType<typeof fixture>>) {
   const server = createServer((req, res) => { void route(req, res, new URL(req.url!, "http://test.invalid"))
     .catch(error => json(res, error.status ?? 500, { error: { code: error.code, message: error.message, retryable: false } })); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/agent/v1`;
+  const baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/agent/v2`;
   const client = new AgentClient({ provider, authorize: async request => {
     const token = randomUUID(); proofs.set(token, request);
     return { provider, baseUrl, token, expiresAt: new Date(Date.now() + 120000).toISOString() };
@@ -235,10 +246,10 @@ describe("provider-owned assets and transport", () => {
     const server = createServer((req, res) => { void route(req, res, new URL(req.url!, "http://test.invalid")).catch(error => json(res, error.status ?? 500, { error: { code: error.code, message: error.message, retryable: false } })); });
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); const address = server.address() as { port: number };
     const statuses: Array<{ method?: string; path: string; status: number }> = [];
-    const client = new AgentClient({ provider, fetch: async (url, init) => { const response = await fetch(url, init); statuses.push({ method: init?.method, path: new URL(String(url)).pathname, status: response.status }); return response; }, authorize: async request => { const token = randomUUID(); proofs.set(token, request); return { provider, baseUrl: `http://127.0.0.1:${address.port}/api/agent/v1`, token, expiresAt: new Date(Date.now() + 120000).toISOString() }; } });
+    const client = new AgentClient({ provider, fetch: async (url, init) => { const response = await fetch(url, init); statuses.push({ method: init?.method, path: new URL(String(url)).pathname, status: response.status }); return response; }, authorize: async request => { const token = randomUUID(); proofs.set(token, request); return { provider, baseUrl: `http://127.0.0.1:${address.port}/api/agent/v2`, token, expiresAt: new Date(Date.now() + 120000).toISOString() }; } });
     const abort = new AbortController();
     try {
-      expect((await client.capabilities()).version).toBe(1); expect((await client.connections()).connections[0]?.name).toBe("Configured");
+      expect((await client.capabilities()).version).toBe(2); expect((await client.connections()).connections[0]?.name).toBe("Configured");
       const createdId = randomUUID(); await client.createSession(createdId, create); await client.createSession(createdId, create);
       const id = randomUUID(), command = input("1"), snapshot = await client.startRun(f.sessionId, id, command);
       await client.startRun(f.sessionId, id, command);

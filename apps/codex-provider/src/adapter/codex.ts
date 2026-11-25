@@ -241,12 +241,9 @@ class CodexRun implements HarnessRun {
   private predictedTurns = new Set<string>();
   private activityTurnId: string | null = null;
   private readonly interruptedTurns = new Map<string, Set<() => void>>();
-  private readonly commandRun = randomUUID();
+  private readonly commandRun: string;
   private commandTurn = 0;
-  private readonly children = new CodexChildren(this.commandRun, this.childSources,
-    threadId => this.request("thread/read", { threadId, includeTurns: true }, CODEX_CHILD_METADATA_TIMEOUT_MS),
-    event => this.emit(event), () => !this.stopped && !this.failed,
-    threadId => this.request("thread/turns/list", { threadId, limit: 1, itemsView: "full" }, CODEX_CHILD_METADATA_TIMEOUT_MS));
+  private readonly children: CodexChildren;
   private readonly commandCalls = new Map<string, { id: string; turnId: string }>();
   private readonly completedCommandCalls = new Set<string>();
   private readonly completedToolCalls = new Set<string>();
@@ -278,6 +275,11 @@ class CodexRun implements HarnessRun {
     private readonly auth: CodexAuthConfig,
     private readonly strictResume = false,
   ) {
+    this.commandRun = options.workerRunId ?? randomUUID();
+    this.children = new CodexChildren(this.commandRun, this.childSources,
+    threadId => this.request("thread/read", { threadId, includeTurns: true }, CODEX_CHILD_METADATA_TIMEOUT_MS),
+    event => this.emit(event), () => !this.stopped && !this.failed,
+    threadId => this.request("thread/turns/list", { threadId, limit: 1, itemsView: "full" }, CODEX_CHILD_METADATA_TIMEOUT_MS), options.nativeObservations);
     // Resolved synchronously from the mode: the login itself already happened during probe, and a
     // session must not wait on it. In interactive mode this is the operator's own home.
     const env = authMode(auth) === "api-key"
@@ -369,7 +371,7 @@ class CodexRun implements HarnessRun {
 
   resolveApproval(approvalId: string, decision: "allow" | "deny", message?: string): boolean {
     const pending = this.approvals.get(approvalId);
-    if (!pending) {
+    if (!pending || this.stopped) {
       return false;
     }
 
@@ -1125,6 +1127,7 @@ class CodexRun implements HarnessRun {
         source = { agentId: id, parentAgentId: parent, ...(callId ? { parentToolCallId: callId } : {}) };
         this.childSources.set(id, source);
       }
+      if (spawning) this.children.correlate(id, item.senderThreadId, String(params.turnId), this.commandTurn);
       const value = states[id], status = value && typeof value === "object" ? (value as Record<string, unknown>).status : undefined;
       // A wait/list/close operation may only name a receiver, even after it has
       // already finished. That is not a new observation of the child's state.

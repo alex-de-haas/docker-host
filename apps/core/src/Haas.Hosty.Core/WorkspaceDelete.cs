@@ -1,6 +1,12 @@
+using Haas.Hosty.Launch;
+
 namespace Haas.Hosty.Core;
 
-internal sealed record WorkspaceDeleteCommand(string RequestId);
+internal sealed record WorkspaceDeleteCommand(string RequestId, bool RemoveAttachedSessions = false, string[]? ReturnTargets = null);
+internal sealed record WorkspaceDeleteOwner(string? AppId, DateTimeOffset? Installation, bool RemoveAttachedSessions,
+    WorkspaceDeleteReturn[]? Returns = null, WorkspaceActivationActor? Authority = null);
+internal sealed record WorkspaceChatRemoval(string WorkspaceId, string RequestId, string UserId, string[] SessionIds);
+internal sealed record WorkspaceWriterStop(string Consumer, DateTimeOffset Installation, HostySdk.App.HostyProviderRef Provider, string AdmissionRef, string RunId);
 internal sealed record WorkspaceDeleteActivity(string Kind, string Reference, string State, string? Detail = null);
 internal sealed record WorkspaceDeleteBatchCommand(string RequestId, string[]? WorkspaceIds = null, bool All = false);
 internal sealed record WorkspaceDeleteTarget(string WorkspaceId, string RequestId, string State = "pending", string? Error = null, string[]? Allocations = null);
@@ -34,8 +40,8 @@ internal sealed partial class DevelopmentWorkspaceService
         => Locked(Hash(OwnerIdentity(owner)), () => BuildDiscardPlan(owner, resources, ct, direct: true), ct);
 
     internal Task<WorkspaceDiscardJournal> AdmitDeleteAsync(WorkspaceOwner owner, string actor, string requestId,
-        WorkspaceDiscardResource[] resources, CancellationToken ct, string[]? expectedAllocations = null)
-        => Locked(Hash(OwnerIdentity(owner)), async () =>
+        WorkspaceDiscardResource[] resources, CancellationToken ct, string[]? expectedAllocations = null, WorkspaceDeleteOwner? deleteOwner = null)
+        => Locked("workspace-participation", () => Locked(Hash(OwnerIdentity(owner)), async () =>
         {
             RequestId(requestId);
             await RequireWorkspaceUserAsync(actor, ct);
@@ -45,7 +51,7 @@ internal sealed partial class DevelopmentWorkspaceService
             {
                 if (prior.State == "pending")
                 {
-                    await RequireDeleteRuntimeIdleAsync(prior.Snapshots ?? [], ct, prior.Resources.Select(r => r.Id));
+                    if (prior.DeleteOwner?.Returns is not { Length: > 0 }) await RequireDeleteRuntimeIdleAsync(prior.Snapshots ?? [], ct, prior.Resources.Select(r => r.Id));
                     await EnsureDiscardFence(owner, prior, ct);
                 }
                 return prior;
@@ -53,6 +59,9 @@ internal sealed partial class DevelopmentWorkspaceService
             var pending = (await PendingDiscardJournalsAsync(actor, ct)).FirstOrDefault(j => j.WorkspaceId == id);
             if (pending is not null)
             {
+                if (deleteOwner?.RemoveAttachedSessions == true || pending.DeleteOwner?.RemoveAttachedSessions == true
+                    || deleteOwner?.Returns is { Length: > 0 } || pending.DeleteOwner?.Returns is { Length: > 0 })
+                    throw Error("request_conflict", "A deletion with a different confirmed selection already owns this workspace.");
                 await RequireDeleteRuntimeIdleAsync(pending.Snapshots ?? [], ct, pending.Resources.Select(r => r.Id));
                 return pending;
             }
@@ -61,7 +70,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 .Order(StringComparer.Ordinal).SequenceEqual(expectedAllocations))
                 throw Error("allocation_changed", "The original workspace allocation was replaced; the replacement is preserved.");
             if (trees.Length == 0) throw Error("not_found", "Workspace not found.");
-            await RequireDeleteRuntimeIdleAsync(trees, ct, resources.Select(r => r.Id));
+            if (deleteOwner?.Returns is not { Length: > 0 }) await RequireDeleteRuntimeIdleAsync(trees, ct, resources.Select(r => r.Id));
             var workflow = await WorkflowAsync(owner, ct);
             // Admission records identities, not a human review of mutable source bytes. Inspection
             // is optional and cannot veto deletion when Git status or an external writer is unknown.
@@ -70,19 +79,27 @@ internal sealed partial class DevelopmentWorkspaceService
                 trees.Select(t => new WorkspaceDiscardTree(t.Id, t.Repository, t.Path, t.Branch,
                     t.Observation?.Head, "", [], [], [], 0)).ToArray(), resources, []);
             var command = new WorkspaceDiscardApply(requestId, workflow.Revision, plan.Digest, plan.Name);
+            var participants = deleteOwner?.RemoveAttachedSessions == true
+                ? await ReadParticipationAsync(id, ct) ?? throw Error("membership_invalid", "Workspace participation is unavailable.")
+                : null;
+            var selectedSessions = participants?.Sessions.Where(s => s.DetachedAt is null && s.Kind != "execution" &&
+                    s.Session.UserId == actor && s.Session.AppId == deleteOwner!.AppId && s.Session.Installation == deleteOwner.Installation)
+                .Select(s => s.Session.SessionId).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
             var journal = new WorkspaceDiscardJournal(actor, id, command, "pending", owner, plan, trees,
                 trees.Select(t => new WorkspaceDiscardItem(t.Id, t.State == "released" ? "removed" : "pending")).ToArray(),
                 resources.Select(r => new WorkspaceDiscardItem(r.Id, "pending", r.Kind)).ToArray(),
                 resources.Select(r => new WorkspaceCleanupResource(r.Id, r.Kind, Guid.NewGuid().ToString("D"), r.Revision)).ToArray(),
-                Direct: true, Activity: trees.SelectMany(t => t.Leases.Select(l =>
+                Direct: true, DeleteOwner: deleteOwner, SelectedSessions: selectedSessions, Activity: trees.SelectMany(t => t.Leases.Select(l =>
                     new WorkspaceDeleteActivity("lease", l, "retained", "External process exit is unknown. The lease is retired when source is removed."))).ToArray());
+            if (trees.Any(t => t.Leases.Length > 0))
+                journal = journal with { Writers = await new CoreAgentAuthorizationStore(paths).WorkspaceWritersAsync(trees, ct) };
             await SaveDiscardAsync(journal);
             await EnsureDiscardFence(owner, journal, ct);
             foreach (var tree in trees)
                 await Save(tree with { Operations = tree.Operations.Select(o => o.State is "pending" or "unknown"
                     ? o with { State = "failed", Error = "Canceled by workspace deletion " + requestId + "." } : o).ToArray() });
             return journal;
-        }, ct);
+        }, ct), ct);
 }
 
 internal sealed partial class WorkspaceCleanupService
@@ -117,7 +134,8 @@ internal sealed partial class WorkspaceCleanupService
             catch (Exception ex) when (ex is AppLifecycleException or IOException or UnauthorizedAccessException)
             { blockers.Add(tree.Repository + ": " + ex.Message); }
         }
-        return plan with { Blockers = blockers.ToArray() };
+        var transitions = returns is null ? [] : await returns.InventoryAsync(workspaceId, userId, ct);
+        return plan with { Blockers = blockers.ToArray(), ReturnTargets = transitions };
     }
 
     public async Task<WorkspaceDiscardProgress> DeleteStatusAsync(string workspaceId, string userId, string? caller, string requestId, CancellationToken ct)
@@ -129,18 +147,23 @@ internal sealed partial class WorkspaceCleanupService
     }
 
     public Task<WorkspaceDiscardProgress> ApplyDeleteAsync(string workspaceId, string userId, string? caller, WorkspaceDeleteCommand input, CancellationToken ct,
-        string[]? expectedAllocations = null)
+        string[]? expectedAllocations = null, WorkspaceActivationActor? authority = null)
         => workspaces.WithResourceContextAsync(new(userId), new(WorkspaceId: workspaceId),
-            () => ApplyDeleteUnderResourceLockAsync(workspaceId, userId, caller, input, ct, expectedAllocations), ct, cleanup: true);
+            () => ApplyDeleteUnderResourceLockAsync(workspaceId, userId, caller, input, ct, expectedAllocations, authority), ct, cleanup: true);
 
     private async Task<WorkspaceDiscardProgress> ApplyDeleteUnderResourceLockAsync(string workspaceId, string userId, string? caller,
-        WorkspaceDeleteCommand input, CancellationToken ct, string[]? expectedAllocations)
+        WorkspaceDeleteCommand input, CancellationToken ct, string[]? expectedAllocations, WorkspaceActivationActor? authority)
     {
         await RequireDeleteAuthorityAsync(userId, caller, ct);
         var gate = gates.GetOrAdd(workspaceId, _ => new(1, 1)); await gate.WaitAsync(ct);
         try
         {
             var journal = await workspaces.ReadDiscardAsync(workspaceId, input.RequestId, userId, ct);
+            if (journal?.DeleteOwner is { } retained && (retained.RemoveAttachedSessions && journal.Actor != userId || retained.AppId != caller ||
+                caller is not null && retained.Installation != (await apps.GetAppAsync(caller, ct))?.InstalledAt ||
+                retained.RemoveAttachedSessions != input.RemoveAttachedSessions ||
+                !(retained.Returns ?? []).Select(t => t.Key).SequenceEqual((input.ReturnTargets ?? []).Order(StringComparer.Ordinal))))
+                throw DevelopmentWorkspaceService.Error("request_conflict", "This request belongs to another actor or confirmed selection.");
             if (journal?.State == "removed") return journal.Progress();
             if (journal is null)
             {
@@ -151,7 +174,21 @@ internal sealed partial class WorkspaceCleanupService
                 // The journal write and fence must share that lifetime too.
                 ct.ThrowIfCancellationRequested();
                 ct = hostLifetime?.ApplicationStopping ?? CancellationToken.None;
-                journal = await workspaces.AdmitDeleteAsync(owner, userId, input.RequestId, resources, ct, expectedAllocations);
+                var installation = caller is null ? null : (await apps.GetAppAsync(caller, ct))?.InstalledAt;
+                if (input.RemoveAttachedSessions && installation is null)
+                    throw DevelopmentWorkspaceService.Error("forbidden", "An installed conversation owner is required.");
+                WorkspaceDeleteReturn[] reviewed = [];
+                if (input.ReturnTargets is { Length: > 0 })
+                {
+                    if (returns is null || authority is null || authority.UserId != userId || authority.AppId != caller)
+                        throw WorkspaceActivationAccess.Denied();
+                    reviewed = await returns.InventoryAsync(workspaceId, userId, ct);
+                    if (!reviewed.Select(t => t.Key).SequenceEqual(input.ReturnTargets.Order(StringComparer.Ordinal)))
+                        throw DevelopmentWorkspaceService.Error("selection_changed", "The workspace runtime selection changed. Review the current consumers.");
+                    await returns.RequireAuthorityAsync(authority, reviewed, ct);
+                }
+                journal = await workspaces.AdmitDeleteAsync(owner, userId, input.RequestId, resources, ct, expectedAllocations,
+                    new(caller, installation, input.RemoveAttachedSessions, reviewed, reviewed.Length == 0 ? null : authority));
             }
             // A retained request has already crossed admission; recovery must also survive
             // disconnects. Core shutdown still preserves its journal for the same-ID retry.
@@ -167,6 +204,20 @@ internal sealed partial class WorkspaceCleanupService
             try
             {
                 journal = await workspaces.AdmitDeleteAsync(removalOwner, userId, journal.Command.RequestId, [], ct);
+                if (journal.Writers is { Length: > 0 } writers)
+                {
+                    var admissions = new CoreAgentAuthorizationStore(paths);
+                    foreach (var writer in writers)
+                        if ((await admissions.Get(writer.AdmissionRef, ct)).Leases?.Any(l => !l.Released &&
+                            journal.Snapshots!.Any(t => t.Leases.Contains(l.LeaseId))) == true)
+                            throw DevelopmentWorkspaceService.Error("cleanup_pending", "Waiting for the provider to stop the workspace writer and release its original lease.");
+                }
+                if (journal.DeleteOwner is { Returns.Length: > 0, Authority: { } actor } transition)
+                    await (returns ?? throw DevelopmentWorkspaceService.Error("cleanup_pending", "The runtime replacement service is unavailable."))
+                        .AdvanceAsync(workspaceId, journal.Command.RequestId, actor, transition.Returns, ct);
+                // Recheck even after a Return was selected: unrelated or superseding live targets stay protected.
+                foreach (var tree in (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(t => t.WorkspaceId == workspaceId))
+                    await workspaces.RequireDeleteRuntimeIdleAsync(tree, ct, journal.Resources.Select(r => r.Id));
                 foreach (var entry in journal.Cleanup.ToArray())
                 {
                     var resource = entry;
@@ -200,11 +251,14 @@ internal sealed partial class WorkspaceCleanupService
                 var finished = await workspaces.FinishDiscardAsync(removalOwner, userId, journal.Command, ct);
                 return finished.Progress();
             }
-            catch (Exception ex) when (ex is AppLifecycleException or SandboxException or IOException or HttpRequestException or UnauthorizedAccessException or OperationCanceledException)
+            catch (Exception ex) when (ex is AppLifecycleException or AppIdentityException or CoreProviderException or SandboxException or IOException or HttpRequestException or UnauthorizedAccessException or OperationCanceledException or InvalidOperationException)
             {
                 journal = await workspaces.ReadDiscardAsync(workspaceId, journal.Command.RequestId, userId, default) ?? journal;
-                journal = journal with { Error = ex.Message };
-                await workspaces.SaveDiscardAsync(journal);
+                if (journal.Error != ex.Message)
+                {
+                    journal = journal with { Error = ex.Message };
+                    await workspaces.SaveDiscardAsync(journal);
+                }
                 return journal.Progress();
             }
         }

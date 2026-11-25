@@ -382,8 +382,8 @@ describe("native authority renewal and stop reconciliation", () => {
     await processes.stop();
     await processes.confirmSdkStop();
     expect(await processes.evidence()).toMatchObject({ stopped: true, allClosed: true });
-    expect(await reconcile(f, id)).toMatchObject({ state: "rejected", error: { code: "effects_unconfirmed" } });
-    expect((await f.controller.snapshot(id)).stopConfirmed).toBe(false); expect((await f.driver.engine.journal.load(id)).receipt.effects).toEqual({ "external-call": "unknown" });
+    expect(await reconcile(f, id)).toMatchObject({ state: "applied" });
+    expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true); expect((await f.driver.engine.journal.load(id)).receipt.effects).toEqual({ "external-call": "unknown" });
   });
   it("requires durable SDK completion as well as sealed process receipts before reconciliation", async () => {
     const { f, id, processes } = await retainedNativeRun();
@@ -411,20 +411,13 @@ describe("native authority renewal and stop reconciliation", () => {
     onEvent({ type: "native_effect", id: "unfinished-effect", state: "started" });
     onEvent({ type: "result", status: "success" });
     await vi.waitFor(async () => expect(await f.controller.snapshot(id)).toMatchObject({
-      state: "unknown", stopConfirmed: false, effects: { unresolvedCallIds: expect.any(Array) },
+      state: "succeeded", stopConfirmed: true, effects: { certainty: "unknown", unresolvedCallIds: expect.any(Array) },
     }));
     const native = (await f.driver.engine.journal.load(id)).receipt;
     expect(native).toMatchObject({ state: "completed", exitConfirmed: true, effects: { "unfinished-effect": "started" } });
     const snapshot = await f.controller.snapshot(id);
     expect(snapshot.effects.unresolvedCallIds).toHaveLength(1);
-    // A legacy run can have a known gap in its replayable facts.
-    await f.store.exclusive(async () => {
-      const { session, record } = await f.store.run(id);
-      record.historyPartial = true;
-      await f.store.save(session);
-    });
     const history = f.store.history.page(f.actor, undefined, undefined, 100, false, true);
-    expect(history.observations).toContainEqual(expect.objectContaining({ runId: id, sourceHistoryIncomplete: true }));
     const input = { command: "retire", requestId: randomUUID(), expectedGeneration: snapshot.generation, expectedRevision: snapshot.revision } as const;
     const body = JSON.stringify(input);
     await expect(f.controller.control(id, input, body, { ...f.actor, userId: "another-user" })).rejects.toMatchObject({ status: 404 });
@@ -452,7 +445,7 @@ describe("native authority renewal and stop reconciliation", () => {
     const applied = await reopened.control(id, input, body, f.actor);
     expect(applied).toMatchObject({ requestId: input.requestId, state: "applied", generation: snapshot.generation });
     expect(await reopened.control(id, input, body, f.actor)).toEqual(applied);
-    expect(release.mock.calls).toEqual(Array.from({ length: 2 }, () =>
+    expect(release.mock.calls).toEqual(Array.from({ length: 3 }, () =>
       ["original-admission", "release_all", { requestId: before.record.workspaceRelease!.requestId }]));
     const after = await reopenedStore.run(id);
     expect(after.session.session.activeRun).toBeNull();
@@ -462,10 +455,9 @@ describe("native authority renewal and stop reconciliation", () => {
     try {
       expect(await archived.list(f.actor)).toEqual([]);
       expect(archived.history.page(f.actor, undefined, history.through, 100, false, true)).toEqual(history);
-      expect(archived.history.states(f.actor).sessions).toMatchObject([{ sessionId: f.sessionId, sourceHistoryIncomplete: true,
-        snapshot: { state: "unknown", stopConfirmed: false, effects: snapshot.effects } }]);
+      expect(archived.history.states(f.actor).sessions).toMatchObject([{ sessionId: f.sessionId, snapshot: { state: "succeeded", stopConfirmed: true, effects: snapshot.effects } }]);
     } finally { archived.history.close(); }
-    expect(await reopened.snapshot(id)).toMatchObject({ state: "unknown", stopConfirmed: false, effects: snapshot.effects });
+    expect(await reopened.snapshot(id)).toMatchObject({ state: "succeeded", stopConfirmed: true, effects: snapshot.effects });
     expect((await driver.engine.journal.load(id)).receipt).toEqual(native);
     await expect(reopened.startRun(f.sessionId, randomUUID(), startInput, JSON.stringify(startInput), f.actor)).rejects.toMatchObject({ code: "session_retired" });
     const configure = { requestId: randomUUID(), expectedSessionRevision: after.session.session.revision, configuration: { connection: { id: "account", revision: "1" } } };

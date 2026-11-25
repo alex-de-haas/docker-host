@@ -37,12 +37,19 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
         }
         foreach (var id in details.Keys.Where(id => !allowed.Any(w => w.Id == id))) details.TryRemove(id, out _);
         var result = new List<InspectedWorkspace>();
+        var removals = new List<WorkspaceRemovalView>();
         foreach (var group in allowed.GroupBy(w => w.WorkspaceId).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
             var first = group.First();
             var owner = first.Owner;
             var assistant = installed.FirstOrDefault(a => a.Id == owner.AppId && a.InstalledAt == owner.Installation);
             var discard = discards.FirstOrDefault(d => d.WorkspaceId == group.Key);
+            if (discard?.DeleteOwner is { } initiator)
+            {
+                if (discard.Actor == userId && (string.IsNullOrEmpty(callerAppId) || initiator.AppId == callerAppId))
+                    removals.Add(new(group.Key, discard.Command.RequestId, first.Name ?? "Workspace", discard.Error));
+                continue;
+            }
             var participation = discard is null ? await workspaces.ParticipationAsync(group.Key, userId, ct) : null;
             var participants = participation is null ? null : await WorkspaceParticipationEndpoints.Project(participation, userId, callerAppId, users, apps, ct);
             var ownSession = participants?.Sessions.FirstOrDefault(s => s.Attached && s.CanOpen);
@@ -67,7 +74,7 @@ internal sealed partial class WorkspaceInspectionService(DevelopmentWorkspaceSer
             result.Add(new(group.Key, state, projection, children) { Name = first.Name ?? "Workspace", Workflow = workflow, Participation = participants, Permissions = permission, PullRequestSummary = pullRequests,
                 UpdatedAt = group.Select(w => w.UpdatedAt ?? w.Observation?.At).Append(workflow.UpdatedAt ?? workflow.CompletedAt).Append(metadata.UpdatedAt).Max() });
         }
-        return new(result.ToArray(), clock.UtcNow, permission);
+        return new(result.ToArray(), clock.UtcNow, permission, removals.ToArray());
     }
 
     internal async Task<WorkspaceOwner> ReadOwnerAsync(string workspaceId, string userId, CancellationToken ct)

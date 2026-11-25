@@ -167,7 +167,7 @@ internal sealed partial class CoreLifecycleService
         if (journal.OnlyWorkspaceId is { } expectedWorkspace)
         {
             var tree = active?.WorktreeId is { } treeId ? await DevWorkspaces.Read(treeId, null, ct) : null;
-            if (tree?.WorkspaceId != expectedWorkspace)
+            if (tree?.WorkspaceId != expectedWorkspace || journal.OnlyDevOperationId is { } expected && active?.Id != expected)
                 return journal with { State = "completed", Phase = "completed", Code = "execution_target_unchanged" };
         }
         var packageRuntime = await PackageRuntimeAsync(app, ct);

@@ -6,7 +6,7 @@ import {
   type AgentResponseInput, type AgentRunControlInput, type AgentRunInput, type AgentRunSnapshot, type AgentSession,
   type AgentSessionCreate, type AgentSessionPage, type AgentWatchItem,
 } from "./agent.js";
-import { agentReplayCursor, validateAgentEvent, validateAgentRunSnapshot, validateAgentRequest, validateAgentSession, validateAgentCapabilities, validateAgentControlReceipt } from "./agent-server.js";
+import { agentReplayCursor, validateAgentEvent, validateAgentRunClosure, validateAgentRunSnapshot, validateAgentRequest, validateAgentSession, validateAgentCapabilities, validateAgentControlReceipt } from "./agent-server.js";
 
 export type AgentClientOptions = { provider: AgentProviderRef; authorize: AgentAuthorizer; fetch?: typeof fetch; requestTimeoutMs?: number };
 export type AgentRequestOptions = { signal?: AbortSignal };
@@ -33,7 +33,7 @@ export const prepareAgentConfiguration = (sessionId: string, configurationId: st
 export const prepareAgentRun = (sessionId: string, runId: string, input: AgentRunInput) => prepareAgentRequest<AgentRunSnapshot>("runs.start", "PUT", `/sessions/${segment(sessionId)}/runs/${segment(runId)}`, input,
   { sessionId, runId, resources: input.resources, ceiling: { mcp: input.mcp, resources: input.resources, configurationRevision: input.configurationRevision } });
 export const prepareAgentResponse = (runId: string, input: AgentResponseInput) => prepareAgentRequest<AgentControlReceipt>("runs.respond", "POST", `/runs/${segment(runId)}/responses`, input, { runId });
-export const prepareAgentCancel = (runId: string, input: AgentCancelInput) => prepareAgentRequest<AgentControlReceipt>("runs.cancel", "POST", `/runs/${segment(runId)}/cancel`, input, { runId, ...(input.fenceIfNotAdmitted ? { sessionId: input.fenceIfNotAdmitted.sessionId } : {}) });
+export const prepareAgentCancel = (runId: string, input: AgentCancelInput) => prepareAgentRequest<AgentControlReceipt>("runs.cancel", "PUT", `/runs/${segment(runId)}/stop`, input, { runId, ...(input.fenceIfNotAdmitted ? { sessionId: input.fenceIfNotAdmitted.sessionId } : {}) });
 export const prepareAgentControl = (runId: string, input: AgentRunControlInput) => prepareAgentRequest<AgentControlReceipt>("runs.control", "POST", `/runs/${segment(runId)}/controls`, input, { runId });
 export const prepareAgentAttachmentChunk = (attachmentId: string, index: number, input: AgentAttachmentChunk) => prepareAgentRequest<AgentAttachmentChunkReceipt>("attachments.write", "PUT", `/attachments/${segment(attachmentId)}/chunks/${index}`, input);
 
@@ -104,7 +104,26 @@ export class AgentClient {
     const value = await this.get<AgentRunSnapshot>("runs.read", `/runs/${segment(runId)}`, options, { runId });
     this.checkSnapshot(value, runId); return value;
   }
+  async closure(runId: string, options?: AgentRequestOptions): Promise<import("./agent.js").AgentRunClosure> {
+    const value = await this.get("runs.closure", `/runs/${segment(runId)}/closure`, options, { runId });
+    validateAgentRunClosure(value);
+    if (value.ref.id !== runId || !sameProvider(this.options.provider, value.ref.provider)
+      || value.pendingContinuations?.some(c => !sameProvider(this.options.provider, c.run.provider)))
+      throw new AgentApiError("response_invalid", "The closure belongs to another attempt or provider.", 502);
+    return value;
+  }
+  async discardDelivery(runId: string, requestId: string, options?: AgentRequestOptions): Promise<import("./agent.js").AgentDiscardReceipt> {
+    const command = prepareAgentRequest<import("./agent.js").AgentDiscardReceipt>("runs.discard", "PUT",
+      `/runs/${segment(runId)}/discard`, { requestId }, { runId });
+    const value = await this.execute(command, options);
+    if (value?.requestId !== requestId || value.runId !== runId || value.state !== "discarded")
+      throw new AgentApiError("response_invalid", "The provider returned a different discard receipt.", 502);
+    return value;
+  }
   respond(runId: string, input: AgentResponseInput, options?: AgentRequestOptions): Promise<AgentControlReceipt> { return this.execute(prepareAgentResponse(runId, input), options); }
+  stop(runId: string, requestId = runId, options?: AgentRequestOptions): Promise<AgentControlReceipt> {
+    return this.cancel(runId, { requestId }, options);
+  }
   cancel(runId: string, input: AgentCancelInput, options?: AgentRequestOptions): Promise<AgentControlReceipt> { return this.execute(prepareAgentCancel(runId, input), options); }
   control(runId: string, requestId: string, options?: AgentRequestOptions): Promise<AgentControlReceipt> { return this.get("runs.controls.read", `/runs/${segment(runId)}/controls/${segment(requestId)}`, options, { runId }); }
   runControl(runId: string, input: AgentRunControlInput, options?: AgentRequestOptions): Promise<AgentControlReceipt> { return this.execute(prepareAgentControl(runId, input), options); }
@@ -224,7 +243,7 @@ export type AgentHistoryOptions = {
 export type AgentHistoryPage = { observations: AgentHistoryObservation[]; through: string; nextCursor: string | null };
 
 type HistoryPageOptions = { through?: string; limit?: number };
-type HistoryEndpoint = "live" | "states" | "range";
+type HistoryEndpoint = "live" | "states" | "range" | "ack";
 async function historyResponse(options: AgentHistoryOptions, accept: string, page?: HistoryPageOptions,
   endpoint?: HistoryEndpoint, parameters?: Record<string, string | number | undefined>): Promise<Response> {
   const url = new URL(options.url);
@@ -244,6 +263,7 @@ async function historyResponse(options: AgentHistoryOptions, accept: string, pag
     url.searchParams.set("limit", String(page.limit));
   }
   const response = await (options.fetch ?? globalThis.fetch)(url, {
+    method: endpoint === "ack" ? "POST" : "GET",
     headers: { accept, authorization: `Bearer ${options.token}` },
     signal: options.signal, redirect: "error", cache: "no-store",
   });
@@ -333,14 +353,21 @@ export async function* watchLiveAgentHistory(options: AgentHistoryOptions & {
       } else {
         if (frame.event !== "observation") throw new AgentApiError("event_invalid", "Unexpected live history frame.", 502);
         const observation = historyObservation(value, frame.id, options.provider);
-        const transient = observation.item.kind === "event" && ["message.delta", "tool.output"].includes(observation.item.event.type);
-        if (!observation.epoch || transient !== (observation.sessionPosition === undefined))
+        if (!observation.epoch || !historyPosition(observation.sessionPosition))
           throw new AgentApiError("event_invalid", "Invalid live record position.", 502);
         yield observation;
       }
     }
   } finally { await response.body?.cancel().catch(() => {}); }
   if (!ready) throw new AgentApiError("stream_closed", "The stream closed before its live boundary.", 503, true);
+}
+
+export async function acknowledgeAgentHistory(options: AgentHistoryOptions, receipt: { sessionId: string; epoch: string; through: number }): Promise<void> {
+  if (!historyIdentity(receipt.sessionId) || !historyIdentity(receipt.epoch) || !historyPosition(receipt.through))
+    throw new AgentApiError("invalid_input", "Invalid durable history receipt.", 400);
+  const response = await historyResponse({ ...options, cursor: undefined }, "application/json", undefined, "ack", receipt);
+  const value: unknown = JSON.parse(await boundedText(response, 1024));
+  if (!historyObject(value) || value.through !== receipt.through) throw new AgentApiError("response_invalid", "Invalid history acknowledgement.", 502);
 }
 
 export async function readAgentHistoryStates(options: AgentHistoryOptions & HistoryPageOptions & { afterSession?: string }) {
@@ -385,8 +412,7 @@ export async function readAgentHistoryRange(options: AgentHistoryOptions & {
     throw new AgentApiError("response_invalid", "Invalid session history range page.", 502);
   const observations = page.observations.map((value, index) => {
     const item = historyObservation(value, value?.cursor, options.provider);
-    if (item.sessionId !== sessionId || item.epoch !== epoch || item.sessionPosition !== from + index || item.sessionPosition > to
-      || item.item.kind === "event" && ["message.delta", "tool.output"].includes(item.item.event.type))
+    if (item.sessionId !== sessionId || item.epoch !== epoch || item.sessionPosition !== from + index || item.sessionPosition > to)
       throw new AgentApiError("response_invalid", "Invalid durable session record or range ordering.", 502);
     return item;
   });

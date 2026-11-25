@@ -268,17 +268,17 @@ describe("SessionManager public provider integration", () => {
     await vi.waitFor(() => expect(liveStreams()).toBe(2), { timeout: 5000 });
     f.complete(aliceRun, "Held for Alice");
     f.complete(bobRun, "Delivered to Bob");
-    const inbox = path.join(f.store.dataDir, "provider-history-inbox", alice.id);
     const positionDir = path.join(f.store.dataDir, "provider-history");
     await vi.waitFor(async () => {
       expect((await broken.store.readEvents(bob.id)).filter(e => e.type === "assistant_text").map(e => e.text)).toEqual(["Delivered to Bob"]);
       const checkpoint = JSON.parse(await readFile(path.join(positionDir, (await readdir(positionDir))[0]!), "utf8"));
       expect(checkpoint.cursor).toBe("feed-4");
-      if (damagedFile === "provider-execution.json") expect((await readdir(inbox)).filter(f => f.endsWith(".json"))).toHaveLength(1);
+      if (damagedFile === "provider-execution.json") expect(await broken.store.withTranscript(alice.id, db => db.pending())).toHaveLength(1);
       else expect(checkpoint.incomplete).toContain(alice.id);
     }, { timeout: 5000 });
     expect(liveStreams()).toBe(2);
-    expect((await broken.store.readEvents(alice.id)).some(e => e.text === "Held for Alice")).toBe(false);
+    if (damagedFile === "record.json") await expect(broken.store.readEvents(alice.id)).rejects.toThrow();
+    else expect((await broken.store.readEvents(alice.id)).some(e => e.text === "Held for Alice")).toBe(false);
     await broken.manager.shutdown();
     await writeFile(source, original);
 
@@ -287,7 +287,7 @@ describe("SessionManager public provider integration", () => {
     await vi.waitFor(async () => {
       const texts = (await repaired.store.readEvents(alice.id)).filter(e => e.type === "assistant_text").map(e => e.text);
       expect(texts).toEqual(["Held for Alice"]);
-      if (damagedFile === "provider-execution.json") expect(await readdir(inbox)).toEqual([]);
+      if (damagedFile === "provider-execution.json") expect(await repaired.store.withTranscript(alice.id, db => db.pending())).toEqual([]);
     }, { timeout: 5000 });
     expect((await repaired.store.readEvents(bob.id)).filter(e => e.type === "assistant_text").map(e => e.text)).toEqual(["Delivered to Bob"]);
     expect(f.authorizations).toHaveLength(startCount);
@@ -448,7 +448,7 @@ describe("SessionManager public provider integration", () => {
     expect((await f.store.readProviderExecution(record.id))!.runId).toBe(runId);
     await expect(f.manager.postMessage(record.id, "Do not duplicate", f.credential)).rejects.toThrow();
     expect(f.starts).toHaveLength(1);
-    expect(f.controls).toMatchObject([{ runId, path: `/runs/${runId}/cancel` }]);
+    expect(f.controls).toMatchObject([{ runId, path: `/runs/${runId}/stop` }]);
   });
 
   it("allows Stop to wait for slow public admission outside the manager queue and cancels its exact run", async () => {
@@ -460,7 +460,7 @@ describe("SessionManager public provider integration", () => {
     await Promise.resolve(); release();
     await posting; await stopping;
     expect(f.starts).toHaveLength(1);
-    expect(f.controls).toMatchObject([{ runId: f.starts[0]!.runId, path: `/runs/${f.starts[0]!.runId}/cancel` }]);
+    expect(f.controls).toMatchObject([{ runId: f.starts[0]!.runId, path: `/runs/${f.starts[0]!.runId}/stop` }]);
     expect((await f.store.readRecord(record.id))!.status).toBe("cancelled");
     expect((await f.store.readProviderExecution(record.id))!.run?.stopConfirmed).toBe(true);
   });
@@ -638,6 +638,6 @@ describe("SessionManager public provider integration", () => {
     await expect(restored.manager.deleteSession(record.id, f.owner, f.credential)).rejects.toMatchObject({ code: "stop_unconfirmed" });
     expect(await restored.store.readRecord(record.id)).not.toBeNull();
     expect(f.starts).toHaveLength(1);
-    expect(f.controls).toMatchObject([{ runId, path: `/runs/${runId}/cancel` }]);
+    expect(f.controls).toMatchObject([{ runId, path: `/runs/${runId}/stop` }]);
   });
 });

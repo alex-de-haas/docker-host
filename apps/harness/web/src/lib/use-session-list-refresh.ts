@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { listSessions, type AssistantSession } from "./assistant-api";
+import { subscribeWorkspaceEvents } from "./workspace-events";
 import { activityTime, isWaiting } from "./attention";
 
 /** The selected chat uses SSE; inventory reconciliation also discovers work started elsewhere. */
@@ -37,6 +38,7 @@ export function useSessionListRefresh(enabled: boolean, sessions: AssistantSessi
         // Retain the known list during an outage; focus or the next tick retries.
       } finally { pending = false; }
     };
+    const unsubscribe = subscribeWorkspaceEvents("/api/session-summaries/events", refresh, () => {});
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       const { sessions: rows, activeId: selected } = latest.current;
@@ -47,7 +49,7 @@ export function useSessionListRefresh(enabled: boolean, sessions: AssistantSessi
     window.addEventListener("focus", recover);
     document.addEventListener("visibilitychange", recover);
     return () => {
-      cancelled = true;
+      cancelled = true; unsubscribe();
       window.clearInterval(timer);
       window.removeEventListener("focus", recover);
       document.removeEventListener("visibilitychange", recover);

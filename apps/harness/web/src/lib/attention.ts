@@ -11,11 +11,11 @@ export function isWaiting(status: string): boolean {
   return WAITING.has(status);
 }
 
-export function observedSessionStatus(session: Pick<AssistantSession, "status" | "providerHistoryContact">): string {
-  return session.providerHistoryContact ? "unknown" : session.status;
+export function observedSessionStatus(session: Pick<AssistantSession, "status" | "providerStatusContact">): string {
+  return session.providerStatusContact ? "unknown" : session.status;
 }
 
-export type Listed = Pick<AssistantSession, "id" | "status" | "providerHistoryContact" | "createdAt" | "updatedAt">;
+export type Listed = Pick<AssistantSession, "id" | "status" | "providerStatusContact" | "createdAt" | "updatedAt">;
 
 export function activityTime(value: { updatedAt?: string | null; createdAt?: string | null }): number {
   const updated = Date.parse(value.updatedAt ?? "");

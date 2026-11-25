@@ -27,8 +27,8 @@ export function transcriptToolId(runId: string, source: AgentSource | undefined,
 }
 export function providerTranscriptSource(snapshot: AgentRunSnapshot, source: AgentSource = { agentId: "root" }, transcriptRun = snapshot.ref.id): ProviderTranscriptSource {
   let parentToolUseId: string | undefined;
-  if (source.parentToolCallId) {
-    const parentId = source.parentAgentId ?? "root";
+  if (source.parentToolCallId && source.parentAgentId) {
+    const parentId = source.parentAgentId;
     const knownRoot = parentId === "root" || [...(snapshot.agents ?? []), ...(snapshot.messages ?? []).flatMap(message => message.source ? [message.source] : []),
       ...(snapshot.tools ?? []).flatMap(tool => tool.source ? [tool.source] : [])].some(agent => agent.agentId === parentId && agent.parentAgentId === undefined);
     const candidates = (snapshot.tools ?? []).filter(tool => tool.id === source.parentToolCallId);

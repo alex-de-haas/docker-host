@@ -201,22 +201,23 @@ it("shows the last observed run on provider loss and recovers without stopping t
   expect(viewport()?.textContent).toContain("Unfinished draft");
 
   await act(async () => emit(7, "session_status", { status: "running", providerHistoryContact: contact }));
-  expect(container.textContent).toContain("Reconnecting to the provider.");
+  expect(container.textContent).toContain("Synchronizing conversation history.");
+  expect(activity()).not.toBeNull();
+  expect(filters()).toContain("Working1");
+  expect(viewport()?.textContent).toContain("Unfinished draft");
+
+  await act(async () => emit(7, "session_status", { status: "running", providerStatusContact: contact }));
   expect(activity()).toBeNull();
   expect(filters()).toContain("Working0");
   expect(panel()?.textContent).toContain("1 completed · 1 unknown");
   await act(async () => panel()!.querySelector("button")!.click());
   expect(panel()?.textContent).toContain("Last known: running");
-  expect(panel()?.textContent).toContain("Completed");
   expect(viewport()?.textContent).toContain("Saved result");
-  expect(viewport()?.textContent).not.toContain("Unfinished draft");
-
-  await act(async () => [...viewport()!.querySelectorAll("button")].find(b => b.textContent === "Refresh")!.click());
-  expect(api.refreshProviderHistory).toHaveBeenCalledExactlyOnceWith("history-one");
+  expect(api.refreshProviderHistory).not.toHaveBeenCalled();
   expect(api.stopSession).not.toHaveBeenCalled();
   await act(async () => {
     emit(8, "assistant_text", { text: "Caught up" });
-    emit(9, "session_status", { status: "idle", providerHistoryContact: null });
+    emit(9, "session_status", { status: "idle", providerHistoryContact: null, providerStatusContact: null });
   });
   expect(viewport()?.textContent).toContain("Caught up");
   expect(container.textContent).not.toContain("Reconnecting to the provider.");

@@ -32,11 +32,10 @@ export function workspaceActivityRows(workspace: DevelopmentWorkspace, sessions:
     // A chat and its one native execution can report the same ongoing work.
     const chatId = binding.canOpen ? binding.sessionId : binding.kind === "execution" && linked === 1 && binding.activityGroup ? chats.get(binding.activityGroup) : undefined;
     const own = chatId ? sessions.find(s => s.id === chatId) : undefined;
-    const newer = own && activityTime(own) > (Date.parse(binding.activityAt ?? "") || 0)
-      && (!["running", "awaiting_approval", "awaiting_question"].includes(own.status) || now - activityTime(own) <= 45_000);
     const observed = Date.parse(binding.activityAt ?? "");
-    const status = newer ? own.status : !["idle", "failed"].includes(binding.status) && (!Number.isFinite(observed) || now - observed > 45_000) ? "unknown" : binding.status;
-    return { binding, status: own?.providerHistoryContact ? "unknown" : status, counted: binding.kind === "execution" || !linked };
+    const active = !["idle", "failed", "cancelled", "completed"].includes(binding.status);
+    const status = own ? observedSessionStatus(own) : active && (!Number.isFinite(observed) || now - observed > 45_000) ? "unknown" : binding.status;
+    return { binding, status, counted: binding.kind === "execution" || !linked };
   });
 }
 export function workspaceCounts(workspace: DevelopmentWorkspace, sessions: readonly AssistantSession[], now = Date.now()): ActivityCounts {

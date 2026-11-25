@@ -767,7 +767,7 @@ it("uses the existing Shell stop confirmation from the contextual shortcut", asy
 });
 
 it("places the restart badge after title icons and uses Restart as the single contextual action", async () => {
-  apps = [{ ...target, system: true, confirmedRoles: ["agent"], interfaces: { agent: [{ key: "default", path: "/api/agent/v1", version: 1, url: null }] }, restartRequired: true, lastError: "Previous runtime operation failed" }];
+  apps = [{ ...target, system: true, confirmedRoles: ["agent"], interfaces: { agent: [{ key: "default", path: "/api/agent/v2", version: 1, url: null }] }, restartRequired: true, lastError: "Previous runtime operation failed" }];
   await mount(true);
   const identity = appRow().querySelector('.dashboard-identity')!;
   const title = identity.querySelector('a')!.parentElement!;

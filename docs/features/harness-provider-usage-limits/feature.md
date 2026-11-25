@@ -1,6 +1,6 @@
 ---
 created: 2026-10-28
-updated: 2026-11-24
+updated: 2026-11-25
 summary: Optional connection-level quota and credit observations for Codex and Claude, with bounded diagnostics, retained snapshots and shared Limits controls.
 components: [apps/harness, packages/agent-provider-runtime, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider]
 ---
@@ -71,7 +71,7 @@ to SIGKILL for an unresponsive owned helper. Diagnostic failures never emit a co
 
 ## Delivery And Interface
 
-The public agent operation `GET /api/agent/v1/connections/{id}/usage` requests a bounded fresh
+The public agent operation `GET /api/agent/v2/connections/{id}/usage` requests a bounded fresh
 snapshot through the existing account diagnostic, with a fresh exact Core operation credential.
 It can initialize a metadata-only native helper without creating a conversation or sending a model
 prompt. Concurrent consumers share the provider's cache and minimum one-minute refresh interval;

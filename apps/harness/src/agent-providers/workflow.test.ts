@@ -266,8 +266,8 @@ it("keeps a child fenced when its native start acknowledgement and Stop confirma
   await vi.waitFor(async () => expect((await store.readSessionFamily(parent.id)).launches[0]!.child.status).toBe("unknown"));
   expect(await store.readMessageReceipt(childSessionId, runId)).toMatchObject({ state: "unknown" });
   expect(f.starts.map(start => start.runId)).toEqual([runId]);
-  await expect(manager.cancelSession(childSessionId)).rejects.toThrow();
-  expect(f.controls.some(control => control.runId === runId && control.path.endsWith("/cancel"))).toBe(true);
+  await expect(manager.cancelSession(childSessionId)).resolves.toBe(false);
+  expect(f.controls.some(control => control.runId === runId && control.path.endsWith("/stop"))).toBe(true);
   expect((await store.readMessageReceipt(childSessionId, runId))!.state).not.toBe("rejected");
   expect((await store.readSessionFamily(parent.id)).launches[0]!.child.status).not.toBe("cancelled");
   expect(f.starts).toHaveLength(1);
@@ -316,7 +316,7 @@ it.each([false, true])("delivers a ready child result only after confirmed paren
   const ticket = { requestId: randomUUID(), childSessionIds: [childSessionId], mode: "all" };
   expect(await manager.subagentAction(parent.id, "subagent-wait", ticket, async () => {})).toMatchObject({ state: "pending" });
   f.update(state.runId!, { state: "unknown", phase: "interrupted", freshness: "last_known", stopConfirmed: false });
-  await vi.waitFor(async () => expect((await store.readRecord(parent.id))!.status).toBe("failed"), { timeout: 5000 });
+  await vi.waitFor(async () => expect((await store.readProviderExecution(parent.id))?.run?.state).toBe("unknown"), { timeout: 5000 });
   f.complete(childRunId, "Review complete");
   const wait = async () => (await store.readSessionFamily(parent.id)).waits[0]!;
   await vi.waitFor(async () => expect((await wait()).state).toBe("ready"), { timeout: 5000 });

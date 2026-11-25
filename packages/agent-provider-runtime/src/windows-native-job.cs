@@ -99,10 +99,8 @@ public static class HostyNativeJob
     [DllImport("kernel32", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] static extern bool SetInformationJobObject(IntPtr job, int kind, ref ExtendedLimits value, uint size);
     [DllImport("kernel32", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] static extern bool QueryInformationJobObject(IntPtr job, int kind, out Accounting value, uint size, IntPtr returned);
     [DllImport("kernel32", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] static extern bool QueryInformationJobObject(IntPtr job, int kind, IntPtr value, uint size, IntPtr returned);
-    [DllImport("kernel32", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
     [DllImport("kernel32", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] static extern bool IsProcessInJob(IntPtr process, IntPtr job, [MarshalAs(UnmanagedType.Bool)] out bool member);
     [DllImport("kernel32", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] static extern bool TerminateJobObject(IntPtr job, uint code);
-    [DllImport("kernel32", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] static extern bool TerminateProcess(IntPtr process, uint code);
     [DllImport("kernel32", SetLastError = true)] static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
     [DllImport("kernel32", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
@@ -169,32 +167,36 @@ public static class HostyNativeJob
         uint length = SearchPath(null, command, Path.HasExtension(command) ? null : ".exe", result.Capacity, result, IntPtr.Zero);
         if (length == 0 || length >= result.Capacity) throw Failure("The selected native executable is unavailable."); return result.ToString();
     }
-    static ProcessInformation StartSuspended(Configuration config) {
+    static ProcessInformation StartSuspended(Configuration config, IntPtr job) {
         if (config.args == null || config.args.Length > 1024 || !Path.IsPathRooted(config.cwd)) throw new IOException("Invalid native launch configuration.");
         string executable = Executable(config.command, config.cwd); var command = new StringBuilder(QuoteArgument(executable));
         foreach (string arg in config.args) { command.Append(' '); command.Append(QuoteArgument(arg)); }
         if (command.Length >= 32767) throw new IOException("The Windows native command exceeds its bound.");
-        var handles = new List<IntPtr>(); IntPtr attributes = IntPtr.Zero, list = IntPtr.Zero; bool initialized = false;
+        var handles = new List<IntPtr>(); IntPtr attributes = IntPtr.Zero, list = IntPtr.Zero, jobList = IntPtr.Zero; bool initialized = false;
         try {
             foreach (int id in new[] { -10, -11, -12 }) {
                 IntPtr source = GetStdHandle(id), target;
                 if (source == IntPtr.Zero || source == new IntPtr(-1) || !DuplicateHandle(GetCurrentProcess(), source, GetCurrentProcess(), out target, 0, true, 2)) throw Failure("Native standard handle duplication failed.");
                 handles.Add(target);
             }
-            IntPtr size = IntPtr.Zero; InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
+            IntPtr size = IntPtr.Zero; InitializeProcThreadAttributeList(IntPtr.Zero, 2, 0, ref size);
             if (size == IntPtr.Zero) throw Failure("Native handle attribute sizing failed.");
             attributes = Marshal.AllocHGlobal(size);
-            if (!InitializeProcThreadAttributeList(attributes, 1, 0, ref size)) throw Failure("Native handle attributes failed."); initialized = true;
+            if (!InitializeProcThreadAttributeList(attributes, 2, 0, ref size)) throw Failure("Native handle attributes failed."); initialized = true;
             list = Marshal.AllocHGlobal(handles.Count * IntPtr.Size);
             for (int at = 0; at < handles.Count; at++) Marshal.WriteIntPtr(list, at * IntPtr.Size, handles[at]);
             if (!UpdateProcThreadAttribute(attributes, 0, new IntPtr(0x20002), list, new IntPtr(handles.Count * IntPtr.Size), IntPtr.Zero, IntPtr.Zero)) throw Failure("Native inherited handle selection failed.");
+            // PROC_THREAD_ATTRIBUTE_JOB_LIST assigns the named scope atomically at process creation.
+            // Even a bridge crash between CreateProcess and ResumeThread leaves no unowned process.
+            jobList = Marshal.AllocHGlobal(IntPtr.Size); Marshal.WriteIntPtr(jobList, job);
+            if (!UpdateProcThreadAttribute(attributes, 0, new IntPtr(0x2000D), jobList, new IntPtr(IntPtr.Size), IntPtr.Zero, IntPtr.Zero)) throw Failure("Native job creation attribute failed.");
             var startup = new StartupInfoEx { StartupInfo = new StartupInfo { cb = (uint)Marshal.SizeOf(typeof(StartupInfoEx)), dwFlags = 0x100, hStdInput = handles[0], hStdOutput = handles[1], hStdError = handles[2] }, Attributes = attributes };
             ProcessInformation process;
             if (!CreateProcessW(executable, command, IntPtr.Zero, IntPtr.Zero, true, CreateSuspended | ExtendedStartup | CreateNoWindow, IntPtr.Zero, config.cwd, ref startup, out process)) throw Failure("Suspended native process creation failed.");
             return process;
         } finally {
             if (initialized) DeleteProcThreadAttributeList(attributes);
-            if (attributes != IntPtr.Zero) Marshal.FreeHGlobal(attributes); if (list != IntPtr.Zero) Marshal.FreeHGlobal(list);
+            if (attributes != IntPtr.Zero) Marshal.FreeHGlobal(attributes); if (list != IntPtr.Zero) Marshal.FreeHGlobal(list); if (jobList != IntPtr.Zero) Marshal.FreeHGlobal(jobList);
             foreach (IntPtr handle in handles) CloseHandle(handle);
         }
     }
@@ -243,24 +245,42 @@ public static class HostyNativeJob
         using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough)) { byte[] bytes = Utf8.GetBytes(Encode(receipt)); file.Write(bytes, 0, bytes.Length); file.Flush(true); }
         File.Replace(temporary, config.file, null);
     }
+    [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern IntPtr OpenJobObject(uint access, bool inherit, string name);
+    static string JobName(string nonce) { return @"Local\Hosty-Agent-" + nonce; }
+
+    // The admission guard serializes a delayed original bridge with the successor, including when
+    // no process was created. This successor is called only under the exclusive attempt owner lock.
+    public static int CloseOrFence(string receiptFile, string nonce) {
+        if (!Path.IsPathRooted(receiptFile) || Path.GetFileName(receiptFile) != nonce + ".json") return 70;
+        using (var gate = new FileStream(receiptFile + ".guard", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) {
+            gate.Position = 0; gate.WriteByte(1); gate.Flush(true);
+            IntPtr job = OpenJobObject(0x0004 | 0x0008, false, JobName(nonce));
+            if (job == IntPtr.Zero) return Marshal.GetLastWin32Error() == 2 ? 0 : 70;
+            try { return TerminateAndWait(job, IntPtr.Zero) ? 0 : 70; }
+            finally { CloseHandle(job); }
+        }
+    }
+
     public static int Run(string pipeName) {
         if (pipeName == null || !System.Text.RegularExpressions.Regex.IsMatch(pipeName, "^hosty-native-[a-f0-9-]{36}$")) return 70;
-        string nonce = pipeName.Substring("hosty-native-".Length); Configuration config = null; IntPtr job = IntPtr.Zero; ProcessInformation process = new ProcessInformation(); bool assigned = false, stopped = false; int code = 127;
+        string nonce = pipeName.Substring("hosty-native-".Length); Configuration config = null; IntPtr job = IntPtr.Zero; ProcessInformation process = new ProcessInformation(); FileStream guard = null; bool stopped = false; int code = 127;
         using (var pipe = PrivatePipe(pipeName)) {
             var reader = new StreamReader(pipe, Utf8, false, 4096, true); var writer = new StreamWriter(pipe, Utf8, 4096, true) { AutoFlush = true };
             writer.WriteLine(Encode(new Message { type = "ready", nonce = nonce }));
             try {
                 config = Decode<Configuration>(ReadLine(reader, 1048576));
                 if (config.version != 1 || config.nonce != nonce || !Path.IsPathRooted(config.file) || !System.Text.RegularExpressions.Regex.IsMatch(config.runId ?? "", "^[A-Za-z0-9-]{1,100}$") || !System.Text.RegularExpressions.Regex.IsMatch(config.generation ?? "", "^[A-Za-z0-9-]{1,100}$")) throw new IOException("Native execution identity mismatch.");
-                job = CreateJobObject(IntPtr.Zero, null); if (job == IntPtr.Zero) throw Failure("Native job creation failed.");
+                guard = new FileStream(config.file + ".guard", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                if (guard.ReadByte() == 1) throw new IOException("The attempt launch is already fenced.");
+                job = CreateJobObject(IntPtr.Zero, JobName(nonce)); if (job == IntPtr.Zero) throw Failure("Native job creation failed.");
                 // Neither BREAKAWAY_OK nor SILENT_BREAKAWAY_OK is enabled. The job handle is not inheritable.
                 var limits = new ExtendedLimits { BasicLimitInformation = new BasicLimits { LimitFlags = KillOnClose } };
                 if (!SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(typeof(ExtendedLimits)))) throw Failure("Native job limits failed.");
                 int stop = 0;
                 ThreadPool.QueueUserWorkItem(delegate { try { string line; while ((line = ReadLine(reader, 4096)) != null) { var control = Decode<Control>(line); if (control.stop && control.nonce == nonce) { Interlocked.Exchange(ref stop, 1); return; } } } catch { } finally { Interlocked.Exchange(ref stop, 1); } });
                 if (!config.cancelled && Interlocked.CompareExchange(ref stop, 0, 0) == 0) {
-                    process = StartSuspended(config);
-                    if (!AssignProcessToJobObject(job, process.Process)) throw Failure("Native job assignment failed before resume."); assigned = true;
+                    process = StartSuspended(config, job);
                     if (Interlocked.CompareExchange(ref stop, 0, 0) == 0) {
                         if (ResumeThread(process.Thread) == UInt32.MaxValue) throw Failure("Native primary thread could not resume.");
                         writer.WriteLine(Encode(new Message { type = "started", nonce = nonce, nativePid = process.ProcessId }));
@@ -272,7 +292,6 @@ public static class HostyNativeJob
             finally {
                 try {
                     if (job != IntPtr.Zero) {
-                        if (process.Process != IntPtr.Zero && !assigned) { if (!TerminateProcess(process.Process, 127) || WaitForSingleObject(process.Process, 5000) != 0) throw Failure("Unassigned suspended native process could not stop."); }
                         stopped = TerminateAndWait(job, process.Process);
                     }
                     if (config != null) Persist(config, stopped, process.ProcessId, code);
@@ -280,6 +299,7 @@ public static class HostyNativeJob
                 } catch { try { if (config != null) Persist(config, false, process.ProcessId, 70); } catch { } stopped = false; }
                 if (process.Thread != IntPtr.Zero) CloseHandle(process.Thread); if (process.Process != IntPtr.Zero) CloseHandle(process.Process);
                 if (job != IntPtr.Zero) CloseHandle(job);
+                if (guard != null) guard.Dispose();
             }
         }
         return stopped ? code : 70;

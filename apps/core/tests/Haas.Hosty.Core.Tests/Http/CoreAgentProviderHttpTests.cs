@@ -23,7 +23,7 @@ public sealed class CoreAgentProviderHttpTests
         var provider = Record("independent.provider", now) with { RuntimeState = "running", ConfirmedRoles = ["agent"],
             GrantedCorePermissions = [],
             Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
-            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v1", 1, [])] } };
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v2", 2, [])] } };
         await apps.UpsertAppAsync(consumer); await apps.UpsertAppAsync(provider);
         var discovery = await host.Services.GetRequiredService<ProviderAccessService>().ListAsync(consumer, "agent", default);
         Assert.Equal(PanelIdentity.Installation(provider), Assert.Single(discovery.Providers).InstallationId);
@@ -49,6 +49,41 @@ public sealed class CoreAgentProviderHttpTests
         await Assert.ThrowsAsync<AppIdentityException>(() => service.Introspect(provider, new(binding.Token, input.Operation, input.Method, input.Path, new string('0', 64)), default));
         await Assert.ThrowsAsync<AppIdentityException>(() => service.Renew(provider, binding.AdmissionRef, default));
         await Assert.ThrowsAsync<AppIdentityException>(() => service.Introspect(provider with { Id = "other.provider" }, new(binding.Token, input.Operation, input.Method, input.Path, input.BodyHash), default));
+        var cleanup = new CoreAgentCleanupRequest(binding.AdmissionRef, input.Provider, "runs.cancel", "PUT",
+            $"/runs/{run}/stop", new string('c', 64), SessionId: session, RunId: run);
+        using var serviceClient = host.CreateClient();
+        serviceClient.DefaultRequestHeaders.Authorization = http.DefaultRequestHeaders.Authorization;
+        var replay = new CoreAgentCleanupRequest(binding.AdmissionRef, input.Provider, input.Operation, input.Method,
+            input.Path, input.BodyHash, input.SessionId, input.RunId);
+        var replayPath = $"/api/internal/apps/{consumer.Id}/agent/replay/token";
+        using var exactReplay = await serviceClient.PostAsJsonAsync(replayPath, replay);
+        Assert.Equal(HttpStatusCode.OK, exactReplay.StatusCode);
+        Assert.Equal(binding.AdmissionRef, (await service.AuthorizeReplay(consumer, replay, default)).AdmissionRef);
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.AuthorizeReplay(consumer, replay with { BodyHash = new string('d', 64) }, default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.AuthorizeReplay(provider, replay, default));
+        var cleanupPath = $"/api/internal/apps/{consumer.Id}/agent/cleanup/token";
+        using var mixed = await http.PostAsJsonAsync(cleanupPath, cleanup);
+        Assert.False(mixed.IsSuccessStatusCode);
+        using var cleanupResponse = await serviceClient.PostAsJsonAsync(cleanupPath, cleanup);
+        Assert.Equal(HttpStatusCode.OK, cleanupResponse.StatusCode);
+        var cleanupBinding = (await cleanupResponse.Content.ReadFromJsonAsync<JsonElement>()).Deserialize(CoreJson.TypeInfo<CoreAgentBinding>())!;
+        var exactStop = new CoreAgentIntrospection(cleanupBinding.Token, "runs.cancel", "PUT", cleanup.Path, cleanup.BodyHash);
+        var stoppedOwner = await service.Introspect(provider, exactStop, default);
+        Assert.Equal(run, stoppedOwner.RunId);
+        Assert.Equal(input.BodyHash, stoppedOwner.OriginalStartDigest);
+        Assert.True(stoppedOwner.CleanupOnly);
+        var discard = cleanup with { Operation = "runs.discard", Path = $"/runs/{run}/discard" };
+        var discardToken = await service.AuthorizeCleanup(consumer, discard, default);
+        var discardOwner = await service.Introspect(provider, new(discardToken.Token, "runs.discard", "PUT", discard.Path, discard.BodyHash), default);
+        Assert.True(discardOwner.CleanupOnly);
+        Assert.Equal(binding.AdmissionRef, discardOwner.AdmissionRef);
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.AuthorizeCleanup(provider, discard, default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.Introspect(provider, exactStop with { BodyHash = new string('d', 64) }, default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.AuthorizeCleanup(consumer, cleanup with { RunId = Guid.NewGuid().ToString() }, default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.AuthorizeCleanup(consumer, cleanup with { Operation = "runs.respond" }, default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.AuthorizeCleanup(provider, cleanup, default));
+        await Assert.ThrowsAsync<AppIdentityException>(() => service.AuthorizeCleanup(consumer with { InstalledAt = now.AddDays(1) }, cleanup, default));
+        await Assert.ThrowsAsync<CoreProviderException>(() => service.Authorize(consumer, credential.AccessToken, input with { BodyHash = new string('d', 64) }, default));
         var sessionAuthorization = await service.Authorize(consumer, credential.AccessToken, input with {
             Operation = "sessions.create", Path = "/sessions/" + session, RunId = null, Ceiling = null }, default);
         var snapshot = await service.Skills(provider, new(sessionAuthorization.AdmissionRef, Guid.NewGuid().ToString(), [new(CoreAgentSkills.PlatformId)]), default);
@@ -114,7 +149,7 @@ public sealed class CoreAgentProviderHttpTests
         var provider = Record("thirdparty.agent", now) with { RuntimeState = "running", ConfirmedRoles = ["agent"],
             Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
             Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> {
-                ["agent"] = [new("native", "api", "/agent", 1, [NamedProviderImplementations.Capability])] } };
+                ["agent"] = [new("native", "api", "/agent", 2, [NamedProviderImplementations.Capability])] } };
         await apps.UpsertAppAsync(consumer); await apps.UpsertAppAsync(provider);
         await apps.PublishImplementationsAsync(provider, "agent", new("native", 1, [new("x", "First", true), new("y", "Second", true)]), default);
         using var caller = host.CreateClient();
@@ -155,7 +190,7 @@ public sealed class CoreAgentProviderHttpTests
             RuntimeState = "running",
             ConfirmedRoles = ["agent"],
             Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
-            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v1", 1, [])] },
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v2", 2, [])] },
         };
         await apps.UpsertAppAsync(consumer);
         await apps.UpsertAppAsync(provider);
@@ -249,7 +284,7 @@ public sealed class CoreAgentProviderHttpTests
         var consumer = Record("unrelated.consumer", now) with { GrantedCorePermissions = [CoreAppPermissions.AgentProviders] };
         var provider = Record("independent.provider", now) with { RuntimeState = "running", ConfirmedRoles = ["agent"],
             Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
-            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v1", 1, [])] } };
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v2", 2, [])] } };
         var apps = host.Services.GetRequiredService<AppRegistryStore>();
         await apps.UpsertAppAsync(consumer); await apps.UpsertAppAsync(provider);
         var credential = await BrowserAuthorityFixture.Grant(host, consumer.Id, "owner");
@@ -289,7 +324,7 @@ public sealed class CoreAgentProviderHttpTests
         var provider = Record("other.provider", now) with { RuntimeState = "running", ConfirmedRoles = ["agent"],
             GrantedCorePermissions = [CoreAppPermissions.DecisionsRead, CoreAppPermissions.DecisionsRequest, CoreAppPermissions.DecisionsRespond],
             Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
-            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v1", 1, [])] } };
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v2", 2, [])] } };
         await apps.UpsertAppAsync(consumer); await apps.UpsertAppAsync(provider);
         var credential = await BrowserAuthorityFixture.Grant(host, consumer.Id, user.Id);
         var agent = host.Services.GetRequiredService<CoreAgentExecution>();
@@ -358,7 +393,7 @@ public sealed class CoreAgentProviderHttpTests
         {
             RuntimeState = "running", ConfirmedRoles = ["agent"],
             Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
-            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v1", 1, [])] },
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v2", 2, [])] },
         };
         var otherProvider = provider with { Id = "other.runtime" };
         foreach (var app in new[] { consumer, otherConsumer, provider, otherProvider }) await apps.UpsertAppAsync(app);
@@ -392,7 +427,7 @@ public sealed class CoreAgentProviderHttpTests
             Assert.Equal(reference, identity.Provider);
             Assert.Equal(clock.UtcNow.AddHours(4), identity.ExpiresAt);
             Assert.Equal(binding.ExpiresAt, identity.ExpiresAt);
-            Assert.Equal("http://127.0.0.1:3999/api/agent/v1", binding.Endpoint);
+            Assert.Equal("http://127.0.0.1:3999/api/agent/v2", binding.Endpoint);
         }
         using var impersonation = await Post(consumer.Id, otherConsumer.Id, "history/token", new CoreAgentHistoryRequest(reference));
         Assert.Equal(HttpStatusCode.Unauthorized, impersonation.StatusCode);

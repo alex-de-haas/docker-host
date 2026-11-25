@@ -44,7 +44,7 @@ it("shows lost contact for the originating chat and its single execution while p
   const rows = space.participation!.sessions;
   rows[1] = { ...rows[1]!, status: "running", activityAt: rows[0]!.activityAt, activityGroup: "my-run" };
   rows.push({ ...rows[1]!, kind: "execution", canOpen: false, sessionId: "native", title: "Native execution" });
-  const mine: AssistantSession = { id: "second", title: "My chat", status: "running", createdAt: rows[1]!.activityAt!, providerHistoryContact: { runId: "native", reason: "unavailable", observedAt: rows[1]!.activityAt! } };
+  const mine: AssistantSession = { id: "second", title: "My chat", status: "running", createdAt: rows[1]!.activityAt!, providerStatusContact: { runId: "native", reason: "unavailable", observedAt: rows[1]!.activityAt! } };
   await act(async () => root.render(<WorkspaceSessions workspace={space} chats={[mine]} refresh={() => {}} />));
   const [other, own, native] = container.querySelectorAll("li");
   expect(other?.textContent).toContain("Owner · running");

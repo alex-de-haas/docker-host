@@ -35,7 +35,7 @@ export class AgentSessionService {
       state: !current && ["running", "waiting_for_input", "queued"].includes(value.state) ? "unknown" : value.state,
       observedAt: current ? new Date().toISOString() : value.observedAt, freshness: current ? "current" : "last_known", stopConfirmed: value.stopConfirmed,
       nativeSession: value.nativeSession ? { provider: this.provider, id: value.nativeSession } : null,
-      conversation: value.conversation ? { provider: this.provider, id: value.conversation } : null };
+      conversation: value.conversation && !this.manager.removalStatus(value.conversation, value.owner) ? { provider: this.provider, id: value.conversation } : null };
   }
   private session(value: ObservedNativeSession, runs: ObservedRun[]): AgentSession {
     const activeRuns = runs.filter(run => run.owner === value.owner && run.nativeSession === value.id && !run.stopConfirmed && !run.retired);
@@ -43,7 +43,7 @@ export class AgentSessionService {
       fail("budget_exceeded", "Reconcile retained unconfirmed native attempts before listing this session.", 429);
     return { ref: { provider: this.provider, id: value.id }, revision: value.revision,
       activeRuns: activeRuns.map(run => ({ provider: this.provider, id: run.id })),
-      capabilities: executionCapabilities, conversation: value.conversation ? { provider: this.provider, id: value.conversation } : null };
+      capabilities: executionCapabilities, conversation: value.conversation && !this.manager.removalStatus(value.conversation, value.owner) ? { provider: this.provider, id: value.conversation } : null };
   }
   async getRun(actor: Actor, ref: RunRef): Promise<AgentRun> {
     this.actor(actor); const id = this.reference(ref);

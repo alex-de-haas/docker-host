@@ -46,8 +46,8 @@ it("starts an unrelated injected engine with its declared settings and capabilit
   try {
     expect((await fetch(origin + "/healthz")).status).toBe(200);
     expect(await (await fetch(origin + "/settings")).text()).toContain("Sign in through Hosty");
-    const capabilities = await (await fetch(origin + "/api/agent/v1/capabilities", { headers: { authorization: "Bearer exact-operation" } })).json() as AgentCapabilities;
-    expect(capabilities.version).toBe(1);
+    const capabilities = await (await fetch(origin + "/api/agent/v2/capabilities", { headers: { authorization: "Bearer exact-operation" } })).json() as AgentCapabilities;
+    expect(capabilities.version).toBe(2);
     expect(capabilities).toEqual(independentEngine.capabilities);
     for (const [method, route] of [["GET", "/api/translation/v1/default/capabilities"], ["POST", "/api/translation/v1/default/translations"]]) {
       const response = await fetch(origin + route, { method, headers: { authorization: "Bearer retired-translation", "content-type": "application/json" },

@@ -27,7 +27,7 @@ public sealed class HostyAgentExecutionClientTests
         using var http = new HttpClient(handler);
         var client = new HostyAgentExecutionClient(http, provider, (request, _) => {
             authorizations.Add(request);
-            return Task.FromResult(new HostyAgentAuthorization(provider, "http://agent.test/api/agent/v1", "exact-operation", DateTimeOffset.UtcNow.AddMinutes(1), "admission", DateTimeOffset.UtcNow.AddHours(1)));
+            return Task.FromResult(new HostyAgentAuthorization(provider, "http://agent.test/api/agent/v2", "exact-operation", DateTimeOffset.UtcNow.AddMinutes(1), "admission", DateTimeOffset.UtcNow.AddHours(1)));
         });
         await client.SendAsync(prepared); await client.SendAsync(prepared);
         Assert.Equal(2, calls.Count); Assert.Equal(prepared.Body, calls[0]); Assert.Equal(calls[0], calls[1]);
@@ -144,7 +144,7 @@ public sealed class HostyAgentExecutionClientTests
             } }
         };
         using var http = new HttpClient(new Handler(request => {
-            Assert.Equal("/agent/v1/history/events?after=last", request.RequestUri!.PathAndQuery);
+            Assert.Equal("/agent/v2/history/events?after=last", request.RequestUri!.PathAndQuery);
             Assert.Equal("Bearer read-history", request.Headers.Authorization!.ToString());
             Assert.False(request.Headers.Contains("X-Hosty-User-Token"));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
@@ -152,7 +152,7 @@ public sealed class HostyAgentExecutionClientTests
             });
         }));
         var client = new HostyAgentExecutionClient(http, provider, (_, _) => throw new InvalidOperationException("Unexpected user authorization"));
-        var binding = new HostyAgentHistoryBinding("read-history", DateTimeOffset.UtcNow.AddHours(1), "http://provider.test/agent/v1");
+        var binding = new HostyAgentHistoryBinding("read-history", DateTimeOffset.UtcNow.AddHours(1), "http://provider.test/agent/v2");
         var results = new List<HostyAgentHistoryObservation>();
         async Task Collect() { await foreach (var item in client.HistoryAsync(binding, "last")) results.Add(item); }
         if (!matching) { await Assert.ThrowsAsync<HostyProviderException>(Collect); return; }
@@ -179,7 +179,7 @@ public sealed class HostyAgentExecutionClientTests
                 Encoding.UTF8, "text/event-stream")
         })));
         var client = new HostyAgentExecutionClient(http, provider, (_, _) => throw new InvalidOperationException());
-        var binding = new HostyAgentHistoryBinding("history", DateTimeOffset.UtcNow.AddHours(1), "http://provider.test/agent/v1");
+        var binding = new HostyAgentHistoryBinding("history", DateTimeOffset.UtcNow.AddHours(1), "http://provider.test/agent/v2");
         await using var reader = client.HistoryAsync(binding).GetAsyncEnumerator();
         await Assert.ThrowsAsync<HostyProviderException>(() => reader.MoveNextAsync().AsTask());
     }
@@ -193,7 +193,7 @@ public sealed class HostyAgentExecutionClientTests
         var provider = new HostyProviderRef("another.provider", "installation", "agent");
         using var http = new HttpClient(new Handler(request =>
         {
-            Assert.Equal("/agent/v1/history/events?after=previous&through=watermark&limit=2", request.RequestUri!.PathAndQuery);
+            Assert.Equal("/agent/v2/history/events?after=previous&through=watermark&limit=2", request.RequestUri!.PathAndQuery);
             Assert.Equal("application/json", Assert.Single(request.Headers.Accept).MediaType);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
@@ -202,7 +202,7 @@ public sealed class HostyAgentExecutionClientTests
             });
         }));
         var client = new HostyAgentExecutionClient(http, provider, (_, _) => throw new InvalidOperationException("Unexpected user authorization"));
-        var binding = new HostyAgentHistoryBinding("history", DateTimeOffset.UtcNow.AddHours(1), "http://provider.test/agent/v1");
+        var binding = new HostyAgentHistoryBinding("history", DateTimeOffset.UtcNow.AddHours(1), "http://provider.test/agent/v2");
         if (valid)
         {
             var page = await client.HistoryPageAsync(binding, "previous", "watermark", 2);

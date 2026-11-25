@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { isPrivateToolProvider } from "../shared/chat-workflow.js";
 import { DecisionsService } from "./decisions/service.js";
 import { decisionsRoute } from "./decisions/routes.js";
@@ -86,8 +87,8 @@ export function createGatewayServer(
   const history = new HistoryService(manager.store, { appId: process.env.HOSTY_APP_ID ?? "hosty.harness", installationId: process.env.HOSTY_APP_INSTALLATION_ID ?? "standalone", key: "default" });
   const execution = new AgentSessionService(manager, history.provider);
   const feedback = new FeedbackService(manager, undefined, providers);
-  const promptTemplates = new PromptTemplateStore(manager.store.dataDir);
-  const speechPreferences = new SpeechPreferences(manager.store.dataDir);
+  const promptTemplates = new PromptTemplateStore(manager.store.preferencesDir);
+  const speechPreferences = new SpeechPreferences(manager.store.preferencesDir);
   const handoffs = new HandoffStore(manager, settings, providers);
   const eventStreams = new EventStreamTransport(manager, Date.now, connections, tasks);
   const recovered = (async () => {
@@ -106,6 +107,8 @@ export function createGatewayServer(
   })();
   const timer = setInterval(() => { void handoffs.sweep().catch(error => console.error("[handoff] cleanup failed", error)); }, 60_000);
   timer.unref();
+  const stopReconciliation = setInterval(() => { void manager.reconcilePendingStops().catch(() => {}); }, 5000);
+  stopReconciliation.unref();
   const server = createServer((request, response) => {
     void recovered.then(() => withAgentAuthority(async () => {
       const credential = readAppCredential(request) ?? request.headers.authorization?.match(/^Bearer (\S+)$/)?.[1];
@@ -143,7 +146,7 @@ export function createGatewayServer(
   const taskServer = Object.assign(server, { stopTaskDispatch: async () => { await manager.decisions?.close(); await tasks.close(); await feedback.close(); } });
   const close = server.close.bind(server);
   server.close = ((callback?: (error?: Error) => void) => { history.close(); void tasks.close(); eventStreams.close(); return close(callback); }) as typeof server.close;
-  server.on("close", () => { void manager.decisions?.close(); history.close(); clearInterval(timer); tasks.close(); void feedback.close(); });
+  server.on("close", () => { void manager.decisions?.close(); history.close(); clearInterval(timer); clearInterval(stopReconciliation); tasks.close(); void feedback.close(); });
   return taskServer;
 }
 
@@ -833,6 +836,22 @@ async function route(
   }
 
   const sessionId = sessionMatch[1]!;
+  if (!sessionMatch[2] && method === "DELETE") {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : await delegationCredential(request, false);
+    if (!credential && actor.via === "app-session") throw new AppContextError(401, "reauth_required", "The owning app session is required.");
+    const accepted = await manager.confirmSessionRemoval(sessionId, actor.userId, randomUUID(), credential ?? undefined);
+    const receipt = accepted ? manager.removalStatus(sessionId, actor.userId) : undefined;
+    sendJson(response, receipt ? receipt.state === "removed" ? 200 : 202 : 404, receipt
+      ? { deleted: true, cleanup: receipt.state, requestId: receipt.requestId }
+      : { code: "session_not_found", message: "Session not found." });
+    return;
+  }
+  if (sessionMatch[2] === "/deletion" && method === "GET") {
+    const receipt = manager.removalStatus(sessionId, actor.userId);
+    sendJson(response, receipt ? 200 : 404, receipt ? { state: receipt.state, reason: receipt.reason, localErased: receipt.localErased, requestId: receipt.requestId } :
+      { code: "session_not_found", message: "Removal not found." });
+    return;
+  }
   const ownedSession = await manager.getSession(sessionId);
   if (!ownedSession || ownedSession.createdBy !== actor.userId) {
     sendJson(response, 404, { code: "session_not_found", message: "Session not found." }); return;
@@ -863,6 +882,14 @@ async function route(
   if (rest === "/history/refresh" && method === "POST") {
     await manager.refreshProviderHistory(sessionId, actor.userId, actor.via === "app-session" ? readAppCredential(request) ?? undefined : undefined);
     sendJson(response, 202, { accepted: true }); return;
+  }
+  if (rest === "/authorize-pending" && method === "POST") {
+    const credential = actor.via === "app-session" ? readAppCredential(request) : null;
+    if (!credential) throw new AppContextError(401, "reauth_required", "Sign in to authorize the retained message.");
+    const body = await readJson(request, 4096);
+    if (typeof body.clientRequestId !== "string") throw new AppContextError(400, "message_request_invalid", "Select the original message.");
+    await manager.authorizePendingMessage(sessionId, actor.userId, body.clientRequestId, credential);
+    sendJson(response, 200, { authorized: true }); return;
   }
   if (rest === "/credentials" && method === "POST") {
     const credential = readAppCredential(request);
@@ -937,18 +964,6 @@ async function route(
       return;
     }
     sendJson(response, 200, record);
-    return;
-  }
-
-  if (rest === "" && method === "DELETE") {
-    const interactiveOwner = actor.via === "app-session";
-    const credential = interactiveOwner ? readAppCredential(request) : await delegationCredential(request, false);
-    const deleted = await manager.deleteSession(sessionId, actor.userId, credential ?? undefined, interactiveOwner);
-    if (!deleted) {
-      sendJson(response, 404, { code: "session_not_found", message: "Session not found." });
-      return;
-    }
-    sendJson(response, 200, { deleted: true });
     return;
   }
 
@@ -1084,22 +1099,11 @@ async function route(
     return;
   }
 
-  if (rest === "/execution-recovery" && (method === "GET" || method === "POST")) {
-    const credential = readAppCredential(request);
-    if (actor.via !== "app-session" || !credential)
-      throw new AppContextError(403, "recovery_operator_required", "Sign in through Core as the owning operator to recover an execution.");
-    response.setHeader("Cache-Control", "no-store");
-    if (method === "GET") sendJson(response, 200, await manager.executionRecovery(sessionId, actor.userId, credential));
-    else {
-      await manager.recoverExecution(sessionId, actor.userId, await readJson(request), credential);
-      sendJson(response, 200, { recovered: true });
-    }
-    return;
-  }
-
   if (rest === "/cancel" && method === "POST") {
     const cancelled = await manager.cancelSession(sessionId, actor.via === "app-session" ? readAppCredential(request) ?? undefined : undefined);
-    sendJson(response, 200, { cancelled });
+    const record = await manager.getSession(sessionId);
+    const pending = record && manager.isProviderStopUnconfirmed(record);
+    sendJson(response, pending ? 202 : 200, { cancelled, ...(pending ? { state: "stopping" } : {}) });
     return;
   }
 

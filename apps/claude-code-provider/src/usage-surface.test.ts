@@ -40,7 +40,7 @@ async function fixture(auth: "claude-token" | "api-key" = "claude-token") {
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   cleanups.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
   const address = server.address(); if (!address || typeof address === "string") throw new Error("No isolated listener.");
-  const origin = `http://127.0.0.1:${address.port}/api/agent/v1`;
+  const origin = `http://127.0.0.1:${address.port}/api/agent/v2`;
   const client = new AgentClient({ provider, authorize: async request => {
     const token = randomUUID(); proofs.set(token, request);
     return { provider, baseUrl: origin, token, expiresAt: new Date(Date.now() + 60000).toISOString() };

@@ -41,10 +41,12 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
     }
 
     internal async Task<AppExecutionStatus> SubmitAsync(string appId, AppExecutionTargetRequest input,
-        WorkspaceActivationActor actor, CancellationToken ct, string? onlyWorkspaceId = null)
+        WorkspaceActivationActor actor, CancellationToken ct, string? onlyWorkspaceId = null, string? onlyDevOperationId = null)
     {
         AppExecutionStore.Validate(input);
-        await ValidateAsync(actor, ct, input.Kind == "workspace");
+        if (actor.Deletion is not null && input.Kind == "package" && onlyWorkspaceId == actor.Deletion.WorkspaceId)
+            await access.ValidateReturnAsync(actor, "app", appId, input.RequestId, ct, onlyDevOperationId, input.Runtime);
+        else await ValidateAsync(actor, ct, input.Kind == "workspace");
         var path = AppExecutionStore.FileFor(paths, appId, input.RequestId);
         var gate = gates.GetOrAdd(path, _ => new(1, 1));
         await gate.WaitAsync(ct);
@@ -54,7 +56,7 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
             var existing = await AppExecutionStore.ReadAsync(paths, appId, input.RequestId, ct);
             if (existing is not null)
             {
-                if (existing.Fingerprint != fingerprint) throw new AppLifecycleException("execution_request_conflict", "This requestId belongs to a different selection or authority.");
+                if (existing.Fingerprint != fingerprint || existing.OnlyDevOperationId != onlyDevOperationId) throw new AppLifecycleException("execution_request_conflict", "This requestId belongs to a different selection or authority.");
                 if (IsSettled(existing.State, existing.Code)) return await StatusAsync(appId, input.RequestId, actor.UserId, ct);
                 await AppExecutionStore.SaveAsync(paths, existing with { State = "running", Code = null, Error = null, Review = null }, ct);
             }
@@ -62,7 +64,7 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
             {
                 var app = await apps.GetAppAsync(appId, ct) ?? throw new AppLifecycleException("app_not_found", "The application is no longer installed.");
                 await AppExecutionStore.SaveAsync(paths, new(appId, input, actor, app.InstalledAt, AppExecutionStore.Binding(app),
-                    fingerprint, OnlyWorkspaceId: onlyWorkspaceId,
+                    fingerprint, OnlyWorkspaceId: onlyWorkspaceId, OnlyDevOperationId: onlyDevOperationId,
                     PreviousRequestId: (await JsonStorage.ReadAsync<AppExecutionOwner>(Path.Combine(AppExecutionStore.DirectoryFor(paths, appId), "owner.json"), ct))?.RequestId), ct);
             }
             queue.Writer.TryWrite((appId, input.RequestId, false));
@@ -188,7 +190,10 @@ internal sealed class AppExecutionTargetService(CoreDataPaths paths, AppRegistry
             {
                 // The lifecycle rechecks this authority under the app lock before effects.
                 // It can also settle an already durable launch without executing more code.
-                operation = await lifecycle.ExecuteTargetAsync(operation, ct, token => ValidateAsync(operation.Actor, token, operation.Request.Kind == "workspace"));
+                operation = await lifecycle.ExecuteTargetAsync(operation, ct, token =>
+                    operation.Actor.Deletion is not null && operation.Request.Kind == "package" && operation.OnlyWorkspaceId == operation.Actor.Deletion.WorkspaceId
+                        ? access.ValidateReturnAsync(operation.Actor, "app", operation.AppId, operation.Request.RequestId, token, operation.OnlyDevOperationId, operation.Request.Runtime)
+                        : ValidateAsync(operation.Actor, token, operation.Request.Kind == "workspace"));
                 await AppExecutionStore.SaveAsync(paths, operation, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

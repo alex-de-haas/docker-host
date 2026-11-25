@@ -24,7 +24,7 @@ function fixture() {
       { id: "approval", revision: decisionRevision, kind: "approval", delivery: "continue_run", source: { agentId: "root" }, toolName: "Edit" },
     ], effects: { certainty: "known", unresolvedCallIds: [] } });
   const client = {
-    capabilities: vi.fn(async () => ({ version: 1 as const, eventVersions: ["agent-event.1"], capabilities: ["runs.live-configure"],
+    capabilities: vi.fn(async () => ({ version: 2 as const, eventVersions: ["agent-event.1"], capabilities: ["runs.live-configure"],
       limits: { maxCommandBytes: 1048576, maxEventBytes: 1048576, maxSnapshotBytes: 1048576, maxReplayBytes: 1048576,
         replayRetentionMs: 1000, maxControls: 10, maxPageSize: 10 }, configuration: { resumeCompatible: [] } })),
     session: vi.fn(async () => session),

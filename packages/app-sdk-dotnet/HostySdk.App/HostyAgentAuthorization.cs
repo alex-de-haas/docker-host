@@ -34,12 +34,15 @@ public record HostyAgentAuthorization(HostyProviderRef Provider, string BaseUrl,
 public record HostyAgentInvocation(int Version, string UserId, string HostRole, string PrincipalId,
     string CallerAppId, string CallerInstallation, HostyProviderRef Provider, string Operation,
     HostyAgentResource[]? ResourceIds, string AdmissionRef, string? SessionId, string? RunId,
-    string? ConfigurationDigest, HostyAgentAuthorityCeiling? Ceiling, DateTimeOffset ExpiresAt);
+    string? ConfigurationDigest, HostyAgentAuthorityCeiling? Ceiling, DateTimeOffset ExpiresAt, string? OriginalStartDigest = null, bool CleanupOnly = false);
 /// <summary>Installation-bound, read-only history access. Endpoint is the selected provider interface base URL.</summary>
 public record HostyAgentHistoryBinding(string Token, DateTimeOffset ExpiresAt, string Endpoint);
 /// <summary>Consumer installation whose admitted runs the provider may return.</summary>
-public record HostyAgentHistoryOwner(string CallerAppId, string CallerInstallation, HostyProviderRef Provider, DateTimeOffset ExpiresAt);
-internal record HostyAgentHistorySelection(HostyProviderRef Provider);
+public record HostyAgentHistoryOwner(string CallerAppId, string CallerInstallation, HostyProviderRef Provider, DateTimeOffset ExpiresAt, bool Acknowledge = false);
+internal record HostyAgentHistorySelection(HostyProviderRef Provider, bool Acknowledge = false);
+/// <summary>An exact stored Core authorization and immutable operation metadata for recovery.</summary>
+public record HostyAgentRecoveryRequest(string AdmissionRef, HostyProviderRef Provider, string Operation,
+    string Method, string Path, string BodyHash, string? SessionId = null, string? RunId = null);
 internal record HostyAgentHistoryIntrospection(string Token, string Key);
 internal record HostyAgentAuthorize(HostyProviderRef Provider, string Operation, string Method, string Path, string BodyHash,
     HostyAgentResource[]? Resources, string? SessionId, string? RunId, string? ConfigurationDigest, HostyAgentAuthorityCeiling? Ceiling, HostyAgentTaskAuthority? Authority, HostyAgentConversation? Conversation);
@@ -82,6 +85,15 @@ public sealed partial class HostyProviderClient
     /// <summary>Resolve a history subscription for this installation without a browser session.</summary>
     public Task<HostyAgentHistoryBinding> AuthorizeAgentHistoryAsync(HostyProviderRef provider, CancellationToken cancellationToken = default) =>
         CoreAsync<HostyAgentHistoryBinding>("/agent/history/token", new HostyAgentHistorySelection(provider), null, cancellationToken);
+    /// <summary>Authorize the transcript owner to acknowledge the records it durably consumed.</summary>
+    public Task<HostyAgentHistoryBinding> AuthorizeAgentHistoryDeliveryAsync(HostyProviderRef provider, CancellationToken cancellationToken = default) =>
+        CoreAsync<HostyAgentHistoryBinding>("/agent/history/token", new HostyAgentHistorySelection(provider, true), null, cancellationToken);
+    /// <summary>Recover delivery of the exact original operation under its current authority.</summary>
+    public Task<HostyAgentAuthorization> AuthorizeAgentReplayAsync(HostyAgentRecoveryRequest request, CancellationToken cancellationToken = default) =>
+        CoreAsync<HostyAgentAuthorization>("/agent/replay/token", request, null, cancellationToken);
+    /// <summary>Observe an existing attempt or close its writer using the owning installation.</summary>
+    public Task<HostyAgentAuthorization> AuthorizeAgentCleanupAsync(HostyAgentRecoveryRequest request, CancellationToken cancellationToken = default) =>
+        CoreAsync<HostyAgentAuthorization>("/agent/cleanup/token", request, null, cancellationToken);
     /// <summary>Provider-only validation of the installation credential used for result delivery.</summary>
     public Task<HostyAgentHistoryOwner> ValidateAgentHistoryAsync(string token, string key, CancellationToken cancellationToken = default) =>
         CoreAsync<HostyAgentHistoryOwner>("/agent/history/introspect", new HostyAgentHistoryIntrospection(token, key), null, cancellationToken);

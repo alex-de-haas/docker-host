@@ -3,7 +3,7 @@
   "id": "hosty.codex-provider",
   "name": "Codex Provider",
   "description": "Local Codex agent execution with app-owned connections and native sessions. OpenAI API connections can also provide dictation and read-aloud.",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "source": {
     "type": "git",
     "repository": "https://github.com/alex-de-haas/docker-host.git",
@@ -139,8 +139,8 @@
       {
         "key": "default",
         "endpoint": "http",
-        "path": "/api/agent/v1",
-        "version": 1,
+        "path": "/api/agent/v2",
+        "version": 2,
         "capabilities": [
           "installation-history",
           "installation-history.live",

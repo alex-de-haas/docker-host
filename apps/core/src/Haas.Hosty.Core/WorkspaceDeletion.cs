@@ -234,5 +234,12 @@ internal sealed class WorkspaceDeletionRecovery(WorkspaceCleanupService cleanup,
         try { await cleanup.RecoverDeletedAsync(logger, stoppingToken); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         { logger.LogWarning(ex, "Workspace deletion recovery did not finish; retained evidence can be retried after restart."); }
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try { await cleanup.RecoverDeletesAsync(stoppingToken); }
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+            { logger.LogWarning("Workspace deletion recovery deferred ({Reason}).", ex.GetType().Name); }
+            await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+        }
     }
 }

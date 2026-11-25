@@ -72,15 +72,16 @@ describe("bounded public native projection", () => {
   it("keeps the latest context across replay expiry and leaves old records without an observation unchanged", async () => {
     const f = await fixture();
     await f.store.save(f.session);
-    const file = path.join(f.store.directory, f.session.id+".json"), before = await readFile(file, "utf8");
+    const before = f.store.history.database(db => db.prepare("SELECT revision FROM execution_sessions WHERE id=?").get(f.session.id));
     const legacy = new ProviderStore(f.store.directory, provider); await legacy.initialize();
     expect((await legacy.run(f.record.snapshot.ref.id)).record.snapshot).not.toHaveProperty("latestContext");
-    expect(await readFile(file, "utf8")).toBe(before);
+    expect(legacy.history.database(db => db.prepare("SELECT revision FROM execution_sessions WHERE id=?").get(f.session.id))).toEqual(before);
     f.append({ type: "context_usage", usage: { usedTokens: 109, maxTokens: 32768, estimated: false, observedAt: new Date().toISOString() } });
     const observation = structuredClone(f.record.snapshot.latestContext);
     f.record.snapshot.state = "succeeded"; f.record.snapshot.phase = "terminal"; f.record.snapshot.stopConfirmed = true;
     f.record.completedAt = new Date(0).toISOString(); f.store.lifecycle(f.record); await f.store.save(f.session);
     const expired = new ProviderStore(f.store.directory, provider, 1024 * 1024, 0); await expired.initialize();
+    await expired.pruneReplay(f.record.snapshot.ref.id);
     const restored = (await expired.run(f.record.snapshot.ref.id)).record;
     expect(restored.events).toEqual([]); expect(restored.snapshot.latestContext).toEqual(observation);
     validateAgentRunSnapshot(restored.snapshot);
@@ -212,15 +213,15 @@ it("marks explicitly incomplete native child tool coverage without changing stop
 });
 
 
-it("distinguishes confirmed process exit from unresolved outcomes without releasing the execution fence", async () => {
+it("releases the attempt after physical closure and preserves unresolved outcomes", async () => {
   const f = await fixture();
   f.session.session.activeRun = f.record.snapshot.ref;
   const receipt: WorkerReceipt = { runId: f.record.snapshot.ref.id, conversationId: f.session.id, generation: "native", state: "completed", revision: 2,
     selection: { model: null, reasoningEffort: null }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     exitConfirmed: true, effects: { [nativeEventIdentity(child, "last-call")]: "started" } };
   projectReceipt(f.store, f.session, f.record, receipt);
-  expect(f.record.snapshot).toMatchObject({ state: "unknown", phase: "interrupted", stopConfirmed: false, freshness: "last_known" });
-  expect(f.session.session.activeRun).toEqual(f.record.snapshot.ref);
+  expect(f.record.snapshot).toMatchObject({ state: "succeeded", phase: "terminal", stopConfirmed: true, freshness: "current", effects: { certainty: "unknown" } });
+  expect(f.session.session.activeRun).toBeNull();
   const warnings = () => f.record.events.filter(event => event.type === "warning" && event.data.code === "native_effect_outcomes_unresolved");
   expect(warnings()).toHaveLength(1);
   expect(warnings()[0]!.data.message).toContain("native process has stopped");
@@ -241,7 +242,7 @@ it.each(["completed", "cancelled"] as const)("shares confirmed whole-tree stop w
   const receipt: WorkerReceipt = { runId: f.record.snapshot.ref.id, conversationId: f.session.id, generation: "native", state, revision: 2,
     selection: { model: null, reasoningEffort: null }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), exitConfirmed: true, effects: {} };
   projectReceipt(f.store, f.session, f.record, { ...receipt, effects: { outstanding: "started" } });
-  expect(f.record.snapshot.agents!.every(agent => agent.stopConfirmed === false)).toBe(true);
+  expect(f.record.snapshot.agents!.every(agent => agent.stopConfirmed === true)).toBe(true);
   projectReceipt(f.store, f.session, f.record, receipt);
   expect(f.record.snapshot.agents).toMatchObject([{ state: "unknown", stopConfirmed: true }, { state: "succeeded", stopConfirmed: true }]);
   const count = f.record.events.length;

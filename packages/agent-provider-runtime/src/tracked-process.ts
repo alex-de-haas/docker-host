@@ -1,6 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { promisify } from "node:util";
+import { linuxWriterArgs, type WriterScope } from "./writer-scope.js";
 import { randomUUID } from "node:crypto";
-import { closeSync, fsyncSync, openSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, fsyncSync, openSync, renameSync, mkdirSync, statSync, statfsSync, realpathSync, rmdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +11,7 @@ import { nativeEnvironment } from "./internal/runtime/environment.js";
 import type { AgentProcessTransport, AgentSpawnOptions } from "./internal/runtime/transport.js";
 
 const producerNonce = randomUUID();
-type Manifest = { version: 1; runId: string; generation: string; sealed: boolean; spawns: string[]; producerPid: number; producerNonce: string; sdkStopConfirmed: boolean };
+type Manifest = { version: 1; runId: string; generation: string; sealed: boolean; spawns: string[]; producerPid: number; producerNonce: string; sdkStopConfirmed: boolean; cgroups?: Record<string, { path: string; dev: string; ino: string }> };
 export type NativeProcessEvidence = { format: "hosty-native-stop.1"; runId: string; generation: string;
   stopped: boolean; allClosed: boolean; sealed: boolean; spawnCount: number; reason?: string };
 const identifier = (value: string) => { if (!/^[A-Za-z0-9-]{1,100}$/.test(value)) throw new Error("Invalid native execution identity."); return value; };
@@ -34,7 +36,7 @@ export class TrackedNativeProcesses {
   private readonly handles = new WeakMap<ChildProcessWithoutNullStreams, { ended: Promise<void>; file: string; nonce: string }>();
   private readonly closed = new Set<Promise<void>>();
   private stopped = false;
-  private constructor(private readonly root: string, private readonly manifest: Manifest) {
+  private constructor(private readonly root: string, private readonly manifest: Manifest, private readonly scope?: WriterScope) {
     this.transport = {
       stopProcess: child => this.stopProcess(child),
       spawn: (command, args, options) => this.launch(options.command ?? command, args, options),
@@ -42,7 +44,7 @@ export class TrackedNativeProcesses {
       spawnCommand: (command, args, options) => this.launch(command, args, options),
     };
   }
-  static async create(dataRoot: string, runId: string, generation: string): Promise<TrackedNativeProcesses> {
+  static async create(dataRoot: string, runId: string, generation: string, scope?: WriterScope): Promise<TrackedNativeProcesses> {
     const root = directory(dataRoot, runId, generation);
     await durableMkdir(root);
     const manifest: Manifest = { version: 1, runId, generation, sealed: false, spawns: [], producerPid: process.pid, producerNonce, sdkStopConfirmed: false };
@@ -50,7 +52,7 @@ export class TrackedNativeProcesses {
     const fd = openSync(file, "wx", 0o600);
     try { writeFileSync(fd, JSON.stringify(manifest)); fsyncSync(fd); } finally { closeSync(fd); }
     if (process.platform !== "win32") { const parent = openSync(root, "r"); try { fsyncSync(parent); } finally { closeSync(parent); } }
-    return new TrackedNativeProcesses(root, manifest);
+    return new TrackedNativeProcesses(root, manifest, scope);
   }
   private launch(command: string, args: string[], options: AgentSpawnOptions): ChildProcessWithoutNullStreams {
     if (this.stopped || this.manifest.sealed) throw new Error("The native execution is sealed.");
@@ -59,6 +61,13 @@ export class TrackedNativeProcesses {
     const nonce = randomUUID(), file = path.join(this.root, nonce + ".json");
     // Both the complete intent set and this individual intent precede every process effect.
     durable(file, { version: 1, runId: this.manifest.runId, generation: this.manifest.generation, nonce, state: "intent", treeStopped: false });
+    let cgroup: string | undefined;
+    if (this.scope?.kind === "linux-cgroup") {
+      cgroup = path.join(this.scope.directory, "hosty-" + nonce);
+      mkdirSync(cgroup);
+      const identity = statSync(cgroup, { bigint: true });
+      (this.manifest.cgroups ??= {})[nonce] = { path: cgroup, dev: String(identity.dev), ino: String(identity.ino) };
+    }
     this.manifest.spawns.push(nonce); durable(path.join(this.root, "manifest.json"), this.manifest);
     const runner = fileURLToPath(new URL("./native-runner.mjs", import.meta.url));
     const env = nativeProcessEnvironment(options.env, options.bearerVariables);
@@ -78,7 +87,7 @@ export class TrackedNativeProcesses {
         this.children.delete(child); resolve();
       }
     });
-    child.send({ version: 1, runId: this.manifest.runId, generation: this.manifest.generation, nonce, file, command, args, cwd: options.cwd }, error => {
+    child.send({ version: 1, runId: this.manifest.runId, generation: this.manifest.generation, nonce, file, command: cgroup ? "/usr/bin/bwrap" : command, args: cgroup ? [...linuxWriterArgs, "--", command, ...args] : args, cwd: options.cwd, cgroup }, error => {
       if (error) requestStop();
     });
     return child;
@@ -108,11 +117,18 @@ export class TrackedNativeProcesses {
     return this.evidence();
   }
   evidence(): Promise<NativeProcessEvidence> { return TrackedNativeProcesses.readEvidence(path.dirname(path.dirname(path.dirname(this.root))), this.manifest.runId, this.manifest.generation); }
-  static async readEvidence(dataRoot: string, runId: string, generation: string): Promise<NativeProcessEvidence> {
+  static async readEvidence(dataRoot: string, runId: string, generation: string, exclusiveSuccessor = false): Promise<NativeProcessEvidence> {
     const root = directory(dataRoot, runId, generation);
     const base = { format: "hosty-native-stop.1" as const, runId, generation, stopped: false, allClosed: false, sealed: false, spawnCount: 0 };
     try {
-      const file = path.join(root, "manifest.json"); if (statSync(file).size > 64000) return { ...base, reason: "invalid_manifest" };
+      const file = path.join(root, "manifest.json");
+      try { statSync(file); } catch (error) {
+        // The manifest is fsynced before any spawn. The exclusive successor owns the gate.
+        if (exclusiveSuccessor && (error as NodeJS.ErrnoException).code === "ENOENT")
+          return { ...base, allClosed: true, stopped: true, sealed: true };
+        throw error;
+      }
+      if (statSync(file).size > 64000) return { ...base, reason: "invalid_manifest" };
       const manifest = JSON.parse(await readFile(file, "utf8")) as Manifest;
       if (manifest.version !== 1 || manifest.runId !== runId || manifest.generation !== generation || typeof manifest.sealed !== "boolean" || typeof manifest.sdkStopConfirmed !== "boolean" || !Array.isArray(manifest.spawns)
         || manifest.spawns.length > 256 || new Set(manifest.spawns).size !== manifest.spawns.length
@@ -120,8 +136,42 @@ export class TrackedNativeProcesses {
       for (const nonce of manifest.spawns) {
         identifier(nonce); const receiptFile = path.join(root, nonce + ".json"); if (statSync(receiptFile).size > 64000) return { ...base, reason: "invalid_receipt" };
         const receipt = JSON.parse(await readFile(receiptFile, "utf8"));
-        if (receipt.version !== 1 || receipt.runId !== runId || receipt.generation !== generation || receipt.nonce !== nonce
-          || receipt.state !== "stopped" || receipt.treeStopped !== true)
+        if (receipt.version !== 1 || receipt.runId !== runId || receipt.generation !== generation || receipt.nonce !== nonce)
+          return { ...base, reason: "invalid_receipt" };
+        const scope = manifest.cgroups?.[nonce];
+        if (scope && exclusiveSuccessor && manifest.producerNonce !== producerNonce) {
+          // Only the successor owning the attempt lock may finish a crashed writer's exact cgroup.
+          if (process.platform !== "linux" || !scope.path.startsWith("/sys/fs/cgroup/") || path.basename(scope.path) !== "hosty-" + nonce)
+            return { ...base, reason: "invalid_cgroup" };
+          try {
+            const current = statSync(scope.path, { bigint: true });
+            if (realpathSync(scope.path) !== scope.path || String(current.dev) !== scope.dev || String(current.ino) !== scope.ino || statfsSync(scope.path).type !== 0x63677270)
+              return { ...base, reason: "invalid_cgroup" };
+            writeFileSync(path.join(scope.path, "cgroup.kill"), "1");
+            if (!/^populated 0$/m.test(readFileSync(path.join(scope.path, "cgroup.events"), "utf8"))) return { ...base, reason: "scope_closing" };
+            rmdirSync(scope.path);
+          } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+          durable(path.join(root, nonce + ".closed.json"), { version: 1, runId, generation, nonce, state: "stopped", treeStopped: true, mechanism: "linux-cgroup-successor.2" });
+          continue;
+        }
+        if (process.platform === "win32" && exclusiveSuccessor && manifest.producerNonce !== producerNonce &&
+          (receipt.state !== "stopped" || receipt.treeStopped !== true)) {
+          const recoveredFile = path.join(root, nonce + ".closed.json");
+          try {
+            const previous = JSON.parse(await readFile(recoveredFile, "utf8"));
+            if (previous.runId === runId && previous.generation === generation && previous.nonce === nonce && previous.treeStopped === true) continue;
+          } catch { /* Incomplete or missing proof requires kernel verification. */ }
+          const system = process.env.SystemRoot ?? process.env.SYSTEMROOT;
+          if (!system || !path.isAbsolute(system)) return { ...base, reason: "job_unavailable" };
+          const helper = fileURLToPath(new URL("./windows-native-job.ps1", import.meta.url));
+          await promisify(execFile)(path.join(system, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+            ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", helper,
+              "-PipeName", "hosty-native-" + nonce, "-RecoveryFile", receiptFile],
+            { windowsHide: true, timeout: 15000 });
+          durable(recoveredFile, { version: 1, runId, generation, nonce, state: "stopped", treeStopped: true, mechanism: "windows-job-successor.2" });
+          continue;
+        }
+        if (receipt.state !== "stopped" || receipt.treeStopped !== true)
           return { ...base, sealed: manifest.sealed, spawnCount: manifest.spawns.length, reason: "stop_unconfirmed" };
       }
       let producerExited = false;
@@ -129,7 +179,8 @@ export class TrackedNativeProcesses {
       catch (error) { producerExited = (error as NodeJS.ErrnoException).code === "ESRCH"; }
       // Signal zero observes existence only. PID reuse or unavailable observation stays unknown.
       const producerStopped = manifest.sealed === true || producerExited;
-      const stopped = producerStopped && manifest.sdkStopConfirmed === true;
+      const stopped = producerStopped && manifest.sdkStopConfirmed === true
+        || exclusiveSuccessor && manifest.producerNonce !== producerNonce;
       return { ...base, sealed: manifest.sealed, spawnCount: manifest.spawns.length, stopped, allClosed: true,
         ...(!stopped ? { reason: !producerStopped ? "producer_active" : "sdk_stop_unconfirmed" } : {}) };
     } catch { return { ...base, reason: "evidence_unavailable" }; }

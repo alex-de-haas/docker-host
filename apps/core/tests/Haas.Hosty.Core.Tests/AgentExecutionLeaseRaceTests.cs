@@ -425,7 +425,7 @@ public sealed partial class CoreLifecycleServiceTests
                 var provider = AssistantMcpAccessHttpTests.Record("independent.lease.provider", now) with
                 {
                     ConfirmedRoles = ["agent"], Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
-                    Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v1", 1, [])] }
+                    Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v2", 2, [])] }
                 };
                 var apps = services.GetRequiredService<AppRegistryStore>();
                 await apps.UpsertAppAsync(consumer); await apps.UpsertAppAsync(provider);
