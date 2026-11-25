@@ -35,6 +35,8 @@ async function within(promise, milliseconds = 5000) {
  */
 export async function runWindowsWriter() {
   let config, bridge, socket, closed = false, stopping = false, connected = false, startupTimer, stopTimer, connectTimer, bridgeClosed = Promise.resolve();
+  let tracing = false;
+  const trace = stage => { if (tracing) process.stderr.write("[native-probe] " + stage + "\n"); };
   const proof = () => {
     try { const value = readFileSync(config.file); if (value.length > 64000) return null; const receipt = JSON.parse(value.toString('utf8')); return isWindowsJobProof(receipt, config, bridge?.pid) ? receipt : null; }
     catch { return null; }
@@ -44,6 +46,7 @@ export async function runWindowsWriter() {
     socket?.destroy();
     // A lost response cannot overwrite an already durable identity-bound job proof.
     const receipt = proof();
+    trace("finish: receipt=" + !!receipt + " bridge=" + bridge?.exitCode + " connected=" + connected);
     if (!receipt) { try { persist(config); } catch {} bridge?.kill('SIGKILL'); code = 70; }
     else code = receipt.code;
     if (bridge) { process.stdin.unpipe(bridge.stdin); bridge.stdin.destroy(); }
@@ -66,6 +69,8 @@ export async function runWindowsWriter() {
     if (message?.stop === true) { if (!config || message.nonce === config.nonce) requestStop(); return; }
     if (config || message?.version !== 1 || !Array.isArray(message.args) || typeof message.command !== 'string') return;
     config = message;
+    tracing = /^job-probe-[A-Za-z0-9]+$/.test(path.basename(config.cwd)) && config.command === process.execPath
+      && config.args.length === 2 && config.args[0] === '-e' && config.args[1] === 'process.exit(0)';
     // Stop/producer loss may arrive before launch configuration. No helper or native command
     // is created in that case; the independent SDK marker remains a separate requirement.
     if (stopping) { try { persist(config, true); } catch { process.exit(70); return; } process.exit(0); return; }
@@ -74,7 +79,7 @@ export async function runWindowsWriter() {
     const connect = () => {
       if (closed) return;
       const candidate = createConnection(pipe); let buffer = '';
-      candidate.once('connect', () => { socket = candidate; });
+      candidate.once('connect', () => { socket = candidate; trace('control pipe connected'); });
       candidate.on('data', bytes => {
         buffer += bytes.toString('utf8'); if (Buffer.byteLength(buffer) > MAX_CONTROL_BYTES) { requestStop(); candidate.destroy(); return; }
         for (let newline; (newline = buffer.indexOf('\n')) >= 0;) {
@@ -82,7 +87,7 @@ export async function runWindowsWriter() {
           try { value = JSON.parse(line); } catch { requestStop(); candidate.destroy(); return; }
           if (value.version !== 1 || value.nonce !== config.nonce) { requestStop(); candidate.destroy(); return; }
           if (value.type === 'ready' && !connected) {
-            connected = true; clearTimeout(startupTimer);
+            connected = true; clearTimeout(startupTimer); trace('ready frame');
             const command = JSON.stringify({ version: 1, runId: config.runId, generation: config.generation, nonce: config.nonce, file: config.file, command: config.command, args: config.args, cwd: config.cwd, cancelled: stopping });
             if (Buffer.byteLength(command) > MAX_CONTROL_BYTES) { requestStop(); candidate.destroy(); return; }
             candidate.write(command + '\n'); if (stopping) requestStop();
@@ -105,7 +110,8 @@ export async function runWindowsWriter() {
       if (!system || !path.isAbsolute(system)) { finish(70); return; }
       const powershell = path.join(system, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
       const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('NODE_CHANNEL_')));
-      bridge = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(new URL('./windows-native-job.ps1', import.meta.url)), '-PipeName', pipeName], { cwd: config.cwd, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      trace('starting bridge');
+      bridge = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(new URL('./windows-native-job.ps1', import.meta.url)), '-PipeName', pipeName, ...(tracing ? ['-TraceBootstrap'] : [])], { cwd: config.cwd, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
       bridgeClosed = Promise.all([
         new Promise(resolve => { bridge.once('exit', resolve); bridge.once('error', resolve); }),
         new Promise(resolve => bridge.stdout.once('close', resolve)),
@@ -114,8 +120,8 @@ export async function runWindowsWriter() {
       // EOF belongs to the command protocol, not to the control channel or job stop operation.
       process.stdin.pipe(bridge.stdin); bridge.stdout.pipe(process.stdout); bridge.stderr.pipe(process.stderr);
       bridge.stdin.on('error', requestStop);
-      bridge.once('error', () => finish(70));
+      bridge.once('error', error => { trace('bridge spawn error ' + error.code); finish(70); });
       bridge.once('exit', code => finish(code));
-      startupTimer = setTimeout(requestStop, 30000); startupTimer.unref(); connect();
+      startupTimer = setTimeout(() => { trace('timed out waiting for bridge ready'); requestStop(); }, 30000); startupTimer.unref(); connect();
   });
 }

@@ -1,10 +1,12 @@
-param([Parameter(Mandatory = $true)][ValidatePattern('^hosty-native-[a-f0-9-]{36}$')][string]$PipeName, [string]$RecoveryFile)
+param([Parameter(Mandatory = $true)][ValidatePattern('^hosty-native-[a-f0-9-]{36}$')][string]$PipeName, [string]$RecoveryFile, [switch]$TraceBootstrap)
 $ErrorActionPreference = 'Stop'
 try {
     # Windows PowerShell and the .NET Framework are stock Windows components. No SDK, download,
     # account import or administrator configuration is performed by this launcher.
+    if ($TraceBootstrap) { [Console]::Error.WriteLine("[native-probe] loading bridge source") }
     $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'windows-native-job.cs') -Raw
     Add-Type -TypeDefinition $source -ReferencedAssemblies @('System.dll', 'System.Core.dll', 'System.Runtime.Serialization.dll', 'System.Xml.dll')
+    if ($TraceBootstrap) { [Console]::Error.WriteLine("[native-probe] bridge compiled") }
     if ($RecoveryFile) { exit ([HostyNativeJob]::CloseOrFence($RecoveryFile, $PipeName.Substring(13))) }
     exit ([HostyNativeJob]::Run($PipeName))
 }

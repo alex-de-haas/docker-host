@@ -37,8 +37,9 @@ async function fixture(suggestions = false) {
 
 it.each([false, true])("persists matched cleanup terminals before the terminal receipt (predictions: %s)", async suggestions => {
   const f = await fixture(suggestions);
-  const terminal = Promise.withResolvers<string>();
-  const suggesting = Promise.withResolvers<void>();
+  let terminalCommitted!: (state: string) => void, suggestionsReady!: () => void;
+  const terminal = new Promise<string>(resolve => { terminalCommitted = resolve; });
+  const suggesting = new Promise<void>(resolve => { suggestionsReady = resolve; });
   const atCompletion: Array<{ effects: unknown; outputs: number }> = [];
   const update = f.journal.update.bind(f.journal);
   vi.spyOn(f.journal, "update").mockImplementation(async (...args) => {
@@ -47,8 +48,8 @@ it.each([false, true])("persists matched cleanup terminals before the terminal r
       atCompletion.push({ effects: retained.receipt.effects, outputs: retained.events.filter(frame => frame.event.type === "tool_result").length });
     }
     const receipt = await update(...args);
-    if (receipt.state === "suggesting") suggesting.resolve();
-    if (["completed", "cancelled", "failed", "interrupted"].includes(receipt.state)) terminal.resolve(receipt.state);
+    if (receipt.state === "suggesting") suggestionsReady();
+    if (["completed", "cancelled", "failed", "interrupted"].includes(receipt.state)) terminalCommitted(receipt.state);
     return receipt;
   });
   f.stop.mockImplementation(async () => {
@@ -72,10 +73,10 @@ it.each([false, true])("persists matched cleanup terminals before the terminal r
   });
   f.emit({ type: "result", status: "success" });
   if (suggestions) {
-    await suggesting.promise;
+    await suggesting;
     f.emit({ type: "prompt_suggestion", text: "Next step" });
   }
-  expect(await terminal.promise).toBe("completed");
+  expect(await terminal).toBe("completed");
   await f.journal.exclusive(async () => {});
   const retained = await f.journal.load(f.runId), events = retained.events.map(frame => frame.event);
   expect(atCompletion).toEqual([{ effects: {}, outputs: 2 }]);
