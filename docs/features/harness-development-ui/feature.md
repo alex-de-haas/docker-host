@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-23
+updated: 2026-11-25
 summary: Harness combines conversations and workspace groups in Sessions, with shared navigation, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -159,10 +159,10 @@ truncated and approval decisions and authority are unchanged. A real Codex propo
 exact path and patch before denial; denying it stops the request without executing a file change,
 leaves the worktree clean and releases the owned activity lease after confirmed Worker exit.
 
-Pending approvals/questions have a pinned Review action that scrolls and focuses their card;
-active work shows its live activity at the end of the transcript and Stop in the composer,
-without an additional activity bar below the conversation header. When the composer is blocked,
-Stop remains available in the header. Repository summaries use bordered cards. Search and activity chips change navigation without
+Pending approvals appear in the transcript. Pending questions have a pinned Review action that
+scrolls to and focuses their card. During active work, the live activity row appears at the end of
+the transcript and Stop appears in the composer. When the composer is blocked, Stop is available
+in the header. Repository summaries use bordered cards. Search and activity chips change navigation without
 changing conversation identity. The mixed list is ordered by most recent activity, with
 stable ID ordering for equal or unavailable dates. Waiting sessions keep their indicators without
 being pinned above newer work. Sessions fall back to their creation date on older records; Core
@@ -209,7 +209,7 @@ and disallows selection and further actions. Harness emits the terminal event af
 the stored conversation. It waits up to 45 seconds for the DELETE response and, after a lost
 response, up to eight seconds to check the session through its authenticated API. A confirmed
 missing session clears its row and draft. A refusal or unconfirmed outcome restores row actions
-and displays the error so the user can retry.
+and displays a dismissible toast so the user can retry.
 
 Manageable workspace rows offer a trailing trash shortcut with the same hover, keyboard-focus and
 touch reachability as conversation deletion. It opens the existing workspace deletion dialog for
@@ -277,9 +277,9 @@ remains Info blue.
 
 ## Workspace Context
 
-On phones the sessions list fills the page, while a conversation keeps its composer and pinned
-decision in view. Workspace opens a bottom sheet with no tabs. The conversation behind the sheet is
-inert; focus enters the sheet, Tab stays within it, and Escape or Back returns to the conversation.
+On phones the sessions list fills the page, while a conversation keeps its composer and any pinned
+question alert in view. Workspace opens a bottom sheet with no tabs. The conversation behind the
+sheet is inert. Focus enters the sheet, Tab stays within it, and Escape or Back returns to the conversation.
 Its workspace tree remains mounted across desktop/sheet transitions. CI checks expand in place
 on phones and retain their click-open popover on larger screens.
 

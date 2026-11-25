@@ -293,7 +293,7 @@ it("closes session confirmation immediately and restores row actions on refusal"
   expect(pick).not.toHaveBeenCalled();
 
   await act(async () => rejectDelete(new Error("Reconcile session resources")));
-  expect(container.querySelector('[role="alert"]')?.textContent).toBe("Could not delete “My chat”. Reconcile session resources");
+  expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(button("Open session My chat").disabled).toBe(false);
   await openSessionMenu("My chat");
   await chooseDelete();

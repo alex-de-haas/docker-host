@@ -45,13 +45,13 @@ it("confirms deletion from the unique row without selecting the session, and all
   expect(onDelete).toHaveBeenCalledExactlyOnceWith("delete-me"); expect(onPick).not.toHaveBeenCalled();
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
-it("reports a refused session deletion beside the list and allows a fresh confirmation", async () => {
+it("keeps a refused deletion out of the session list and allows a fresh confirmation", async () => {
   const onDelete = vi.fn().mockRejectedValueOnce(new Error("Complete and delete the workspace first."));
   const onPick = vi.fn(); let finish!: () => void;
   await act(async () => root.render(<DevelopmentNavigation sessions={[disposable]} activeId="delete-me" workspaces={[]} onPick={onPick} onNew={() => {}} onDelete={onDelete} />));
   await click("Delete Disposable chat"); await click("Delete session");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Complete and delete");
+  expect(container.querySelector('[role="alert"]')).toBeNull();
   onDelete.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
   await click("Delete Disposable chat");
   await click("Delete session");

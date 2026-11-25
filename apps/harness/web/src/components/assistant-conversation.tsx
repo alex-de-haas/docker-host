@@ -27,7 +27,8 @@ import { clearEditDraft, listPreservedDrafts, outboxFiles, preserveDraft, readEd
 import { AppMentionInput, type AppMentionInputHandle } from "@/components/app-mention-input";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { AppContextPicker, type AppContextPickerHandle } from "@/components/app-context-picker";
-import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, PanelLeft, Diamond, Pencil, TriangleAlert } from "lucide-react";
+import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, PanelLeft, Diamond, Pencil, TriangleAlert, CircleAlert, X } from "lucide-react";
+import { Toast } from "radix-ui";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { InlineError, StatusBadge } from "@/components/status";
@@ -169,6 +170,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const streamed = streams.root;
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [deletionNotice, setDeletionNotice] = useState<{ id: number; sessionId: string; message: string } | null>(null);
+  const nextDeletionNoticeId = useRef(0);
   const [sending, setSending] = useState(false);
   const [stoppingSession, setStoppingSession] = useState<string | null>(null);
   const [hiddenHistoryNotice, setHiddenHistoryNotice] = useState<string>();
@@ -245,7 +248,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [workspaceToResolve, setWorkspaceToResolve] = useState<string | null>(null);
   const [workspaceVisible, setWorkspaceVisible] = useState(true);
-  const decisionCard = useRef<HTMLDivElement | null>(null);
+  const questionCard = useRef<HTMLDivElement | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [mobileDetails, setMobileDetails] = useState(false);
   const narrowViewport = useNarrowWorkspace();
@@ -771,10 +774,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     }
   }, [setHistoryOpen, fullPage, navigateSelection, workspace, inventory]);
 
-  const remove = useCallback((sessionId: string, reportError = true) => {
+  const remove = useCallback((sessionId: string, notifyFailure = true) => {
     const existing = pendingDeletes.current.get(sessionId);
     if (existing) return existing.result;
-    if (reportError) setError(null);
+    if (notifyFailure) setDeletionNotice(current => current?.sessionId === sessionId ? null : current);
     const confirmation = new AbortController();
     setDeletingIds(current => new Set(current).add(sessionId));
     const result = deleteAndReconcileSession(sessionId, confirmation.signal).then(() => {
@@ -782,7 +785,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       setSessions(current => current.filter(entry => entry.id !== sessionId));
       detachDeleted(sessionId);
     }).catch(cause => {
-      if (reportError) setError(cause instanceof Error ? cause.message : String(cause));
+      if (notifyFailure) {
+        setDeletionNotice({ id: ++nextDeletionNoticeId.current, sessionId, message: cause instanceof Error ? cause.message : String(cause) });
+      }
       throw cause;
     }).finally(() => {
       pendingDeletes.current.delete(sessionId);
@@ -1320,7 +1325,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
   const mcpActivity = useMemo(() => contextDetailsOpen ? observedMcpActivity(events) : EMPTY_MCP_ACTIVITY, [events, contextDetailsOpen]);
 
-  const pendingDecision = events.find(event => event.seq >= contextBoundary && event.providerHistoryEarlier !== true && (status === "awaiting_approval" && event.type === "approval_request" && !decidedApprovals.has(transcriptDecisionId(event)) || status === "awaiting_question" && event.type === "question_request" && !cancelledQuestionIds.has(transcriptDecisionId(event)) && !answeredQuestions.has(transcriptDecisionId(event))));
+  const pendingQuestion = status === "awaiting_question" ? events.find(event =>
+    event.type === "question_request" && event.seq >= contextBoundary && event.providerHistoryEarlier !== true
+    && !cancelledQuestionIds.has(transcriptDecisionId(event)) && !answeredQuestions.has(transcriptDecisionId(event))
+  ) : undefined;
 
   const createAppAction = fullPage ? session ? (
     <CreateApp key={`creation-${session.id}`} session={session} openOnMount={openAppCreation}
@@ -1351,6 +1359,19 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   return (
     <div className={`harness-conversation flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
+      <Toast.Provider duration={8_000} label="Session deletion">
+        {deletionNotice && <Toast.Root key={deletionNotice.id} open onOpenChange={open => {
+          if (!open) setDeletionNotice(current => current?.id === deletionNotice.id ? null : current);
+        }} data-slot="session-deletion-toast">
+          <Alert variant="destructive" role="presentation" className="pr-10 shadow-lg">
+            <CircleAlert aria-hidden />
+            <AlertTitle>Could not delete session</AlertTitle>
+            <AlertDescription>{deletionNotice.message}</AlertDescription>
+            <Toast.Close asChild><Button type="button" variant="ghost" size="icon-sm" className="absolute top-1.5 right-1.5" aria-label="Dismiss notification"><X aria-hidden /></Button></Toast.Close>
+          </Alert>
+        </Toast.Root>}
+        <Toast.Viewport className="fixed top-4 left-1/2 z-50 w-[calc(100%-2rem)] max-w-96 -translate-x-1/2 rounded-lg outline-none" />
+      </Toast.Provider>
       {fullPage && ready && <StorageRecoveryNotice />}
       {fullPage && inventory.error && <div className="shrink-0 px-3 py-2"><InlineError message={inventory.error} /></div>}
       {!failuresInDetails && deletionFailures}
@@ -1433,11 +1454,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           </>
         )}
       </header>
-      {!showSessions && !historyLoading && pendingDecision && <div className="shrink-0 px-3 pt-2">
+      {!showSessions && !historyLoading && pendingQuestion && <div className="shrink-0 px-3 pt-2">
         <Alert variant="warning" role="status">
           <Diamond aria-hidden />
-          <AlertTitle>Needs you · {pendingDecision.type === "approval_request" ? "Approval requested" : "Answer requested"}</AlertTitle>
-          <AlertAction><Button size="sm" variant="outline" onClick={() => { decisionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); decisionCard.current?.focus(); }}>Review</Button></AlertAction>
+          <AlertTitle>Needs you · Answer requested</AlertTitle>
+          <AlertAction><Button size="sm" variant="outline" onClick={() => { questionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); questionCard.current?.focus(); }}>Review</Button></AlertAction>
         </Alert>
       </div>}
 
@@ -1507,7 +1528,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     </MessageScrollerItem>
                   ) : (
                     <MessageScrollerItem key={item.key} messageId={item.key}>
-                    <div ref={item.event === pendingDecision ? decisionCard : undefined} tabIndex={item.event === pendingDecision ? -1 : undefined}>
+                    <div ref={item.event === pendingQuestion ? questionCard : undefined} tabIndex={item.event === pendingQuestion ? -1 : undefined}>
                     {nativeSource(item.event) && <p className="mb-1 text-xs text-muted-foreground">From {nativeTranscript.agents.get(nativeAgentKey(nativeSource(item.event)!))?.label ?? "subagent"}</p>}
                     <TranscriptEvent
                       event={item.event.seq < contextBoundary && ["approval_request", "question_request"].includes(item.event.type)

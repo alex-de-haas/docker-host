@@ -1,6 +1,6 @@
 ---
 created: 2026-10-21
-updated: 2026-11-12
+updated: 2026-11-25
 summary: Shared web tokens, local fonts and scoped SDK chrome, with Shell, Harness, Marketplace and Telemetry adoption and an in-place credential grid.
 components: [apps/core, apps/shell, apps/desktop, apps/harness, apps/marketplace, apps/documents, apps/telemetry, apps/telemetry-ui, apps/demo-app, packages/app-sdk, shared/web]
 ---
@@ -351,10 +351,10 @@ with distinct waiting and failure icons. Retained development work opens from Se
 uses New session and descriptive app context, with authorized source preparation separate. External workspaces is accessible
 from the session column footer. Its 264 px navigation column matches the compact session rows,
 with a hammer, one truncated workspace name and accent selection, without the external task ID.
-The conversation pins
-pending decisions with a Review action and active work with Stop, caps transcript/composer width,
-and can hide the workspace without destroying it. Repository cards and all existing Git, preview,
-consumer and workflow controls remain available. On narrow widths, the sessions list fills the page
+The conversation pins pending questions with a Review action, shows approval cards in the transcript,
+caps transcript and composer width, and can hide the workspace without destroying it. Stop remains
+available during active work. Repository cards and all existing Git, preview, consumer and workflow
+controls remain available. On narrow widths, the sessions list fills the page
 and Workspace opens a sheet with keyboard focus handling and an inert conversation behind it.
 Session changes opens a standalone review page across the available application width, with
 file selection, Viewed, previous/next, Unified/Split and wrapping. Conversation, session navigation

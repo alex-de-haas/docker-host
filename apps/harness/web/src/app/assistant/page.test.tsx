@@ -497,6 +497,7 @@ const renderDeletion = async () => {
   await act(async () => root.render(<AssistantConversation fullPage />));
   await type("My retained draft");
 };
+const deletionToast = () => container.querySelector('[data-slot="session-deletion-toast"]');
 it("detaches on a local deletion event even if the HTTP response is lost", async () => {
   let reject!: (reason: Error) => void;
   vi.mocked(api.deleteSession).mockImplementation(() => new Promise((_, no) => { reject = no; }));
@@ -514,9 +515,10 @@ it("detaches on a local deletion event even if the HTTP response is lost", async
   expect(api.createSession).not.toHaveBeenCalled();
 });
 it.each([
+  ["stop_unconfirmed", "Provider execution has not confirmed native exit."],
   ["exit_unconfirmed", "Native exit is unconfirmed"],
   ["retirement_pending", "Retry Delete session to finish the original request"],
-])("shows %s without waiting for another session read", async (code, message) => {
+])("shows %s once in a dismissible toast without waiting for another session read", async (code, message) => {
   vi.mocked(api.deleteSession).mockRejectedValue(new api.AssistantApiError(code, message, 503));
   await renderDeletion();
   vi.mocked(api.getSession).mockClear().mockImplementation(() => new Promise(() => {}));
@@ -526,9 +528,13 @@ it.each([
   expect(localStorage.getItem(WORK_SELECTION_STORAGE_KEY)).toBe(JSON.stringify({ sessionId: record.id }));
   expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("My retained draft");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
-  expect(container.querySelector('nav[aria-label="Sessions"] [role="alert"]')?.textContent).toContain(message);
+  expect(deletionToast()?.textContent).toContain(message);
+  expect(container.querySelector('nav[aria-label="Sessions"]')?.textContent).not.toContain(message);
+  expect(container.querySelector("main")?.textContent).not.toContain(message);
   expect(button("Delete Conversation")).not.toBeNull();
   expect(window.location.search).toBe("?session=session-one");
+  await act(async () => button("Dismiss notification")!.click());
+  expect(deletionToast()).toBeNull();
 });
 it("unlocks deletion and keeps the draft when both the request and session lookup stall", async () => {
   await renderDeletion();
@@ -542,12 +548,15 @@ it("unlocks deletion and keeps the draft when both the request and session looku
     expect(navigation.querySelector('button[disabled] [role="status"]')?.textContent).toContain("Deleting…");
     expect(button("Delete Conversation")).toBeNull();
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(navigation.querySelector('[role="alert"]')?.textContent).toContain("Deletion could not be confirmed in time");
+    expect(deletionToast()?.textContent).toContain("Deletion could not be confirmed in time");
+    expect(navigation.querySelector('[role="alert"]')).toBeNull();
     expect(button("Delete Conversation")).not.toBeNull();
     expect(vi.mocked(api.deleteSession).mock.lastCall?.[1]?.aborted).toBe(true);
     expect(vi.mocked(api.getSession).mock.calls.some(([, signal]) => signal?.aborted)).toBe(true);
     expect(localStorage.getItem("hosty.assistant.draft.session-one")).toBe("My retained draft");
     expect(window.location.search).toBe("?session=session-one");
+    await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+    expect(deletionToast()).toBeNull();
   } finally { vi.useRealTimers(); }
 });
 it("ignores a late terminal event after HTTP deletion has already detached the session", async () => {
@@ -596,11 +605,13 @@ it.each(["deleted", "retained", "unavailable", "route missing"])("reconciles a l
     expect(button("Delete Other conversation")).not.toBeNull();
     expect(localStorage.getItem("hosty.assistant.draft.other-session")).toBe("Other retained draft");
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(container.querySelector('nav[aria-label="Sessions"] [role="alert"]')?.textContent).toContain("Lost deletion response");
+    expect(deletionToast()?.textContent).toContain("Lost deletion response");
+    expect(container.querySelector('nav[aria-label="Sessions"] [role="alert"]')).toBeNull();
     vi.mocked(api.deleteSession).mockRejectedValue(new Error("Request failed (404)."));
     vi.mocked(api.getSession).mockRejectedValue(missing);
     await openDelete("Other conversation");
     expect(button("Delete Other conversation")).toBeNull();
+    expect(deletionToast()).toBeNull();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(input().value).toBe("My retained draft");
   }

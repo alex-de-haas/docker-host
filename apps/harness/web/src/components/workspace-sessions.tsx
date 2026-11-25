@@ -18,7 +18,6 @@ export function WorkspaceSessions({ workspace, chats = [], now, sessionId, runni
   const execution = useTaskExecutionSummary(workspace.id, participation?.revision);
   const [deleting, setDeleting] = useState<{ sessionId: string; title: string } | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState("");
   const section = useRef<HTMLElement>(null);
   const localActions = useWorkspaceSessionActions(actions ? undefined : workspace, refresh, onSelect);
   const sessionActions = actions ?? localActions;
@@ -48,7 +47,7 @@ export function WorkspaceSessions({ workspace, chats = [], now, sessionId, runni
           <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="size-6 shrink-0 text-muted-foreground" disabled={busy || retry || deletionLocked} aria-label={`Session actions for ${s.title}`}><MoreHorizontal className="size-3.5" aria-hidden /></Button></DropdownMenuTrigger>
           <DropdownMenuContent align="end" onCloseAutoFocus={event => { if (deleting) event.preventDefault(); }}>
             <DropdownMenuItem disabled={busy || retry || deletionLocked || !inactive} onSelect={() => void command("detach", {}, s.sessionId)}>Detach session</DropdownMenuItem>
-            {onDelete && <DropdownMenuItem variant="destructive" disabled={busy || retry || deletionLocked || (!inactive && s.status !== "unknown")} onSelect={() => { setDeleteError(""); setDeleting({ sessionId: s.sessionId, title: s.title || "Untitled session" }); }}>Delete session…</DropdownMenuItem>}
+            {onDelete && <DropdownMenuItem variant="destructive" disabled={busy || retry || deletionLocked || (!inactive && s.status !== "unknown")} onSelect={() => setDeleting({ sessionId: s.sessionId, title: s.title || "Untitled session" })}>Delete session…</DropdownMenuItem>}
           </DropdownMenuContent>
         </DropdownMenu>}
         {!s.canOpen && <span className="shrink-0 text-muted-foreground">{s.kind === "execution" ? "Agent execution" : "Private chat"}</span>}
@@ -65,15 +64,14 @@ export function WorkspaceSessions({ workspace, chats = [], now, sessionId, runni
         <DialogFooter><Button variant="outline" onClick={() => setDeleting(null)}>Keep session</Button>
           <Button variant="destructive" disabled={deletionLocked || busy || retry} onClick={async () => {
             if (!deleting || !onDelete || deletionLocked) return;
-            setDeleting(null); setRemovingId(deleting.sessionId); setDeleteError("");
+            setDeleting(null); setRemovingId(deleting.sessionId);
             try { await onDelete(deleting.sessionId); }
-            catch (cause) { setDeleteError(`Could not delete “${deleting.title}”. ${cause instanceof Error ? cause.message : String(cause)}`); }
+            catch { /* The conversation surface reports the error. */ }
             finally { setRemovingId(null); refresh(); }
           }}>Delete session</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    {deleteError && <p role="alert" className="text-destructive-foreground">{deleteError}</p>}
     {error && <p role="alert" className="text-destructive-foreground">{error}</p>}
     {retry && !busy && pending && <Button size="sm" variant="outline" disabled={deletionLocked} onClick={() => void run(pending)}>Retry same request</Button>}
   </section>;

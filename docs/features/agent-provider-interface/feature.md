@@ -536,6 +536,8 @@ owned native account context retain their own lifetimes.
 
 [Execution ownership, recovery and confirmed Delete](../agent-execution-reliability/feature.md)
 
+When a native handle is released, Stop rechecks the original scope evidence. A saved PID cannot identify its current owner.
+
 Codex protocol acknowledgments have a 30-second deadline, with a two-second polite interrupt
 budget and independently bounded metadata diagnostics. These bound RPC acknowledgments rather
 than active inference or human approval waits. Interrupt requests carry the correlated thread and

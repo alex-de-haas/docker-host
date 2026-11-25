@@ -99,6 +99,20 @@ it("waits for the full replay before mounting the real scroller and initially po
   expect(composer.value).toBe("Draft written while history loads");
 });
 
+it("opens a session with an unresolved approval in the transcript and no approval banner", async () => {
+  await mount();
+  await act(async () => {
+    stream().event({ seq: 1, ts: "", type: "approval_request", approvalId: "pending", toolName: "Bash", input: { command: "echo pending" } });
+    stream().event({ seq: 2, ts: "", type: "session_status", status: "awaiting_approval" });
+  });
+  await connect();
+  expect(container.textContent).not.toContain("Needs you · Approval requested");
+  const allow = [...viewport()!.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.includes("Allow once"));
+  expect(allow).toBeDefined();
+  await act(async () => allow!.click());
+  expect(api.resolveApproval).toHaveBeenCalledWith("history-one", "pending", "allow", undefined);
+});
+
 it("keeps a context boundary visible, reloads the chat and leaves an earlier open decision read-only", async () => {
   await mount(); await connect();
   await act(async () => stream().event({ seq: 1, ts: "", type: "approval_request", approvalId: "old", toolName: "Earlier tool" }));
@@ -276,6 +290,7 @@ it("keeps replayed child output and live deltas attributed, with actionable appr
     emit(12, "question_request", { providerSource: source, questionId: "child-question", questions: [{ id: "choice", question: "Which store?", header: "Store", multiSelect: false, allowText: false, options: [{ id: "local", label: "Local", description: "" }] }] });
     emit(13, "session_status", { status: "awaiting_question" });
   });
+  expect(container.textContent).toContain("Needs you · Answer requested");
   const question = container.querySelector<HTMLElement>('[data-slot="question-card"]')!;
   expect(panel.contains(question)).toBe(false); expect(question.closest('[data-slot="message-scroller-item"]')?.textContent).toContain("From Storage research");
   await act(async () => question.querySelector<HTMLElement>('[role="radio"]')!.click());
