@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { AgentApiError } from "@hosty-sdk/app/agent";
 import type { AgentPendingDecision, AgentToolBlock, AgentSource, AgentRunState } from "@hosty-sdk/app/agent";
 import type { HarnessEventSource } from "./internal/harness/adapter.js";
 import type { WorkerEvent, WorkerReceipt } from "./internal/worker/contracts.js";
@@ -109,8 +110,32 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
       if (session.nativeId && session.nativeId !== event.harnessSessionId) throw new Error("Native continuation changed its session identity.");
       session.nativeId = event.harnessSessionId; session.session.nativeState = "available";
       emit("session.bound", { sessionId: session.id, nativeState: "available" }); break;
-    case "assistant_delta": { const block = message(); block.text = text(block.text + event.text); fitMessages(); emit("message.delta", { messageId, text: text(event.text) }); break; }
-    case "assistant_text": { const block = message(); block.text = text(event.text); block.state = "complete"; fitMessages(); emit("message.completed", { messageId, text: block.text, truncated: snapshot.coverage?.messages === "truncated" }); break; }
+    case "assistant_delta": {
+      const block = message();
+      block.text = text(block.text + event.text); fitMessages();
+      // Preserve the original in durable delivery even when the presentation snapshot is clipped.
+      // A native frame fits 1 MiB before the larger public envelope is added.
+      try { emit("message.delta", { messageId, text: event.text }); }
+      catch (error) {
+        if (!(error instanceof AgentApiError) || error.code !== "event_budget") throw error;
+        let split = Math.floor(event.text.length / 2);
+        if (split && event.text.charCodeAt(split) >= 0xdc00 && event.text.charCodeAt(split) <= 0xdfff) split--;
+        emit("message.delta", { messageId, text: event.text.slice(0, split) });
+        emit("message.delta", { messageId, text: event.text.slice(split) });
+      }
+      break;
+    }
+    case "assistant_text": {
+      const block = message(); block.text = text(event.text); block.state = "complete"; fitMessages();
+      try { emit("message.completed", { messageId, text: event.text }); }
+      catch (error) {
+        if (!(error instanceof AgentApiError) || error.code !== "event_budget") throw error;
+        emit("message.completed", { messageId, text: block.text, truncated: true });
+        emit("warning", { code: "message_delivery_truncated", messageId, originalBytes: Buffer.byteLength(event.text),
+          message: "The complete native message exceeds the public event size limit. This delivery contains a shortened message." });
+      }
+      break;
+    }
     case "tool_use": {
       const id = publicToolId(event.toolUseId ?? `unidentified-${frame.sequence}`, source.agentId);
       const block: AgentToolBlock = { id, source, name: event.toolName, input: bounded(event.input), state: "running" };

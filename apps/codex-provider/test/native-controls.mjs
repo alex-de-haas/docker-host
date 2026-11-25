@@ -77,13 +77,18 @@ test('installed Codex resumes the exact persisted thread and supplies its retain
     assert.equal(await connections.inspectNativeContext(sessionId, randomUUID()), 'missing');
     const events = [];
     resumed = new CodexHarnessAdapter({ dataDir: data, codexHome: home, isolated: true }).start({
-      sessionId, cwd: home, nativeConfigHome: home, nativeHome: home, model: 'fixture-model', reasoningEffort: 'low', requireNativeResume: true,
+      sessionId, cwd: home, nativeConfigHome: home, nativeHome: home, restrictedHost: true, model: 'fixture-model', reasoningEffort: 'low', requireNativeResume: true,
       resumeHarnessSessionId: id, onEvent: event => events.push(event),
     });
     resumed.send(next);
     const deadline = Date.now() + 8000;
     while (!requests.length && !events.some(e => e.type === 'error') && Date.now() < deadline) await delay(25);
     assert.ok(events.some(e => e.type === 'harness_session' && e.harnessSessionId === id), 'exact native session resumed');
+    const toolNames = requests.flatMap(request => (request.tools ?? []).flatMap(tool =>
+      [tool.name ?? tool.type, ...(tool.tools ?? []).map(member => member.name)]));
+    assert.ok(toolNames.length, 'inspected the actual restricted tool catalog sent to the model');
+    assert.ok(!toolNames.some(name => /^(exec_command|write_stdin|shell|local_shell|computer|computer_use|spawn_agent|node_repl|code_mode)$/.test(name)),
+      'The restricted catalog contains an unrestricted native tool: ' + toolNames.join(', '));
     assert.ok(requests.some(r => JSON.stringify(r.input).includes(marker) && JSON.stringify(r.input).includes(next)), 'both saved and new input reached local model');
   } finally {
     await seed?.closeAndWait(); await resumed?.stopAndWait();

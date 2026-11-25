@@ -77,7 +77,7 @@ export class NativeExecution implements ExecutionDriver {
         const isolated = await connections.prepareAdapter(configuration.binding!, { skillPath: configuration.skillPath, sessionDirectory: path.join(data, "native-sessions", session.id) });
         const writable = record.input?.resources?.some(resource => resource.kind === "worktree") === true;
         if (this.ownedAttempt && writable && !this.writerScope) throw new AgentApiError("unsupported_capability", "A verified writable workspace scope is unavailable on this host.", 422);
-        const processes = await TrackedNativeProcesses.create(data, record.snapshot.ref.id, record.snapshot.generation, this.writerScope); this.processes.set(record.snapshot.ref.id, processes);
+        const processes = await TrackedNativeProcesses.create(data, record.snapshot.ref.id, record.snapshot.generation, this.writerScope, request.options.restrictedHost); this.processes.set(record.snapshot.ref.id, processes);
         return trackedAdapter(isolated, processes); },
     }, controller.capacity);
   }
@@ -125,6 +125,9 @@ export class NativeExecution implements ExecutionDriver {
         const pinned = await this.authority.skills(record.admissionRef, configuration.pinRequestId, configuration.pinRequestId, configuration.configuration.skills);
         requirePinnedSnapshot(configuration, pinned);
       }
+      const restrictedHost = !!this.ownedAttempt && this.controller.capabilities.capabilities.includes("scope.restricted-native-tools");
+      if (restrictedHost && (input.resources?.some(item => item.kind === "worktree") || configuration.configuration.approvalMode === "autonomous" || configuration.configuration.subagents?.enabled === true))
+        throw new AgentApiError("unsupported_capability", "The original execution profile requires a qualified native writer scope.", 422);
       const resources = input.resources ?? [], workspaces = resources.filter(value => value.kind === "worktree"), workspace = workspaces[0];
       if (resources.some(value => value.kind !== "worktree")) throw new AgentApiError("unsupported_resource", "Only a revisioned Core worktree is supported as an execution directory.", 422);
       for (const workspace of workspaces) {
@@ -166,7 +169,7 @@ export class NativeExecution implements ExecutionDriver {
       const request: WorkerRunRequest = { conversationId: sessionId, binding: configuration.binding!, input: text, selection: input.selection ?? { model: null, reasoningEffort: null },
         resource: workspace ? { kind: "worktree", id: workspace.id, revision: workspace.revision } : { kind: "conversation", id: sessionId },
         operation: "chat", skillExportId: configuration.snapshotId, autoAllowedPrefixes: mcp.prefixes,
-        options: { systemPrompt, autonomy: configuration.configuration.approvalMode ?? "normal", mcpServers: mcp.servers,
+        options: { ...(restrictedHost ? { restrictedHost: true } : {}), systemPrompt, autonomy: configuration.configuration.approvalMode ?? "normal", mcpServers: mcp.servers,
           promptSuggestions: configuration.configuration.predictions?.enabled === true, nativeTools: configuration.configuration.nativeTools, subagents: configuration.configuration.subagents,
           ...(session.nativeId ? { resumeHarnessSessionId: session.nativeId, requireNativeResume: true } : {}) } };
       this.requests.set(request, runId);

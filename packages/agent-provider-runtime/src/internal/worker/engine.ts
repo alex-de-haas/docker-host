@@ -171,7 +171,12 @@ export class WorkerEngine {
           this.admitted.delete(id);
         }
       });
-    } catch { await this.fail(id, "Worker could not persist or finalize provider output. Execution may require recovery."); }
+    } catch (error) {
+      const message = error instanceof WorkerApiError && error.code === "event_limit"
+        ? "The native output retention limit was reached. Earlier recorded output was preserved. Additional native output could not be recorded."
+        : "Worker could not persist or finalize provider output. Execution may require recovery.";
+      await this.fail(id, message);
+    }
     finally { pending.delete(queued); if (!pending.size && this.queuedEvents.get(id) === pending) this.queuedEvents.delete(id); }
   }
   private async stopNative(id: string): Promise<void> {

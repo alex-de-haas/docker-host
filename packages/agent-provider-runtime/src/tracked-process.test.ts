@@ -180,3 +180,14 @@ it.skipIf(process.platform === "win32")("recovers a durable SDK stop marker befo
   await f.tracked.confirmSdkStop();
   expect(await TrackedNativeProcesses.readEvidence(f.data, f.runId, f.generation)).toMatchObject({ stopped: true, allClosed: true, sealed: true });
 });
+
+it.skipIf(process.platform === "win32")("separates a closed unqualified target from an unverified detached descendant after takeover", async () => {
+  const f = await fixture();
+  const child = f.tracked.transport.spawn(process.execPath, ["-e", "process.exit(0)"], { cwd: f.data, env: {} });
+  child.stdout.resume(); child.stderr.resume();
+  await new Promise(resolve => child.once("close", resolve));
+  await f.tracked.confirmSdkStop();
+  expect(await TrackedNativeProcesses.readEvidence(f.data, f.runId, f.generation, true)).toMatchObject({
+    targetStopped: true, stopped: false, allClosed: false, reason: "unqualified_descendants",
+  });
+});

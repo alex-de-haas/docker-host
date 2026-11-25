@@ -65,7 +65,14 @@ def check(context, app, app_origin, call, timed, link, client):
     def pending():
         state = snapshot()
         return state if state.get('pending') and not state.get('stopConfirmed') else None
-    request = {'text': 'write', 'clientRequestId': str(uuid.uuid4())}
+    qualified = 'scope.workspace-writers' in connection['capabilities']
+    gate_prompt = 'write' if qualified else 'question-blocking'
+    gate_kind = 'approval' if qualified else 'question'
+    gate_route = '/approvals/' if qualified else '/questions/'
+    gate_event = 'approval_request' if qualified else 'question_request'
+    gate_key = 'approvalId' if qualified else 'questionId'
+    answer = {'decision': 'allow'} if qualified else {'answers': {'first': 'fixture choice', 'second': 'fixture answer'}}
+    request = {'text': gate_prompt, 'clientRequestId': str(uuid.uuid4())}
     admitted = call(app_origin, route+'/messages', request)
     assert admitted['state'] == 'accepted'
     before = wait(pending, 90)
@@ -82,7 +89,7 @@ def check(context, app, app_origin, call, timed, link, client):
     assert resumed['sessionId'] == provider_session and resumed['generation'] == before['generation']
     assert call(app_origin, route+'/messages', request) == admitted, 'Consumer retry must retain the original receipt'
     assert snapshot()['ref']['id'] == run_id
-    approval = next(item for item in resumed['pending'] if item['kind'] == 'approval')
+    approval = next(item for item in resumed['pending'] if item['kind'] == gate_kind)
     card_id = 'agent-decision-' + json.dumps([run_id, approval['id']], separators=(',', ':'), ensure_ascii=False).encode().hex()
     # Harness cards are run-qualified; the provider's raw decision ID is not its API route ID.
     # Read the replayed public event so this check exercises the same card as the browser.
@@ -92,21 +99,21 @@ def check(context, app, app_origin, call, timed, link, client):
                 continue
             envelope = json.loads(raw[6:])
             event = envelope.get('event', envelope)
-            if event.get('type') == 'approval_request' and event.get('approvalId') == card_id:
+            if event.get('type') == gate_event and event.get(gate_key) == card_id:
                 break
         else:
             raise AssertionError('The exact run-qualified approval must survive consumer restart and SSE replay')
-    call(app_origin, route+'/approvals/'+card_id, {'decision': 'allow'})
+    call(app_origin, route+gate_route+card_id, answer)
     wait(lambda: execution_stopped(current()), 90)
     completed = snapshot()
     assert completed['ref']['id'] == run_id and completed['state'] == 'succeeded'
     assert completed['result']['status'] == 'succeeded'
-    say('PASS: real Harness restart preserves provider PID, exact pending run, immutable input receipt and live approval completion')
+    say('PASS: real Harness restart preserves provider PID, exact pending run, immutable input receipt and live decision completion')
 
     data = context['root'] / 'apps' / provider['appId'] / 'data'
     # Kill the HTTP service while the native agent is waiting for a decision. No operator
     # attestation enters the protocol. Stop after restart applies to the exact original attempt.
-    call(app_origin, route+'/messages', {'text': 'write', 'clientRequestId': str(uuid.uuid4())})
+    call(app_origin, route+'/messages', {'text': gate_prompt, 'clientRequestId': str(uuid.uuid4())})
     crash = wait(pending, 90)
     before_crash = native_proof(data, crash)
     assert before_crash['spawns'] and before_crash['nativeId']
@@ -151,11 +158,11 @@ def check(context, app, app_origin, call, timed, link, client):
     assert_closed(closed)
     obsolete_id = 'agent-decision-' + json.dumps([crash['ref']['id'], crash['pending'][0]['id']], separators=(',', ':')).encode().hex()
     try:
-        call(app_origin, route + '/approvals/' + obsolete_id, {'decision': 'allow'})
+        call(app_origin, route + gate_route + obsolete_id, answer)
     except urllib.error.HTTPError as error:
-        assert error.code == 409 and json.load(error)['code'] in ('approval_not_pending', 'run_fenced', 'stale_decision')
+        assert error.code == 409 and json.load(error)['code'] in ('approval_not_pending', 'question_not_pending', 'run_fenced', 'stale_decision')
     else:
-        raise AssertionError('A physically closed attempt accepted its obsolete approval.')
+        raise AssertionError('A physically closed attempt accepted its obsolete decision.')
     call(app_origin, route+'/messages', {'text': 'hello', 'clientRequestId': str(uuid.uuid4())})
     def completed_turn():
         value = snapshot()
@@ -163,7 +170,7 @@ def check(context, app, app_origin, call, timed, link, client):
     continued = wait(completed_turn, 90)
     assert continued['state'] == 'succeeded' and continued['sessionId'] == provider_session
     assert native_proof(data, continued)['nativeId'] == before_crash['nativeId']
-    say('PASS: provider restart and Stop close the original native tree, reject its obsolete approval, and preserve the next chat turn.')
+    say('PASS: provider restart and Stop close the original native tree, reject its obsolete decision, and preserve the next chat turn.')
 
     fresh = call(app_origin, '/api/sessions', {'title': 'Independent stopped-effect conversation', 'connectionId': connection['id'], 'profileId': None})
     fresh_route = '/api/sessions/'+fresh['id']
@@ -199,7 +206,7 @@ def check(context, app, app_origin, call, timed, link, client):
     dirty_file = tree_path/'retirement-fixture.txt'
     dirty_file.write_text('Preserve this uncommitted work.')
     if 'scope.workspace-writers' in connection['capabilities']:
-        call(app_origin, delete_route+'/messages', {'text': 'write', 'clientRequestId': str(uuid.uuid4())})
+        call(app_origin, delete_route+'/messages', {'text': gate_prompt, 'clientRequestId': str(uuid.uuid4())})
         def waiting_writer():
             value = (call(app_origin, delete_route).get('providerExecution') or {}).get('run') or {}
             return value if value.get('pending') and not value.get('stopConfirmed') else None

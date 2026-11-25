@@ -40,11 +40,13 @@ export class AttemptSupervisors implements ExecutionDriver {
   private scan?: Promise<void>;
   private readonly unavailable = new Set<string>();
   private closed = false;
+  private windowsJobAvailable = false;
   readonly directory: string;
   constructor(private readonly store: ProviderStore, data: string, private readonly entry = process.env.HOSTY_PROVIDER_ENTRY ?? process.argv[1]!) {
     this.directory = path.join(data, "attempt-scopes-v2");
   }
-  async initialize(): Promise<void> {
+  async initialize(windowsJobAvailable = false): Promise<void> {
+    this.windowsJobAvailable = windowsJobAvailable;
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     await this.reconcile();
     this.timer = setInterval(() => { void this.reconcile(); }, 2000);
@@ -87,7 +89,9 @@ export class AttemptSupervisors implements ExecutionDriver {
     available.close();
     this.launches.set(id, Date.now() + 2000);
     const loader = this.entry.endsWith(".ts") ? process.execArgv : [];
-    const child = spawn(process.execPath, [...loader, this.entry, "--hosty-attempt", id], {
+    const args = [...loader, this.entry, "--hosty-attempt", id];
+    if (this.windowsJobAvailable) args.push("--windows-job");
+    const child = spawn(process.execPath, args, {
       detached: true, stdio: "ignore", windowsHide: true,
     });
     child.once("error", () => { this.launches.delete(id); });

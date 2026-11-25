@@ -28,14 +28,15 @@ export function generationBuildEnvironment(directory) {
   return { NODE_OPTIONS: "--import=" + import.meta.url, HOSTY_BUILD_GENERATION: directory };
 }
 
-function unused(directory) {
+export function unusedGeneration(directory) {
   const file = path.join(directory, marker);
-  if (!existsSync(file) || !lstatSync(file).isFile()) return false;
-  const db = new DatabaseSync(file);
+  let db;
   try {
+    if (!lstatSync(file).isFile()) return false;
+    db = new DatabaseSync(file);
     db.exec("PRAGMA busy_timeout=0; BEGIN EXCLUSIVE; SELECT id FROM generation WHERE id=1");
     return true;
-  } catch { return false; } finally { db.close(); }
+  } catch { return false; } finally { db?.close(); }
 }
 
 /** Called under the preparation lock. New runtime readers acquire the same lock before selecting a bundle. */
@@ -53,7 +54,7 @@ export async function reclaimGenerations(store, current) {
   complete.sort((a,b) => b.time - a.time || a.dir.localeCompare(b.dir));
   const removed = new Set();
   for (const dir of [...partial, ...complete.slice(2).map(item => item.dir)]) {
-    if (!unused(dir)) continue;
+    if (!unusedGeneration(dir)) continue;
     try { await rm(dir, { recursive: true, force: true }); removed.add(path.basename(dir)); }
     catch (error) { if (!["EBUSY","EPERM","ENOTEMPTY"].includes(error.code)) throw error; }
   }

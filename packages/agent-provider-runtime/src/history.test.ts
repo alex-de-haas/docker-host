@@ -59,6 +59,29 @@ it("throttles only the chat with an unacknowledged backlog and releases it after
   expect(() => store.history.requireDeliveryCapacity(alice, session.id, 32)).not.toThrow();
 });
 
+it("keeps recording an active chat past its admission watermark and commits its Stop while the receiver is offline", async () => {
+  const store = await openStore(), active = await admitted(store), sibling = await admitted(store);
+  for (const [index, text] of ["before the watermark", "after the watermark"].entries()) {
+    store.emit(active.run, "message.completed", { messageId: "message-" + index, text });
+    await store.save(active.session);
+    expect(() => store.history.requireDeliveryCapacity(alice, active.session.id, 32)).toThrow(/durable delivery/);
+  }
+  const before = store.history.states(alice, store.history.currentBoundary(alice), undefined, 10);
+  const owner = before.sessions.find(chat => chat.sessionId === active.session.id)!;
+  const rows = store.history.range(alice, before.through, active.session.id, owner.epoch, 1, owner.head, 10);
+  expect(rows.observations.flatMap(({ item }) => item.kind === "event" && item.event.type === "message.completed" ? [item.event.data.text] : []))
+    .toEqual(["before the watermark", "after the watermark"]);
+  store.emit(sibling.run, "message.completed", { messageId: "healthy", text: "independent" }); await store.save(sibling.session);
+  active.run.snapshot.stopConfirmed = true; active.run.snapshot.state = "cancelled"; active.run.snapshot.phase = "terminal";
+  store.lifecycle(active.run); await store.save(active.session);
+  const after = store.history.states(alice, store.history.currentBoundary(alice), undefined, 10);
+  const stopped = after.sessions.find(chat => chat.sessionId === active.session.id)!;
+  expect(stopped.head).toBeGreaterThan(owner.head);
+  expect((await store.run(active.runId)).record.snapshot.stopConfirmed).toBe(true);
+  store.history.acknowledgeThrough(alice, active.session.id, stopped.epoch, stopped.head);
+  expect(() => store.history.requireDeliveryCapacity(alice, active.session.id, 32)).not.toThrow();
+});
+
 it("recovers three offline conversations for two owners through one installation, retaining facts beyond replay", async () => {
   const store = await openStore();
   const foreign = { ...alice, callerInstallation: "install-2" };
@@ -194,17 +217,24 @@ it("discards only the closed run's public replay and fenced delivery, including 
   const raw = journal.observations(closed.runId)!;
   raw.write({ retained: "private callback" });
   expect(raw.read()).toEqual({ retained: "private callback" });
+  const sibling = store.makeRun(closed.session, randomUUID(), alice, "{}");
+  closed.session.runs[sibling.snapshot.ref.id] = sibling;
+  store.lifecycle(sibling); await store.save(closed.session);
   const stale = await store.load(closed.session.id);
   await expect(controller(store).discardDelivery(closed.runId, request, { ...actor, admissionRef: "other-admission" })).rejects.toMatchObject({ status: 403 });
   const proof = { runId: closed.runId, requestId: request, state: "discarded" };
   expect(await controller(store).discardDelivery(closed.runId, request, actor)).toEqual(proof);
   const next = await openStore(store.directory);
   expect(await controller(next).discardDelivery(closed.runId, request, actor)).toEqual(proof);
-  expect(next.history.page(alice).observations.map(item => item.runId)).toEqual([other.runId]);
+  expect(next.history.page(alice).observations.map(item => item.runId)).toEqual([other.runId, sibling.snapshot.ref.id]);
   await expect(next.run(closed.runId, alice)).rejects.toMatchObject({ status: 404 });
   store.emit(stale.runs[closed.runId]!, "message.completed", { messageId: "late", text: "delayed private answer" });
   await expect(store.save(stale)).rejects.toMatchObject({ code: "state_changed" });
-  expect(next.history.page(alice).observations.map(item => item.runId)).toEqual([other.runId]);
+  expect(next.history.page(alice).observations.map(item => item.runId)).toEqual([other.runId, sibling.snapshot.ref.id]);
+  const statePage = next.history.states(alice);
+  const state = statePage.sessions.find(session => session.sessionId === closed.session.id)!;
+  const remaining = next.history.range(alice, statePage.through, closed.session.id, state.epoch, state.head, state.head, 1);
+  expect(remaining.observations[0]?.runId).toBe(sibling.snapshot.ref.id);
   expect(next.historicalRunIds.has(closed.runId)).toBe(true);
   expect(raw.read()).toBeNull();
   expect(() => raw.write({ retained: "late callback" })).toThrow("was discarded");
@@ -405,4 +435,45 @@ it("serves the same scoped facts through HTTP paging and SSE, and closes a quiet
   } finally {
     const ended = once(server, "close"); server.close(); server.closeAllConnections(); await ended;
   }
+});
+
+
+it("delivers the original native message independently of its clipped snapshot, using one stable completion", async () => {
+  const store = await openStore(), { session, run } = await admitted(store);
+  const text = "α🦋".repeat(50_000) + "exact terminal suffix";
+  projectEvent(store, session, run, { runId: run.snapshot.ref.id, generation: run.snapshot.generation, sequence: 1, event: { type: "assistant_delta", text } });
+  projectEvent(store, session, run, { runId: run.snapshot.ref.id, generation: run.snapshot.generation, sequence: 2, event: { type: "assistant_text", text } });
+  await store.save(session);
+  expect(run.snapshot.messages?.[0]?.text.length).toBeLessThan(text.length);
+  expect(run.snapshot.coverage?.messages).toBe("truncated");
+  const page = store.history.page(alice, undefined, undefined, 40);
+  const events = page.observations.flatMap(({ item }) => item.kind === "event" ? [item.event] : []);
+  const final = events.filter(e => e.type === "message.completed");
+  expect(final).toHaveLength(1);
+  expect(final[0]?.data.text === text).toBe(true);
+  const deltas = events.filter(e => e.type === "message.delta");
+  expect(deltas.map(e => e.data.text).join("") === text).toBe(true);
+  expect(deltas.every(e => e.data.messageId === final[0]!.data.messageId)).toBe(true);
+});
+
+
+it("preserves near-limit delta bytes and identifies the single shortened completion when its public envelope cannot fit", async () => {
+  const store = await openStore(), { session, run } = await admitted(store);
+  const frame = { runId: run.snapshot.ref.id, generation: run.snapshot.generation, sequence: 1, event: { type: "assistant_delta" as const, text: "" } };
+  const limit = 1024 * 1024;
+  frame.event.text = "x".repeat(limit - Buffer.byteLength(JSON.stringify(frame)) - 3) + "α";
+  expect(Buffer.byteLength(JSON.stringify(frame))).toBeLessThanOrEqual(limit);
+  projectEvent(store, session, run, frame);
+  projectEvent(store, session, run, { ...frame, sequence: 2, event: { type: "assistant_text", text: frame.event.text } });
+  await store.save(session);
+  const page = store.history.page(alice, undefined, undefined, 40);
+  const events = page.observations.flatMap(({ item }) => item.kind === "event" ? [item.event] : []);
+  const deltas = events.filter(e => e.type === "message.delta");
+  expect(deltas).toHaveLength(2);
+  expect(deltas.map(e => e.data.text).join("") === frame.event.text).toBe(true);
+  const finals = events.filter(e => e.type === "message.completed");
+  expect(finals).toHaveLength(1);
+  expect(finals[0]?.data).toMatchObject({ messageId: deltas[0]!.data.messageId, truncated: true });
+  expect(events.filter(e => e.type === "warning" && e.data.code === "message_delivery_truncated")).toHaveLength(1);
+  expect(events.every(e => Buffer.byteLength(JSON.stringify(e)) <= limit)).toBe(true);
 });

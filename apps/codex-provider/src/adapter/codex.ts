@@ -56,6 +56,8 @@ function spawnTarget(args: string[]): { command: string; args: string[] } {
     : { command: resolved, args };
 }
 
+const restrictedFeatures = ["shell_tool", "unified_exec", "shell_snapshot", "code_mode_host", "computer_use", "hooks", "plugins", "apps", "multi_agent"];
+
 export class CodexHarnessAdapter implements HarnessAdapter {
   readonly name = "codex-app-server";
   // Pinned 0.162.1 supports structured questions in default mode with the explicit feature flag.
@@ -154,6 +156,8 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   }
 
   start(options: HarnessStartOptions): HarnessRun {
+    if (options.restrictedHost && (options.autonomy === "autonomous" || options.subagents?.enabled === true))
+      throw new Error("This execution profile requires a qualified native writer scope.");
     return new ReconfigurableCodexRun(options, this.auth);
   }
 }
@@ -294,7 +298,8 @@ class CodexRun implements HarnessRun {
     const mcp = toCodexMcpConfig(options.mcpServers);
     // The pinned 0.167 CLI exposes multi_agent as a stable feature. Make the advertised default
     // explicit for this process instead of inheriting an operator's mutable native config.
-    const providerArgs = ["app-server", "-c", "features.default_mode_request_user_input=true", "-c", "features.multi_agent=true", ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args];
+    const toolPolicy = options.restrictedHost ? restrictedFeatures.flatMap(feature => ["-c", `features.${feature}=false`]) : ["-c", "features.multi_agent=true"];
+    const providerArgs = ["app-server", "-c", "features.default_mode_request_user_input=true", ...toolPolicy, ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args];
     const target = spawnTarget(providerArgs);
     const spawnOptions = {
       stdio: ["pipe", "pipe", "pipe"] as const,
@@ -581,14 +586,21 @@ class CodexRun implements HarnessRun {
       if (!this.selectedModel) throw new Error("Codex did not report its default model; select a model explicitly.");
     }
 
+    const threadConfig = {
+      ...(this.selectedEffort ? { model_reasoning_effort: this.selectedEffort } : {}),
+      ...(this.options.restrictedHost ? {
+        features: { ...Object.fromEntries(restrictedFeatures.map(feature => [feature, false])), default_mode_request_user_input: true },
+        agents: { max_depth: 0 },
+      } : {}),
+    };
     if (this.options.resumeHarnessSessionId) {
       const resumed = (await this.request(CODEX_METHODS.threadResume, {
         threadId: this.options.resumeHarnessSessionId,
         cwd: this.options.cwd,
         model: this.selectedModel,
-        ...(this.selectedEffort ? { config: { model_reasoning_effort: this.selectedEffort } } : {}),
+        ...(Object.keys(threadConfig).length ? { config: threadConfig } : {}),
         sandbox: this.options.autonomy === "autonomous" ? "danger-full-access" : "read-only",
-        approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
+        approvalPolicy: this.options.restrictedHost || this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
       }).catch((error) => { if (this.auth.isolated || this.strictResume) throw new Error("The original native thread could not be resumed."); return null; })) as { thread?: { id?: string } } | null;
       if ((this.strictResume || this.auth.isolated || resumed) && resumed?.thread?.id !== this.options.resumeHarnessSessionId)
         throw new Error("Codex did not resume the requested thread.");
@@ -602,10 +614,10 @@ class CodexRun implements HarnessRun {
       const started = (await this.request(CODEX_METHODS.threadStart, {
         cwd: this.options.cwd,
         model: this.selectedModel,
-        ...(this.selectedEffort ? { config: { model_reasoning_effort: this.selectedEffort } } : {}),
+        ...(Object.keys(threadConfig).length ? { config: threadConfig } : {}),
         // Apply explicit chat policy on both initial start and every turn, including resumed threads.
         sandbox: this.options.autonomy === "autonomous" ? "danger-full-access" : "read-only",
-        approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
+        approvalPolicy: this.options.restrictedHost || this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
       })) as { threadId?: string; thread?: { id?: string } };
       this.reportSelection(started);
       this.threadId = started.threadId ?? started.thread?.id ?? null;
@@ -669,7 +681,7 @@ class CodexRun implements HarnessRun {
         input: [{ type: "text", text }],
         model: this.selectedModel,
         effort: this.selectedEffort,
-        approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
+        approvalPolicy: this.options.restrictedHost || this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
         // A tracked local runner observes the process tree; it does not supply a filesystem or
         // network sandbox. Preserve the same explicit native policy with either spawn path.
         sandboxPolicy: { type: this.options.autonomy === "autonomous" ? "dangerFullAccess" : "readOnly" },
@@ -746,6 +758,12 @@ class CodexRun implements HarnessRun {
           this.emit({ type: "notice", message: "Codex question rejected: " + reason });
         }
       } else if (APPROVAL_METHODS.has(message.method)) {
+        if (this.options.restrictedHost) {
+          const result = message.method === "item/permissions/requestApproval" ? { permissions: {}, scope: "turn" }
+            : { decision: approvalDecision(message.method, "deny", "This host cannot contain an unrestricted native command.") };
+          this.respond(message.id, result);
+          return;
+        }
         const approvalId = randomUUID();
         const params = message.params ?? {};
         const proposal = message.method === "item/fileChange/requestApproval" ? this.takeFileChangeProposal(params) : undefined;

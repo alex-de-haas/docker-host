@@ -26,6 +26,19 @@ it("reuses complete output without installing or building and preserves source f
   expect(f.builds()).toBe(1);
   expect(await readFile(path.join(f.root, "input"), "utf8")).toBe("first");
 });
+it("keeps an active damaged generation at its original path while publishing the repaired bundle", async () => {
+  const f = await fixture();
+  const first = await prepare(f.options);
+  const { useGeneration } = await import("../../../packages/agent-provider-runtime/scripts/generation-use.mjs");
+  const release = useGeneration(first);
+  try {
+    await writeFile(path.join(first, "api.mjs"), "old generation");
+    const replacement = await prepare(f.options);
+    expect(replacement).not.toBe(first);
+    expect(await prepare(f.options)).toBe(replacement);
+    expect(await readFile(path.join(first, "api.mjs"), "utf8")).toBe("old generation");
+  } finally { release(); }
+});
 it("snapshots public favicons and invalidates cached bundles when public assets change", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "harness-public-")); roots.push(root);
   // Derive config inputs from production discovery, leaving recursive source trees empty so

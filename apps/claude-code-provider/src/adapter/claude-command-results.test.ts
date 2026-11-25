@@ -96,3 +96,23 @@ it("keeps observed nested Bash exit metadata unknown when the SDK supplies only 
     expect(events.find(event => event.type === "tool_result" && event.output === "Child returned")).toMatchObject({ status: "completed" });
   } finally { await run.stopAndWait?.(); }
 });
+
+it("refuses unrestricted resource-less starts and keeps Bash, writes, subagents and user hooks outside the restricted host", async () => {
+  const adapter = new ClaudeHarnessAdapter();
+  const events: HarnessEvent[] = [];
+  const options = { sessionId: "restricted", cwd: "/tmp", restrictedHost: true as const, onEvent: (event: HarnessEvent) => events.push(event) };
+  expect(() => adapter.start({ ...options, autonomy: "autonomous" })).toThrow(/qualified native writer/);
+  const outcomes: unknown[] = [];
+  queryMock.mockImplementation((args: { options: { canUseTool: (name: string, input: object) => Promise<unknown> } }) => Object.assign((async function* () {
+    yield { type: "system", subtype: "init", session_id: "restricted" };
+    for (const tool of ["Bash", "Write", "Agent", "Read"]) outcomes.push(await args.options.canUseTool(tool, {}));
+    yield { type: "result", subtype: "success", result: "done" };
+  })(), { interrupt: async () => {}, close: () => {} }));
+  const run = adapter.start(options); run.send("test");
+  try {
+    await vi.waitFor(() => expect(outcomes).toHaveLength(4));
+    expect(outcomes).toMatchObject([{ behavior: "deny" }, { behavior: "deny" }, { behavior: "deny" }, { behavior: "allow" }]);
+    expect(queryMock.mock.calls.at(-1)?.[0].options).toMatchObject({ tools: ["Read", "Glob", "Grep", "AskUserQuestion"], settingSources: [], permissionMode: "default", allowDangerouslySkipPermissions: false });
+    expect(events.some(event => event.type === "approval_request")).toBe(false);
+  } finally { await run.stop(); }
+});

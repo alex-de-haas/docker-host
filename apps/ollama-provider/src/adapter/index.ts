@@ -75,10 +75,16 @@ export class OllamaHarnessAdapter implements HarnessAdapter {
     return this.client.models();
   }
   start(options: HarnessStartOptions): HarnessRun {
+    if (options.restrictedHost && (options.autonomy === "autonomous" || options.subagents?.enabled === true))
+      throw new Error("This execution profile requires a qualified native writer scope.");
     return new OllamaRun(this.config, this.client, options);
   }
 }
 class OllamaRun implements HarnessRun {
+  private get nativeTools() {
+    if (this.options.nativeTools === "none") return [];
+    return this.options.restrictedHost ? LOCAL_TOOLS.filter(tool => !["run_command", "apply_patch"].includes(tool.function.name)) : LOCAL_TOOLS;
+  }
   private stopped = false;
   private controller = new AbortController();
   private task: Promise<void> = Promise.resolve();
@@ -381,7 +387,7 @@ class OllamaRun implements HarnessRun {
           this.catalogRevision = this.revision;
         }
         const tools = [
-          ...(this.options.nativeTools === "none" ? [] : LOCAL_TOOLS),
+          ...this.nativeTools,
           ...this.mcp.tools.filter((tool) =>
             this.options.nativeTools === "none" || this.exposedTools.has(tool.function.name),
           ),
@@ -551,7 +557,7 @@ class OllamaRun implements HarnessRun {
     args: Record<string, unknown>,
   ): Promise<void> {
     const remote = this.mcp.bindings.get(name),
-      local = LOCAL_TOOLS.find((t) => t.function.name === name);
+      local = this.nativeTools.find((t) => t.function.name === name);
     const displayName = remote?.displayName ?? name;
     const effect: Effect = {
       id: randomUUID(),

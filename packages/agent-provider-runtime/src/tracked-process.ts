@@ -11,9 +11,9 @@ import { nativeEnvironment } from "./internal/runtime/environment.js";
 import type { AgentProcessTransport, AgentSpawnOptions } from "./internal/runtime/transport.js";
 
 const producerNonce = randomUUID();
-type Manifest = { version: 1; runId: string; generation: string; sealed: boolean; spawns: string[]; producerPid: number; producerNonce: string; sdkStopConfirmed: boolean; cgroups?: Record<string, { path: string; dev: string; ino: string }> };
+type Manifest = { version: 1; runId: string; generation: string; sealed: boolean; spawns: string[]; producerPid: number; producerNonce: string; sdkStopConfirmed: boolean; restrictedHost?: true; cgroups?: Record<string, { path: string; dev: string; ino: string }> };
 export type NativeProcessEvidence = { format: "hosty-native-stop.1"; runId: string; generation: string;
-  stopped: boolean; allClosed: boolean; sealed: boolean; spawnCount: number; reason?: string };
+  stopped: boolean; allClosed: boolean; targetStopped?: boolean; sealed: boolean; spawnCount: number; reason?: string };
 const identifier = (value: string) => { if (!/^[A-Za-z0-9-]{1,100}$/.test(value)) throw new Error("Invalid native execution identity."); return value; };
 const directory = (data: string, run: string, generation: string) => path.join(data, "native-processes", identifier(run), identifier(generation));
 function durable(file: string, value: unknown): void {
@@ -44,10 +44,10 @@ export class TrackedNativeProcesses {
       spawnCommand: (command, args, options) => this.launch(command, args, options),
     };
   }
-  static async create(dataRoot: string, runId: string, generation: string, scope?: WriterScope): Promise<TrackedNativeProcesses> {
+  static async create(dataRoot: string, runId: string, generation: string, scope?: WriterScope, restrictedHost?: true): Promise<TrackedNativeProcesses> {
     const root = directory(dataRoot, runId, generation);
     await durableMkdir(root);
-    const manifest: Manifest = { version: 1, runId, generation, sealed: false, spawns: [], producerPid: process.pid, producerNonce, sdkStopConfirmed: false };
+    const manifest: Manifest = { version: 1, runId, generation, sealed: false, spawns: [], producerPid: process.pid, producerNonce, sdkStopConfirmed: false, ...(restrictedHost ? { restrictedHost } : {}) };
     const file = path.join(root, "manifest.json");
     const fd = openSync(file, "wx", 0o600);
     try { writeFileSync(fd, JSON.stringify(manifest)); fsyncSync(fd); } finally { closeSync(fd); }
@@ -174,6 +174,11 @@ export class TrackedNativeProcesses {
         if (receipt.state !== "stopped" || receipt.treeStopped !== true)
           return { ...base, sealed: manifest.sealed, spawnCount: manifest.spawns.length, reason: "stop_unconfirmed" };
       }
+      // A previous unrestricted POSIX process could change its process group. Receipts for
+      // the original group cannot prove closure of its independently detached descendants.
+      if (exclusiveSuccessor && process.platform !== "win32" && !manifest.restrictedHost
+        && manifest.spawns.some(nonce => !manifest.cgroups?.[nonce]))
+        return { ...base, targetStopped: true, spawnCount: manifest.spawns.length, reason: "unqualified_descendants" };
       let producerExited = false;
       try { process.kill(manifest.producerPid, 0); }
       catch (error) { producerExited = (error as NodeJS.ErrnoException).code === "ESRCH"; }

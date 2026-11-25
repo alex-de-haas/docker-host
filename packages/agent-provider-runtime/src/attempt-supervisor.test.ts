@@ -18,13 +18,13 @@ it("recovers a transient startup scan and schedules healthy attempts beside an u
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   try {
     await writeFile(entry, `import { writeFileSync } from "node:fs";
-writeFileSync(new URL("./" + process.argv[3], import.meta.url), "started");`);
+writeFileSync(new URL("./" + process.argv[3], import.meta.url), process.argv[4] ?? "started");`);
     await mkdir(path.join(driver.directory, invalid + ".scope"), { recursive: true });
-    await driver.initialize();
+    await driver.initialize(true);
     await driver.start("session", invalid);
-    await expect.poll(() => readFile(path.join(root, healthy), "utf8").catch(() => ""), { timeout: 6_000 }).toBe("started");
+    await expect.poll(() => readFile(path.join(root, healthy), "utf8").catch(() => ""), { timeout: 6_000 }).toBe("--windows-job");
     await rm(path.join(driver.directory, invalid + ".scope"), { recursive: true });
-    await expect.poll(() => readFile(path.join(root, invalid), "utf8").catch(() => ""), { timeout: 6_000 }).toBe("started");
+    await expect.poll(() => readFile(path.join(root, invalid), "utf8").catch(() => ""), { timeout: 6_000 }).toBe("--windows-job");
     expect(warn.mock.calls).toHaveLength(2);
   } finally {
     await driver.close();

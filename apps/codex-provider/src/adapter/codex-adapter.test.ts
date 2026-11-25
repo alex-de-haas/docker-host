@@ -55,6 +55,17 @@ describe("codex harness adapter", () => {
     delete process.env.HOSTY_TEST_CODEX_DENIAL_MODE;
   });
 
+  it("refuses unrestricted resource-less starts and rejects native escalation on the restricted host", async () => {
+    const adapter = new CodexHarnessAdapter({ dataDir: authDir });
+    const options = { sessionId: "restricted", cwd: process.cwd(), restrictedHost: true as const, onEvent: (event: HarnessEvent) => events.push(event) };
+    expect(() => adapter.start({ ...options, autonomy: "autonomous" })).toThrow(/qualified native writer/);
+    run = adapter.start(options);
+    run.send("write");
+    await waitFor(() => events.find(event => event.type === "result" || event.type === "error"), "denied restricted native approval");
+    expect(events.some(event => event.type === "approval_request")).toBe(false);
+    expect(events.some(event => event.type === "result")).toBe(true);
+  });
+
   function start(resumeHarnessSessionId?: string): HarnessRun {
     const adapter = new CodexHarnessAdapter({ dataDir: authDir });
     run = adapter.start({

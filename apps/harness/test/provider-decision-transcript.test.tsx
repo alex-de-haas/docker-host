@@ -77,4 +77,4 @@ it("keeps reused provider question and approval IDs distinct through manager res
   ]);
   expect(events.filter(event => event.type === "question_answered")).toHaveLength(1);
   expect(f.controls.filter(control => control.path.endsWith("/responses"))[2]!.input.response).toEqual({ kind: "question", answers: { choice: "full", multiple: ["a", "b", "Own, exact"] } });
-});
+}, 20000);

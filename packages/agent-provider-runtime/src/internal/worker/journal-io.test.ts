@@ -48,3 +48,17 @@ it("fences uncertain samples and retains committed usage with explicit uncertain
   await reopened.sample("run");
   expect((await reopened.load("run")).receipt.usage).toMatchObject({ activeMs: 0, unknown: true });
 });
+
+it("retains every accepted native event at the per-run byte limit and can still commit a terminal receipt", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "worker-limit-"));
+  cleanup.push(() => rm(root, { recursive: true, force: true }));
+  const journal = new WorkerJournal(root, undefined, 1024, "local", path.join(root, "attempts.sqlite"));
+  cleanup.push(async () => journal.close());
+  await journal.initialize(); await journal.accept("run", request()); await journal.accept("other", request());
+  await journal.append("run", { type: "assistant_delta", text: "a".repeat(600) });
+  await expect(journal.append("run", { type: "assistant_delta", text: "b".repeat(600) })).rejects.toMatchObject({ code: "event_limit" });
+  expect((await journal.load("run")).events.map(frame => frame.event)).toEqual([{ type: "assistant_delta", text: "a".repeat(600) }]);
+  await journal.append("other", { type: "assistant_text", text: "unrelated" });
+  await journal.update("run", "cancelled");
+  expect((await journal.load("run")).receipt.state).toBe("cancelled");
+});

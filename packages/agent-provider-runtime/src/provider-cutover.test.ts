@@ -23,6 +23,13 @@ it("rejects an active old writer and an orphan journal, then accepts confirmed c
     await expect(verifyLegacyQuiescence(root)).rejects.toThrow("lease");
     record.runs[run]!.workspaceRelease.state = "released";
     await writeFile(file, JSON.stringify(record));
+    await writeFile(file, JSON.stringify({ ...record, runs: { [run]: { ...record.runs[run], reservedFor: { runId: run } } } }));
+    await expect(verifyLegacyQuiescence(root)).rejects.toThrow("continuation");
+    await writeFile(file, JSON.stringify(record));
+    const matchingJournal = path.join(journal, run + ".json");
+    await writeFile(matchingJournal, JSON.stringify({ version: 1, receipt: { runId: run, exitConfirmed: false } }));
+    await expect(verifyLegacyQuiescence(root)).rejects.toThrow("unconfirmed");
+    await writeFile(matchingJournal, JSON.stringify({ version: 1, receipt: { runId: run, exitConfirmed: true } }));
     const orphan = randomUUID(), orphanFile = path.join(journal, orphan + ".json");
     const receipt = { version: 1, receipt: { runId: orphan, exitConfirmed: false } };
     await writeFile(orphanFile, JSON.stringify(receipt));

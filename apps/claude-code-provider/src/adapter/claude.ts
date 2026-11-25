@@ -51,6 +51,7 @@ const AUTH_ENV_KEYS = [
 const AUTO_ALLOWED_TOOLS = new Set(["Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite", "Task"]);
 
 const ASK_USER_QUESTION = "AskUserQuestion";
+const RESTRICTED_NATIVE_TOOLS = ["Read", "Glob", "Grep", ASK_USER_QUESTION];
 
 /**
  * The part of the SDK's third `canUseTool` argument the card can use. A structural subset rather
@@ -128,6 +129,8 @@ export class ClaudeHarnessAdapter implements HarnessAdapter {
   }
 
   start(options: HarnessStartOptions): HarnessRun {
+    if (options.restrictedHost && (options.autonomy === "autonomous" || options.subagents?.enabled === true))
+      throw new Error("This execution profile requires a qualified native writer scope.");
     return new ClaudeRun(options, this.environment);
   }
 }
@@ -502,9 +505,9 @@ class ClaudeRun implements HarnessRun {
           },
           // Host operator context: the harness reads the operator's own user+project settings
           // (CLAUDE.md, skills), exactly like an admin running Claude Code by hand.
-          settingSources: ["user"],
+          settingSources: this.options.restrictedHost ? [] : ["user"],
           strictMcpConfig: true,
-          ...(this.options.nativeTools === "none" ? { tools: [] } : {}),
+          ...(this.options.nativeTools === "none" ? { tools: [] } : this.options.restrictedHost ? { tools: RESTRICTED_NATIVE_TOOLS } : {}),
           ...(this.options.subagents?.enabled === false ? { disallowedTools: ["Agent", "Task"] } : {}),
           env: { ...this.environment, ...(this.options.nativeHome ? { HOME: this.options.nativeHome, CLAUDE_CONFIG_DIR: this.options.nativeHome } : {}) },
           ...(this.options.mcpServers ? { mcpServers: this.options.mcpServers } : {}),
@@ -574,6 +577,8 @@ class ClaudeRun implements HarnessRun {
     context?: ApprovalContext,
   ): Promise<unknown> {
     if (this.stopped) return Promise.resolve({ behavior: "deny", message: "Session stopped." });
+    if (this.options.restrictedHost && !toolName.startsWith("mcp__") && !RESTRICTED_NATIVE_TOOLS.includes(toolName))
+      return Promise.resolve({ behavior: "deny", message: "This native tool requires a qualified host execution scope." });
     if (this.options.nativeTools === "none" && !toolName.startsWith("mcp__") || this.options.subagents?.enabled === false && ["Agent", "Task"].includes(toolName)) return Promise.resolve({ behavior: "deny", message: "This tool is disabled by the session configuration." });
     const callOwner = context?.toolUseID ? this.toolSources.get(context.toolUseID) : undefined;
     const source = callOwner && callOwner.agentId !== "root" ? [...this.childSources.values()].find(item => item.agentId === callOwner.agentId)

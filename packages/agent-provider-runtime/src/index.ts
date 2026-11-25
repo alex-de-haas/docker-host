@@ -2,9 +2,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { acquireAttemptScope, AttemptSupervisors, needsSupervisor } from "./attempt-supervisor.js";
 import { createServer } from "node:http";
 import { verifyLegacyQuiescence } from "./provider-cutover.js";
-import { canAcquireWorkspace } from "./mcp.js";
 import { DatabaseSync } from "node:sqlite";
-import { probeWriterScope, writerCapability } from "./writer-scope.js";
+import { probeWriterScope, writerCapability, type WriterScope } from "./writer-scope.js";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { AgentApiError } from "@hosty-sdk/app/agent";
@@ -39,10 +38,21 @@ export async function startAgentProvider<C extends EngineConnections>(options: {
   const scope = attemptId ? acquireAttemptScope(driver.directory, attemptId) : undefined;
   if (attemptId && !scope) process.exit(0);
   const run = attemptId ? (await store.run(attemptId)).record : undefined;
-  const writerScope = !run || canAcquireWorkspace(run.input?.mcp) || run.input?.resources?.some(resource => resource.kind === "worktree")
-    ? await probeWriterScope(data) : undefined;
+  let writerScope: WriterScope | undefined;
+  if (options.engine.managedNativeScopes) {
+    if (attemptId && process.platform === "win32") {
+      // The HTTP service probes once. Every actual native launch still creates its own OS job
+      // and must obtain its own closure receipt. The probe never proves an attempt has stopped.
+      if (process.argv[4] === "--windows-job") writerScope = { kind: "windows-job" };
+    } else writerScope = await probeWriterScope(data);
+  }
   const capabilities = structuredClone(options.engine.capabilities);
   if (writerScope && !capabilities.capabilities.includes(writerCapability)) capabilities.capabilities.push(writerCapability);
+  if (options.engine.managedNativeScopes && !writerScope) {
+    capabilities.capabilities = capabilities.capabilities.filter(capability => capability !== "subagents.native");
+    capabilities.capabilities.push("scope.restricted-native-tools");
+    delete capabilities.subagents;
+  }
   const controller = new ProviderController(store, authority, connections, capabilities, Number(env.AGENT_MAX_CONCURRENCY ?? 4));
   if (scope && attemptId && run) {
     const id = attemptId;
@@ -90,7 +100,7 @@ export async function startAgentProvider<C extends EngineConnections>(options: {
     process.exit(0);
   }
   controller.driver = driver;
-  await driver.initialize();
+  await driver.initialize(writerScope?.kind === "windows-job");
   const api = agentRoutes(controller, attachments);
   const interfaces = options.engine.openInterfaces?.(connections, data);
   // Settings are an app-owned Hosty-authenticated surface; importing it does not start a native agent.

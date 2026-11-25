@@ -136,6 +136,8 @@ export interface NativeHistoryHome { home: string; directories: Readonly<Record<
 
 export interface NativeObservationCheckpoint { read(): unknown; write(value: unknown): void; flush?(): Promise<void> }
 export interface HarnessStartOptions {
+  /** The host cannot contain arbitrary commands or write-capable descendants. */
+  restrictedHost?: true;
   nativeObservations?: NativeObservationCheckpoint;
   nativeTools?: "provider_default" | "none";
   nativeConfigHome?: string;

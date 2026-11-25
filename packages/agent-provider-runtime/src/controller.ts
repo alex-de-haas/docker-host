@@ -202,7 +202,9 @@ export class ProviderController {
       if (this.closing) throw new AgentApiError("provider_stopping", "Provider is stopping; this new run was not admitted.", 503, true);
       this.store.history.requireDeliveryCapacity(actor, sessionId);
       this.requireCapabilities(input.requiredCapabilities);
-      if (this.driver.durableCommands && input.resources?.some(resource => resource.kind === "worktree"))
+      const selection = session.configurations[input.configurationRevision]?.configuration;
+      if (this.driver.durableCommands && (input.resources?.some(resource => resource.kind === "worktree")
+        || this.capabilities.capabilities.includes("scope.restricted-native-tools") && (selection?.approvalMode === "autonomous" || selection?.subagents?.enabled === true)))
         this.requireCapabilities(["scope.workspace-writers"]);
       if (session.session.activeRun) conflict("The previous execution still owns this session.", "session_busy");
       if (session.session.revision !== input.expectedSessionRevision || session.session.configurationRevision !== input.configurationRevision) conflict("The session configuration changed.");

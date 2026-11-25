@@ -1074,3 +1074,15 @@ it("cancels an actual pending remote MCP request promptly during the longer huma
   expect(s.events.filter(event => event.type === "tool_result")).toContainEqual(expect.objectContaining({ status: "unknown" }));
   expect(s.events.filter(event => event.type === "native_effect")).not.toContainEqual(expect.objectContaining({ state: "settled" }));
 });
+
+it("rejects an unrestricted resource-less run and refuses model calls to tools absent from the restricted catalog", async () => {
+  const f = fixture([tool("run_command", { command: "echo unexpected" }), tool("apply_patch", { path: "outside", old_text: "", new_text: "unexpected" }), answer("Done")]);
+  const restricted = { restrictedHost: true as const };
+  await expect(start(f, { ...restricted, autonomy: "autonomous" })).rejects.toThrow(/qualified native writer/);
+  const s = await start(f, restricted);
+  s.run.send("Fixture");
+  await wait(s.events, "result");
+  expect(s.events.some(event => event.type === "approval_request")).toBe(false);
+  expect(s.events.filter(event => event.type === "tool_result")).toMatchObject([{ status: "failed" }, { status: "failed" }]);
+  await expect(readFile(path.join(s.root, "outside"))).rejects.toMatchObject({ code: "ENOENT" });
+});
