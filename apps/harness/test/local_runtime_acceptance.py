@@ -231,10 +231,46 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
     old_name = attachment('old-file-' + token + '.txt', old_data)
     old_text = 'mcp completed MCP_OUTPUT_MARKER_' + token
     tool_output = 'tool-result-' + token
+    tool_names = {'mcp__hosty-core__list_apps', 'mcp__hosty-core__get_app'}
     first, first_store, first_input = send(chat, old_text, [old_name])
     first_file, = first_input['input']['attachments']
     check_file(first_file, old_name, old_data, first)
-    assert any(tool_output in tool.get('output', '') for tool in first['tools']), 'The scripted tool result must exist before testing for its absence'
+    first_run_id = first['ref']['id']
+    delivery = first_store['runs'][first_run_id]['events']
+    results = [event for event in delivery if event['type'] == 'tool.completed'
+        and event['data']['name'] in tool_names and event['data']['state'] == 'completed']
+    assert len(results) == len(tool_names) and {event['data']['name'] for event in results} == tool_names
+    for event in results:
+        assert event['runId'] == first_run_id and event['generation'] == first['generation'] and event['source']['agentId'] == 'root'
+        assert json.loads(event['data']['output'])['content'] == [{'type': 'text', 'text': tool_output}]
+
+    def assert_transcript_tool_results():
+        # Chat status can come from the compact history lane before the browser stream
+        # replays the complete positioned output. Follow the same durable events as the UI.
+        calls, completed, restored = {}, {}, {}
+        deadline = time.monotonic() + 90
+        with owner.client.open(app_origin + '/api' + route + '/events?after=0', timeout=35) as response:
+            for raw in response:
+                if time.monotonic() >= deadline:
+                    break
+                if not raw.startswith(b'data: '):
+                    continue
+                event = json.loads(raw[6:])
+                source = event.get('providerSource') or {}
+                if event['type'] == 'provider_history_order' and 'toolOutput' in event:
+                    restored[event['target']] = event['toolOutput']
+                elif source.get('runId') == first_run_id and source.get('generation') == first['generation'] and source.get('provider') == first['ref']['provider']:
+                    if event['type'] == 'tool_use' and event['toolName'] in tool_names:
+                        calls[event['toolUseId']] = event['toolName']
+                    if event['type'] == 'tool_result' and event['status'] == 'completed':
+                        completed[event['toolUseId']] = event
+                found = {name for call, name in calls.items() if call in completed and tool_output in
+                    restored.get(completed[call]['providerEventId'], completed[call]['output'])}
+                if found == tool_names:
+                    return
+        raise AssertionError('The original marked tool results must be replayable in the owner transcript')
+
+    assert_transcript_tool_results()
     queued_chat = owner.harness('/sessions', {'title': 'Composer continuation after provider reinstall',
         'connectionId': connection_id, 'profileId': None, 'appIds': []})
     queue_before, queue_before_store, _ = send(queued_chat, 'Before composer continuation')
@@ -325,6 +361,7 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
     assert last_input['continuation'] == 'start' and last_input['selection']['model'] == fresh['model']
     last_file, = last_input['input']['attachments']
     check_file(last_file, new_name, new_data, last)
+    assert_transcript_tool_results()
     for marker in (old_text, old_name, old_data.decode(), first_file['id'], first_file['digest'], resumed_text,
                    tool_output, 'Apps checked', first['ref']['id'], continued['ref']['id']):
         assert marker not in json.dumps([last_input, last_store['session']['configuration']]), 'The new public provider payload included an old prompt, tool result, run or attachment'
