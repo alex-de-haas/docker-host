@@ -1,5 +1,6 @@
 """Exercise the v2 provider through a real Core Local installation and its signed-in Harness consumer."""
 import collections
+from datetime import datetime
 import json
 from pathlib import Path
 import sqlite3
@@ -22,6 +23,20 @@ def native_proof(data, target):
         native = json.loads(db.execute('SELECT payload FROM native_attempts WHERE id=?', (run_id,)).fetchone()[0])
     assert public['snapshot']['ref'] == target['ref'] and public['snapshot']['generation'] == generation
     assert session['id'] == session_id and native['receipt']['runId'] == run_id
+    stop_time = next((event['occurredAt'] for event in public['events']
+        if event['type'] == 'run.updated' and event['data']['snapshot']['phase'] == 'terminal'
+        and event['data']['snapshot']['stopConfirmed']), None)
+    return {'runId': run_id, 'generation': generation, 'sessionId': session_id,
+        'nativeId': session.get('nativeId'), 'activeRun': (session['session'].get('activeRun') or {}).get('id'),
+        'nativeGeneration': native['receipt']['generation'], 'nativeState': native['receipt']['state'],
+        'effectIds': sorted((native['receipt'].get('effects') or {}).keys()),
+        'eventCounts': dict(collections.Counter(frame['event']['type'] for frame in native['events'])),
+        'stopConfirmedAt': stop_time, **native_process_receipts(data, target)}
+
+
+def native_process_receipts(data, target):
+    """Read the exact runner scope and OS receipts independently of the removable chat payload."""
+    run_id, generation = target['ref']['id'], target['generation']
     root = data / 'native-processes' / run_id / generation
     manifest = json.loads((root / 'manifest.json').read_text())
     assert (manifest['runId'], manifest['generation']) == (run_id, generation)
@@ -30,13 +45,9 @@ def native_proof(data, target):
         recovered = root / (nonce+'.closed.json')
         receipt = json.loads((recovered if recovered.is_file() else root / (nonce+'.json')).read_text())
         assert (receipt['nonce'], receipt['runId'], receipt['generation']) == (nonce, run_id, generation)
-        receipts.append({key: receipt.get(key) for key in ('nonce', 'state', 'treeStopped', 'writerPid', 'nativePid', 'mechanism')})
-    return {'runId': run_id, 'generation': generation, 'sessionId': session_id,
-        'nativeId': session.get('nativeId'), 'activeRun': (session['session'].get('activeRun') or {}).get('id'),
-        'nativeGeneration': native['receipt']['generation'], 'nativeState': native['receipt']['state'],
-        'effectIds': sorted((native['receipt'].get('effects') or {}).keys()),
-        'eventCounts': dict(collections.Counter(frame['event']['type'] for frame in native['events'])),
-        'producerNonce': manifest['producerNonce'], 'producerPid': manifest['producerPid'],
+        receipts.append({key: receipt.get(key) for key in
+            ('nonce', 'state', 'treeStopped', 'writerPid', 'nativePid', 'mechanism', 'observedAt')})
+    return {'producerNonce': manifest['producerNonce'], 'producerPid': manifest['producerPid'],
         'spawns': manifest['spawns'], 'receipts': receipts}
 
 
@@ -49,10 +60,14 @@ def assert_same_attempt(original, later):
 
 def physically_closed(data, target):
     proof = native_proof(data, target)
-    if proof['activeRun'] is None and proof['spawns'] and len(proof['receipts']) == len(proof['spawns']) and all(
-            receipt['state'] == 'stopped' and receipt['treeStopped'] is True for receipt in proof['receipts']):
+    if proof['activeRun'] is None and groups_closed(proof):
         return proof
     return None
+
+
+def groups_closed(proof):
+    return bool(proof['spawns']) and len(proof['receipts']) == len(proof['spawns']) and all(
+        receipt['state'] == 'stopped' and receipt['treeStopped'] is True for receipt in proof['receipts'])
 
 
 def check_mac_workspace_continuation(context, app, app_origin, call, client, connection):
@@ -75,7 +90,7 @@ def check_mac_workspace_continuation(context, app, app_origin, call, client, con
     assert source.is_relative_to(context['root'].resolve()), 'The edit must target the disposable Core worktree'
     marker = uuid.uuid4().hex
     edited = source / ('workspace-edit-' + marker + '.txt')
-    descendant_ready = edited.with_name(edited.name + '.ready')
+    heartbeat = edited.with_name(edited.name + '.heartbeat')
     data = context['root'] / 'apps' / context['agentProviders'].entries['codex']['appId'] / 'data'
     queue_route = route + '/message-queue'
 
@@ -105,7 +120,7 @@ def check_mac_workspace_continuation(context, app, app_origin, call, client, con
     first_entry = enqueue('initial')
     def running_edit():
         _, run = observation(first_entry)
-        return run if run.get('state') == 'running' and run.get('effects', {}).get('unresolvedCallIds') and descendant_ready.is_file() else None
+        return run if run.get('state') == 'running' and run.get('effects', {}).get('unresolvedCallIds') and heartbeat.is_file() else None
     first = wait(running_edit, 90)
     assert edited.read_text() == 'Initial edit\n'
     requested = call(app_origin, route + '/cancel', {})
@@ -120,8 +135,6 @@ def check_mac_workspace_continuation(context, app, app_origin, call, client, con
         assert run['effects']['unresolvedCallIds'] == first['effects']['unresolvedCallIds']
         return run
     stopped = wait(cancelled, 90)
-    proof = native_proof(data, stopped)
-    assert any(receipt['treeStopped'] is not True for receipt in proof['receipts']), 'Stop waited for the descendant cleanup'
 
     second_entry = enqueue('follow-up')
     def continued():
@@ -131,7 +144,17 @@ def check_mac_workspace_continuation(context, app, app_origin, call, client, con
         assert run['state'] == 'succeeded' and run['sessionId'] == stopped['sessionId']
         return run
     wait(continued, 90)
-    wait(lambda: physically_closed(data, stopped), 90)
+    proof = wait(lambda: physically_closed(data, stopped), 90)
+    # HTTP and background cleanup can finish between observations. Compare the committed
+    # public terminal event with writes by the descendant and closure of its actual group.
+    beats = [tuple(map(int, line.split())) for line in heartbeat.read_text().splitlines()]
+    app_server_pid, last_write = beats[-1]
+    receipt = next(item for item in proof['receipts'] if item['nativePid'] == app_server_pid)
+    stop_time = datetime.fromisoformat(proof['stopConfirmedAt']).timestamp()
+    group_closed = datetime.fromisoformat(receipt['observedAt']).timestamp()
+    assert stop_time < last_write / 1000 <= group_closed, (
+        'Expected an owned descendant to write after public Stop and before group closure',
+        {'stop': proof['stopConfirmedAt'], 'lastWriteMs': last_write, 'groupClosed': receipt['observedAt']})
     assert edited.read_text() == 'Initial edit\nFollow-up edit\n'
 
     # Chat removal is logical. It must not erase the independently selected source tree.
@@ -139,7 +162,7 @@ def check_mac_workspace_continuation(context, app, app_origin, call, client, con
         assert response.status in (200, 202) and json.load(response)['deleted']
     assert all(item['id'] != chat['id'] for item in call(app_origin, '/api/sessions')['sessions'])
     assert edited.read_text() == 'Initial edit\nFollow-up edit\n'
-    say('PASS: native macOS edited the selected worktree without a profile, stopped with one unknown tool outcome, and edited it again in the same chat while the original descendant cleanup was pending')
+    say('PASS: native macOS edited the selected worktree without a profile, confirmed Stop before an owned descendant stopped writing, cleaned up its group, and accepted another edit in the same chat')
 
 
 def check(context, app, app_origin, call, timed, link, client):
@@ -301,6 +324,8 @@ def check(context, app, app_origin, call, timed, link, client):
             value = (call(app_origin, delete_route).get('providerExecution') or {}).get('run') or {}
             return value if value.get('pending') and not value.get('stopConfirmed') else None
         writer = wait(waiting_writer, 90)
+        writer_scope = native_process_receipts(data, writer)
+        assert writer_scope['spawns']
         assert original_leases < set(call(app_origin, worktree_route)['leases'])
     else:
         writer = None
@@ -311,7 +336,12 @@ def check(context, app, app_origin, call, timed, link, client):
         assert response.status in (200, 202) and result['deleted'] and result['requestId']
     wait(lambda: call(app_origin, delete_route+'/deletion').get('state') == 'removed', 90)
     if writer:
-        wait(lambda: physically_closed(data, writer), 90)
+        def writer_groups_closed():
+            proof = native_process_receipts(data, writer)
+            assert proof['producerNonce'] == writer_scope['producerNonce']
+            assert set(writer_scope['spawns']) <= set(proof['spawns'])
+            return groups_closed(proof)
+        wait(writer_groups_closed, 90)
     assert dirty_file.read_text() == 'Preserve this uncommitted work.'
     wait(lambda: set(call(app_origin, worktree_route)['leases']) == original_leases, 90)
     assert not any(item['sessionId'] == disposable['id'] and item['attached'] for item in call(app_origin, workspace_route+'/participants')['sessions'])

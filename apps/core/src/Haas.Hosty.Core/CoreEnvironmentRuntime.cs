@@ -232,7 +232,20 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
             throw new SandboxException("environment_launch_failed", $"Unable to start the child Core launcher ({reason}). See {log}", 409);
         }
         using var launcher = launched;
-        var spawned = new CoreEnvironmentProcess(launched.Id, launched.StartTime.ToUniversalTime());
+        async Task<SandboxException> LauncherExitAsync()
+        {
+            var exitCode = launched.ExitCode;
+            var collision = File.Exists(log) && (await File.ReadAllTextAsync(log, ct)).Contains("Hosty Core cannot bind ", StringComparison.Ordinal);
+            await File.AppendAllTextAsync(log, $"[hosty] Child Core launcher exited before readiness (exit code {exitCode}). Check the executable and preceding output.\n", ct);
+            return new SandboxException(collision ? "environment_port_collision" : "environment_launch_failed", $"Child Core exited before readiness (exit code {exitCode}). See {log}", 409);
+        }
+        CoreEnvironmentProcess spawned;
+        try { spawned = new CoreEnvironmentProcess(launched.Id, launched.StartTime.ToUniversalTime()); }
+        catch (Exception ex) when ((ex is System.ComponentModel.Win32Exception or InvalidOperationException) && launched.HasExited)
+        {
+            // On macOS, the launcher can disappear before its start timestamp is available.
+            throw await LauncherExitAsync();
+        }
         if (generation is not null) CoreBuildRetention.Mark(generation, "starting", record.Request.ProjectPath, spawned.Pid, spawned.StartedAt);
         await saveProcess(spawned);
         // On Windows cmd is the launcher. Discovery supplies the actual Core process after readiness.
@@ -252,12 +265,7 @@ internal sealed class CoreEnvironmentRuntime(HostyCoreRuntimeConfig config, IDoc
                 if (generation is not null) CoreBuildRetention.Mark(generation, "ready", record.Request.ProjectPath, process.Pid, process.StartedAt);
                 await saveProcess(process); return;
             }
-            if (launched.HasExited)
-            {
-                var collision = File.Exists(log) && (await File.ReadAllTextAsync(log, ct)).Contains("Hosty Core cannot bind ", StringComparison.Ordinal);
-                await File.AppendAllTextAsync(log, $"[hosty] Child Core launcher exited before readiness (exit code {launched.ExitCode}). Check the executable and preceding output.\n", ct);
-                throw new SandboxException(collision ? "environment_port_collision" : "environment_launch_failed", $"Child Core exited before readiness (exit code {launched.ExitCode}). See {log}", 409);
-            }
+            if (launched.HasExited) throw await LauncherExitAsync();
             await Task.Delay(100, deadline.Token);
         }
         throw new SandboxException("environment_start_timeout", "Child Core readiness timed out. See " + log, 409);

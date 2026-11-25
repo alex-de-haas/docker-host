@@ -1,5 +1,5 @@
 import { AgentApiError } from "@hosty-sdk/app/agent";
-import type { HarnessAdapter, HarnessRun } from "./internal/harness/adapter.js";
+import { withRunLifecycle, type HarnessAdapter, type HarnessRun } from "./internal/harness/adapter.js";
 import type { TrackedNativeProcesses } from "./tracked-process.js";
 
 /** An SDK stream ending is separate from proof that the known native process tree stopped. */
@@ -35,25 +35,18 @@ export function trackedAdapter(adapter: HarnessAdapter, processes: TrackedNative
           void processes.stop().catch(() => {});
         }
       };
-      const wrapped: HarnessRun = { send: text => run.send(text), resolveApproval: (...args) => run.resolveApproval(...args), resolveQuestion: (...args) => run.resolveQuestion(...args),
-        setMcpServers: value => run.setMcpServers(value), interrupt: () => run.interrupt(), stop, stopAndWait: stop };
-      if (run.stopForCancellation) {
-        let stopping: ReturnType<NonNullable<HarnessRun["stopForCancellation"]>> | undefined;
-        wrapped.stopForCancellation = () => stopping ??= (async () => {
-          try {
-            const { drained } = await run.stopForCancellation!();
-            await processes.confirmSdkStop(true);
-            return { drained: drained.catch(() => {}).then(() => processes.stop()).then(() => {}) };
-          } catch (error) {
-            void processes.stop().catch(() => {});
-            throw error;
-          }
-        })();
-      }
-      if (run.readUsage) wrapped.readUsage = () => run.readUsage!();
-      if (run.disableSuggestions) wrapped.disableSuggestions = () => run.disableSuggestions!();
-      if (run.finishSuggestions) wrapped.finishSuggestions = () => run.finishSuggestions!();
-      return wrapped;
+      let stopping: ReturnType<NonNullable<HarnessRun["stopForCancellation"]>> | undefined;
+      const stopForCancellation = run.stopForCancellation && (() => stopping ??= (async () => {
+        try {
+          const { drained } = await run.stopForCancellation!();
+          await processes.confirmSdkStop(true);
+          return { drained: drained.catch(() => {}).then(() => processes.stop()).then(() => {}) };
+        } catch (error) {
+          void processes.stop().catch(() => {});
+          throw error;
+        }
+      })());
+      return withRunLifecycle(run, { stop, stopAndWait: stop, stopForCancellation });
     },
   };
 }

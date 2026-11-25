@@ -72,7 +72,7 @@ export async function startAgentProvider<C extends EngineConnections>(options: {
     });
     // When a native SDK hangs during stop, ending this process also tears down its in-process
     // adapters and the private parent channels of all registered native runners. The successor
-    // must still verify physical closure before it releases the run slot.
+    // verifies the original agent exited before releasing its run slot. Exclusive claims need their own closure proof.
     let closingSince = 0;
     const stopDeadline = setInterval(() => {
       void store.run(id).then(({ record }) => {

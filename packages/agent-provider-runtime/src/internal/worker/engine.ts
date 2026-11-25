@@ -135,15 +135,33 @@ export class WorkerEngine {
         if (this.closing && !admittedBeforeClose) return;
         const current = await this.journal.load(id);
         const state = current.receipt.state;
-        if (terminal(state)) {
-          if (state === "cancelled" && this.drainingTerminals.has(id)) {
-            lateTerminal = true;
-            await this.drainCompletionTerminals(id, current, [queued]);
-          }
+        const draining = state === "cancelled" && this.drainingTerminals.has(id);
+        if (terminal(state) && !draining) return;
+        let source: HarnessEvent["source"];
+        try { source = readHarnessEventSource(event.source); }
+        catch (error) {
+          if (state === "cancelling" || draining) return; // An unattributable callback cannot settle or fail a stopped attempt.
+          throw error;
+        }
+        if (draining) {
+          lateTerminal = true;
+          await this.drainCompletionTerminals(id, current, [queued]);
           return;
         }
         const active = this.active.get(id);
-        const source = readHarnessEventSource(event.source);
+        if (state === "cancelling") {
+          // Stop owns the root outcome. Never ask for a decision after its dispatch gate closed.
+          if (event.type === "approval_request" || event.type === "question_request"
+            || event.type === "prompt_suggestion" || event.type === "answer_complete") return;
+          if (event.type === "result" || event.type === "error" || event.type === "agent_status"
+            || event.type === "tool_result" || event.type === "command_result"
+            || event.type === "native_effect" && event.state !== "started") {
+            await this.drainCompletionTerminals(id, current, [queued]);
+            return;
+          }
+          // A native call can already be starting as Stop is accepted. Its start and output
+          // still belong to this attempt, and a matching terminal can settle the observed effect.
+        }
         if (source && source.agentId !== "root") {
           // Child output belongs to this run, but its result/error is not the root turn outcome.
           await this.journal.append(id, { ...event, source });
@@ -167,7 +185,7 @@ export class WorkerEngine {
         if (event.type === "prompt_suggestion" || event.type === "answer_complete") return;
         await this.journal.append(id, event);
         if (event.type === "approval_request" || event.type === "question_request" && event.blocking !== false) await this.journal.update(id, "awaiting_input");
-        if (event.type === "result" && successfulResult(event.status) && active?.suggestions && state !== "cancelling") {
+        if (event.type === "result" && successfulResult(event.status) && active?.suggestions) {
           active.collecting = setTimeout(() => { void this.finishSuggestion(id, true).catch(error => console.warn("[worker] Prediction finalization remains unconfirmed.", { code: journalErrorCode(error) })); }, SUGGESTION_DEADLINE_MS);
           active.collecting.unref();
           await this.journal.update(id, "suggesting");
@@ -175,8 +193,8 @@ export class WorkerEngine {
           return;
         }
         if (event.type === "result" || event.type === "error") {
-          await this.stopNative(id, state === "cancelling");
-          await this.journal.update(id, state === "cancelling" ? "cancelled" : event.type === "error" ? "failed" : "completed");
+          await this.stopNative(id);
+          await this.journal.update(id, event.type === "error" ? "failed" : "completed");
           this.admitted.delete(id);
         }
       });
@@ -189,14 +207,13 @@ export class WorkerEngine {
     }
     finally { pending.delete(queued); if (!pending.size && this.queuedEvents.get(id) === pending) this.queuedEvents.delete(id); }
   }
-  private async stopNative(id: string, cancelling = false): Promise<void> {
+  private async stopNative(id: string): Promise<void> {
     const active = this.active.get(id);
     if (!active) return;
     clearTimeout(active.collecting);
     const beforeStop = await this.journal.load(id);
     if (active.run.stopAndWait) {
-      if (cancelling) await this.stopForCancellation(id, active.run);
-      else await active.run.stopAndWait();
+      await active.run.stopAndWait();
       await this.drainCompletionTerminals(id, beforeStop);
     } else await active.run.stop();
     active.release(); this.active.delete(id); this.disabledSuggestions.delete(id);
@@ -357,10 +374,9 @@ export class WorkerEngine {
           || pending.some(frame => frame.event.type !== "question_request" || frame.event.blocking === false))
           throw new WorkerApiError(409, "stale_parking", "Only execution blocked exclusively on these questions can be parked.");
       });
-      return terminal(current.state) || current.state === "parking" ? current : this.journal.update(id, "parking");
+      return terminal(current.state) || current.state === "parking" || current.state === "cancelling" ? current : this.journal.update(id, "parking");
     });
-    if (terminal(receipt.state)) return receipt;
-    return this.finishPark(id);
+    return receipt.state === "parking" ? this.finishPark(id) : receipt;
   }
   /** Park only after the native stream acknowledged the exact orchestration tool result. */
   async barrier(id: string, input: import("./contracts.js").WorkerBarrier): Promise<WorkerReceipt> {
@@ -401,10 +417,9 @@ export class WorkerEngine {
       });
       const fresh = (await this.journal.load(id)).receipt;
       if (fresh.state === "completed" && fresh.exitConfirmed) return this.journal.update(id, "parked");
-      return terminal(fresh.state) || fresh.state === "parking" ? fresh : this.journal.update(id, "parking");
+      return terminal(fresh.state) || fresh.state === "parking" || fresh.state === "cancelling" ? fresh : this.journal.update(id, "parking");
     });
-    if (terminal(receipt.state)) return receipt;
-    return this.finishPark(id);
+    return receipt.state === "parking" ? this.finishPark(id) : receipt;
   }
   private async finishPark(id: string): Promise<WorkerReceipt> {
     const active = this.active.get(id);
@@ -439,7 +454,9 @@ export class WorkerEngine {
       return (await this.journal.load(id)).receipt;
     }
     const receipt = await this.journal.exclusive(async () => {
-      await this.journal.control(id, controlId, { kind: "cancel" }, async () => {});
+      await this.journal.control(id, controlId, { kind: "cancel" }, async record => {
+        if (!terminal(record.receipt.state)) record.receipt.pending = [];
+      });
       const current = (await this.journal.load(id)).receipt;
       return terminal(current.state) || current.state === "suggesting" ? current : this.journal.update(id, "cancelling");
     });

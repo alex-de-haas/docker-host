@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using Haas.Hosty.Core;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -46,6 +47,54 @@ public sealed class CoreEnvironmentLaunchTests : IDisposable
         Assert.Contains("exit code 23", text);
     }
 
+    [Fact]
+    public async Task Start_LivePosixChildRecordsItsIdentityAndReadyVersion()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        Directory.CreateDirectory(root);
+        var executable = Path.Combine(root, "live child");
+        await File.WriteAllTextAsync(executable, "#!/bin/sh\nexec /bin/sleep 20\n");
+        File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var record = Record(executable);
+        var runtime = Runtime(new ReadyClients());
+        var saved = new List<CoreEnvironmentProcess>();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+
+        try
+        {
+            await runtime.StartAsync(record, root, async process =>
+            {
+                saved.Add(process);
+                if (process.Version is not null) return;
+                var run = Path.Combine(root, "core", "run");
+                Directory.CreateDirectory(run);
+                await File.WriteAllTextAsync(CoreInstanceId.BuildPath(root), record.Id);
+                await JsonStorage.WriteAsync(Path.Combine(run, "control.json"), new ControlDiscoveryDocument(
+                    1, "core", "http", "http://127.0.0.1:7070", "http://127.0.0.1:7070",
+                    new Dictionary<string, string>(), process.StartedAt, process.Pid));
+            }, deadline.Token);
+
+            Assert.Collection(saved,
+                starting => Assert.Null(starting.Version),
+                ready =>
+                {
+                    Assert.Equal(saved[0].Pid, ready.Pid);
+                    Assert.Equal(saved[0].StartedAt, ready.StartedAt);
+                    Assert.Equal("0.200.0", ready.Version);
+                    Assert.True(CoreEnvironmentRuntime.Alive(ready));
+                });
+        }
+        finally
+        {
+            if (saved.FirstOrDefault() is { } owned && CoreEnvironmentRuntime.Alive(owned))
+            {
+                using var child = Process.GetProcessById(owned.Pid);
+                child.Kill();
+                await child.WaitForExitAsync();
+            }
+        }
+    }
+
     [WindowsNativeFact]
     public async Task WindowsLaunch_ExecutesQuotedPathsAndRedirectsBothStreams()
     {
@@ -70,9 +119,9 @@ public sealed class CoreEnvironmentLaunchTests : IDisposable
         Assert.Contains("child-standard-error", text);
     }
 
-    private CoreEnvironmentRuntime Runtime() => new(
+    private CoreEnvironmentRuntime Runtime(IHttpClientFactory? clients = null) => new(
         new(root, root, "", 7070, "http://localhost:7070", null, "localhost", null, false),
-        new DockerInventory(), new Clients(), NullLogger<CoreEnvironmentRuntime>.Instance);
+        new DockerInventory(), clients ?? new Clients(), NullLogger<CoreEnvironmentRuntime>.Instance);
 
     private static CoreEnvironmentRecord Record(string executable) => new(Guid.NewGuid().ToString("N"), new("launch-test", null, null),
         new(Guid.NewGuid().ToString(), "Launch regression"), "hash", 7070, 1, "stopped", DateTimeOffset.UtcNow, Executable: executable);
@@ -85,6 +134,17 @@ public sealed class CoreEnvironmentLaunchTests : IDisposable
                 : "[]", ""));
     }
     private sealed class Clients : IHttpClientFactory { public HttpClient CreateClient(string name) => new(); }
+
+    private sealed class ReadyClients : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(new ReadyHandler());
+
+        private sealed class ReadyHandler : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+                => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"version\":\"0.200.0\"}") });
+        }
+    }
 
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
 }

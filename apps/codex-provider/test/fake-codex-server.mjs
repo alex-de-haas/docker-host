@@ -433,11 +433,17 @@ function handle(msg) {
       send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: turnId } } });
       if (phase === "initial") {
         writeFileSync(file, "Initial edit\n", { flag: "wx" });
-        // Keep an owned group member alive after the app-server exits. It ignores polite
-        // shutdown so the runner has observable background cleanup, and self-expires if lost.
+        // Timestamp real writes by the owned descendant, including during background cleanup.
+        // It stays in the app-server's group and has a finite lifetime if the fixture is lost.
         const descendant = spawn(process.execPath, ["-e",
-          'process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(process.argv[1], "ready"); setTimeout(() => {}, 30000)',
-          file + ".ready"], { stdio: "ignore" });
+          `const { appendFileSync } = require("node:fs");
+          const appServerPid = process.ppid;
+          const writeBeat = () => appendFileSync(process.argv[1], appServerPid + " " + Date.now() + "\\n");
+          process.on("SIGTERM", () => {});
+          writeBeat();
+          const timer = setInterval(writeBeat, 40);
+          setTimeout(() => clearInterval(timer), 30000);`,
+          file + ".heartbeat"], { stdio: "ignore" });
         descendant.unref();
         // Leave an exact tool outcome open while the chat waits for Stop.
         send({ method: "item/started", params: { threadId: activeThreadId, turnId, item: { type: "webSearch", id: "pending-search" } } });

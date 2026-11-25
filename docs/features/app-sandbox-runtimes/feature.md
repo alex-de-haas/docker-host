@@ -1,6 +1,6 @@
 ---
 created: 2026-10-14
-updated: 2026-11-07
+updated: 2026-11-25
 summary: Parent-managed child Core environments with ordinary applications and accounts, private copied or workspace builds, lifecycle recovery and unified Dashboard controls.
 components: [apps/core, apps/harness, apps/shell, apps/demo-app, packages/app-sdk]
 ---
@@ -37,9 +37,9 @@ APPDATA/LOCALAPPDATA resolve inside the child's own home, so its NuGet configura
 do not reuse the parent's profile. Provider credentials and arbitrary ambient variables remain excluded.
 
 Windows child startup passes shell quoting directly to cmd.exe /d /s /c, without executable-argument
-escaping of the command fragment. The startup log exists before the launcher starts; early launcher
-failure records its numeric operating-system or exit code and preserves the log for diagnosis.
-The durable child keeps shell-owned output redirection rather than parent-owned process pipes.
+escaping of the command fragment. Core creates the startup log before launching. Early failures
+retain the numeric operating-system error or launcher exit code, including when the launcher exits
+before Core can record its process identity. The durable child uses shell-owned output redirection.
 
 `current` copies the parent's prepared executable closure; `release` copies its installed native
 Core binary; `source` builds an absolute selected Core project into a child-owned output directory.

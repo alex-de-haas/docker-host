@@ -311,7 +311,9 @@ describe("native authority renewal and stop reconciliation", () => {
     f.setPinned({ digest: "e".repeat(64) });
     await vi.waitFor(async () => expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true), { timeout: 4000, interval: 20 });
     expect((await f.controller.snapshot(id)).state).toBe("cancelled"); expect(f.stop).toHaveBeenCalled();
-    expect(f.authority.workspace).toHaveBeenCalledWith("original-admission", "release_all", expect.any(Object));
+    const { generation } = await f.controller.snapshot(id);
+    await vi.waitFor(() => expect(f.authority.workspace).toHaveBeenCalledWith("original-admission", "release_all",
+      expect.objectContaining({ generation, requestId: expect.any(String) })), { timeout: 4000 });
   });
   it("honors an explicit workspace stop request even when execution authority still renews", async () => {
     const f = await fixture(), id = await start(f); await vi.waitFor(() => expect(f.starts).toHaveBeenCalledTimes(1));
@@ -324,7 +326,9 @@ describe("native authority renewal and stop reconciliation", () => {
     await vi.waitFor(async () => expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true), { timeout: 4000, interval: 20 });
     expect((await f.controller.snapshot(id)).state).toBe("cancelled"); expect(f.stop).toHaveBeenCalled();
     expect(f.authority.renew).toHaveBeenCalled();
-    expect(f.authority.workspace).toHaveBeenCalledWith("original-admission", "release_all", expect.any(Object));
+    const { generation } = await f.controller.snapshot(id);
+    await vi.waitFor(() => expect(f.authority.workspace).toHaveBeenCalledWith("original-admission", "release_all",
+      expect.objectContaining({ generation, requestId: expect.any(String) })), { timeout: 4000 });
   });
   it("rejects missing native admission rather than applying client stop attestation", async () => {
     const f = await fixture(), session = await f.store.load(f.sessionId), run = f.store.makeRun(session, randomUUID(), f.actor, "{}");

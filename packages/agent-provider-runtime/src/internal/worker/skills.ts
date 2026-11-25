@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, realpath, rm, symlink, lstat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import type { HarnessAdapter, HarnessRun, HarnessStartOptions } from "../harness/adapter.js";
+import { withRunLifecycle, type HarnessAdapter, type HarnessRun, type HarnessStartOptions } from "../harness/adapter.js";
 
 /** Resolve only an app-scoped Core export ID, never a caller-provided host path. */
 export async function resolveSkillExport(root: string | undefined, id: string | undefined): Promise<string | undefined> {
@@ -53,13 +53,16 @@ export async function skillAdapter(adapter: HarnessAdapter, options: SkillAdapte
     await linkSkillDirectory(root, options.relativePath, options.selected);
     nativeOptions = await options.prepare?.(root) ?? {};
   } catch (error) { if (!durable) await rm(root, { recursive: true, force: true }); throw error; }
-  let closed = false;
-  const close = async () => {
-    if (closed) return;
+  let closing: Promise<void> | undefined;
+  const close = (terminal = false) => closing ??= (async () => {
+    if (terminal && durable) {
+      try { await options.close?.(root); }
+      catch { console.warn("[worker] Could not finalize the stopped native session's shared profile."); }
+      return;
+    }
     await options.close?.(root);
     if (!durable) await rm(root, { recursive: true, force: true });
-    closed = true;
-  };
+  })();
   return {
     name: adapter.name, capabilities: adapter.capabilities,
     probe: async () => { const health = await adapter.probe(); if (health.available) await options.beforeProbe?.(root); return health; },
@@ -67,14 +70,18 @@ export async function skillAdapter(adapter: HarnessAdapter, options: SkillAdapte
     start: input => {
       let run: HarnessRun;
       try { run = adapter.start({ ...input, nativeHome: root, ...nativeOptions }); }
-      catch (error) { void close(); throw error; }
+      catch (error) { void close().catch(() => {}); throw error; }
       const stop = async () => { if (run.stopAndWait) await run.stopAndWait(); else await run.stop(); await close(); };
-      return { send: text => run.send(text), resolveApproval: (...args) => run.resolveApproval(...args),
-        resolveQuestion: (...args) => run.resolveQuestion(...args), setMcpServers: value => run.setMcpServers(value),
-        interrupt: () => run.interrupt(), stop, ...(run.stopAndWait ? { stopAndWait: stop } : {}),
-        disableSuggestions: run.disableSuggestions ? () => run.disableSuggestions!() : undefined,
-        finishSuggestions: run.finishSuggestions ? () => run.finishSuggestions!() : undefined,
-        readUsage: run.readUsage ? () => run.readUsage!() : undefined };
+      const stopForCancellation = run.stopForCancellation && (async () => {
+        const closure = await run.stopForCancellation!();
+        if (!durable) return { drained: closure.drained.finally(() => close()) };
+        // The next turn can reopen this directory as soon as Stop is published.
+        // Finish copying shared state here, while only the original turn owns it.
+        // A copy failure does not change the proof that the agent exited.
+        await close(true);
+        return closure;
+      });
+      return withRunLifecycle(run, { stop, stopAndWait: run.stopAndWait ? stop : undefined, stopForCancellation });
     },
   };
 }

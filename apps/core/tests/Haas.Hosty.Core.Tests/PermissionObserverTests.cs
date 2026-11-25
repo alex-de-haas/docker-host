@@ -265,14 +265,25 @@ public sealed class LiveManifestWatchesTests
     [Fact]
     public async Task Watchers_ShareDirectoriesFilterNoiseRecoverErrorsAndRelease()
     {
-        var root = Directory.CreateTempSubdirectory("permission-watches-").FullName;
+        var fixture = Directory.CreateTempSubdirectory("permission-watches-").FullName;
+        // Both watched directories belong to this test, including the parent used to detect replacement.
+        var root = Path.Combine(fixture, "source");
         var notifications = new ConcurrentQueue<string>();
         using var watches = new LiveManifestWatches(notifications.Enqueue);
         try
         {
             var one = Path.Combine(root, "one.json");
             var two = Path.Combine(root, "two.json");
-            File.WriteAllText(one, "{}"); File.WriteAllText(two, "{}");
+            // FSEvents can deliver directory creation after CreateDirectory returns. Establish
+            // that boundary before a separate watcher starts observing the source for replacement.
+            using (var setup = new FileSystemWatcher(fixture, "source") { NotifyFilter = NotifyFilters.DirectoryName })
+            {
+                var created = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                setup.Created += (_, _) => created.TrySetResult();
+                setup.EnableRaisingEvents = true;
+                Directory.CreateDirectory(root);
+                await created.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             watches.Set("one", one, root + Path.DirectorySeparatorChar);
             var count = watches.DirectoryCount;
             Assert.Equal(2, count); // Source directory plus its parent, not the filesystem root.
@@ -292,6 +303,6 @@ public sealed class LiveManifestWatchesTests
             watches.Set("one", null); watches.Set("two", null);
             Assert.Equal(0, watches.DirectoryCount);
         }
-        finally { watches.Dispose(); Directory.Delete(root, true); }
+        finally { watches.Dispose(); Directory.Delete(fixture, true); }
     }
 }

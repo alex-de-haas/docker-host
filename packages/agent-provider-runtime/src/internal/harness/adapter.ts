@@ -209,6 +209,28 @@ export interface HarnessRun {
   detach?(): Promise<void>;
 }
 
+type HarnessRunLifecycle = Pick<HarnessRun, "stop" | "stopAndWait" | "stopForCancellation">;
+
+/** Keep adapter methods bound to their original receiver while wrapping ownership of shutdown. */
+export function withRunLifecycle(run: HarnessRun, lifecycle: HarnessRunLifecycle): HarnessRun {
+  const bound = {
+    waitForAdmission: run.waitForAdmission?.bind(run),
+    finishSuggestions: run.finishSuggestions?.bind(run),
+    disableSuggestions: run.disableSuggestions?.bind(run),
+    readUsage: run.readUsage?.bind(run),
+    send: run.send.bind(run),
+    resolveApproval: run.resolveApproval.bind(run),
+    resolveQuestion: run.resolveQuestion.bind(run),
+    setMcpServers: run.setMcpServers.bind(run),
+    interrupt: run.interrupt.bind(run),
+    stop: lifecycle.stop,
+    stopAndWait: lifecycle.stopAndWait,
+    stopForCancellation: lifecycle.stopForCancellation,
+    detach: run.detach?.bind(run),
+  } satisfies Record<keyof HarnessRun, unknown>;
+  return bound;
+}
+
 export interface HarnessAdapter {
   readonly name: string;
   readonly capabilities: HarnessCapabilities;

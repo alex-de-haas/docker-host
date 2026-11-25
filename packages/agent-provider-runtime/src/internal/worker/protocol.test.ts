@@ -213,6 +213,7 @@ it("cancellation wins a parking race and a late native answer cannot restart wor
   await expect(f.engine.respond("run-1", { ...command, controlId: "late-answer", kind: "question", answers: { q1: "Yes" } })).rejects.toMatchObject({ code: "stale_control" });
   const cancellation = f.engine.cancel("run-1", "cancel-1");
   await expect.poll(async () => (await f.journal.load("run-1")).receipt.state).toBe("cancelling");
+  expect(await f.engine.park("run-1", command)).toMatchObject({ state: "cancelling", pending: [] });
   release(); await Promise.all([parking, cancellation]);
   expect((await f.journal.load("run-1")).receipt).toMatchObject({ state: "cancelled", exitConfirmed: true });
   expect(f.starts()).toBe(1);

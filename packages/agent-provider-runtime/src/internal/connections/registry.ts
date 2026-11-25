@@ -1,6 +1,6 @@
 import { ConnectionUsage } from "./usage.js";
 import { absentUsage, type ProviderUsage } from "../harness/provider-usage.js";
-import type { HarnessAdapter, HarnessAvailability, HarnessRun } from "../harness/adapter.js";
+import { withRunLifecycle, type HarnessAdapter, type HarnessAvailability, type HarnessRun } from "../harness/adapter.js";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -405,25 +405,28 @@ export abstract class AgentConnections {
           } });
           const runs = this.usageRuns.get(current.id) ?? new Set<HarnessRun>();
           runs.add(run); this.usageRuns.set(current.id, runs);
-          const removeRun = () => { runs.delete(run); if (!runs.size) this.usageRuns.delete(current.id); };
+          const finish = () => {
+            if (released) return;
+            runs.delete(run);
+            if (!runs.size) this.usageRuns.delete(current.id);
+            release();
+          };
 
-          return {
-            readUsage: run.readUsage ? () => run.readUsage!() : undefined,
-            send: (text) => run.send(text),
-            resolveApproval: (id, decision, message) =>
-              run.resolveApproval(id, decision, message),
-            resolveQuestion: (id, answers) => run.resolveQuestion(id, answers),
-            interrupt: () => run.interrupt(),
-            setMcpServers: (servers) => run.setMcpServers(servers),
-            ...(run.stopAndWait ? { stopAndWait: async () => {
-              await run.stopAndWait!();
-              removeRun(); release();
-            } } : {}),
+          return withRunLifecycle(run, {
             stop: async () => {
               await run.stop();
-              removeRun(); release();
+              finish();
             },
-          };
+            stopAndWait: run.stopAndWait && (async () => {
+              await run.stopAndWait!();
+              finish();
+            }),
+            stopForCancellation: run.stopForCancellation && (async () => {
+              const closure = await run.stopForCancellation!();
+              finish();
+              return closure;
+            }),
+          });
         } catch (error) {
           release();
           throw error;

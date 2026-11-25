@@ -57,6 +57,7 @@ it("closes the old root and preserves only its already registered outcomes durin
   expect(engine.occupied).toBe(0);
   await engine.submit("next", request);
   await vi.waitFor(() => expect(launches).toHaveLength(2));
+  emit({ type: "native_effect", id: "known", state: "settled", source: { agentId: "" } });
   emit({ type: "tool_result", toolUseId: "known", status: "failed", output: "wrong source", source: { ...source, parentToolCallId: "other" } });
   emit({ type: "native_effect", id: "known", state: "settled", source });
   emit({ type: "tool_result", toolUseId: "known", status: "failed", output: "captured after root stop", source });
