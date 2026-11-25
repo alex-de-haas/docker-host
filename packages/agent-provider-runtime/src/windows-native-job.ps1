@@ -9,6 +9,7 @@ try {
     exit ([HostyNativeJob]::Run($PipeName))
 }
 catch {
-    [Console]::Error.WriteLine('The provider Windows native job bridge could not establish execution proof.')
+    $failure = $_.Exception.GetBaseException()
+    [Console]::Error.WriteLine(('The provider Windows job bridge failed ({0}, 0x{1:X8}).' -f $failure.GetType().Name, $failure.HResult))
     exit 70
 }

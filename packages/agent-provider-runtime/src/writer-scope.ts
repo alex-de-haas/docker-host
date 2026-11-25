@@ -30,21 +30,31 @@ export function linuxWriterScope(): WriterScope | undefined {
   finally { if (probe) try { rmdirSync(probe); } catch { /* Empty probe directory may be reclaimed by the delegated host. */ } }
   return undefined;
 }
-export const linuxWriterArgs = ["--die-with-parent", "--unshare-pid", "--bind", "/", "/", "--proc", "/proc", "--ro-bind", "/sys/fs/cgroup", "/sys/fs/cgroup", "--cap-drop", "ALL"];
+export const linuxWriterArgs = ["--die-with-parent", "--unshare-pid", "--bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--ro-bind", "/sys/fs/cgroup", "/sys/fs/cgroup", "--cap-drop", "ALL"];
 
-export async function probeWriterScope(data: string): Promise<WriterScope | undefined> {
+export async function probeWriterScope(data: string, diagnostic?: (message: string) => void): Promise<WriterScope | undefined> {
   if (process.platform !== "win32") return linuxWriterScope();
   const trial = await mkdtemp(path.join(data, "job-probe-"));
   const { TrackedNativeProcesses } = await import("./tracked-process.js");
   const processes = await TrackedNativeProcesses.create(trial, randomUUID(), randomUUID());
   try {
-    const child = processes.transport.spawn(process.execPath, ["-e", ""], { cwd: trial, env: { SystemRoot: process.env.SystemRoot ?? process.env.SYSTEMROOT } });
-    const [exit] = await once(child, "close", { signal: AbortSignal.timeout(15000) });
-    if (exit !== 0) return;
+    const system = process.env.SystemRoot ?? process.env.SYSTEMROOT;
+    if (!system || !path.isAbsolute(system)) return;
+    // Stock PowerShell compiles the private bridge in the writable per-probe temporary directory.
+    const env = { SystemRoot: system, WINDIR: system, TEMP: trial, TMP: trial, USERPROFILE: trial,
+      PATH: path.join(system, "System32"), ComSpec: path.join(system, "System32", "cmd.exe") };
+    const child = processes.transport.spawn(process.execPath, ["-e", "process.exit(0)"], { cwd: trial, env });
+    let stderr = "";
+    child.stderr.on("data", chunk => { if (diagnostic && stderr.length < 2048) stderr += String(chunk).slice(0, 2048 - stderr.length); });
+    child.stdout.resume();
+    child.stdin.end();
+    const [exit, signal] = await once(child, "close", { signal: AbortSignal.timeout(45000) });
+    if (exit !== 0) { diagnostic?.(`Windows no-op exited ${exit ?? signal}. ${stderr.trim()}`); return; }
     await processes.confirmSdkStop();
     const proof = await processes.stop();
     if (proof.allClosed && proof.stopped && proof.spawnCount === 1) return { kind: "windows-job" };
-  } catch { /* An unqualified bridge cannot accept a writable workspace. */ }
+    diagnostic?.(`Windows no-op has no physical receipt (${proof.reason ?? "invalid proof"}).`);
+  } catch (error) { diagnostic?.(`Windows no-op probe failed (${(error as Error).name}).`); }
   finally { await processes.stop(); await rm(trial, { recursive: true, force: true }); }
   return undefined;
 }

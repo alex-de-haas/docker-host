@@ -23,7 +23,7 @@ try {
   await build({ stdin:{ contents:"export {TrackedNativeProcesses} from './tracked-process.ts'; export {probeWriterScope} from './writer-scope.ts';",resolveDir:input }, bundle:true,platform:'node',target:'node24',format:'esm',outfile:entry });
   for (const file of commonAssets) await copyFile(path.join(input,file),path.join(temp,file));
   const {probeWriterScope, TrackedNativeProcesses} = await import(pathToFileURL(entry).href);
-  const scope = await probeWriterScope(temp);
+  const scope = await probeWriterScope(temp, message => console.error(message));
   if (format === 'unavailable') {
     assert.equal(scope, undefined, 'This host must refuse unrestricted worktree writers.');
   } else {

@@ -288,7 +288,11 @@ public static class HostyNativeJob
                     }
                 }
                 uint exit; if (process.Process != IntPtr.Zero && WaitForSingleObject(process.Process, 0) == 0 && GetExitCodeProcess(process.Process, out exit)) code = unchecked((int)exit); else code = 137;
-            } catch { code = 127; }
+            } catch (Exception error) {
+                var native = error.GetBaseException() as Win32Exception;
+                Console.Error.WriteLine("The provider Windows job could not start ({0}, {1}).", native == null ? error.GetType().Name : error.Message, native == null ? error.HResult : native.NativeErrorCode);
+                code = 127;
+            }
             finally {
                 try {
                     if (job != IntPtr.Zero) {
