@@ -34,7 +34,10 @@ export function summarizeProviderUsage(usage: ProviderUsage | null, now = Date.n
   if (!usage || usage.state !== "available") return unknown("Account limits are unavailable.");
   if (usage.invalidated) return unknown("Account limits need a new observation.");
   if (usage.stale || !Number.isFinite(now) || !isFresh(usage.observedAt, now)) return unknown("Account limits are outdated.");
-  if (usage.partial) return unknown("Account limits are incomplete.");
+  const candidates = usage.rows.filter(isWindow);
+  const onlyCodexWindows = candidates.length > 0 && candidates.every(row => row.group.startsWith("codex:"));
+  // A Codex update can report a complete bucket before the full account snapshot arrives.
+  if (usage.partial && !onlyCodexWindows) return unknown("Account limits are incomplete.");
 
   // Structured providers can choose their single-value headline themselves.
   const active = usage.rows.filter(row => row.active === true);
@@ -44,9 +47,8 @@ export function summarizeProviderUsage(usage: ProviderUsage | null, now = Date.n
     if (!isWindow(active[0])) return unknown("The provider headline has no comparable quota.", active[0]);
     windows = active;
   } else {
-    const candidates = usage.rows.filter(isWindow);
     if (!candidates.length) return unknown("No comparable account limit was reported.");
-    if (candidates.every(row => row.group.startsWith("codex:"))) {
+    if (onlyCodexWindows) {
       const groups = new Map<string, UsageRow[]>();
       for (const row of candidates) groups.set(row.group, [...(groups.get(row.group) ?? []), row]);
       const applicable: UsageRow[][] = [];
