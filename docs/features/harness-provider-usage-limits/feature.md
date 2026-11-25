@@ -1,6 +1,6 @@
 ---
 created: 2026-10-28
-updated: 2026-11-13
+updated: 2026-11-24
 summary: Optional connection-level quota and credit observations for Codex and Claude, with bounded diagnostics, retained snapshots and shared Limits controls.
 components: [apps/harness, packages/agent-provider-runtime, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider]
 ---
@@ -110,12 +110,14 @@ reset time; clicking opens all reported windows and credits.
 A provider-designated headline row is authoritative. Otherwise, the indicator takes the smallest
 remaining percentage across windows in a single applicable bucket, or the known generic Claude
 five-hour and seven-day windows. Codex model scopes use exact selected-model identifiers; ambiguous
-buckets and model/surface display names do not establish applicability. Credits and monetary balances
-are excluded from the ring. Missing amounts, partial or stale observations, elapsed resets and
-ambiguous applicability produce a dashed ring with `?`, rather than a fabricated balance. Each
-selected window's amount must be fresh, including retained rows from partial updates. Detailed
-last-known values remain in the popover. A local display clock expires the meter without making
-provider requests.
+buckets and model/surface display names do not establish applicability. A partial Codex update can
+supply the percentage from a single applicable bucket before the full account snapshot arrives.
+The tooltip and accessible label identify the partial report, and the popover lists every reported
+window and credit balance. Credits and monetary balances are excluded from the ring. Missing
+amounts, other partial reports, stale observations, elapsed resets and ambiguous applicability
+produce a dashed ring with `?`. Each selected window's amount must be fresh, including retained rows
+from partial updates. Detailed last-known values remain in the popover. A local display clock
+expires the meter without making provider requests.
 Refresh affects only usage state, preserving settings edits and message drafts and leaving Send
 independent of diagnostic availability.
 

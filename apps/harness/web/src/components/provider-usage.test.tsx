@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
+import { codexUsage } from "../../../src/harness/provider-usage";
 import { ProviderUsageIndicator, UsageDetails, usageAmount, usageLabel } from "./provider-usage";
 import { useProviderUsage, type ProviderUsage, type UsageRow } from "@/lib/provider-usage";
 vi.mock("@/lib/provider-usage", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/provider-usage")>(), useProviderUsage: vi.fn() }));
@@ -116,6 +117,31 @@ it("shows remaining quota with its limiting window and keeps all windows and ref
   } finally { await act(async () => root.unmount()); element.remove(); }
   await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("shows the reported Codex quota and explains partial coverage", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-24T09:57:00Z"));
+  const observedAt = "2026-11-24T09:56:55Z";
+  const usage = codexUsage({ rateLimits: {
+    secondary: { usedPercent: 88, resetsAt: Date.parse("2026-11-25T08:17:09Z") / 1000 },
+    credits: { balance: "36736.43" },
+  } }, true, observedAt);
+  vi.mocked(useProviderUsage).mockReturnValue({ usage, refreshing: false, refresh: vi.fn().mockResolvedValue(undefined) });
+  const element = document.createElement("div"); document.body.append(element); const root = createRoot(element);
+  try {
+    await act(async () => root.render(<ProviderUsageIndicator connectionId="test" model="gpt-6.2-sol" />));
+    const button = element.querySelector<HTMLButtonElement>('[data-slot="provider-usage"]')!;
+    expect(button.textContent).toBe("12% left");
+    expect(button.querySelector('[role="meter"]')?.getAttribute("aria-valuenow")).toBe("12");
+    expect(button.getAttribute("aria-label")).toContain("12% left · codex · secondary (partial report)");
+    await act(async () => button.click());
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("Only the reported limits are shown.");
+    expect(dialog.textContent).toContain("12% remaining");
+    expect(dialog.textContent).toContain("codex credits");
+  } finally { await act(async () => root.unmount()); element.remove(); }
 });
 
 it("expires the remaining meter without restoring quota or requesting more provider data", async () => {

@@ -54,6 +54,15 @@ describe("summarizeProviderUsage", () => {
     expect(summarizeProviderUsage(value, now)).toEqual({ remaining: 30, row: value.rows[1] });
   });
 
+  it("uses a fresh reported Codex bucket even before a full account snapshot", () => {
+    const value = codexUsage({ rateLimits: { primary: { usedPercent: 88 }, credits: { balance: "36736.43" } } }, true, observedAt);
+    const [quota, credits] = value.rows;
+    expect(summarizeProviderUsage(value, now)).toEqual({ remaining: 12, row: quota });
+    unknown({ ...value, rows: [credits] });
+    unknown({ ...value, rows: [quota, { ...quota, id: "other", group: "codex:other" }] });
+    unknown(value, now + 120_001);
+  });
+
   it("selects only an exact canonical Codex model scope", () => {
     const value = codexUsage({ rateLimitsByLimitId: {
       selected: { normalModelSlug: "canonical-model", primary: { usedPercent: 20 } },
