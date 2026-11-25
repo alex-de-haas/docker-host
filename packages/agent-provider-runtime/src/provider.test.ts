@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { AgentClient } from "@hosty-sdk/app/agent/client";
+import { AgentClient, prepareAgentCancel } from "@hosty-sdk/app/agent/client";
 import type { AgentAuthorizationRequest, AgentRunInput, AgentSessionCreate } from "@hosty-sdk/app/agent";
 import type { AgentConnections } from "./internal/connections/registry.js";
 import type { ProviderAuthority } from "./core.js";
@@ -144,6 +144,62 @@ describe("independent provider admission", () => {
     } finally { await close(); }
   });
 
+  it("retries the same HTTP Stop exactly once after a full database cannot commit its intent", async () => {
+    const f = await fixture(), { client, close } = await httpClient(f);
+    const id = randomUUID(), sibling = randomUUID(), otherSession = randomUUID(), request = randomUUID();
+    const command = prepareAgentCancel(id, { requestId: request });
+    const release = f.store.history.subscribe(actor, () => {}); // Keep connection-local SQLite limits across HTTP requests.
+    const acceptedAtDispatch: string[] = [];
+    vi.mocked(f.driver.cancel).mockImplementation(async (run, requestId) => {
+      await f.store.exclusive(async () => {
+        const { session, record } = await f.store.run(run);
+        acceptedAtDispatch.push(record.controls[requestId]!.receipt.state);
+        Object.assign(record.snapshot, { state: "cancelled", phase: "terminal", stopConfirmed: true });
+        f.store.lifecycle(record); await f.store.save(session);
+      });
+    });
+    try {
+      await client.createSession(otherSession, create);
+      for (const [sessionId, runId] of [[f.sessionId, id], [otherSession, sibling]] as const) {
+        await client.startRun(sessionId, runId, input("1"));
+        const { session, record } = await f.store.run(runId);
+        Object.assign(record.snapshot, { state: "running", phase: "executing" });
+        f.store.lifecycle(record); await f.store.save(session);
+      }
+      const before = await client.run(id), other = await client.run(sibling);
+      const originalLimit = f.store.history.database(db => {
+        db.exec("CREATE TABLE test_pressure(payload BLOB)");
+        const previous = Number(db.prepare("PRAGMA max_page_count").get()!.max_page_count);
+        const pages = Number(db.prepare("PRAGMA page_count").get()!.page_count);
+        db.exec("PRAGMA max_page_count=" + (pages + 16));
+        const demand = (pages + 32) * Number(db.prepare("PRAGMA page_size").get()!.page_size);
+        const fill = "INSERT INTO test_pressure VALUES(zeroblob(" + demand + "))";
+        expect(() => db.exec(fill)).toThrowError(expect.objectContaining({ errcode: 13 })); // SQLITE_FULL
+        db.exec("CREATE TEMP TRIGGER stop_pressure BEFORE UPDATE ON execution_runs WHEN NEW.id='" + id
+          + "' BEGIN " + fill + "; END");
+        return previous;
+      });
+      await expect(client.execute(command)).rejects.toMatchObject({ status: 503, code: "storage_unavailable", retryable: true });
+      await expect(client.control(id, request)).rejects.toMatchObject({ status: 404, code: "control_not_found" });
+      expect(await client.run(id)).toEqual(before);
+      expect(f.driver.cancel).not.toHaveBeenCalled();
+      // The other active run keeps its own identity and can still publish new output.
+      const independent = await f.store.run(sibling);
+      f.store.emit(independent.record, "message.completed", { messageId: "independent", text: "still working" });
+      await f.store.save(independent.session);
+      expect(await client.run(sibling)).toMatchObject({ generation: other.generation, state: "running", stopConfirmed: false });
+      expect((await f.store.run(sibling)).record.events.at(-1)?.data.text).toBe("still working");
+      f.store.history.database(db => db.exec("DROP TRIGGER stop_pressure; PRAGMA max_page_count=" + originalLimit));
+      expect(await client.execute(command)).toMatchObject({ requestId: request, generation: before.generation, state: "accepted" });
+      await expect.poll(async () => (await client.control(id, request)).state).toBe("applied");
+      const settled = await client.control(id, request);
+      expect(await client.execute(command)).toEqual(settled);
+      expect(f.driver.cancel).toHaveBeenCalledExactlyOnceWith(id, request);
+      expect(acceptedAtDispatch).toEqual(["accepted"]);
+      expect((await client.run(id)).stopConfirmed).toBe(true);
+    } finally { await f.controller.close(); release(); await close(); }
+  });
+
   it("rejects a stale write from an independently opened store and preserves the committed snapshot", async () => {
     const f = await fixture(), other = new ProviderStore(f.store.directory, provider);
     await other.initialize();
@@ -185,7 +241,7 @@ async function httpClient(f: Awaited<ReturnType<typeof fixture>>) {
   });
   const route = agentRoutes(f.controller, new AttachmentStore(path.join(f.dir, "assets"), provider));
   const server = createServer((req, res) => { void route(req, res, new URL(req.url!, "http://test.invalid"))
-    .catch(error => json(res, error.status ?? 500, { error: { code: error.code, message: error.message, retryable: false } })); });
+    .catch(error => json(res, error.status ?? 500, { error: { code: error.code, message: error.message, retryable: error.retryable ?? error.status >= 500 } })); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/agent/v2`;
   const client = new AgentClient({ provider, authorize: async request => {

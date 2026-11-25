@@ -2,13 +2,15 @@ import { it, expect, vi } from 'vitest';
 import { build } from 'esbuild';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtemp, mkdir, writeFile, copyFile, rm, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inputSnapshot, prepare, repository } from './local-runtime.mjs';
+import { acknowledgeAgentHistory, readAgentHistoryRange, readAgentHistoryStates } from '@hosty-sdk/app/agent/client';
+import { ProviderStore } from '../src/store.ts';
 import { commonAssets } from './build-config.mjs';
 
 async function listen(server) {
@@ -20,13 +22,59 @@ async function write(root, relative, bytes) {
   await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, bytes);
 }
 
+// Feed the same atomic publication path as the supervisor. The consumer stays offline until
+// after Stop, and the real native inference is still connected throughout this write.
+async function fillHistory(data, provider, runId) {
+  const store = new ProviderStore(path.join(data, 'agent-sessions'), provider, 4096);
+  const hash = createHash('sha256');
+  try {
+    await store.initialize();
+    await store.exclusive(async () => {
+      const { session, record } = await store.run(runId);
+      for (let i = 0; i < 65; i++) {
+        const text = i + ' ' + 'x'.repeat(1024 * 1024 - 8192);
+        store.emit(record, 'message.completed', { messageId: 'offline-' + i, text });
+        hash.update(text);
+      }
+      await store.save(session);
+    });
+  } finally { store.history.close(); }
+  return hash.digest('hex');
+}
+
+async function replayAndAcknowledge(options, sessionId, expectedHash) {
+  const state = await readAgentHistoryStates(options);
+  const chat = state.sessions.find(item => item.sessionId === sessionId);
+  expect(chat.snapshot.stopConfirmed).toBe(true);
+  let from = 1, count = 0;
+  const received = createHash('sha256');
+  while (from <= chat.head) {
+    const page = await readAgentHistoryRange({ ...options, through: state.through, sessionId, epoch: chat.epoch, from, to: chat.head, limit: 10 });
+    for (const { item } of page.observations) {
+      if (item.event?.type === 'message.completed' && item.event.data.messageId.startsWith('offline-')) {
+        expect(item.event.data.messageId).toBe('offline-' + count++);
+        received.update(item.event.data.text);
+      }
+    }
+    if (page.nextPosition === null) break;
+    from = page.nextPosition;
+  }
+  expect(count).toBe(65);
+  expect(received.digest('hex')).toBe(expectedHash);
+  const receipt = { sessionId, epoch: chat.epoch, through: chat.head };
+  await acknowledgeAgentHistory(options, receipt);
+  await acknowledgeAgentHistory(options, receipt);
+}
+
 // Exercise the actual Core Local launcher and production Ollama adapter. The HTTP peers stand in
 // for Core admission and an Ollama server whose one inference stream stays open until cancelled.
-it('reattaches to a live attempt across HTTP process death, then stops it once with the original generation', async () => {
+it('stops the original native attempt after an HTTP restart with a full delivery backlog, then admits the next run after durable ACK', async () => {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), 'hosty-attempt-restart-')));
   const root = path.join(directory, 'source'), cache = path.join(directory, 'cache'), data = path.join(directory, 'data');
   const slug = 'ollama-provider', installationId = randomUUID(), appId = 'test.provider', account = randomUUID();
   const sessionId = randomUUID(), runId = randomUUID(), stopId = randomUUID();
+  const provider = { appId, installationId, key: 'default' };
+  let activeRun = runId, activeStop = stopId;
   let chats = 0, stopped = 0, releases = 0, admitted = 0, service;
   const peers = createServer(async (request, response) => {
     if (request.url === '/api/chat') {
@@ -37,8 +85,12 @@ it('reattaches to a live attempt across HTTP process death, then stops it once w
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
     const input = JSON.parse(Buffer.concat(chunks).toString() || '{}');
     let result;
-    if (request.url.endsWith('/introspect')) result = {
-      provider: { appId, installationId, key: 'default' }, operation: input.operation, sessionId, runId,
+    if (request.url.endsWith('/history/introspect')) result = {
+      provider, callerAppId: 'test.consumer', callerInstallation: 'consumer-installation',
+      expiresAt: new Date(Date.now() + 60000).toISOString(), acknowledge: true,
+    };
+    else if (request.url.endsWith('/introspect')) result = {
+      provider, operation: input.operation, sessionId, runId: input.path?.match(/\/runs\/([^/]+)/)?.[1] ?? runId,
       principalId: 'principal', userId: 'user', callerAppId: 'test.consumer', callerInstallation: 'consumer-installation', admissionRef: 'admission',
     };
     else if (request.url.endsWith('/admit')) {
@@ -107,6 +159,7 @@ it('reattaches to a live attempt across HTTP process death, then stops it once w
     const first = await call('sessions/'+sessionId+'/runs/'+runId, { expectedSessionRevision:'1',configurationRevision:'1',continuation:'start',input:{ text:'Please wait.' } });
     await vi.waitFor(async () => { const run = await call('runs/'+runId); expect({ chats, state:run.state, result:run.result }).toMatchObject({ chats:1,state:'running' }); }, { timeout:12000 });
     await killService();
+    const expectedHash = await fillHistory(data, provider, runId);
     await delay(250); expect(stopped).toBe(0);
     await startService();
     expect(await call('runs/'+runId)).toMatchObject({ generation:first.generation, state:'running', stopConfirmed:false });
@@ -117,10 +170,24 @@ it('reattaches to a live attempt across HTTP process death, then stops it once w
     }, { timeout:10000 });
     expect(await call('runs/'+runId+'/stop', { requestId:stopId })).toMatchObject({ state:'applied' });
     expect(chats).toBe(1); expect(admitted).toBe(2);
+    activeRun = randomUUID(); activeStop = randomUUID();
+    const nextRoute = 'sessions/' + sessionId + '/runs/' + activeRun;
+    const session = await call('sessions/' + sessionId);
+    const next = { expectedSessionRevision: session.revision, configurationRevision: '1', continuation: 'resume', input: { text: 'Continue.' } };
+    await expect(call(nextRoute, next)).rejects.toThrow('history_backpressure');
+    expect(admitted).toBe(2);
+    await replayAndAcknowledge({ url: origin + '/api/agent/v2/history/events', token: 'fixture', provider }, sessionId, expectedHash);
+    await call(nextRoute, next);
+    await vi.waitFor(() => expect(chats).toBe(2), { timeout: 10000 });
+    await call('runs/' + activeRun + '/stop', { requestId: activeStop });
+    await vi.waitFor(async () => {
+      expect(await call('runs/' + activeRun)).toMatchObject({ state: 'cancelled', stopConfirmed: true });
+      expect(stopped).toBe(2); expect(releases).toBe(2);
+    }, { timeout: 10000 });
   } finally {
-    if (service?.exitCode === null && service.signalCode === null && chats && !stopped) {
-      await call('runs/'+runId+'/stop', { requestId:stopId }).catch(() => {});
-      await vi.waitFor(() => expect(stopped).toBe(1), { timeout:4000 }).catch(() => {});
+    if (service?.exitCode === null && service.signalCode === null && chats > stopped) {
+      await call('runs/'+activeRun+'/stop', { requestId:activeStop }).catch(() => {});
+      await vi.waitFor(() => expect(stopped).toBe(chats), { timeout:4000 }).catch(() => {});
     }
     await killService(); peers.closeAllConnections(); await new Promise(resolve => peers.close(resolve));
     await rm(directory,{ recursive:true,force:true });
