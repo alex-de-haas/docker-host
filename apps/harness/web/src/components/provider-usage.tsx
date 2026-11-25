@@ -82,11 +82,15 @@ export function UsageDetails({ usage }: { usage: ProviderUsage | null }) {
 export function ProviderUsageIndicator({ connectionId, revision, model }: { connectionId: string; revision?: string | number; model?: string | null }) {
   const { usage: latest, refreshing, refresh } = useProviderUsage(connectionId), titleId = useId();
   const now = useUsageNow();
-  const usage = revision !== undefined && latest && latest.connectionRevision !== revision ? { state: "unavailable" as const, rows: [], observedAt: null } : latest;
+  const usage: ProviderUsage | null = revision !== undefined && latest && latest.connectionRevision !== revision
+    ? { state: "unavailable", rows: [], observedAt: null }
+    : latest;
   if (usage?.state === "not_applicable" || usage?.state === "unsupported") return null;
   const { remaining, row, reason } = summarizeProviderUsage(usage, now, model);
   const amount = remaining === null ? "?" : `${percent.format(remaining)}%`;
-  const description = remaining === null ? reason ?? "Remaining limits are not available." : `${amount} left · ${row!.label}`;
+  const description = remaining === null
+    ? reason ?? "Remaining limits are not available."
+    : `${amount} left · ${row!.label}${usage?.partial ? " (partial report)" : ""}`;
   return <TooltipProvider delayDuration={250}><Tooltip><Popover>
     <PopoverTrigger asChild><TooltipTrigger asChild><Button type="button" variant="ghost" aria-label={`Provider limits: ${description}`}
       data-slot="provider-usage" className="h-9 min-w-9 gap-1 px-1 font-normal">
