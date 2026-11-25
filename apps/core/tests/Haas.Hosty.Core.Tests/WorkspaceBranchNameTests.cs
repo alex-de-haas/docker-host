@@ -86,13 +86,16 @@ public sealed partial class CoreLifecycleServiceTests
     [InlineData("intent")]
     [InlineData("refs")]
     [InlineData("worktree")]
-    public async Task WorkspaceBranchNames_InterruptedPreparationRecoversExactAllocation(string stage)
+    public async Task WorkspaceGit_InterruptedPreparationRecoversUnicodeBranch(string stage)
     {
-        var (f, _) = await SourceFixtureAsync();
+        var (f, _) = await SourceFixtureAsync(shortPaths: true);
         var service = new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock);
         var owner = WorkspaceTestOwner(f);
-        var input = WorkspaceRequest() with { Name = "Recover allocation" };
+        var input = WorkspaceRequest() with { Name = "Исправить вход" };
         var tree = await service.PrepareAsync(owner, input, default);
+        Assert.Equal("hosty/исправить-вход-" + tree.Id[..12], tree.Branch);
+        Assert.Equal(Encoding.UTF8.CodePage,
+            DevelopmentWorkspaceService.GitStartInfo(tree.Path, ["symbolic-ref", "HEAD"]).StandardOutputEncoding?.CodePage);
         var repo = service.RepositoryPath(tree.Repository);
         await service.RenameAsync(owner, new(Guid.NewGuid().ToString(), "Renamed before retry"), default);
         if (stage != "worktree") await RunGitAsync(repo, ["worktree", "remove", tree.Path]);
@@ -106,6 +109,9 @@ public sealed partial class CoreLifecycleServiceTests
         var recovered = await new DevelopmentWorkspaceService(f.Paths, f.Apps, f.Clock).PrepareAsync(owner, input, default);
         Assert.Equal("active", recovered.State);
         Assert.Equal(tree.Branch, recovered.Branch);
+        var receipt = Assert.Single(recovered.Operations, operation => operation.Id == input.RequestId);
+        Assert.Equal("succeeded", receipt.State);
+        Assert.Equal(tree.OriginalBase, receipt.ResultHead);
         Assert.Equal(tree.OriginalBase, recovered.Observation!.Head);
         Assert.Equal("Renamed before retry", recovered.Name);
         Assert.Single((await service.ListAsync(owner, true, default)).Workspaces);
