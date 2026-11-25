@@ -291,7 +291,8 @@ export class NativeExecution implements ExecutionDriver {
     this.maintenance = task; return task;
   }
   private async pump(): Promise<void> {
-    for (const session of await this.store.records(true)) for (const record of Object.values(session.runs)) {
+    await this.store.retryHistory();
+    for (const session of await this.store.records(true, true)) for (const record of Object.values(session.runs)) {
       const id = record.snapshot.ref.id;
       if (record.input && record.snapshot.stopConfirmed && !record.reservedFor && record.workspaceRelease?.state !== "released")
         await this.cleanup(id, true).catch(() => {});

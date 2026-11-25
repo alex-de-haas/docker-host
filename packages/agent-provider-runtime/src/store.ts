@@ -35,6 +35,21 @@ export const valueHash = (value: unknown) => bytesHash(JSON.stringify(value));
 export const increment = (value: string) => (BigInt(value) + 1n).toString();
 export const sameActor = (a: Actor, b: Actor) => a.userId === b.userId && a.principalId === b.principalId && a.callerAppId === b.callerAppId && a.callerInstallation === b.callerInstallation;
 const safe = (value: string) => /^[A-Za-z0-9-]{1,100}$/.test(value);
+const occupied = (record: SessionRecord) => !!record.session.activeRun || Object.values(record.runs).some(run => !!run.reservedFor);
+const notAdmitted = { status: "cancelled", error: {
+  code: "run_not_admitted", message: "The original request was fenced before native admission.", retryable: false,
+} } as const;
+type DurableState = { digest: string; occupied: boolean };
+type UncertainWrite = {
+  owner: Actor; provider: AgentProviderRef; occupied: boolean; previousDigest?: string; attemptedRunIds: string[];
+};
+function logStorageFailure(sessionId: string, stage: "aggregate" | "history", error: unknown): void {
+  const cause = isUncertainWrite(error) ? error.cause : error;
+  const code = (cause as NodeJS.ErrnoException | null)?.code;
+  console.warn("[agent-provider] session storage operation failed", {
+    sessionId, stage, code: typeof code === "string" && /^[A-Z0-9_]{1,48}$/.test(code) ? code : "unknown",
+  });
+}
 
 /** One atomic session aggregate owns admission, its active slot, controls, events and snapshots. */
 export class ProviderStore {
@@ -43,7 +58,10 @@ export class ProviderStore {
   private tail: Promise<unknown> = Promise.resolve();
   private runs = new Map<string, string>();
   readonly historicalRunIds = new Set<string>();
-  private uncertain = new Set<string>();
+  private readonly uncertain = new Map<string, UncertainWrite>();
+  private readonly durable = new Map<string, DurableState>();
+  private readonly historyPending = new Set<string>();
+  private readonly writing = new Map<string, Promise<void>>();
   private listeners = new Map<string, Set<() => void>>();
   constructor(readonly directory: string, readonly provider: AgentProviderRef, readonly maxReplayBytes = 64 * 1024 * 1024, readonly replayRetentionMs = 7 * 24 * 60 * 60 * 1000) {}
   async initialize(): Promise<void> {
@@ -51,7 +69,8 @@ export class ProviderStore {
     this.history = new InstallationHistory(path.join(this.directory, "installation-history.sqlite"), this.provider);
     for (const file of await readdir(this.directory)) {
       if (!file.endsWith(".json") || !safe(file.slice(0, -5))) continue;
-      const record = await this.load(file.slice(0, -5));
+      const { record, bytes } = await this.readAggregate(file.slice(0, -5));
+      this.rememberDurable(record, bytes);
       const retained = Object.keys(record.runs), historical = record.priorRunIds ?? [];
       for (const id of historical) this.historicalRunIds.add(id);
       const current = sameProvider(record.session.ref.provider, this.provider);
@@ -68,7 +87,7 @@ export class ProviderStore {
         if (this.expireReplay(run)) changed = true;
       }
       if (changed) await this.save(record);
-      else this.history.publish(record);
+      else this.publishHistory(record);
     }
     this.initialized = true;
   }
@@ -101,18 +120,89 @@ export class ProviderStore {
   }
   exclusive<T>(action: () => Promise<T>): Promise<T> { const next = this.tail.catch(() => {}).then(action); this.tail = next; return next; }
   private file(id: string) { if (!safe(id)) throw new AgentApiError("invalid_id", "Invalid resource identity.", 400); return path.join(this.directory, id + ".json"); }
-  async load(id: string, actor?: Actor): Promise<SessionRecord> {
-    if (this.uncertain.has(id)) throw new AgentApiError("storage_uncertain", "Retained provider state requires recovery.", 503);
-    let record: SessionRecord;
-    try { record = JSON.parse(await readFile(this.file(id), "utf8")) as SessionRecord; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new AgentApiError("session_not_found", "Session not found.", 404); throw new AgentApiError("storage_unavailable", "Retained provider state is unavailable; do not resubmit its identities.", 503); }
-    if (record.version !== 1 || record.id !== id || !record.owner || !record.session || !record.runs || !record.configurations)
+  private async readAggregate(id: string): Promise<{ record: SessionRecord; bytes: Buffer }> {
+    const file = this.file(id);
+    let bytes: Buffer, record: SessionRecord;
+    try { bytes = await readFile(file); record = JSON.parse(bytes.toString("utf8")) as SessionRecord; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new AgentApiError("session_not_found", "Session not found.", 404);
+      throw new AgentApiError("storage_unavailable", "Retained provider state is unavailable; do not resubmit its identities.", 503);
+    }
+    if (!record || record.version !== 1 || record.id !== id || !record.owner || !record.session || !record.runs || !record.configurations)
       throw new AgentApiError("storage_unavailable", "Invalid retained provider state.", 503);
-    if (actor && (!sameActor(record.owner, actor) || !sameProvider(record.session.ref.provider, this.provider))) throw new AgentApiError("session_not_found", "Session not found.", 404);
-    // After startup, committed outboxes have been published before the writer advances. A new
-    // loaded aggregate starts with an empty outbox. The on-disk copy remains a crash receipt.
-    if (this.initialized && sameProvider(record.session.ref.provider, this.provider)) for (const run of Object.values(record.runs)) this.history.acknowledge(run);
-    return record;
+    return { record, bytes };
+  }
+
+  async load(id: string, actor?: Actor): Promise<SessionRecord> {
+    for (;;) {
+      const uncertain = this.uncertain.get(id);
+      if (uncertain) {
+        if (actor && (!sameActor(uncertain.owner, actor) || !sameProvider(uncertain.provider, this.provider)))
+          throw new AgentApiError("session_not_found", "Session not found.", 404);
+        throw new AgentApiError("storage_uncertain", "Retained provider state requires recovery.", 503, true);
+      }
+      const write = this.writing.get(id);
+      if (write) { await write; continue; }
+      const { record } = await this.readAggregate(id);
+      // Atomic publication can become visible before its directory sync. Only expose
+      // the resulting record once that save has committed or raised its recovery fence.
+      if (this.writing.has(id) || this.uncertain.has(id)) continue;
+      if (actor && (!sameActor(record.owner, actor) || !sameProvider(record.session.ref.provider, this.provider)))
+        throw new AgentApiError("session_not_found", "Session not found.", 404);
+      // Preserve the durable outbox across every read and subsequent save while publication is pending.
+      const published = this.initialized && !this.historyPending.has(id) && sameProvider(record.session.ref.provider, this.provider);
+      for (const run of Object.values(record.runs)) {
+        if (published) this.history.acknowledge(run);
+        if (run.cancelFence && run.snapshot.stopConfirmed && !run.snapshot.result) this.markNotAdmitted(run);
+      }
+      return record;
+    }
+  }
+
+  private rememberDurable(record: SessionRecord, bytes: string | Uint8Array): void {
+    this.durable.set(record.id, { digest: bytesHash(bytes), occupied: occupied(record) });
+  }
+
+  // The writer can preserve a separate temporary file, but only a byte-identical, previously
+  // committed target proves the attempted replacement was not admitted. Never promote a temp file.
+  async refreshUncertainSession(id: string, actor: Actor): Promise<void> {
+    const pending = this.uncertain.get(id);
+    if (!pending?.previousDigest || !sameActor(pending.owner, actor) || !sameProvider(pending.provider, this.provider)) return;
+    await this.exclusive(async () => {
+      if (this.uncertain.get(id) !== pending) return;
+      const retained = await this.readAggregate(id).catch(() => null);
+      if (!retained || bytesHash(retained.bytes) !== pending.previousDigest
+        || !sameActor(retained.record.owner, actor) || !sameProvider(retained.record.session.ref.provider, this.provider)) return;
+      for (const runId of pending.attemptedRunIds) this.runs.delete(runId);
+      this.uncertain.delete(id);
+    });
+  }
+
+  async refreshUncertainRun(id: string, actor: Actor): Promise<void> {
+    const sessionId = this.runs.get(id);
+    if (sessionId) await this.refreshUncertainSession(sessionId, actor);
+  }
+
+  private publishHistory(record: SessionRecord): void {
+    try { this.history.publish(record); }
+    catch (error) {
+      if (!this.historyPending.has(record.id)) logStorageFailure(record.id, "history", error);
+      this.historyPending.add(record.id);
+      return;
+    }
+    this.historyPending.delete(record.id);
+  }
+
+  async retryHistory(): Promise<void> {
+    if (!this.historyPending.size) return;
+    for (const id of [...this.historyPending]) {
+      if (this.uncertain.has(id)) continue;
+      await this.exclusive(async () => {
+        if (!this.historyPending.has(id) || this.uncertain.has(id)) return;
+        const retained = await this.readAggregate(id).catch(() => null);
+        if (retained) this.publishHistory(retained.record);
+      });
+    }
   }
   /** Preserve the previous installation's commands, receipts and qualified runs before rebinding the public session. */
   async archiveInstallation(record: SessionRecord): Promise<void> {
@@ -121,12 +211,37 @@ export class ProviderStore {
     await durableWriteFile(path.join(directory, path.basename(this.file(record.id))), await readFile(this.file(record.id)));
   }
   async save(record: SessionRecord): Promise<void> {
-    if (this.uncertain.has(record.id)) throw new AgentApiError("storage_uncertain", "Retained provider state requires recovery.", 503);
-    try { await durableWriteFile(this.file(record.id), JSON.stringify(record)); }
-    catch (error) { if (isUncertainWrite(error)) this.uncertain.add(record.id); throw error; }
-    try { this.history.publish(record); }
-    catch (error) { this.uncertain.add(record.id); throw error; }
-    for (const id of Object.keys(record.runs)) { this.runs.set(id, record.id); for (const listener of this.listeners.get(id) ?? []) { try { listener(); } catch { /* A committed observation cannot undo a write. */ } } }
+    if (this.uncertain.has(record.id)) throw new AgentApiError("storage_uncertain", "Retained provider state requires recovery.", 503, true);
+    let settle!: () => void;
+    this.writing.set(record.id, new Promise<void>(resolve => { settle = resolve; }));
+    try {
+      const bytes = JSON.stringify(record);
+      try { await durableWriteFile(this.file(record.id), bytes); }
+      catch (error) {
+        logStorageFailure(record.id, "aggregate", error);
+        if (!isUncertainWrite(error)) throw error;
+        const previous = this.durable.get(record.id);
+        const attemptedRunIds = Object.keys(record.runs).filter(id => !this.runs.has(id));
+        for (const id of attemptedRunIds) this.runs.set(id, record.id);
+        this.uncertain.set(record.id, {
+          owner: record.owner, provider: record.session.ref.provider, attemptedRunIds,
+          occupied: occupied(record) || previous?.occupied === true,
+          previousDigest: error.evidencePath !== error.target ? previous?.digest : undefined,
+        });
+        throw new AgentApiError("storage_uncertain", "Retained provider state requires recovery.", 503, true);
+      }
+      this.rememberDurable(record, bytes);
+      // Indexed execution and its control receipts belong to the committed aggregate, independently
+      // of the history projection. Returning success allows the original controller dispatch once.
+      for (const id of Object.keys(record.runs)) this.runs.set(id, record.id);
+      this.publishHistory(record);
+      for (const id of Object.keys(record.runs)) for (const listener of this.listeners.get(id) ?? []) {
+        try { listener(); } catch { /* A committed observation cannot undo a write. */ }
+      }
+    } finally {
+      this.writing.delete(record.id);
+      settle();
+    }
   }
   async create(id: string, actor: Actor, body: string, input: AgentSessionCreate, configuration: ConfigurationRecord, onFresh?: () => void): Promise<AgentSession> {
     return this.exclusive(async () => {
@@ -142,27 +257,32 @@ export class ProviderStore {
     });
   }
   async run(id: string, actor?: Actor): Promise<{ session: SessionRecord; record: RunRecord }> {
-    let sessionId = this.runs.get(id);
-    if (!sessionId) {
-      // A freshly committed identity may not yet be in a restarted process's index.
-      for (const file of await readdir(this.directory)) {
-        if (!file.endsWith(".json") || !safe(file.slice(0, -5))) continue;
-        const session = await this.load(file.slice(0, -5));
-        if (Object.hasOwn(session.runs, id)) { sessionId = session.id; this.runs.set(id, session.id); break; }
-      }
-    }
+    // Startup indexes the retained aggregates before accepting requests. A write indexes new
+    // identities only after it commits or records uncertainty. A raw disk scan could find an
+    // unpublished candidate while the authoritative write is still in progress.
+    const sessionId = this.runs.get(id);
     if (!sessionId) throw new AgentApiError("run_not_found", "Run not found.", 404);
     const session = await this.load(sessionId, actor); const record = session.runs[id];
     if (!record) throw new AgentApiError("run_not_found", "Run not found.", 404);
     return { session, record };
   }
-  async records(currentInstallationOnly = false): Promise<SessionRecord[]> {
+  async records(currentInstallationOnly = false, skipUncertain = false): Promise<SessionRecord[]> {
     const result: SessionRecord[] = [];
     for (const file of await readdir(this.directory)) if (file.endsWith(".json") && safe(file.slice(0, -5))) {
-      const record = await this.load(file.slice(0, -5));
-      if (!currentInstallationOnly || sameProvider(record.session.ref.provider, this.provider)) result.push(record);
+      const record = await this.load(file.slice(0, -5)).catch(error => {
+        if (skipUncertain && error instanceof AgentApiError && error.code === "storage_uncertain") return null;
+        throw error;
+      });
+      if (record && (!currentInstallationOnly || sameProvider(record.session.ref.provider, this.provider))) result.push(record);
     }
     return result;
+  }
+
+  occupiedSlots(): number {
+    let count = 0;
+    for (const [id, state] of this.durable) if (this.uncertain.get(id)?.occupied ?? state.occupied) count++;
+    for (const [id, attempt] of this.uncertain) if (!this.durable.has(id) && attempt.occupied) count++;
+    return count;
   }
   async list(actor: Actor): Promise<AgentSession[]> {
     const sessions: AgentSession[] = [];
@@ -188,6 +308,8 @@ export class ProviderStore {
     if (!this.expireReplay(current.record)) return;
     await this.exclusive(async () => { const { session, record } = await this.run(id, actor); if (this.expireReplay(record)) await this.save(session); });
   }
+  markNotAdmitted(run: RunRecord): void { run.snapshot.result = notAdmitted; }
+
   makeRun(session: SessionRecord, id: string, actor: VerifiedOperation, body: string, input?: AgentRunInput): RunRecord {
     if (this.runs.has(id)) throw new AgentApiError("request_conflict", "Run identity is already retained.", 409);
     return { hash: bytesHash(body), admissionRef: actor.admissionRef, input, historyVersion: 1, events: [], firstSequence: "1", controls: {}, nativeSequence: 0, nativeRevision: -1,

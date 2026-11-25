@@ -1,6 +1,6 @@
 ---
 created: 2026-11-12
-updated: 2026-11-20
+updated: 2026-11-24
 summary: Per-conversation storage commits accepted Harness input before dispatch and isolates damaged history without replaying uncertain execution.
 components: [apps/harness]
 ---
@@ -39,6 +39,8 @@ reading state or a range leaves live delivery active. If a run summary supplied 
 tool output, the original durable event fills in the existing transcript entry when it arrives.
 Harness tracks the lifecycle separately from later message and control events. Recovered usage
 and context update their own checkpoints, including when the terminal state arrived first.
+An earlier usage or transcript event can fill a gap after a newer context observation
+has arrived. Replay preserves the newest context and the run watermark.
 
 For each bound chat, Harness stores the inclusive intervals it has applied. It commits transcript
 entries under stable source identities before recording coverage. Retrying after a crash can repeat
@@ -248,6 +250,8 @@ redelivered event. Both owners' requests for the other owner's chats were denied
   first. Check each owner's visible messages, marker positions, order and unique fact identities.
 - Reopen the store after interruption between transcript and coverage writes. Retry overlapping
   pages, test an older state arriving after a newer update, and preserve explicit unavailable ranges.
+- Hold a range with usage and transcript events until a newer context event arrives live. Verify
+  the range fills the gap, preserves the newer context and run watermark, and starts no new run.
 
 - Damage the execution metadata or root record of one conversation and deliver a later result to
   a different owner. The healthy chat receives its final answer immediately. Repair the damaged

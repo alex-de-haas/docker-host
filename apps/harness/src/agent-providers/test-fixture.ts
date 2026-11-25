@@ -44,13 +44,14 @@ export async function publicProviderFixture(installationHistory = false, impleme
     for (const stream of historyStreams) stream.enqueue(frame);
   };
   const starts: Array<{ runId: string; sessionId: string; input: AgentRunInput; body: string }> = [];
+  const refusedStarts = new Map<string, { sessionId: string; body: string }>();
   const controls: Array<{ runId: string; input: Record<string, unknown>; path: string }> = [];
   const managers: SessionManager[] = [];
   const behavior: { startGate?: Promise<void>; cancel: "confirmed" | "unavailable" | "unresolved"; reconcile: "confirmed" | "unavailable";
     retire?: "confirmed" | "unavailable"; loseNextRetireResponse?: boolean;
     sessionLookupGate?: Promise<void>; failSessionLookup?: boolean; failHistoryTokenOnce?: boolean; rejectHistoryStream?: boolean; legacyWorkflowCore?: boolean;
     legacyHistoryRoute?: boolean; capabilitiesTimeoutAfterStart?: boolean; snapshotIssue?: "denied" | "timeout";
-    loseNextStartResponse?: boolean; keepReservationAfterCancel?: boolean; deferPredictions?: boolean; beforeCancel?: (runId: string) => void;
+    loseNextStartResponse?: boolean; refuseNextStart?: boolean; keepReservationAfterCancel?: boolean; deferPredictions?: boolean; beforeCancel?: (runId: string) => void;
     connectionRevision: string } = { cancel: "confirmed", reconcile: "confirmed", connectionRevision: "1" };
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const error = (code: string, message: string, status = 409) => json({ error: { code, message, retryable: false } }, status);
@@ -154,6 +155,11 @@ export async function publicProviderFixture(installationHistory = false, impleme
     if (parts[0] === "sessions" && parts[2] === "runs") {
       if (behavior.startGate) await behavior.startGate;
       const sessionId = parts[1]!, runId = parts[3]!, previous = starts.find(start => start.runId === runId);
+      if (behavior.refuseNextStart) {
+        delete behavior.refuseNextStart;
+        refusedStarts.set(runId, { sessionId, body });
+        return error("storage_uncertain", "Retained provider state requires recovery.", 503);
+      }
       if (previous && previous.body !== body) return error("request_conflict", "Run UUID has different bytes.");
       if (!previous) {
         const runInput = JSON.parse(body) as AgentRunInput, session = sessions.get(sessionId)!;
@@ -168,7 +174,23 @@ export async function publicProviderFixture(installationHistory = false, impleme
       return json(runs.get(runId));
     }
     if (parts[0] === "runs") {
-      const runId = parts[1]!, snapshot = runs.get(runId);
+      const runId = parts[1]!;
+      const refused = refusedStarts.get(runId);
+      if (!runs.has(runId) && refused && parts[2] === "cancel") {
+        const input = JSON.parse(body), fence = input.fenceIfNotAdmitted;
+        if (fence?.sessionId !== refused.sessionId || fence?.startDigest !== createHash("sha256").update(refused.body).digest("hex"))
+          return error("request_conflict", "The cancel fence must identify the original start.");
+        if (behavior.cancel === "unavailable") {
+          controls.push({ runId, input, path: route });
+          return error("storage_uncertain", "Retained provider state requires recovery.", 503);
+        }
+        runs.set(runId, { ref: { provider, id: runId }, sessionId: refused.sessionId, generation: randomUUID(), revision: "1",
+          state: "cancelled", phase: "terminal", stopConfirmed: true, freshness: "current", observedAt: new Date().toISOString(),
+          configurationRevision: sessions.get(refused.sessionId)!.configurationRevision, lastSequence: "0", cursor: "cursor-0",
+          pending: [], effects: { certainty: "known", unresolvedCallIds: [] }, messages: [], tools: [],
+          result: { status: "cancelled", error: { code: "run_not_admitted", message: "The original request was fenced before native admission.", retryable: false } } });
+      }
+      const snapshot = runs.get(runId);
       if (!snapshot) return error("run_not_found", "Run not found.", 404);
       if (parts.length === 2 && behavior.snapshotIssue === "denied") return error("permission_denied", "Owner credential expired.", 403);
       if (parts.length === 2 && behavior.snapshotIssue === "timeout") throw new DOMException("The operation was aborted due to timeout", "TimeoutError");

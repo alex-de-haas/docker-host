@@ -48,10 +48,15 @@ export function agentRoutes(controller: ProviderController, attachments: Attachm
       case "attachments.write": result = await attachments.chunk(parsed.attachmentId!, parsed.chunkIndex!, parsed.input, actor); break;
       case "sessions.create": result = await controller.createSession(parsed.sessionId!, parsed.input, body, actor, () => { status = 201; }); break;
       case "sessions.configure": result = await controller.configureSession(parsed.sessionId!, parsed.input, body, actor, () => { status = 201; }); break;
-      case "sessions.read": result = await controller.readSession(parsed.sessionId!, actor); break;
+      case "sessions.read":
+        await controller.store.refreshUncertainSession(parsed.sessionId!, actor);
+        result = await controller.readSession(parsed.sessionId!, actor); break;
       case "sessions.list": result = page(await controller.store.list(actor), parsed.query.cursor, parsed.query.limit, value => value.ref.id, "sessions"); break;
       case "runs.start": result = await controller.startRun(parsed.sessionId!, parsed.runId!, parsed.input, body, actor, () => { status = 202; }); break;
-      case "runs.read": await controller.store.pruneReplay(parsed.runId!, actor); result = await controller.snapshot(parsed.runId!, actor, { committedOnly: true }); break;
+      case "runs.read":
+        await controller.store.refreshUncertainRun(parsed.runId!, actor);
+        await controller.store.pruneReplay(parsed.runId!, actor);
+        result = await controller.snapshot(parsed.runId!, actor, { committedOnly: true }); break;
       case "runs.respond": result = await controller.respond(parsed.runId!, parsed.input, body, actor); break;
       case "runs.cancel": result = await controller.cancel(parsed.runId!, parsed.input, body, actor); break;
       case "runs.control": result = await controller.control(parsed.runId!, parsed.input, body, actor); break;

@@ -5,6 +5,7 @@ import { AgentClient, prepareAgentControl } from "@hosty-sdk/app/agent/client";
 import { publicProviderFixture, type PublicProviderFixture } from "../agent-providers/test-fixture.js";
 import { DevelopmentClient } from "./development.js";
 import { AgentSessionService } from "../agent-sessions/service.js";
+import * as appSession from "../app-session.js";
 
 const fixtures: PublicProviderFixture[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const fixture of fixtures.splice(0)) await fixture.close(); });
@@ -27,12 +28,23 @@ it("waits for public admission without holding the lane needed by Stop", async (
   let release!: () => void; f.behavior.startGate = new Promise(resolve => { release = resolve; });
   const posted = f.manager.postMessage(session.id, "Admit once", f.credential, [], { actorUserId: f.owner, clientRequestId: randomUUID() });
   await vi.waitFor(() => expect(f.authorizations.some(request => request.operation === "runs.start")).toBe(true));
+  expect(f.manager.isSourceAdmissionInFlight((await f.manager.getSession(session.id))!)).toBe(true);
   const review = f.manager.executionRecovery(session.id, f.owner);
   const stopping = f.manager.cancelSession(session.id);
   release(); await posted; await stopping;
-  expect(await review).toMatchObject({ runId: f.starts[0]!.runId, recoverable: false });
+  expect(await review).toBeNull();
+  expect(f.manager.isSourceAdmissionInFlight((await f.manager.getSession(session.id))!)).toBe(false);
   expect(f.starts).toHaveLength(1);
   expect(f.controls.filter(control => control.path.endsWith("/cancel"))).toHaveLength(1);
+});
+
+it.each([
+  ["queued", "preparing"], ["running", "executing"], ["waiting_for_input", "waiting"],
+] as const)("does not report a current %s execution as interrupted", async (state, phase) => {
+  const f = await fixture();
+  f.update(f.runId, { state, phase });
+  await expect(f.manager.executionRecovery(f.session.id, f.owner)).resolves.toBeNull();
+  expect(f.controls).toEqual([]);
 });
 
 it("does not offer reconcile when the provider has not declared authoritative recovery", async () => {
@@ -90,11 +102,116 @@ it("cancels an admitted lost-response start without retransmitting its immutable
   await expect(f.manager.postMessage(session.id, "May have started exactly once", f.credential, [], { actorUserId: f.owner, clientRequestId: requestId })).rejects.toThrow();
   expect(f.starts).toHaveLength(1);
   expect(await f.manager.messageReceipt(session.id, requestId, f.owner)).toMatchObject({ state: "unknown" });
+  const current = (await f.manager.getSession(session.id))!;
+  expect(current.sourceAdmission).toBeDefined();
+  expect(f.manager.isSourceAdmissionInFlight(current)).toBe(false);
   await f.manager.cancelSession(session.id);
   expect(f.starts).toHaveLength(1);
   expect(f.controls.filter(control => control.path.endsWith("/cancel"))).toHaveLength(1);
   expect((await f.store.readRecord(session.id))?.sourceAdmission).toBeUndefined();
-  await expect(f.manager.postMessage(session.id, "May have started exactly once", f.credential, [], { actorUserId: f.owner, clientRequestId: requestId })).rejects.toMatchObject({ code: "message_outcome_unknown" });
+  await expect(f.manager.postMessage(session.id, "May have started exactly once", f.credential, [], { actorUserId: f.owner, clientRequestId: requestId })).resolves.toMatchObject({ state: "accepted" });
+  expect(f.starts).toHaveLength(1);
+});
+
+it("repairs an admitted send receipt from Check status without a new start or Stop", async () => {
+  const f = await publicProviderFixture(); fixtures.push(f);
+  const session = await f.manager.createSession({ createdBy: f.owner }), requestId = randomUUID();
+  f.behavior.loseNextStartResponse = true;
+  await expect(f.manager.postMessage(session.id, "Accepted before the response was lost", f.credential, [],
+    { actorUserId: f.owner, clientRequestId: requestId })).rejects.toThrow();
+  expect(await f.manager.messageReceipt(session.id, requestId, f.owner)).toMatchObject({ state: "unknown" });
+  await expect(f.manager.executionRecovery(session.id, f.owner, f.credential)).resolves.toBeNull();
+  expect(await f.manager.messageReceipt(session.id, requestId, f.owner)).toMatchObject({ state: "accepted" });
+  expect((await f.store.readRecord(session.id))?.sourceAdmission).toBeUndefined();
+  expect(f.starts).toHaveLength(1);
+  expect(f.controls).toEqual([]);
+  f.complete(f.starts[0]!.runId);
+  await vi.waitFor(async () => expect((await f.manager.getSession(session.id))?.status).toBe("idle"));
+});
+
+it("keeps an unadmitted send uncertain until the same Stop request durably fences it", async () => {
+  const f = await publicProviderFixture(); fixtures.push(f);
+  const session = await f.manager.createSession({ createdBy: f.owner }), requestId = randomUUID();
+  f.behavior.refuseNextStart = true;
+  await expect(f.manager.postMessage(session.id, "Never admitted", f.credential, [],
+    { actorUserId: f.owner, clientRequestId: requestId })).rejects.toThrow();
+  await expect(f.manager.executionRecovery(session.id, f.owner, f.credential)).rejects.toMatchObject({ code: "provider_admission_unconfirmed" });
+  expect(f.controls).toEqual([]);
+  f.behavior.cancel = "unavailable";
+  await expect(f.manager.cancelSession(session.id, f.credential)).rejects.toMatchObject({ code: "storage_uncertain" });
+  expect(await f.manager.messageReceipt(session.id, requestId, f.owner)).toMatchObject({ state: "unknown" });
+  f.behavior.cancel = "confirmed";
+  await expect(f.manager.cancelSession(session.id, f.credential)).resolves.toBe(true);
+  expect(f.controls).toHaveLength(2);
+  expect(f.controls[1]).toEqual(f.controls[0]);
+  expect(await f.manager.messageReceipt(session.id, requestId, f.owner)).toMatchObject({
+    state: "rejected", error: { code: "run_not_admitted" },
+  });
+  expect((await f.store.readRecord(session.id))?.sourceAdmission).toBeUndefined();
+  expect(f.requests.filter(request => /\/sessions\/[^/]+\/runs\/[^/]+$/.test(request.path))).toHaveLength(1);
+  expect(f.starts).toEqual([]);
+});
+
+it("shows an unconfirmed Stop in a paused queue and enables retry after admission is fenced", async () => {
+  const f = await publicProviderFixture(); fixtures.push(f);
+  const session = await f.manager.createSession({ createdBy: f.owner }), entryId = randomUUID();
+  vi.spyOn(appSession, "resolveAppSession").mockResolvedValue({ status: "active",
+    identity: { userId: f.owner, hostRole: "host.admin" } });
+  f.behavior.refuseNextStart = true;
+  await f.manager.messageQueueCommand(session.id, f.owner, {
+    requestId: randomUUID(), expectedRevision: (await f.manager.messageQueue(session.id, f.owner)).revision,
+    command: { type: "enqueue", entryId, text: "Keep the original queue message", attachments: [] },
+  }, f.credential);
+  await vi.waitFor(async () => expect((await f.manager.messageQueue(session.id, f.owner)).entries[0]?.state).toBe("unknown"));
+  f.behavior.cancel = "unavailable";
+  await expect(f.manager.cancelSession(session.id, f.credential)).rejects.toMatchObject({ code: "storage_uncertain" });
+  expect(await f.manager.messageQueue(session.id, f.owner)).toMatchObject({
+    paused: true, reason: "Stop was not confirmed. Check status before resuming.",
+    entries: [{ id: entryId, state: "unknown" }],
+  });
+  await expect(f.manager.messageQueueCommand(session.id, f.owner, {
+    requestId: randomUUID(), expectedRevision: (await f.manager.messageQueue(session.id, f.owner)).revision,
+    command: { type: "resume" },
+  }, f.credential)).rejects.toMatchObject({ code: "stop_unconfirmed" });
+  f.behavior.cancel = "confirmed";
+  await f.manager.cancelSession(session.id, f.credential);
+  expect(await f.manager.messageQueue(session.id, f.owner)).toMatchObject({
+    paused: true, entries: [{ id: entryId, state: "failed", error: { code: "run_not_admitted" } }],
+  });
+});
+
+it.each(["read", "cancel"] as const)("retains an unconfirmed Stop after a failed %s and observes eventual exit without another Stop", async stage => {
+  const f = await fixture();
+  if (stage === "read") f.behavior.snapshotIssue = "denied";
+  else f.behavior.cancel = "unavailable";
+  await expect(f.manager.cancelSession(f.session.id, f.credential)).rejects.toMatchObject({ code: stage === "read" ? "permission_denied" : "exit_unconfirmed" });
+  delete f.behavior.snapshotIssue;
+  expect(f.manager.isProviderStopUnconfirmed((await f.manager.getSession(f.session.id))!)).toBe(true);
+  await expect(f.manager.executionRecovery(f.session.id, f.owner, f.credential)).resolves.toBeNull();
+  expect(f.manager.isProviderStopUnconfirmed((await f.manager.getSession(f.session.id))!)).toBe(true);
+  await f.manager.messageQueueCommand(f.session.id, f.owner, {
+    requestId: randomUUID(), expectedRevision: (await f.manager.messageQueue(f.session.id, f.owner)).revision,
+    command: { type: "enqueue", entryId: randomUUID(), text: "Save for after Stop", attachments: [] },
+  }, f.credential);
+  await vi.waitFor(async () => expect(await f.manager.messageQueue(f.session.id, f.owner)).toMatchObject({
+    paused: true, reason: "Stop was not confirmed. Check status before resuming.", entries: [{ state: "queued" }],
+  }));
+  f.update(f.runId, { state: "cancelled", phase: "terminal", stopConfirmed: true });
+  await expect(f.manager.executionRecovery(f.session.id, f.owner, f.credential)).resolves.toBeNull();
+  expect(f.manager.isProviderStopUnconfirmed((await f.manager.getSession(f.session.id))!)).toBe(false);
+  expect((await f.store.readRecord(f.session.id))?.providerStopProof?.runId).toBe(f.runId);
+  expect(f.controls.filter(control => control.path.endsWith("/cancel"))).toHaveLength(stage === "read" ? 0 : 1);
+});
+
+it("clears the Stop request when the provider already confirmed exit at a parked checkpoint", async () => {
+  const f = await fixture();
+  f.update(f.runId, { state: "waiting_for_input", phase: "parked", stopConfirmed: true });
+  await expect(f.manager.cancelSession(f.session.id, f.credential)).resolves.toBe(true);
+  const stopped = (await f.manager.getSession(f.session.id))!;
+  expect(stopped.providerStopRequestedRunId).toBeUndefined();
+  expect(f.manager.isProviderStopUnconfirmed(stopped)).toBe(false);
+  await expect(f.manager.postMessage(f.session.id, "Continue after confirmed Stop", f.credential, [],
+    { actorUserId: f.owner, clientRequestId: randomUUID() })).resolves.toMatchObject({ state: "accepted" });
 });
 
 it("rejects another actor before reading or controlling the provider execution", async () => {

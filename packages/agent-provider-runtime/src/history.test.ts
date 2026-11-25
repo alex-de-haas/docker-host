@@ -153,13 +153,41 @@ it("recovers a committed outbox after interruption and replays the same cursors 
   const cursor = store.history.page(alice).through;
   const fault = vi.spyOn(store.history, "publish").mockImplementationOnce(() => { throw new Error("simulated interruption"); });
   store.emit(run, "message.completed", { messageId: "last", text: "final answer" });
-  await expect(store.save(session)).rejects.toThrow("interruption");
+  await expect(store.save(session)).resolves.toBeUndefined();
+  expect((await store.run(run.snapshot.ref.id, alice)).record.historyOutbox?.at(-1)).toMatchObject({
+    kind: "event", event: { type: "message.completed" },
+  });
   fault.mockRestore();
   const restored = await openStore(store.directory);
   const backfill = restored.history.page(alice, cursor);
   expect(backfill.observations).toHaveLength(1);
   const reopened = await openStore(store.directory);
   expect(reopened.history.page(alice, cursor)).toEqual(backfill);
+});
+
+it("continues to serve committed execution and retries every unpublished fact without duplicating a committed page", async () => {
+  const store = await openStore(), { session, run, runId } = await admitted(store);
+  const cursor = store.history.page(alice).through, notify = vi.fn();
+  const unsubscribe = store.subscribe(runId, notify);
+  const publish = store.history.publish.bind(store.history);
+  const fault = vi.spyOn(store.history, "publish")
+    .mockImplementationOnce(() => { throw Object.assign(new Error("synthetic database lock"), { code: "SQLITE_BUSY" }); })
+    .mockImplementationOnce(record => { publish(record); throw new Error("synthetic lost acknowledgement"); });
+  store.emit(run, "message.completed", { messageId: "first", text: "first" });
+  await store.save(session);
+  expect(notify).toHaveBeenCalledOnce();
+  const { session: current, record } = await store.run(runId, alice);
+  expect(record.historyOutbox?.some(item => eventType(item) === "message.completed")).toBe(true);
+  store.emit(record, "message.completed", { messageId: "second", text: "second" });
+  await store.save(current);
+  expect(notify).toHaveBeenCalledTimes(2);
+  const committed = store.history.page(alice, cursor);
+  expect(committed.observations.map(row => eventType(row.item))).toEqual(["message.completed", "message.completed"]);
+  fault.mockRestore();
+  await store.retryHistory();
+  expect((await store.run(runId, alice)).record.historyOutbox).toBeUndefined();
+  expect(store.history.page(alice, cursor)).toEqual(committed);
+  unsubscribe();
 });
 
 it.each(["lost", "rolled back"])("recovers retained evidence and rejects obsolete cursors when the archive is %s", async damage => {

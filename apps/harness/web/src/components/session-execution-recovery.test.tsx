@@ -25,7 +25,8 @@ it("uses the recovery button as explicit confirmation and retains the identical 
   await act(async () => container.querySelector('button')!.click());
   const input = vi.mocked(api.recoverExecution).mock.calls[0]![1];
   expect(input).toMatchObject({ runId: "run", expectedRevision: 5, consumerExitConfirmed: true });
-  expect(container.querySelector('[role="alert"] [data-slot="alert-description"]')?.textContent).toBe("Connection lost");
+  expect(container.querySelector('[role="status"] [data-slot="alert-description"]')?.textContent).toContain("Connection lost");
+  expect(container.querySelectorAll('[data-slot="alert"]')).toHaveLength(1);
   expect(container.textContent).toContain("Retry recovery"); expect(changed).not.toHaveBeenCalled();
   await act(async () => container.querySelector('button')!.click());
   expect(api.recoverExecution).toHaveBeenLastCalledWith("chat", input);

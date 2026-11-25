@@ -37,8 +37,10 @@ export type AssistantSession = {
   providerHistoryContact?: { runId: string; observedAt: string; reason: "denied" | "invalid" | "unavailable" };
   workerRun?: { id: string; sequence: number; generation?: string };
   workerRecovery?: { state: "pending" | "completed" };
+  stopUnconfirmed?: true;
   storageRecovery?: { state: "required"; code: string; message: string };
   sourceAdmission?: { clientRequestId?: string; runId?: string; state: "preparing" | "dispatching" };
+  sourceAdmissionInFlight?: true;
   agentProfile?: import("../../../src/profiles/types").AgentProfile | null;
   profileLocked?: boolean;
   taskExecutionId?: string;
