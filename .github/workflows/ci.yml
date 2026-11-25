@@ -503,6 +503,9 @@ jobs:
       - name: Qualify native Windows Job Object writer closure
         if: runner.os == 'Windows' && hashFiles('packages/agent-provider-runtime/scripts/writer-scope-acceptance.mjs') != ''
         run: node packages/agent-provider-runtime/scripts/writer-scope-acceptance.mjs required
+      - name: Verify Windows native streams, job membership and bridge reuse
+        if: runner.os == 'Windows' && hashFiles('packages/agent-provider-runtime/src/windows-job-cache.test.mjs') != ''
+        run: npm test --workspace @hosty/agent-provider-runtime -- src/windows-native.test.ts src/windows-job-cache.test.mjs scripts/doctor.test.mjs
       - name: Qualify delegated Linux cgroup writer closure
         if: runner.os == 'Linux' && hashFiles('packages/agent-provider-runtime/scripts/writer-scope-acceptance.mjs') != ''
         run: |

@@ -2,7 +2,6 @@ import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -23,7 +22,7 @@ async function fileInfo(file) {
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
 
-export async function resolveWindowsCompiler(systemRoot = process.env.SystemRoot) {
+export async function resolveWindowsCompiler(systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT) {
   if (!systemRoot || !path.isAbsolute(systemRoot)) throw new Error('An absolute Windows SystemRoot is required for the Job Object helper.');
   for (const framework of ['Framework64', 'Framework']) {
     const compiler = path.join(systemRoot, 'Microsoft.NET', framework, 'v4.0.30319', 'csc.exe');
@@ -63,7 +62,7 @@ async function acquireBuildLock(db) {
 
 /** One crash-released interprocess lock publishes immutable binaries. Older processes keep their own executable. */
 export async function prepareWindowsJob(data, source = fileURLToPath(new URL('./windows-native-job.cs', import.meta.url)),
-  { systemRoot = process.env.SystemRoot, execute = run } = {}) {
+  { systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT, execute = run } = {}) {
   if (!data || !path.isAbsolute(data)) throw new Error('The Windows Job Object helper requires an absolute provider data directory.');
   const bytes = await readFile(source);
   const key = createHash('sha256').update(recipe).update('\0').update(bytes).digest('hex');
@@ -71,6 +70,7 @@ export async function prepareWindowsJob(data, source = fileURLToPath(new URL('./
   const index = path.join(data, '.windows-job-cache.sqlite');
   const existing = await fileInfo(index);
   if (existing && !existing.isFile()) throw new Error('Invalid Windows Job Object helper cache.');
+  const { DatabaseSync } = await import('node:sqlite');
   const db = new DatabaseSync(index);
   let staging;
   try {
