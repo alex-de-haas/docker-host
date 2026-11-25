@@ -1,6 +1,6 @@
 ---
 created: 2026-09-27
-updated: 2026-11-03
+updated: 2026-11-25
 summary: Logical workspaces group repository worktrees with explicit session membership, compatible Git operations and an authorized inspection API.
 components: [apps/core, apps/harness]
 ---
@@ -75,6 +75,8 @@ legacy task label or `workspace`. The slug uses NFC-normalized invariant lowerca
 letters, decimal digits and attached combining marks, with other runs replaced by
 hyphens. It preserves non-Latin text and fits within 32 UTF-8 bytes without splitting
 a scalar or retaining a trailing separator. Core performs no translation or model call.
+Core decodes Git's standard output as UTF-8, so worktree validation reads the exact
+registered ref on Windows regardless of the host console code page.
 
 The suffix normally contains the first 12 hexadecimal characters of the full worktree
 ID, giving a maximum ordinary branch length of 51 UTF-8 bytes. Existing refs and pending
@@ -282,6 +284,7 @@ does not isolate one exposed worktree from another.
 - Verify normalized, byte-bounded readable branches, non-Latin names and fallback labels;
   exercise occupied refs, namespace conflicts and concurrent owners with the same purpose.
 - Recover preparation before and after the atomic ref transaction and worktree materialization.
+  Verify that the original request completes a pending allocation with a Cyrillic branch on Windows.
   Refuse missing, changed or symbolic allocation evidence without adopting or removing foreign refs.
 - Preserve legacy branch names through replay, rename, restart and partial Delete/Discard recovery;
   validate both naming formats and remove new allocation receipts during authorized cleanup.

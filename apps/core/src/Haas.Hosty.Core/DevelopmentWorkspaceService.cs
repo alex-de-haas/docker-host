@@ -1018,7 +1018,11 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     }
     internal static ProcessStartInfo GitStartInfo(string cwd, string[] args, string? index = null, WorkspaceCommand? author = null)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd };
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = cwd,
+            StandardOutputEncoding = Encoding.UTF8
+        };
         foreach (var key in start.Environment.Keys.Where(k => k.StartsWith("GIT_", StringComparison.Ordinal)).ToArray()) start.Environment.Remove(key);
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
