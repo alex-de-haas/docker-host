@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -33,7 +33,10 @@ try {
       const { prepareWindowsJob } = await import('../src/windows-job-cache.mjs');
       const executable = await prepareWindowsJob(temp);
       const invoke = args => promisify(execFile)(executable, args, { timeout: 10000, windowsHide: true });
-      const nonce = randomUUID(), pipe = 'hosty-native-' + nonce, receipt = path.join(temp, nonce + '.json');
+      let deep = temp;
+      while (deep.length < 265) deep = path.join(deep, 'deep-workspace-segment');
+      await mkdir(deep, { recursive: true });
+      const nonce = randomUUID(), pipe = 'hosty-native-' + nonce, receipt = path.join(deep, nonce + '.json');
       assert.equal((await invoke(['--version'])).stdout.trimEnd(), 'hosty-windows-job/1');
       await assert.rejects(invoke([]), { code: 70 });
       await assert.rejects(invoke([pipe, path.join(temp, 'wrong-receipt.json')]), { code: 70 });
@@ -42,6 +45,16 @@ try {
         await invoke([pipe, receipt]);
         assert.deepEqual(await readFile(receipt + '.guard'), Buffer.from([1]));
       }
+      // The probe above uses ordinary short paths. Exercise the actual per-attempt guard,
+      // temporary receipt, atomic replacement and independent read under a long data root.
+      const unit = await TrackedNativeProcesses.create(deep, randomUUID(), randomUUID(), scope);
+      try {
+        const child = unit.transport.spawn(process.execPath, ['-e', 'process.exit(0)'], { cwd: temp, env: process.env });
+        child.stdout.resume(); child.stderr.pipe(process.stderr); child.stdin.end();
+        assert.equal((await once(child, 'close', { signal: AbortSignal.timeout(30000) }))[0], 0);
+        await unit.confirmSdkStop();
+        assert.equal((await unit.stop()).stopped, true);
+      } finally { await unit.stop(); }
     }
     const descendant = "const db=new (require('node:sqlite').DatabaseSync)(process.argv[1]);db.exec('BEGIN EXCLUSIVE; CREATE TABLE held(id)');require('node:fs').writeFileSync(process.argv[2], 'running');setInterval(()=>{},1000)";
     const parent = "require('node:child_process').spawn(process.execPath,['-e',process.argv[1],process.argv[2],process.argv[3]],{detached:true,stdio:'ignore'});setInterval(()=>{},1000)";

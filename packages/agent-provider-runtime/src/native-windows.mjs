@@ -37,8 +37,17 @@ export async function runWindowsWriter() {
   let tracing = false;
   const trace = stage => { if (tracing) process.stderr.write("[native-probe] " + stage + "\n"); };
   const proof = () => {
-    try { const value = readFileSync(config.file); if (value.length > 64000) return null; const receipt = JSON.parse(value.toString('utf8')); return isWindowsJobProof(receipt, config, bridge?.pid) ? receipt : null; }
-    catch { return null; }
+    try {
+      const value = readFileSync(config.file);
+      if (value.length > 64000) return null;
+      const receipt = JSON.parse(value.toString('utf8'));
+      if (isWindowsJobProof(receipt, config, bridge?.pid)) return receipt;
+      // Only fixed metadata from the no-op capability probe is diagnostic.
+      trace('unconfirmed receipt: state=' + (['intent', 'unknown', 'stopped'].includes(receipt.state) ? receipt.state : 'invalid')
+        + ' confirmed=' + (receipt.treeStopped === true) + ' sameWriter=' + (receipt.writerPid === bridge?.pid)
+        + ' pathLength=' + config.file.length);
+    } catch (error) { trace('receipt read failed: ' + (error.code ?? error.name)); }
+    return null;
   };
   const finish = async (code = 70) => {
     if (closed) return; closed = true; clearTimeout(startupTimer); clearTimeout(stopTimer); clearTimeout(connectTimer);
@@ -46,10 +55,13 @@ export async function runWindowsWriter() {
     // A lost response cannot overwrite an already durable identity-bound job proof.
     const receipt = proof();
     trace("finish: receipt=" + !!receipt + " bridge=" + bridge?.exitCode + " connected=" + connected);
-    if (!receipt) { try { persist(config); } catch {} bridge?.kill('SIGKILL'); code = 70; }
+    if (!receipt) {
+      // The intent is already durable. Preserve the helper's own failure record if it wrote one.
+      bridge?.kill('SIGKILL'); code = 70;
+    }
     else code = receipt.code;
     if (bridge) { process.stdin.unpipe(bridge.stdin); bridge.stdin.destroy(); }
-    // Private completion precedes pipe drain. Wait for PowerShell's stdio-close event and all
+    // Private completion precedes pipe drain. Wait for the helper's stdio-close event and all
     // already forwarded writes before ending the SDK-facing streams.
     const drained = await within(bridgeClosed.then(drainOutput).catch(() => false));
     if (!drained) { bridge?.kill('SIGKILL'); code = 70; }
@@ -94,7 +106,8 @@ export async function runWindowsWriter() {
             // The helper has flushed and atomically replaced the proof file before this message.
             if (!proof()) { requestStop(); return; }
             finish(value.code);
-          } else if (value.type !== 'started') { requestStop(); candidate.destroy(); return; }
+          } else if (value.type === 'started') { trace('native process started'); }
+          else { requestStop(); candidate.destroy(); return; }
         }
       });
       candidate.on('error', error => {

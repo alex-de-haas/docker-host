@@ -36,8 +36,7 @@ public static class HostyNativeJob
         try {
             return args.Length == 2 ? CloseOrFence(args[1], nonce) : Run(args[0]);
         } catch (Exception error) {
-            var failure = error.GetBaseException();
-            Console.Error.WriteLine("The provider Windows job bridge failed ({0}, 0x{1:X8}).", failure.GetType().Name, failure.HResult);
+            ReportFailure(args.Length == 2 ? "recover" : "connect", error);
             return 70;
         }
     }
@@ -137,7 +136,17 @@ public static class HostyNativeJob
     [DllImport("advapi32", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string descriptor, uint revision, out IntPtr result, out uint size);
     [DllImport("kernel32")] static extern IntPtr LocalFree(IntPtr value);
 
-    static Exception Failure(string message) { return new IOException(message, new Win32Exception(Marshal.GetLastWin32Error())); }
+    sealed class NativeFailure : Win32Exception {
+        internal readonly string Operation;
+        internal NativeFailure(int code, string operation) : base(code) { Operation = operation; }
+    }
+    static Exception Failure(string operation) { return new NativeFailure(Marshal.GetLastWin32Error(), operation); }
+    static void ReportFailure(string stage, Exception error) {
+        var failure = error.GetBaseException();
+        var native = failure as NativeFailure;
+        Console.Error.WriteLine("[windows-job] {0}: {1} (0x{2:X8})", stage,
+            native == null ? failure.GetType().Name : native.Operation, native == null ? failure.HResult : native.NativeErrorCode);
+    }
     static string ReadLine(TextReader reader, int maximum) {
         var value = new StringBuilder(); int next;
         while ((next = reader.Read()) >= 0) { if (next == 10) return value.ToString().TrimEnd('\r'); if (value.Length >= maximum) throw new IOException("Control message exceeds its bound."); value.Append((char)next); }
@@ -236,7 +245,12 @@ public static class HostyNativeJob
                         uint id = checked((uint)Marshal.ReadIntPtr(buffer, 8 + at * IntPtr.Size).ToInt64()); IntPtr process = OpenProcess(Synchronize | QueryLimitedInformation, false, id);
                         if (process == IntPtr.Zero) { if (Marshal.GetLastWin32Error() == 87) continue; throw Failure("Native member handle acquisition failed."); }
                         bool member;
-                        if (!IsProcessInJob(process, job, out member)) { CloseHandle(process); throw Failure("Native job membership verification failed."); }
+                        if (!IsProcessInJob(process, job, out member)) {
+                            var failure = Failure("Native job membership verification failed.");
+                            try { if (!Exited(process)) throw failure; }
+                            finally { CloseHandle(process); }
+                            continue;
+                        }
                         if (member) handles.Add(process); else CloseHandle(process);
                     }
                     return handles;
@@ -245,24 +259,65 @@ public static class HostyNativeJob
             throw new IOException("Native job inventory exceeds its bound.");
         } catch { foreach (IntPtr handle in handles) CloseHandle(handle); throw; }
     }
+    static bool Exited(IntPtr process) {
+        uint state = WaitForSingleObject(process, 0);
+        if (state == 0) return true;
+        if (state == WaitTimeout) return false;
+        throw Failure("Native member exit observation failed.");
+    }
     static bool TerminateAndWait(IntPtr job, IntPtr primary) {
+        // The caller holds the admission guard, so an empty job cannot acquire a new root.
+        if ((primary == IntPtr.Zero || Exited(primary)) && ActiveProcesses(job) == 0) return true;
         var handles = CaptureMembers(job); if (primary != IntPtr.Zero) handles.Add(primary);
         try {
             if (!TerminateJobObject(job, 137)) throw Failure("Native job termination failed.");
             var timeout = Stopwatch.StartNew();
             while (timeout.ElapsedMilliseconds < 5000) {
                 bool exited = true;
-                foreach (IntPtr handle in handles) { uint state = WaitForSingleObject(handle, 0); if (state == WaitTimeout) exited = false; else if (state != 0) throw Failure("Native member exit observation failed."); }
+                foreach (IntPtr handle in handles) if (!Exited(handle)) exited = false;
                 if (exited && ActiveProcesses(job) == 0) return true; Thread.Sleep(25);
             }
-            return false;
+            throw new TimeoutException("Native job closure timed out.");
         } finally { foreach (IntPtr handle in handles) if (handle != primary) CloseHandle(handle); }
+    }
+    [DllImport("kernel32", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    static extern SafeFileHandle CreateFileW(string file, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    static extern bool MoveFileExW(string source, string destination, uint flags);
+    [DllImport("kernel32", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    static extern bool DeleteFileW(string file);
+
+    // The runtime supplies absolute normalized paths. Bypass legacy Framework MAX_PATH handling
+    // only for receipt and admission-guard I/O, including the atomic rename in the same directory.
+    static string EvidencePath(string file) {
+        file = file.Replace('/', '\\');
+        if (file.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return file;
+        if (file.StartsWith(@"\\?\", StringComparison.Ordinal)) file = file.Substring(4);
+        if (file.Length >= 3 && Char.IsLetter(file[0]) && file[1] == ':' && file[2] == '\\') return @"\\?\" + file;
+        if (file.StartsWith(@"\\", StringComparison.Ordinal) && !file.StartsWith(@"\\.\", StringComparison.Ordinal))
+            return @"\\?\UNC\" + file.Substring(2);
+        throw new IOException("The receipt path must be an absolute drive or UNC path.");
+    }
+    static FileStream EvidenceFile(string path, bool guard) {
+        // OPEN_ALWAYS keeps an existing fence intact; CREATE_NEW gives each receipt writer its own scratch file.
+        var handle = CreateFileW(path, guard ? 0xc0000000u : 0x40000000u, 0, IntPtr.Zero,
+            guard ? 4u : 1u, 0x80000080u, IntPtr.Zero);
+        if (handle.IsInvalid) {
+            var error = Failure(guard ? "Open admission guard" : "Create temporary receipt"); handle.Dispose(); throw error;
+        }
+        try { return new FileStream(handle, guard ? FileAccess.ReadWrite : FileAccess.Write); }
+        catch { handle.Dispose(); throw; }
     }
     static void Persist(Configuration config, bool stopped, uint pid, int code) {
         var receipt = new Receipt { runId = config.runId, generation = config.generation, nonce = config.nonce, state = stopped ? "stopped" : "unknown", treeStopped = stopped, activeProcesses = stopped ? 0u : UInt32.MaxValue, knownHandlesClosed = stopped, writerPid = Process.GetCurrentProcess().Id, nativePid = pid, code = code, observedAt = DateTime.UtcNow.ToString("o") };
-        string temporary = config.file + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough)) { byte[] bytes = Utf8.GetBytes(Encode(receipt)); file.Write(bytes, 0, bytes.Length); file.Flush(true); }
-        File.Replace(temporary, config.file, null);
+        string destination = EvidencePath(config.file);
+        string temporary = destination.Substring(0, destination.LastIndexOf('\\') + 1) + Guid.NewGuid().ToString("N") + ".tmp";
+        using (var file = EvidenceFile(temporary, false)) {
+            byte[] bytes = Utf8.GetBytes(Encode(receipt)); file.Write(bytes, 0, bytes.Length); file.Flush(true);
+        }
+        if (!MoveFileExW(temporary, destination, 1 | 8)) {
+            var error = Failure("Replace flushed receipt"); DeleteFileW(temporary); throw error;
+        }
     }
     [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern IntPtr OpenJobObject(uint access, bool inherit, string name);
@@ -271,11 +326,16 @@ public static class HostyNativeJob
     // The admission guard serializes a delayed original bridge with the successor, including when
     // no process was created. This successor is called only under the exclusive attempt owner lock.
     public static int CloseOrFence(string receiptFile, string nonce) {
-        if (!Path.IsPathRooted(receiptFile) || Path.GetFileName(receiptFile) != nonce + ".json") return 70;
-        using (var gate = new FileStream(receiptFile + ".guard", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) {
+        string destination = EvidencePath(receiptFile);
+        if (!destination.EndsWith("\\" + nonce + ".json", StringComparison.Ordinal)) return 70;
+        using (var gate = EvidenceFile(destination + ".guard", true)) {
             gate.Position = 0; gate.WriteByte(1); gate.Flush(true);
             IntPtr job = OpenJobObject(0x0004 | 0x0008, false, JobName(nonce));
-            if (job == IntPtr.Zero) return Marshal.GetLastWin32Error() == 2 ? 0 : 70;
+            if (job == IntPtr.Zero) {
+                int code = Marshal.GetLastWin32Error();
+                if (code == 2) return 0;
+                throw new NativeFailure(code, "Open job for recovery");
+            }
             try { return TerminateAndWait(job, IntPtr.Zero) ? 0 : 70; }
             finally { CloseHandle(job); }
         }
@@ -287,11 +347,14 @@ public static class HostyNativeJob
         using (var pipe = PrivatePipe(pipeName)) {
             var reader = new StreamReader(pipe, Utf8, false, 4096, true); var writer = new StreamWriter(pipe, Utf8, 4096, true) { AutoFlush = true };
             writer.WriteLine(Encode(new Message { type = "ready", nonce = nonce }));
+            string stage = "read-configuration";
             try {
                 config = Decode<Configuration>(ReadLine(reader, 1048576));
                 if (config.version != 1 || config.nonce != nonce || !Path.IsPathRooted(config.file) || !System.Text.RegularExpressions.Regex.IsMatch(config.runId ?? "", "^[A-Za-z0-9-]{1,100}$") || !System.Text.RegularExpressions.Regex.IsMatch(config.generation ?? "", "^[A-Za-z0-9-]{1,100}$")) throw new IOException("Native execution identity mismatch.");
-                guard = new FileStream(config.file + ".guard", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                stage = "acquire-guard";
+                guard = EvidenceFile(EvidencePath(config.file) + ".guard", true);
                 if (guard.ReadByte() == 1) throw new IOException("The attempt launch is already fenced.");
+                stage = "create-job";
                 job = CreateJobObject(IntPtr.Zero, JobName(nonce)); if (job == IntPtr.Zero) throw Failure("Native job creation failed.");
                 // Neither BREAKAWAY_OK nor SILENT_BREAKAWAY_OK is enabled. The job handle is not inheritable.
                 var limits = new ExtendedLimits { BasicLimitInformation = new BasicLimits { LimitFlags = KillOnClose } };
@@ -299,27 +362,32 @@ public static class HostyNativeJob
                 int stop = 0;
                 ThreadPool.QueueUserWorkItem(delegate { try { string line; while ((line = ReadLine(reader, 4096)) != null) { var control = Decode<Control>(line); if (control.stop && control.nonce == nonce) { Interlocked.Exchange(ref stop, 1); return; } } } catch { } finally { Interlocked.Exchange(ref stop, 1); } });
                 if (!config.cancelled && Interlocked.CompareExchange(ref stop, 0, 0) == 0) {
+                    stage = "launch";
                     process = StartSuspended(config, job);
                     if (Interlocked.CompareExchange(ref stop, 0, 0) == 0) {
                         if (ResumeThread(process.Thread) == UInt32.MaxValue) throw Failure("Native primary thread could not resume.");
+                        stage = "observe";
                         writer.WriteLine(Encode(new Message { type = "started", nonce = nonce, nativePid = process.ProcessId }));
                         while (Interlocked.CompareExchange(ref stop, 0, 0) == 0) { uint state = WaitForSingleObject(process.Process, 25); if (state == 0) break; if (state != WaitTimeout) throw Failure("Native process exit observation failed."); }
                     }
                 }
                 uint exit; if (process.Process != IntPtr.Zero && WaitForSingleObject(process.Process, 0) == 0 && GetExitCodeProcess(process.Process, out exit)) code = unchecked((int)exit); else code = 137;
             } catch (Exception error) {
-                var native = error.GetBaseException() as Win32Exception;
-                Console.Error.WriteLine("The provider Windows job could not start ({0}, {1}).", native == null ? error.GetType().Name : error.Message, native == null ? error.HResult : native.NativeErrorCode);
+                ReportFailure(stage, error);
                 code = 127;
             }
             finally {
-                try {
-                    if (job != IntPtr.Zero) {
-                        stopped = TerminateAndWait(job, process.Process);
-                    }
-                    if (config != null) Persist(config, stopped, process.ProcessId, code);
-                    try { writer.WriteLine(Encode(new Message { type = "stopped", nonce = nonce, nativePid = process.ProcessId, code = code, treeStopped = stopped, activeProcesses = stopped ? 0u : UInt32.MaxValue, knownHandlesClosed = stopped })); } catch { }
-                } catch { try { if (config != null) Persist(config, false, process.ProcessId, 70); } catch { } stopped = false; }
+                if (job != IntPtr.Zero) {
+                    try { stopped = TerminateAndWait(job, process.Process); }
+                    catch (Exception error) { ReportFailure("verify-closure", error); }
+                }
+                if (config != null) {
+                    try {
+                        Persist(config, stopped, process.ProcessId, code);
+                        try { writer.WriteLine(Encode(new Message { type = "stopped", nonce = nonce, nativePid = process.ProcessId, code = code, treeStopped = stopped, activeProcesses = stopped ? 0u : UInt32.MaxValue, knownHandlesClosed = stopped })); }
+                        catch (IOException) { /* The durable receipt survives disconnection. */ }
+                    } catch (Exception error) { ReportFailure("persist-receipt", error); stopped = false; }
+                }
                 if (process.Thread != IntPtr.Zero) CloseHandle(process.Thread); if (process.Process != IntPtr.Zero) CloseHandle(process.Process);
                 if (job != IntPtr.Zero) CloseHandle(job);
                 if (guard != null) guard.Dispose();
