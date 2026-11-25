@@ -370,9 +370,9 @@ jobs:
       - name: Test Windows detached launcher output
         if: runner.os == 'Windows'
         run: dotnet test apps/cli/tests/Haas.Hosty.Cli.Tests/Haas.Hosty.Cli.Tests.csproj --filter FullyQualifiedName~WindowsDetachedLaunchTests
-      - name: Test Windows child Core launch
+      - name: Test Windows child Core launch and workspace Git
         if: runner.os == 'Windows'
-        run: dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --filter "FullyQualifiedName~CoreEnvironmentLaunchTests|FullyQualifiedName~WindowsProcessControlTests"
+        run: dotnet test apps/core/tests/Haas.Hosty.Core.Tests/Haas.Hosty.Core.Tests.csproj --filter "FullyQualifiedName~CoreEnvironmentLaunchTests|FullyQualifiedName~WindowsProcessControlTests|FullyQualifiedName~WorkspaceGit_InterruptedPreparationRecoversUnicodeBranch"
       - name: Publish Core and verify native paired updates
         env:
           HOSTY_VERIFY_PLATFORM_UPDATE: '1'
