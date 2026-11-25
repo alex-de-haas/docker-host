@@ -41,7 +41,6 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
   const [deleting, setDeleting] = useState<AssistantSession | null>(null);
   const [workspaceToDelete, setWorkspaceToDelete] = useState<DevelopmentWorkspace | null>(null);
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [error, setError] = useState<string | null>(null);
   const localDeletes = useRef(new Set<string>());
   const localWorkspaceDeletion = useWorkspaceDeletion(onDelete, () => onRefresh?.());
   const workspaceRemovals = workspaceDeletion ?? localWorkspaceDeletion;
@@ -67,10 +66,9 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
     if (localDeletes.current.has(session.id)) return;
     localDeletes.current.add(session.id);
     setDeleting(null);
-    setError(null);
     setDeletingIds(current => new Set(current).add(session.id));
     try { await onDelete(session.id); }
-    catch (cause) { setError(sessionLabel(session) + ": " + (cause instanceof Error ? cause.message : String(cause))); }
+    catch { /* The conversation surface reports the error. */ }
     finally {
       localDeletes.current.delete(session.id);
       setDeletingIds(current => {
@@ -105,7 +103,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
       </Button>
       {session && !removing && <Button variant="ghost" size="icon-sm" aria-label={`Delete ${label}`} title="Delete session"
         className="shrink-0 text-muted-foreground hover:text-destructive-foreground [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-        onClick={event => { deleteTrigger.current = event.currentTarget; setError(null); setDeleting(session); }}><Trash2 /></Button>}
+        onClick={event => { deleteTrigger.current = event.currentTarget; setDeleting(session); }}><Trash2 /></Button>}
       {workspace && !removing && workspace.permissions?.manage !== false && <Button variant="ghost" size="icon-sm" aria-label={(removalPending ? "Recover workspace deletion " : "Delete workspace ") + label} title={removalPending ? "Recover workspace deletion" : "Delete workspace"}
         className="shrink-0 text-muted-foreground hover:text-destructive-foreground [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
         onClick={event => {
@@ -140,7 +138,6 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, onPick, 
         </Button>;
       })}</div>
     </div>
-    {error && <p role="alert" className="px-3 py-2 text-sm text-destructive-foreground">{error}</p>}
     {!workspaceDeletion && <WorkspaceDeletionFailures deletion={localWorkspaceDeletion} className="px-3 py-2" />}
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-2">
       {visible.map(renderItem)}

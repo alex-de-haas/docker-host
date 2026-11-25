@@ -549,10 +549,12 @@ the same cleanup. Ordinary cancellation, message admission and task completion s
 `stopConfirmed`.
 
 Before launching a child, the provider durably records its intent. Durable SDK-stop confirmation,
-matching child receipts and a sealed/exited producer support reconciliation after restart. Missing
-proof stays `unknown`; a client-supplied stopped flag or a saved PID does not establish it. Automatic provider recovery
-never terminates processes by PIDs loaded from receipt files. Workspace release uses the original
-admission and begins after the provider confirms stop or accepts retirement.
+matching child receipts and a sealed/exited producer support reconciliation after restart. Stop
+also rechecks this evidence for an interrupted run whose native handle has already been released.
+Missing proof stays `unknown`. A client-supplied stopped flag or a saved PID does not establish it.
+Automatic provider recovery never terminates processes by PIDs loaded from receipt files.
+Workspace release uses the original admission and begins after the provider confirms stop or
+accepts retirement.
 
 Codex protocol acknowledgments have a 30-second deadline, with a two-second polite interrupt
 budget and independently bounded metadata diagnostics. These bound RPC acknowledgments rather

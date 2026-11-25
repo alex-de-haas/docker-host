@@ -27,7 +27,8 @@ import { clearEditDraft, listPreservedDrafts, outboxFiles, preserveDraft, readEd
 import { AppMentionInput, type AppMentionInputHandle } from "@/components/app-mention-input";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { AppContextPicker, type AppContextPickerHandle } from "@/components/app-context-picker";
-import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, PanelLeft, Diamond, Pencil, TriangleAlert } from "lucide-react";
+import { ArrowLeft, History, Loader2, MessageSquarePlus, Paperclip, Plus, Blocks, Send, Sparkles, Square, PanelRight, PanelLeft, Diamond, Pencil, TriangleAlert, CircleAlert, X } from "lucide-react";
+import { Toast } from "radix-ui";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { InlineError, StatusBadge } from "@/components/status";
@@ -169,6 +170,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const streamed = streams.root;
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [deletionNotice, setDeletionNotice] = useState<{ id: number; sessionId: string; message: string } | null>(null);
+  const nextDeletionNoticeId = useRef(0);
   const [sending, setSending] = useState(false);
   const [stoppingSession, setStoppingSession] = useState<string | null>(null);
   const [stopFailure, setStopFailure] = useState<{ sessionId: string; issue: RecoveryIssue }>();
@@ -774,10 +777,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     }
   }, [setHistoryOpen, fullPage, navigateSelection, workspace, inventory]);
 
-  const remove = useCallback((sessionId: string, reportError = true) => {
+  const remove = useCallback((sessionId: string, notifyFailure = true) => {
     const existing = pendingDeletes.current.get(sessionId);
     if (existing) return existing.result;
-    if (reportError) setError(null);
+    if (notifyFailure) setDeletionNotice(current => current?.sessionId === sessionId ? null : current);
     const confirmation = new AbortController();
     setDeletingIds(current => new Set(current).add(sessionId));
     const result = deleteAndReconcileSession(sessionId, confirmation.signal).then(() => {
@@ -785,7 +788,9 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       setSessions(current => current.filter(entry => entry.id !== sessionId));
       detachDeleted(sessionId);
     }).catch(cause => {
-      if (reportError) setError(cause instanceof Error ? cause.message : String(cause));
+      if (notifyFailure) {
+        setDeletionNotice({ id: ++nextDeletionNoticeId.current, sessionId, message: cause instanceof Error ? cause.message : String(cause) });
+      }
       throw cause;
     }).finally(() => {
       pendingDeletes.current.delete(sessionId);
@@ -1357,6 +1362,19 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   return (
     <div className={`harness-conversation flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${review ? "harness-review-active" : ""}`}>
+      <Toast.Provider duration={8_000} label="Session deletion">
+        {deletionNotice && <Toast.Root key={deletionNotice.id} open onOpenChange={open => {
+          if (!open) setDeletionNotice(current => current?.id === deletionNotice.id ? null : current);
+        }} data-slot="session-deletion-toast">
+          <Alert variant="destructive" role="presentation" className="pr-10 shadow-lg">
+            <CircleAlert aria-hidden />
+            <AlertTitle>Could not delete session</AlertTitle>
+            <AlertDescription>{deletionNotice.message}</AlertDescription>
+            <Toast.Close asChild><Button type="button" variant="ghost" size="icon-sm" className="absolute top-1.5 right-1.5" aria-label="Dismiss notification"><X aria-hidden /></Button></Toast.Close>
+          </Alert>
+        </Toast.Root>}
+        <Toast.Viewport className="fixed top-4 left-1/2 z-50 w-[calc(100%-2rem)] max-w-96 -translate-x-1/2 rounded-lg outline-none" />
+      </Toast.Provider>
       {fullPage && ready && <StorageRecoveryNotice />}
       {fullPage && inventory.error && <div className="shrink-0 px-3 py-2"><InlineError message={inventory.error} /></div>}
       {!failuresInDetails && deletionFailures}

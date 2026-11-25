@@ -209,7 +209,7 @@ and disallows selection and further actions. Harness emits the terminal event af
 the stored conversation. It waits up to 45 seconds for the DELETE response and, after a lost
 response, up to eight seconds to check the session through its authenticated API. A confirmed
 missing session clears its row and draft. A refusal or unconfirmed outcome restores row actions
-and displays the error so the user can retry.
+and displays a dismissible toast so the user can retry.
 
 Manageable workspace rows offer a trailing trash shortcut with the same hover, keyboard-focus and
 touch reachability as conversation deletion. It opens the existing workspace deletion dialog for
