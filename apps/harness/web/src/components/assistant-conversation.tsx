@@ -243,7 +243,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [workspaceToResolve, setWorkspaceToResolve] = useState<string | null>(null);
   const [workspaceVisible, setWorkspaceVisible] = useState(true);
-  const decisionCard = useRef<HTMLDivElement | null>(null);
+  const questionCard = useRef<HTMLDivElement | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [mobileDetails, setMobileDetails] = useState(false);
   const narrowViewport = useNarrowWorkspace();
@@ -1323,7 +1323,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
   const mcpActivity = useMemo(() => contextDetailsOpen ? observedMcpActivity(events) : EMPTY_MCP_ACTIVITY, [events, contextDetailsOpen]);
 
-  const pendingDecision = events.find(event => event.seq >= contextBoundary && event.providerHistoryEarlier !== true && (status === "awaiting_approval" && event.type === "approval_request" && !decidedApprovals.has(transcriptDecisionId(event)) || status === "awaiting_question" && event.type === "question_request" && !cancelledQuestionIds.has(transcriptDecisionId(event)) && !answeredQuestions.has(transcriptDecisionId(event))));
+  const pendingQuestion = status === "awaiting_question" ? events.find(event =>
+    event.type === "question_request" && event.seq >= contextBoundary && event.providerHistoryEarlier !== true
+    && !cancelledQuestionIds.has(transcriptDecisionId(event)) && !answeredQuestions.has(transcriptDecisionId(event))
+  ) : undefined;
 
   const createAppAction = fullPage ? session ? (
     <CreateApp key={`creation-${session.id}`} session={session} openOnMount={openAppCreation}
@@ -1436,11 +1439,11 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
           </>
         )}
       </header>
-      {!showSessions && !historyLoading && pendingDecision && <div className="shrink-0 px-3 pt-2">
+      {!showSessions && !historyLoading && pendingQuestion && <div className="shrink-0 px-3 pt-2">
         <Alert variant="warning" role="status">
           <Diamond aria-hidden />
-          <AlertTitle>Needs you · {pendingDecision.type === "approval_request" ? "Approval requested" : "Answer requested"}</AlertTitle>
-          <AlertAction><Button size="sm" variant="outline" onClick={() => { decisionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); decisionCard.current?.focus(); }}>Review</Button></AlertAction>
+          <AlertTitle>Needs you · Answer requested</AlertTitle>
+          <AlertAction><Button size="sm" variant="outline" onClick={() => { questionCard.current?.scrollIntoView({ block: "center", behavior: "instant" }); questionCard.current?.focus(); }}>Review</Button></AlertAction>
         </Alert>
       </div>}
 
@@ -1507,7 +1510,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                     </MessageScrollerItem>
                   ) : (
                     <MessageScrollerItem key={item.key} messageId={item.key}>
-                    <div ref={item.event === pendingDecision ? decisionCard : undefined} tabIndex={item.event === pendingDecision ? -1 : undefined}>
+                    <div ref={item.event === pendingQuestion ? questionCard : undefined} tabIndex={item.event === pendingQuestion ? -1 : undefined}>
                     {nativeSource(item.event) && <p className="mb-1 text-xs text-muted-foreground">From {nativeTranscript.agents.get(nativeAgentKey(nativeSource(item.event)!))?.label ?? "subagent"}</p>}
                     <TranscriptEvent
                       event={item.event.seq < contextBoundary && ["approval_request", "question_request"].includes(item.event.type)
