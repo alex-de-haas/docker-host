@@ -58,7 +58,7 @@ async function reload() { await act(async () => root.unmount()); root = createRo
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); localStorage.clear(); sessionStorage.clear(); vi.resetAllMocks();
-  delete session.storageRecovery; delete session.sourceAdmission; session.status = "idle";
+  delete session.storageRecovery; delete session.sourceAdmission; delete session.sourceAdmissionInFlight; delete session.stopUnconfirmed; session.status = "idle";
   vi.mocked(api.getStorageRecovery).mockResolvedValue({ issues: [] }); vi.mocked(api.getExecutionRecovery).mockResolvedValue(null);
   vi.mocked(api.recoverExecution).mockResolvedValue();
   vi.mocked(api.stopSession).mockResolvedValue();
@@ -285,6 +285,38 @@ it("retains a visible draft and attachments while a source storage fence blocks 
   expect(api.recoverExecution).not.toHaveBeenCalled();
 });
 
+it("keeps both recovery notices hidden while a new turn is being admitted", async () => {
+  session.status = "running";
+  session.sourceAdmission = { state: "dispatching", runId: "normal-run" };
+  session.sourceAdmissionInFlight = true;
+  let finishReview!: (value: null) => void;
+  vi.mocked(api.getExecutionRecovery).mockImplementationOnce(() => new Promise(resolve => { finishReview = resolve; }));
+  localStorage.setItem(draftKey, original.draftText);
+  await mount();
+  expect(container.querySelector("header")?.textContent).toContain("running");
+  expect(message().readOnly).toBe(true);
+  expect(container.querySelector('[aria-label="Session storage recovery"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Interrupted execution recovery"]')).toBeNull();
+
+  vi.mocked(api.getSession).mockResolvedValue({ ...session, sourceAdmission: undefined, sourceAdmissionInFlight: undefined });
+  await act(async () => finishReview(null));
+  expect(message().readOnly).toBe(false);
+  expect(message().value).toBe(original.draftText);
+  expect(container.querySelector('[aria-label="Session storage recovery"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Interrupted execution recovery"]')).toBeNull();
+});
+
+it("shows an interrupted run without a recovery button when the provider cannot reconcile it", async () => {
+  session.sourceAdmission = { state: "dispatching", runId: "interrupted-run" };
+  vi.mocked(api.getExecutionRecovery).mockResolvedValue({ recoverable: false, runId: "interrupted-run", generation: "provider", expectedRevision: "1" });
+  await mount();
+  const panel = container.querySelector('[aria-label="Interrupted execution recovery"]');
+  expect(panel?.textContent).toContain("process exit is unconfirmed");
+  expect(panel?.querySelector("button")?.textContent).toBe("Check status");
+  expect(button("Recover stopped execution")).toBeUndefined();
+  expect(container.querySelector('[aria-label="Stop"]')).not.toBeNull();
+});
+
 it("opens source-only recovery and preserves the draft after an explicitly confirmed recovery without sending it", async () => {
   session.sourceAdmission = { state: "preparing", clientRequestId: original.clientRequestId, runId: "interrupted-run" };
   vi.mocked(api.getExecutionRecovery).mockResolvedValue({ sourceOnly: true, recoverable: true, runId: "interrupted-run", generation: "worker", expectedRevision: 1 });
@@ -373,4 +405,113 @@ it("does not let a delayed null-review refresh roll back a newer live status", a
   expect(container.querySelector("header")?.textContent).toContain("running");
   expect(message().value).toBe(original.draftText); expect(message().readOnly).toBe(false);
   expect(api.recoverExecution).not.toHaveBeenCalled(); expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+});
+
+it("shows one current recovery notice, checks the original send without replay and exposes Retry only after the provider fences it", async () => {
+  const providerMessage = "Retained provider state requires recovery.";
+  const stopReason = "Stop was not confirmed. Check status before resuming.";
+  const unconfirmed = "The provider has no record of this send. Retry Stop to prevent the original request from starting.";
+  const queued: queueApi.QueueEntry = { id: "affected-entry", text: "Earlier send", attachments: [], state: "unknown", createdAt: "",
+    attempt: { clientRequestId: original.clientRequestId }, error: { code: "storage_uncertain", message: providerMessage } };
+  session.status = "running";
+  session.sourceAdmission = { state: "dispatching", runId: "unconfirmed-run", clientRequestId: original.clientRequestId };
+  queue = { ...queue, entries: [queued], paused: true, reason: stopReason };
+  vi.mocked(api.getExecutionRecovery).mockRejectedValue(new api.AssistantApiError("storage_uncertain", providerMessage, 503));
+  vi.mocked(api.stopSession).mockRejectedValueOnce(new api.AssistantApiError("storage_uncertain", providerMessage, 503));
+  localStorage.setItem(draftKey, original.draftText);
+  localStorage.setItem(attachmentsKey, JSON.stringify(original.attachments));
+  await mount();
+  const [, emit, , connect] = vi.mocked(api.streamEvents).mock.calls.at(-1)!;
+  await act(async () => {
+    const ts = "2026-11-24T11:59:00Z";
+    emit({ type: "user_message", seq: 1, ts, text: "Historic turn" });
+    emit({ type: "notice", seq: 2, ts, code: "storage_uncertain", message: "Earlier storage incident" });
+    emit({ type: "user_message", seq: 3, ts, text: queued.text, clientRequestId: original.clientRequestId });
+    emit({ type: "notice", seq: 4, ts, code: "storage_uncertain", message: providerMessage });
+    emit({ type: "notice", seq: 5, ts, message: providerMessage });
+    connect?.("connected");
+    container.querySelector<HTMLButtonElement>('button[aria-label="Stop"]')!.click();
+  });
+
+  const noticeRegion = container.querySelector('[aria-label="Session notices"]')!;
+  expect(noticeRegion.querySelectorAll('[data-slot="alert"]')).toHaveLength(1);
+  expect(container.textContent!.split(providerMessage)).toHaveLength(2);
+  expect(container.textContent).toContain("Earlier storage incident");
+  expect(container.textContent).not.toContain(stopReason);
+  expect(container.textContent).not.toContain("Working…");
+  expect(container.querySelector("header")?.textContent).toContain("unknown");
+  expect(button("Retry")).toBeUndefined();
+  expect(button("Recover stopped execution")).toBeUndefined();
+
+  vi.mocked(api.getExecutionRecovery).mockRejectedValue(new api.AssistantApiError("provider_admission_unconfirmed", unconfirmed, 409));
+  const queueReads = vi.mocked(queueApi.getMessageQueue).mock.calls.length;
+  await act(async () => button("Check status").click());
+  expect(noticeRegion.textContent).toContain(unconfirmed);
+  expect(vi.mocked(queueApi.getMessageQueue).mock.calls.length).toBe(queueReads + 1);
+  expect(api.stopSession).toHaveBeenCalledTimes(1);
+  expect(api.recoverExecution).not.toHaveBeenCalled();
+  expect(api.postMessage).not.toHaveBeenCalled();
+  expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+  expect(message().value).toBe(original.draftText);
+  expect(attachment()).not.toBeNull();
+
+  const settled = { ...session, status: "cancelled", sourceAdmission: undefined };
+  queue = { ...queue, revision: 2, reason: "Response stopped. Resume the queue when ready.",
+    entries: [{ ...queued, state: "failed", error: { code: "run_not_admitted", message: "The original send did not run. Retry when ready." } }] };
+  vi.mocked(api.getSession).mockResolvedValue(settled);
+  vi.mocked(api.getExecutionRecovery).mockResolvedValue(null);
+  await act(async () => button("Retry Stop").click());
+  expect(api.stopSession).toHaveBeenCalledTimes(2);
+  expect(noticeRegion.textContent).toBe("");
+  expect(button("Retry")?.disabled).toBe(false);
+  expect(container.textContent).toContain("The original send did not run.");
+  expect(message().readOnly).toBe(false);
+  expect(message().value).toBe(original.draftText);
+  expect(attachment()).not.toBeNull();
+  expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+});
+
+it("clears a standalone Stop warning when a later live session observation confirms cancellation", async () => {
+  session.status = "running";
+  vi.mocked(api.stopSession).mockRejectedValueOnce(new Error("Could not confirm Stop"));
+  await mount();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Stop"]')!.click());
+  expect(container.querySelector('[aria-label="Session recovery"]')?.textContent).toContain("Could not confirm Stop");
+
+  const emit = vi.mocked(api.streamEvents).mock.calls.at(-1)![1];
+  vi.mocked(api.getSession).mockResolvedValue({ ...session, status: "cancelled", lastEventSeq: 1, updatedAt: "2026-11-24T12:00:00Z" });
+  await act(async () => emit({ type: "session_status", status: "cancelled", seq: 1, ts: "2026-11-24T12:00:00Z" }));
+  expect(container.querySelector('[aria-label="Session recovery"]')).toBeNull();
+  expect(container.querySelector("header")?.textContent).toContain("cancelled");
+});
+
+it("restores the Stop notice from the retained session after reload without any queued messages", async () => {
+  session.status = "running";
+  session.stopUnconfirmed = true;
+  localStorage.setItem(draftKey, original.draftText);
+  localStorage.setItem(attachmentsKey, JSON.stringify(original.attachments));
+  await mount();
+  await reload();
+
+  const notice = () => container.querySelector('[aria-label="Session recovery"]');
+  expect(notice()?.textContent).toContain("Stop not confirmed");
+  expect(container.querySelector('[aria-label="Message queue"]')).toBeNull();
+  queue = { ...queue, revision: 1, paused: true, reason: "Stop was not confirmed. Check status before resuming.",
+    entries: [{ id: "queued", text: "Another message", attachments: [], state: "queued", createdAt: "" }] };
+  await act(async () => button("Check status").click());
+  expect(notice()?.textContent).toContain("Waiting for the provider to confirm");
+  expect(button("Resume queue")?.disabled).toBe(true);
+  expect(api.stopSession).not.toHaveBeenCalled();
+  expect(api.recoverExecution).not.toHaveBeenCalled();
+
+  vi.mocked(api.getSession).mockResolvedValue({ ...session, status: "cancelled", stopUnconfirmed: undefined });
+  queue = { ...queue, revision: 2, reason: "Response stopped. Resume the queue when ready." };
+  await act(async () => button("Check status").click());
+  expect(notice()).toBeNull();
+  expect(button("Resume queue")?.disabled).toBe(false);
+  expect(container.querySelector("header")?.textContent).toContain("cancelled");
+  expect(message().value).toBe(original.draftText);
+  expect(attachment()).not.toBeNull();
+  expect(queueApi.commandMessageQueue).not.toHaveBeenCalled();
+  expect(api.postMessage).not.toHaveBeenCalled();
 });

@@ -229,5 +229,5 @@ export function useMessageQueue(session: AssistantSession | null, ready: boolean
     const key = activeScope.current, id = current.current?.id;
     if (key && id) { await loadLocal(key); await flush(key, id); }
   };
-  return { queue, scope, outbox: scope ? outbox.filter(row => row.scope === scope) : [], error, busy, operation, enqueue, perform, retryLocal, recoverLocal, receive, refresh: refreshAll };
+  return { queue, scope, outbox: scope ? outbox.filter(row => row.scope === scope) : [], error, busy, operation, enqueue, perform, retryLocal, recoverLocal, receive, refresh: refreshAll, refreshStatus: refresh };
 }

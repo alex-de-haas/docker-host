@@ -14,6 +14,7 @@ import { ProviderStore, bytesHash, type VerifiedOperation } from "./store.js";
 import { AttachmentStore } from "./attachments.js";
 import { agentRoutes, json } from "./server.js";
 import { projectEvent } from "./projection.js";
+import * as persistence from "./internal/persistence.js";
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
@@ -50,15 +51,100 @@ describe("independent provider admission", () => {
     expect(first.cursor).toBe(f.store.cursor(first.generation, first.lastSequence));
     expect((await f.store.run(runId)).record.events.at(-1)?.data.snapshot).toEqual(first);
   });
+  it("dispatches one committed admission and one Stop while history is unavailable", async () => {
+    const f = await fixture(), id = randomUUID(), command = input("1"), body = JSON.stringify(command);
+    const fault = vi.spyOn(f.store.history, "publish").mockImplementation(() => {
+      throw Object.assign(new Error("synthetic publication failure"), { code: "SQLITE_BUSY" });
+    });
+    const start = await f.controller.startRun(f.sessionId, id, command, body, actor);
+    expect(await f.controller.startRun(f.sessionId, id, command, body, actor)).toEqual(start);
+    expect(f.driver.start).toHaveBeenCalledOnce();
+    const cancel = { requestId: randomUUID(), expectedGeneration: start.generation, expectedRevision: start.revision };
+    await expect(f.controller.cancel(id, cancel, JSON.stringify(cancel), actor)).resolves.toMatchObject({ state: "accepted" });
+    await f.controller.close();
+    expect(f.driver.cancel).toHaveBeenCalledOnce();
+    expect((await f.store.run(id, actor)).record.controls[cancel.requestId]?.receipt.state).toBe("applied");
+    fault.mockRestore();
+    await f.store.retryHistory();
+    const history = f.store.history.page(actor);
+    expect(history.observations.filter(row => row.item.kind === "event" && row.item.event.type === "control.updated")).toHaveLength(2);
+    await f.store.retryHistory();
+    expect(f.store.history.page(actor)).toEqual(history);
+  });
   it("a before-admission cancellation fences a delayed identical start without a native effect", async () => {
     const f = await fixture(), id = randomUUID(), command = input("1"), body = JSON.stringify(command);
     const cancel = { requestId: randomUUID(), fenceIfNotAdmitted: { sessionId: f.sessionId, startDigest: bytesHash(body) } };
     const receipt = await f.controller.cancel(id, cancel, JSON.stringify(cancel), actor);
     expect(receipt.state).toBe("applied");
     const delayed = await f.controller.startRun(f.sessionId, id, command, body, actor);
-    expect(delayed).toMatchObject({ state: "cancelled", stopConfirmed: true }); expect(f.driver.start).not.toHaveBeenCalled();
+    expect(delayed).toMatchObject({ state: "cancelled", stopConfirmed: true,
+      result: { status: "cancelled", error: { code: "run_not_admitted" } } });
+    expect(f.driver.start).not.toHaveBeenCalled();
     expect((await f.store.load(f.sessionId)).session.activeRun).toBeNull();
   });
+  it("isolates an uncertain attempt, counts its slot and reopens only the verified preimage", async () => {
+    const f = await fixture(2), command = input("1"), uncertainRun = randomUUID(), body = JSON.stringify(command);
+    const other = randomUUID(), third = randomUUID();
+    await f.controller.createSession(other, create, JSON.stringify(create), actor);
+    await f.controller.createSession(third, create, JSON.stringify(create), actor);
+    const fault = vi.spyOn(persistence, "durableWriteFile").mockImplementationOnce(async (target, bytes) => {
+      const temp = target + ".failed-test.tmp";
+      await writeFile(temp, bytes);
+      throw new persistence.DurableWriteError(target, Object.assign(new Error("simulated locked target"), { code: "EBUSY" }), temp);
+    });
+    try {
+      await expect(f.controller.startRun(f.sessionId, uncertainRun, command, body, actor)).rejects.toMatchObject({ code: "storage_uncertain" });
+    } finally { fault.mockRestore(); }
+    expect(f.driver.start).not.toHaveBeenCalled();
+    await expect(f.store.run(uncertainRun, actor)).rejects.toMatchObject({ code: "storage_uncertain" });
+    await expect(f.store.run(uncertainRun, { ...actor, userId: "unrelated" })).rejects.toMatchObject({ code: "session_not_found" });
+    await expect(f.store.run(randomUUID(), actor)).rejects.toMatchObject({ code: "run_not_found" });
+
+    const { client, close } = await httpClient(f);
+    const abort = new AbortController();
+    try {
+      const attachment = await client.uploadAttachment(randomUUID(), Buffer.from("An independent attachment"), { mediaType: "text/plain" });
+      const independent: AgentRunInput = { ...command, input: { text: "An independent chat", attachments: [attachment] } };
+      const started = await client.startRun(other, randomUUID(), independent);
+      expect(started.state).toBe("queued");
+      const stream = client.events(started.ref.id, { signal: abort.signal });
+      expect((await stream.next()).value?.event).toMatchObject({ type: "run.updated", data: { snapshot: { ref: started.ref } } });
+      abort.abort();
+      await stream.return(undefined);
+      expect((await f.store.records(true, true)).map(record => record.id)).toEqual(expect.arrayContaining([other, third]));
+      expect((await f.store.records(true, true)).map(record => record.id)).not.toContain(f.sessionId);
+      await expect(f.controller.startRun(third, randomUUID(), command, body, actor)).rejects.toMatchObject({ code: "provider_busy" });
+      const cancel = { requestId: randomUUID(), expectedGeneration: started.generation, expectedRevision: started.revision };
+      await expect(f.controller.cancel(started.ref.id, cancel, JSON.stringify(cancel), actor)).resolves.toMatchObject({ state: "accepted" });
+
+      await f.store.refreshUncertainRun(uncertainRun, { ...actor, userId: "unrelated" });
+      await expect(f.store.run(uncertainRun, actor)).rejects.toMatchObject({ code: "storage_uncertain" });
+      await expect(client.run(uncertainRun)).rejects.toMatchObject({ code: "run_not_found" });
+      const exact = await client.startRun(f.sessionId, uncertainRun, command);
+      expect(exact.state).toBe("queued");
+      expect((await client.startRun(f.sessionId, uncertainRun, command))).toEqual(exact);
+      expect(f.driver.start).toHaveBeenCalledTimes(2);
+    } finally { abort.abort(); await close(); await f.controller.close(); }
+  });
+
+  it("does not reopen a write with a possibly published aggregate until a new store observes it", async () => {
+    const f = await fixture(), command = input("1"), runId = randomUUID(), durableWrite = persistence.durableWriteFile;
+    const fault = vi.spyOn(persistence, "durableWriteFile").mockImplementationOnce(async (target, bytes) => {
+      await durableWrite(target, bytes);
+      throw new persistence.DurableWriteError(target, new Error("simulated directory sync failure"));
+    });
+    try {
+      await expect(f.controller.startRun(f.sessionId, runId, command, JSON.stringify(command), actor)).rejects.toMatchObject({ code: "storage_uncertain" });
+    } finally { fault.mockRestore(); }
+    await f.store.refreshUncertainRun(runId, actor);
+    await expect(f.store.run(runId, actor)).rejects.toMatchObject({ code: "storage_uncertain" });
+    expect(f.driver.start).not.toHaveBeenCalled();
+    const reopened = new ProviderStore(f.store.directory, provider);
+    await reopened.initialize();
+    try { expect((await reopened.run(runId, actor)).record.snapshot.state).toBe("queued"); }
+    finally { reopened.history.close(); }
+  });
+
   it("retains unknown-stop capacity after process restart", async () => {
     const f = await fixture(1), command = input("1"), id = randomUUID(); await f.controller.startRun(f.sessionId, id, command, JSON.stringify(command), actor);
     await f.store.exclusive(async () => { const { session, record } = await f.store.run(id); record.snapshot.state = "unknown"; record.snapshot.phase = "interrupted"; await f.store.save(session); });

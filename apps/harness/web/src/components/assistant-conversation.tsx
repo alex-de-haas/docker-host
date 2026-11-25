@@ -6,7 +6,7 @@ import { observedMcpActivity, type McpActivity } from "@/lib/mcp-activity";
 import { HostyNavigationBoundary } from "@hosty-sdk/app/react";
 import { SessionAgentSettings, type AgentSettingsNotice } from "@/components/session-agent-settings";
 import { SessionAutonomy } from "@/components/session-autonomy";
-import { SessionExecutionRecovery } from "@/components/session-execution-recovery";
+import { recoveryIssue, SessionExecutionRecovery, type RecoveryIssue } from "@/components/session-execution-recovery";
 import { StorageRecoveryNotice } from "@/components/storage-recovery-notice";
 import { SessionExecutionIndicator } from "@/components/session-execution-indicator";
 import { useHostyUi } from "@hosty-sdk/app/ui/react";
@@ -103,6 +103,19 @@ const HISTORY_STORAGE_KEY = "hosty.assistant.history";
 /** An ask is a prompt fragment, not a payload: anything longer is a page dumping itself into the draft. */
 const MAX_ASK_CHARS = 4_000;
 const EMPTY_MCP_ACTIVITY: McpActivity = { total: 0, tools: [] };
+const RECOVERY_NOTICE_CODES = new Set(["storage_uncertain", "storage_unavailable", "provider_admission_unconfirmed", "source_admission_recovery_required"]);
+
+function isProviderRecoveryNotice(event: AssistantEvent) {
+  return event.type === "notice" && (typeof event.code === "string"
+    ? RECOVERY_NOTICE_CODES.has(event.code)
+    : event.message === "Retained provider state requires recovery.");
+}
+
+function isExecutionSettled(record: AssistantSession) {
+  return ["idle", "cancelled", "failed", "abandoned"].includes(record.status)
+    && !record.sourceAdmission && !record.storageRecovery && !record.stopUnconfirmed && !record.providerHistoryContact && !record.workerRun
+    && record.workerRecovery?.state !== "pending";
+}
 
 function HistoryGapMarker({ gap }: { gap: ProviderHistoryGap }) {
   const count = gap.to - gap.from + 1;
@@ -158,6 +171,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [stoppingSession, setStoppingSession] = useState<string | null>(null);
+  const [stopFailure, setStopFailure] = useState<{ sessionId: string; issue: RecoveryIssue }>();
   const sendingRef = useRef(false);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
   const [sendRecoveryBlocked, setSendRecoveryBlocked] = useState(false);
@@ -280,6 +294,15 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const workspaceReadOnly = observedWorkspaceFence || (!observedWorkspaceActive && !!session && fencedWorkspaceSessions.has(session.id));
   const composerHidden = workspaceReadOnly || inventory.loading;
   const storageBlocked = !!session?.storageRecovery || !!session?.sourceAdmission;
+  const storageBlocker = session?.storageRecovery ?? (session?.sourceAdmission && !session.sourceAdmissionInFlight
+    ? { message: "This message's acceptance or execution outcome needs review." } : undefined);
+  const localStopIssue = stopFailure?.sessionId === session?.id ? stopFailure?.issue : undefined;
+  const stopIssue = localStopIssue ?? (session?.stopUnconfirmed ? { message: "Waiting for the provider to confirm that the response stopped." } : undefined);
+  const recoveryVisible = !!storageBlocker || !!stopIssue || session?.workerRecovery?.state === "pending";
+  const observedActivity = !!activity?.activity && connection === "connected" && !storageBlocker
+    && !session?.stopUnconfirmed && session?.workerRecovery?.state !== "pending";
+  const activityUnconfirmed = recoveryVisible && !observedActivity;
+  const displayedStatus = session?.providerHistoryContact || activityUnconfirmed && running ? "unknown" : status;
   const composerBlocked = composerHidden || storageBlocked;
   const composerBlockedRef = useRef(composerBlocked);
   useLayoutEffect(() => { composerBlockedRef.current = composerBlocked; }, [composerBlocked]);
@@ -296,6 +319,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const messageQueue = useMessageQueue(session, ready);
   const { queue: queueSnapshot, scope: queueScope, perform: performQueue, operation: queueOperation } = messageQueue;
   const queueReceive = messageQueue.receive;
+  const refreshQueueStatus = messageQueue.refreshStatus;
   // A new document gets a new view. Reload/duplicated tabs recover a reservation explicitly.
   const [viewId] = useState(() => crypto.randomUUID());
   const [editTransition, setEditTransition] = useState<string | null>(null);
@@ -507,6 +531,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     setContextDetailsOpen(false);
     setSession(record);
     sessionSnapshot.current = record;
+    if (isExecutionSettled(record)) setStopFailure(value => value?.sessionId === record.id ? undefined : value);
     setHistoryGaps(record.providerHistoryGaps ?? []);
     setSubagentSnapshotThrough(record.lastEventSeq ?? 0);
     setHealth(null);
@@ -624,7 +649,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         const unnamedMessage = event.type === "user_message" && !sessionSnapshot.current?.title
           && event.seq > (record.lastEventSeq ?? 0);
         if (settingsPending && (event.type === "user_message" || event.type === "app_context_changed" || liveStatus)
-          || liveStatus && sessionSnapshot.current?.sourceAdmission || unnamedMessage) refreshSettings();
+          || liveStatus && (sessionSnapshot.current?.sourceAdmission || sessionSnapshot.current?.stopUnconfirmed) || unnamedMessage
+          || event.historical !== true && isProviderRecoveryNotice(event)) refreshSettings();
         if (event.type === "user_message") {
           const lock = (current: AssistantSession) => current.id === record.id
             ? { ...current, ...(current.providerLocked !== undefined ? { providerLocked: true } : {}), ...(current.profileLocked !== undefined ? { profileLocked: true } : {}) } : current;
@@ -659,7 +685,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
             updatedAt: activityTime({ updatedAt: event.ts }) > activityTime(item) ? event.ts : item.updatedAt } : item;
           setSessions(current => current.map(applyStatus));
           setSession(current => current ? applyStatus(current) : current);
-          if (sessionSnapshot.current) sessionSnapshot.current = applyStatus(sessionSnapshot.current);
+          if (sessionSnapshot.current) {
+            sessionSnapshot.current = applyStatus(sessionSnapshot.current);
+            if (isExecutionSettled(sessionSnapshot.current)) setStopFailure(issue => issue?.sessionId === record.id ? undefined : issue);
+          }
           if (event.providerHistoryContact) {
             setActivity(null);
             setStreams(emptyTranscriptStreams());
@@ -1083,8 +1112,8 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
 
   // Overlay live status while retaining stream updates for previously selected sessions.
   const listedSessions = useMemo(
-    () => session ? sessions.map(record => record.id === session.id ? { ...record, status, providerHistoryContact: session.providerHistoryContact } : record) : sessions,
-    [sessions, session, status],
+    () => session ? sessions.map(record => record.id === session.id ? { ...record, status: displayedStatus, providerHistoryContact: session.providerHistoryContact } : record) : sessions,
+    [sessions, session, displayedStatus],
   );
 
   const appIconMetadata = useMemo(() => [...new Map([
@@ -1186,21 +1215,40 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     finally { sendingRef.current = false; setSending(false); }
   };
 
+  const refreshExecutionStatus = useCallback(async (id: string, includeQueue = false) => {
+    if (activeSessionId.current !== id) return;
+    await Promise.all([
+      getSession(id).then(current => {
+        if (activeSessionId.current !== id) return;
+        const latest = sessionSnapshot.current;
+        onSessionChange(current);
+        if (latest && (activityTime(current) < activityTime(latest) || (current.lastEventSeq ?? 0) < (latest.lastEventSeq ?? 0))) return;
+        setStatus(current.status);
+        if (isExecutionSettled(current)) setStopFailure(value => value?.sessionId === id ? undefined : value);
+      }),
+      includeQueue ? refreshQueueStatus() : null,
+    ]);
+  }, [onSessionChange, refreshQueueStatus]);
+
   const stop = useCallback(async () => {
     if (!session || !running && !session.sourceAdmission && !session.workerRun || sendingRef.current || providerSavingRef.current || stoppingRef.current) return;
     const id = session.id;
+    const sequence = sessionSnapshot.current?.lastEventSeq ?? 0;
     stoppingRef.current = id;
     setStoppingSession(id);
-    setError(null);
     try {
       await stopSession(id);
+      setStopFailure(value => value?.sessionId === id ? undefined : value);
+      await refreshExecutionStatus(id, true).catch(() => {});
     } catch (cause) {
-      if (activeSessionId.current === id) setError(cause instanceof Error ? cause.message : String(cause));
+      const latest = sessionSnapshot.current;
+      const settled = latest?.id === id && (latest.lastEventSeq ?? 0) > sequence && isExecutionSettled(latest);
+      if (activeSessionId.current === id && !settled) setStopFailure({ sessionId: id, issue: recoveryIssue(cause) });
     } finally {
       stoppingRef.current = null;
       setStoppingSession(null);
     }
-  }, [session, running]);
+  }, [session, running, refreshExecutionStatus]);
 
   useEffect(() => {
     deletedSessionRef.current = (sessionId: string, local: boolean) => {
@@ -1263,7 +1311,15 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const orderedEvents = useMemo(() => orderedHistory(events, historyGaps), [events, historyGaps]);
   const nativeTranscript = useMemo(() => nativeAgentTranscript(orderedEvents, streams.children), [orderedEvents, streams.children]);
   const sessionTranscript = useMemo(() => sessionSubagentTranscript(nativeTranscript.events, session?.subagents, subagentSnapshotThrough), [nativeTranscript.events, session?.subagents, subagentSnapshotThrough]);
-  const items = useMemo(() => transcriptItems(sessionTranscript, attachmentIndex.claimed, decidedApprovals, true), [sessionTranscript, attachmentIndex, decidedApprovals]);
+  const admissionRequestId = session?.sourceAdmission?.clientRequestId;
+  const recoveryCode = localStopIssue?.code ?? session?.storageRecovery?.code;
+  const items = useMemo(() => {
+    const activeTurn = recoveryVisible ? sessionTranscript.findLastIndex(event => event.type === "user_message"
+      && (!admissionRequestId || admissionRequestId === event.clientRequestId)) : -1;
+    const visibleTranscript = activeTurn < 0 ? sessionTranscript : sessionTranscript.filter((event, index) =>
+      index <= activeTurn || !(isProviderRecoveryNotice(event) || recoveryCode && event.type === "notice" && event.code === recoveryCode));
+    return transcriptItems(visibleTranscript, attachmentIndex.claimed, decidedApprovals, true);
+  }, [sessionTranscript, attachmentIndex, decidedApprovals, recoveryVisible, admissionRequestId, recoveryCode]);
   const feedbackTranscript = useFeedbackTranscript(session?.id, events, !historyLoading && !showSessions);
   const mcpActivity = useMemo(() => contextDetailsOpen ? observedMcpActivity(events) : EMPTY_MCP_ACTIVITY, [events, contextDetailsOpen]);
 
@@ -1337,7 +1393,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
               {fullPage ? <>{session && renamingSessionId === session.id ? <SessionTitleInput key={session.id} title={sessionTitle ?? ""} onCommit={async title => { setRenamingSessionId(null); await rename(session.id, title); }} onCancel={() => setRenamingSessionId(null)} /> : <><h1 className="min-w-0 truncate text-sm font-medium">{session ? sessionTitle || "Untitled session" : "New session"}</h1>{session && <Button variant="ghost" size="icon-sm" aria-label="Rename session" onClick={() => setRenamingSessionId(session.id)}><Pencil className="size-3.5" /></Button>}</>}</> : <HostyNavigationBoundary><Sparkles className="h-4 w-4 shrink-0" aria-hidden /><span className="text-sm font-medium">Assistant</span></HostyNavigationBoundary>}
             </div>
             <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
-              {status !== "idle" && <StatusBadge value={session?.providerHistoryContact ? "unknown" : status} />}
+              {status !== "idle" && <StatusBadge value={displayedStatus} />}
               {composerBlocked && (running || stopping || session?.sourceAdmission || session?.workerRun) && <Button type="button" variant="ghost" size="icon-sm" disabled={sending || stopping} onClick={() => void stop()} aria-label="Stop" title="Stop response">
                 {sending || stopping ? <Loader2 className="motion-safe:animate-spin" /> : <Square className="fill-current" />}
               </Button>}
@@ -1393,26 +1449,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       {!fullPage && !showSessions && session && <SessionWorkspaces key={`workspaces-${session.id}`} session={session} running={running} />}
       <div role="region" aria-label="Session notices" tabIndex={0} className="max-h-1/2 shrink-0 overflow-y-auto overscroll-contain empty:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring">
         {error && <div className="shrink-0 px-3 pt-2"><InlineError message={error} /></div>}
-        {storageBlocked && <div className="shrink-0 px-3 pt-2">
-          <Alert aria-label="Session storage recovery" role="status" variant="warning">
-            <TriangleAlert aria-hidden />
-            <AlertTitle>Session needs recovery</AlertTitle>
-            <AlertDescription>
-              <p>{session?.storageRecovery?.message.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 500) || "This message's acceptance or execution outcome needs review."}</p>
-              <p>Your draft is preserved. Sending and queue changes remain blocked until recovery is complete.</p>
-            </AlertDescription>
-          </Alert>
-        </div>}
-        {session && (session.workerRun || session.workerRecovery?.state === "pending" || session.sourceAdmission) && <SessionExecutionRecovery key={session.id}
-          sessionId={session.id} refreshKey={`${session.workerRun?.id ?? session.sourceAdmission?.runId ?? ""}:${session.sourceAdmission?.state ?? ""}:${status}:${error ?? ""}`} onRecovered={async () => {
-            const current = await getSession(session.id);
-            if (activeSessionId.current === session.id) {
-              const latest = sessionSnapshot.current;
-              onSessionChange(current);
-              if (!latest || activityTime(current) >= activityTime(latest) && (current.lastEventSeq ?? 0) >= (latest.lastEventSeq ?? 0)) setStatus(current.status);
-              setError(null);
-            }
-          }} />}
+        {session && (storageBlocker || stopIssue || session.workerRun || session.workerRecovery?.state === "pending" || session.sourceAdmission) && <SessionExecutionRecovery key={session.id}
+          sessionId={session.id} refreshKey={`${session.workerRun?.id ?? session.sourceAdmission?.runId ?? ""}:${session.sourceAdmission?.state ?? ""}:${status}:${localStopIssue?.code ?? stopIssue?.message ?? ""}`}
+          blocker={storageBlocker} stopIssue={stopIssue} stopping={stopping} onRetryStop={stop}
+          onRecovered={includeQueue => refreshExecutionStatus(session.id, includeQueue)} />}
       </div>
 
       {showSessions ? (
@@ -1512,7 +1552,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                         .catch(error => setError(error instanceof Error ? error.message : String(error)))}>Refresh</Button></AlertAction>
                     </Alert>
                   </MessageScrollerItem>}
-                  {!session?.providerHistoryContact && (running || stopping) && connection !== "disconnected" && <MessageScrollerItem messageId="current-activity">
+                  {!session?.providerHistoryContact && !activityUnconfirmed && (running || stopping) && connection !== "disconnected" && <MessageScrollerItem messageId="current-activity">
                     <AssistantActivity status={status} activity={activity?.activity ?? null}
                       connection={connection} stopping={stopping} appNames={appNames} />
                   </MessageScrollerItem>}
@@ -1545,8 +1585,10 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
                 {session.handoffDispatch.state === "queued" && <AlertAction><Button type="button" variant="outline" size="sm" disabled={sending}
                   onClick={() => { setSending(true); void retryHandoff(session.id).then(attach).catch(cause => setError(String(cause))).finally(() => setSending(false)); }}>Retry starting</Button></AlertAction>}
               </Alert>}
-            <MessageQueue queue={queueSnapshot} outbox={messageQueue.outbox} transcriptRequestIds={transcriptRequestIds} busy={messageQueue.busy || storageBlocked} viewId={viewId}
-              editingId={editing?.entryId} error={messageQueue.error} pendingOperation={!!queueOperation}
+            <MessageQueue queue={queueSnapshot} outbox={messageQueue.outbox} transcriptRequestIds={transcriptRequestIds} busy={messageQueue.busy || storageBlocked || !!stopIssue} viewId={viewId}
+              editingId={editing?.entryId} pendingOperation={!!queueOperation}
+              error={messageQueue.error === stopIssue?.message || messageQueue.error === storageBlocker?.message ? null : messageQueue.error}
+              recovery={recoveryVisible ? { requestId: admissionRequestId } : undefined}
               legacySend={pendingSend} legacyBusy={sending} onLegacyRetry={() => void recoverSend()}
               onCommand={command => { if (!composerBlockedRef.current) void performQueue(command).catch(() => {}); }}
               onEdit={(entry, recover) => { void beginQueueEdit(entry, recover); }}

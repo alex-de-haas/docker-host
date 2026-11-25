@@ -141,6 +141,7 @@ export interface SessionRecord {
   providerExecution?: import("../agent-providers/execution.js").ProviderExecutionState;
   providerUploads?: Record<string, string>;
   providerStopProof?: { runId: string; generation: string; revision: string; observedAt: string };
+  providerStopRequestedRunId?: string;
   providerLocked?: boolean;
   title: string | null;
   /**
