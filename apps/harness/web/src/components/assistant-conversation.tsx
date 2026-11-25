@@ -244,7 +244,18 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   }, []);
   const [ready, setReady] = useState(false);
   const inventory = useDevelopmentInventory(ready);
-  useSessionListRefresh(fullPage && ready, sessions, session?.id, setSessions);
+  const acceptSelectedSummary = useCallback((summary: AssistantSession) => {
+    const selected = sessionSnapshot.current;
+    if (!selected || selected.id !== summary.id || (summary.lastEventSeq ?? 0) < (selected.lastEventSeq ?? 0)
+      || activityTime(summary) < activityTime(selected)) return;
+    const next = { ...selected, status: summary.status, providerStatusContact: summary.providerStatusContact,
+      stopUnconfirmed: summary.stopUnconfirmed, sourceAdmission: summary.sourceAdmission,
+      sourceAdmissionInFlight: summary.sourceAdmissionInFlight, updatedAt: summary.updatedAt, lastEventSeq: summary.lastEventSeq };
+    sessionSnapshot.current = next;
+    setSession(next);
+    setStatus(next.status);
+  }, []);
+  useSessionListRefresh(fullPage && ready, sessions, session?.id, setSessions, acceptSelectedSummary);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [workspaceToResolve, setWorkspaceToResolve] = useState<string | null>(null);
   const [workspaceVisible, setWorkspaceVisible] = useState(true);
@@ -678,7 +689,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (event.type === "session_status") {
           // Cancellation closes earlier approval cards, including when replaying a stopped turn.
           if (event.status === "cancelled") setEvents(current => [...current, event]);
-          if (event.historical === true) return;
+          if (event.historical === true || event.seq < (sessionSnapshot.current?.lastEventSeq ?? 0)) return;
           const value = String(event.status ?? "idle");
           if (Array.isArray(event.providerHistoryGaps)) setHistoryGaps(event.providerHistoryGaps as ProviderHistoryGap[]);
           setStatus(value);

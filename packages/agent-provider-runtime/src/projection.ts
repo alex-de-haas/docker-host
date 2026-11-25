@@ -161,6 +161,7 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
 }
 export function projectReceipt(store: ProviderStore, session: SessionRecord, record: RunRecord, receipt: WorkerReceipt): void {
   const snapshot = record.snapshot;
+  const hadUnresolvedAtExit = snapshot.stopConfirmed && snapshot.effects.unresolvedCallIds.length > 0;
   const before = valueHash([snapshot.state, snapshot.phase, snapshot.stopConfirmed, snapshot.pending, snapshot.effects, snapshot.selection, snapshot.agents]);
   record.nativeRevision = receipt.revision; record.nativeGeneration = receipt.generation;
   if (receipt.usage && Number.isSafeInteger(receipt.usage.sequence) && receipt.usage.sequence >= 0 && (!snapshot.executionUsage || BigInt(receipt.usage.sequence) > BigInt(snapshot.executionUsage.sequence))) {
@@ -215,7 +216,7 @@ export function projectReceipt(store: ProviderStore, session: SessionRecord, rec
   }
   projectAppliedDecisionControls(store, record);
   if (before !== valueHash([snapshot.state, snapshot.phase, snapshot.stopConfirmed, snapshot.pending, snapshot.effects, snapshot.selection, snapshot.agents])) {
-    if (receipt.exitConfirmed === true && snapshot.effects.unresolvedCallIds.length)
+    if (!hadUnresolvedAtExit && receipt.exitConfirmed === true && snapshot.effects.unresolvedCallIds.length)
       store.emit(record, "warning", { code: "native_effect_outcomes_unresolved",
         message: `The native process has stopped, but outcomes of ${snapshot.effects.unresolvedCallIds.length} native tool call(s) remain unresolved. The provider retained the unknown outcomes.` });
     store.lifecycle(record);

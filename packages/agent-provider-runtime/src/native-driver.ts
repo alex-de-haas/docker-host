@@ -11,7 +11,7 @@ import type { AgentResponseInput, AgentRunControlInput, AgentPendingDecision, Ag
 import { AgentApiError } from "@hosty-sdk/app/agent";
 import type { DecisionAnswers, DecisionRecord } from "@hosty-sdk/app/decisions";
 import { WorkerEngine } from "./internal/worker/engine.js";
-import { WorkerJournal } from "./internal/worker/journal.js";
+import { WorkerJournal, digest } from "./internal/worker/journal.js";
 import { WorkerApiError, type WorkerRunRequest } from "./internal/worker/contracts.js";
 import { prepareNativeInput, type NativeInputPreparer } from "./engine.js";
 import type { ProviderConnections } from "./internal/connections/registry.js";
@@ -194,8 +194,9 @@ export class NativeExecution implements ExecutionDriver {
     const native = await this.journal.load(id).catch(error => { if (error instanceof WorkerApiError && error.status === 404) return null; throw error; });
     if (native) { await this.synchronize(id); return; }
     await this.store.exclusive(async () => { const { session, record } = await this.store.run(id); if (record.snapshot.stopConfirmed) return;
-      record.snapshot.state = cancelled || record.snapshot.phase === "cancelling" ? "cancelled" : "failed"; record.snapshot.phase = "terminal"; record.snapshot.stopConfirmed = true;
-      record.snapshot.result = { status: cancelled ? "cancelled" : "failed", error: { code: "native_admission_failed", message, retryable: false } };
+      const stopped = cancelled || record.decisionsFenced || record.snapshot.phase === "cancelling";
+      record.snapshot.state = stopped ? "cancelled" : "failed"; record.snapshot.phase = "terminal"; record.snapshot.stopConfirmed = true;
+      record.snapshot.result = stopped ? { status: "cancelled" } : { status: "failed", error: { code: "native_admission_failed", message, retryable: false } };
       if (session.session.activeRun?.id === id) { session.session.activeRun = null; session.session.revision = increment(session.session.revision); }
       this.store.lifecycle(record); this.store.emit(record, "result.available", { result: record.snapshot.result }); await this.store.save(session);
     });
@@ -228,16 +229,8 @@ export class NativeExecution implements ExecutionDriver {
   async cancel(id: string, requestId: string): Promise<void> {
     this.mcp.close(id);
     const native = await this.journal.load(id).catch(error => { if (error instanceof WorkerApiError && error.status === 404) return null; throw error; });
-    if (native) {
-      const receipt = await this.engine.cancel(id, requestId);
-      if (receipt.state === "interrupted" && !receipt.exitConfirmed && !this.engine.ownsExecution(id)) {
-        // Stop can revisit durable proof that was unavailable when the provider reopened the run.
-        try { await this.reconcileOwnedStop(id); }
-        catch (error) {
-          if (!(error instanceof AgentApiError && ["exit_unconfirmed", "effects_unconfirmed"].includes(error.code))) throw error;
-        }
-      }
-    } else await this.failBeforeStart(id, "Cancelled before native admission.", true);
+    if (native) await this.engine.cancel(id, requestId);
+    else await this.failBeforeStart(id, "Cancelled before native admission.", true);
     // A preparing start observes the durable cancelling phase before native admission.
   }
   async respond(id: string, input: AgentResponseInput): Promise<void> {
@@ -333,6 +326,27 @@ export class NativeExecution implements ExecutionDriver {
         await this.journal.update(id, record.decisionsFenced ? "cancelled" : "failed", "The original execution supervisor exited.");
     });
     await this.synchronize(id);
+    const nativeId = native.receipt.snapshot?.nativeSessionId, checkpoint = this.journal.observations(id);
+    const observations = checkpoint?.read() as { items?: unknown[] } | undefined;
+    if (this.ownedAttempt === id && nativeId && checkpoint && observations?.items?.length && this.connections.recoverChildObservations) {
+      // Physical closure was published before reading history. Replay only missing observations;
+      // this read-only provider API cannot start a turn or repeat an external tool.
+      const writes: Promise<unknown>[] = [];
+      await this.connections.recoverChildObservations({ sessionId: record.snapshot.sessionId, nativeId, attemptId: id,
+        checkpoint: { ...checkpoint, flush: async () => { await Promise.all(writes); } },
+        emit: event => {
+          const write = this.journal.exclusive(async () => {
+            const current = await this.journal.load(id);
+            const identity = digest(event);
+            if (!current.events.some(frame => digest(frame.event) === identity)) await this.journal.append(id, event);
+          });
+          writes.push(write);
+          void write.catch(() => {});
+        },
+      }).catch(() => {});
+      await Promise.allSettled(writes);
+      await this.synchronize(id);
+    }
   }
   private async proxyDecision(id: string, event: { approvalId: string; toolName: string; input: unknown }) {
     await this.store.exclusive(async () => { const { session, record } = await this.store.run(id);

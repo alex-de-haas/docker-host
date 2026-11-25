@@ -15,7 +15,7 @@ export function acquireAttemptScope(directory: string, id: string): DatabaseSync
     return db;
   } catch (error) {
     db.close();
-    if ((error as { errcode?: number }).errcode === 5) return undefined;
+    if (((error as { errcode?: number }).errcode ?? 0) % 256 === 5) return undefined;
     throw error;
   }
 }
@@ -38,6 +38,7 @@ export class AttemptSupervisors implements ExecutionDriver {
   private readonly launches = new Map<string, number>();
   private timer?: NodeJS.Timeout;
   private scan?: Promise<void>;
+  private readonly unavailable = new Set<string>();
   private closed = false;
   readonly directory: string;
   constructor(private readonly store: ProviderStore, data: string, private readonly entry = process.env.HOSTY_PROVIDER_ENTRY ?? process.argv[1]!) {
@@ -46,20 +47,42 @@ export class AttemptSupervisors implements ExecutionDriver {
   async initialize(): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     await this.reconcile();
-    this.timer = setInterval(() => { void this.reconcile().catch(() => {}); }, 2000);
+    this.timer = setInterval(() => { void this.reconcile(); }, 2000);
     this.timer.unref();
   }
   private reconcile(): Promise<void> {
     return this.scan ??= (async () => {
-      for (const session of await this.store.recordsDue()) {
+      let sessions;
+      try {
+        sessions = await this.store.recordsDue();
+        this.unavailable.delete("inventory");
+      } catch {
+        this.reportUnavailable("inventory");
+        return;
+      }
+      for (const session of sessions) {
         for (const run of Object.values(session.runs)) if (needsSupervisor(run)) this.wake(run.snapshot.ref.id);
       }
       for (const [id, until] of this.launches) if (until <= Date.now()) this.launches.delete(id);
     })().finally(() => { this.scan = undefined; });
   }
+  private reportUnavailable(id: string): void {
+    if (!this.unavailable.has(id)) {
+      this.unavailable.add(id);
+      console.warn("[agent-provider] supervisor scheduling will retry", { target: id });
+    }
+  }
   private wake(id: string): void {
     if (this.closed || (this.launches.get(id) ?? 0) > Date.now()) return;
-    const available = acquireAttemptScope(this.directory, id);
+    let available;
+    try {
+      available = acquireAttemptScope(this.directory, id);
+      this.unavailable.delete(id);
+    } catch {
+      // The command is committed. Its scope can recover independently of other runs and HTTP.
+      this.reportUnavailable(id);
+      return;
+    }
     if (!available) return;
     available.close();
     this.launches.set(id, Date.now() + 2000);

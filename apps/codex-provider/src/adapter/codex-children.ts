@@ -12,6 +12,8 @@ function assignment(items: Array<Record<string, unknown> | null>): string | unde
   return content.map(object).flatMap(block => block?.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n");
 }
 
+type ChildObservation = { child: string; parent: string; root: string; rootTurn: string; parentTurn: string; turn: number; id: string; kind: string };
+
 export const CODEX_CHILD_METADATA_TIMEOUT_MS = 5_000;
 /** Pinned0.167 typed observations; reading history never starts or resumes a native thread. */
 export class CodexChildren {
@@ -26,7 +28,8 @@ export class CodexChildren {
   private readonly activeAssignments = new Set<string>();
   private assignmentReads = 0;
   private warned = false;
-  private readonly unmatched = new Map<string, { child: string; parent: string; root: string; rootTurn: string; parentTurn: string; turn: number; id: string; kind: string }>();
+  private readonly unmatched = new Map<string, ChildObservation>();
+  private readonly awaitingCommit = new Map<string, ChildObservation>();
   private restored = false;
   constructor(private readonly runId: string, readonly sources: Map<string, HarnessEventSource>,
     private readonly read: (threadId: string) => Promise<unknown>, private readonly emit: (event: HarnessEvent) => void,
@@ -36,6 +39,13 @@ export class CodexChildren {
     if (this.restored) return;
     const saved = object(this.checkpoint?.read());
     if (saved?.attempt === this.runId && Array.isArray(saved.items) && saved.items.length <= 256) {
+      if (Array.isArray(saved.sources) && saved.sources.length <= 256) for (const raw of saved.sources) {
+        const source = object(raw);
+        if (source && identity(source.agentId) && identity(source.parentAgentId) && identity(source.parentToolCallId)
+          && !this.sources.has(source.agentId)) this.sources.set(source.agentId, {
+            agentId: source.agentId, parentAgentId: source.parentAgentId, parentToolCallId: source.parentToolCallId,
+          });
+      }
       for (const entry of saved.items) {
         const e = object(entry);
         if (e && [e.child, e.parent, e.root, e.rootTurn, e.parentTurn, e.id].every(identity)
@@ -49,7 +59,7 @@ export class CodexChildren {
     this.restored = true;
   }
   private savePending(): void {
-    this.checkpoint?.write({ attempt: this.runId, items: [...this.unmatched.values()] });
+    this.checkpoint?.write({ attempt: this.runId, items: [...this.unmatched.values(), ...this.awaitingCommit.values()], sources: [...this.sources.values()].slice(0, 256) });
   }
   correlate(child: string, parent: string, parentTurn: string, turn: number): void {
     this.restore();
@@ -59,7 +69,7 @@ export class CodexChildren {
       if (item.child !== child || item.parent !== parent || item.parentTurn !== parentTurn || item.turn !== turn) continue;
       this.observeItem({ threadId: parent, turnId: parentTurn,
         item: { type: "subAgentActivity", id: item.id, agentThreadId: child, kind: item.kind } }, item.root, item.rootTurn, turn, parentTurn);
-      this.unmatched.delete(key); changed = true;
+      this.unmatched.delete(key); this.awaitingCommit.set(key, item); changed = true;
     }
     if (changed) this.savePending();
   }
@@ -80,7 +90,7 @@ export class CodexChildren {
     if (!source && item.kind !== "started") {
       const key = JSON.stringify([parent, params.turnId, item.id, item.kind, item.agentThreadId]);
       if (this.unmatched.has(key)) return;
-      if (this.unmatched.size >= 256) { this.incomplete("Additional native child observations exceeded the bounded inventory."); return; }
+      if (this.unmatched.size + this.awaitingCommit.size >= 256) { this.incomplete("Additional native child observations exceeded the bounded inventory."); return; }
       this.unmatched.set(key, { parent, parentTurn: params.turnId, child: item.agentThreadId, id: item.id, kind: String(item.kind), root: rootThread, rootTurn, turn });
       this.savePending();
       return;
@@ -221,6 +231,14 @@ export class CodexChildren {
     this.emit({ type: "native_effect", id, state: status === "unknown" ? "unknown" : "settled", source });
   }
 
+  async recover(root: string): Promise<void> {
+    this.restore();
+    // The retained native session binding and exact parent turn constrain every metadata read.
+    for (const [key, fact] of this.unmatched) if (fact.root !== root) this.unmatched.delete(key);
+    for (const turn of [...new Set([...this.unmatched.values()].map(fact => fact.turn))].slice(0, 4))
+      await this.finish(turn);
+  }
+
   async finish(turn: number): Promise<void> {
     this.restore();
     const deadline = Date.now() + CODEX_CHILD_METADATA_TIMEOUT_MS;
@@ -256,6 +274,11 @@ export class CodexChildren {
     if (this.pending.size) this.incomplete("Native child metadata exceeded its bounded observation deadline; coverage is partial.");
     if ([...(this.spawned.get(turn) ?? [])].some(id => !this.verified.get(turn)?.has(id)))
       this.incomplete("An observed native child has no verified completed tool history; coverage is partial.");
+    if (this.awaitingCommit.size && !this.pending.size) {
+      await this.checkpoint?.flush?.();
+      for (const [key, value] of this.awaitingCommit) if (value.turn === turn) this.awaitingCommit.delete(key);
+      this.savePending();
+    }
     this.closedTurns.add(turn);
   }
   private incomplete(message: string): void {

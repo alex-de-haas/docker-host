@@ -42,11 +42,26 @@ export class WorkerJournal {
   constructor(private readonly directory: string, private readonly replayMs = REPLAY_MS, private readonly maxBytes = MAX_EVENT_BYTES, private readonly boundary: "container" | "local" = "local", private readonly databasePath?: string) {}
   private database?: DatabaseSync;
   close(): void { this.database?.close(); this.database = undefined; }
+  static discardPayload(db: DatabaseSync, run: string): void {
+    for (const table of ["native_attempts", "native_observations"]) {
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))
+        db.prepare(`DELETE FROM ${table} WHERE id=?`).run(run);
+    }
+  }
+
   private get db(): DatabaseSync | undefined {
     if (!this.databasePath) return;
     if (!this.database) {
       const database = new DatabaseSync(this.databasePath);
-      database.exec("PRAGMA busy_timeout = 5000; PRAGMA synchronous = FULL; CREATE TABLE IF NOT EXISTS native_attempts (id TEXT PRIMARY KEY, payload TEXT NOT NULL)");
+      database.exec(`PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON;
+        CREATE TABLE IF NOT EXISTS native_attempts (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS native_observations (id TEXT PRIMARY KEY, payload TEXT NOT NULL);`);
+      if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='discarded_deliveries'").get()) {
+        for (const table of ["native_attempts", "native_observations"])
+          database.exec(`CREATE TRIGGER IF NOT EXISTS ${table}_discard_fence BEFORE INSERT ON ${table}
+            WHEN EXISTS(SELECT 1 FROM discarded_deliveries WHERE run=NEW.id)
+            BEGIN SELECT RAISE(ABORT, 'The original attempt was discarded'); END`);
+      }
       this.database = database;
     }
     return this.database;
@@ -54,8 +69,8 @@ export class WorkerJournal {
   observations(id: string): import("../harness/adapter.js").NativeObservationCheckpoint | undefined {
     const db = this.db;
     if (!db) return;
-    db.exec("CREATE TABLE IF NOT EXISTS native_observations (id TEXT PRIMARY KEY, payload TEXT NOT NULL)");
     return {
+      flush: () => this.exclusive(async () => {}),
       read: () => JSON.parse(String(db.prepare("SELECT payload FROM native_observations WHERE id = ?").get(id)?.payload ?? "null")),
       write: value => {
         const data = JSON.stringify(value);

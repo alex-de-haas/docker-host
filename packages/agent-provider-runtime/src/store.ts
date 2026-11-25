@@ -1,3 +1,4 @@
+import { WorkerJournal } from "./internal/worker/journal.js";
 import { sameProvider } from "./provider-ref.js";
 import { needsSupervisor } from "./attempt-supervisor.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -176,7 +177,10 @@ export class ProviderStore {
     const { runs, ...session } = record;
     try {
       this.history.commitSession(record, db => {
-        if (discarded) this.history.discardDelivery(db, record.owner, record.id, discarded.run, discarded.admission, discarded.request);
+        if (discarded) {
+          this.history.discardDelivery(db, record.owner, record.id, discarded.run, discarded.admission, discarded.request);
+          WorkerJournal.discardPayload(db, discarded.run);
+        }
         const existing = db.prepare("SELECT revision FROM execution_sessions WHERE id=?").get(record.id);
         if (Number(existing?.revision ?? 0) !== revision)
           throw new AgentApiError("state_changed", "The retained execution changed. Read its current revision.", 409, true);

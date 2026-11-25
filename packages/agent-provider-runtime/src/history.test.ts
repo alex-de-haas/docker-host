@@ -1,3 +1,4 @@
+import { WorkerJournal } from "./internal/worker/journal.js";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -189,6 +190,10 @@ it("discards only the closed run's public replay and fenced delivery, including 
   store.emit(closed.run, "message.completed", { messageId: "last", text: "private answer" });
   closed.run.snapshot.state = "cancelled"; closed.run.snapshot.phase = "terminal"; closed.run.snapshot.stopConfirmed = true;
   store.lifecycle(closed.run); await store.save(closed.session);
+  const journal = new WorkerJournal(store.directory, undefined, undefined, "local", store.databasePath);
+  const raw = journal.observations(closed.runId)!;
+  raw.write({ retained: "private callback" });
+  expect(raw.read()).toEqual({ retained: "private callback" });
   const stale = await store.load(closed.session.id);
   await expect(controller(store).discardDelivery(closed.runId, request, { ...actor, admissionRef: "other-admission" })).rejects.toMatchObject({ status: 403 });
   const proof = { runId: closed.runId, requestId: request, state: "discarded" };
@@ -201,6 +206,9 @@ it("discards only the closed run's public replay and fenced delivery, including 
   await expect(store.save(stale)).rejects.toMatchObject({ code: "state_changed" });
   expect(next.history.page(alice).observations.map(item => item.runId)).toEqual([other.runId]);
   expect(next.historicalRunIds.has(closed.runId)).toBe(true);
+  expect(raw.read()).toBeNull();
+  expect(() => raw.write({ retained: "late callback" })).toThrow("was discarded");
+  journal.close();
 });
 
 it("retains unacknowledged facts and prunes only the owning installation's acknowledged window", async () => {

@@ -139,7 +139,8 @@ describe("provider-owned accounts and public sessions", () => {
     expect(text).toContain(connection.id); expect(text).not.toContain("synthetic-private"); expect(text).not.toContain("secretKey");
     expect((await request("/api/settings/connections", "POST", { name: "Cross-kind", kind: "codex", auth: "api-key", secret: "synthetic" })).status).toBe(400);
     expect((await request(`/api/settings/connections/${connection.id}`, "PUT", { name: "Stale", expectedRevision: "0" })).status).toBe(409);
-    expect(await readFile(path.join(f.store.directory, (await session(f, connection)).ref.id + ".json"), "utf8")).not.toContain("synthetic-private");
+    await session(f, connection);
+    expect((await readFile(f.store.databasePath)).includes("synthetic-private")).toBe(false);
   });
   it("blocks settings replacement, removal and relogin while a public run owns the selected account", async () => {
     sdk.hold = true;

@@ -25,16 +25,14 @@ export class InstallationHistory {
     closeSync(openSync(file, "a", 0o600));
     this.db = new DatabaseSync(file, { open: false });
     this.withDatabase(() => this.db.exec(`
-      CREATE TABLE IF NOT EXISTS history_scopes (scope TEXT PRIMARY KEY, epoch TEXT NOT NULL, position INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS history_scopes (scope TEXT PRIMARY KEY, epoch TEXT NOT NULL, position INTEGER NOT NULL, marker TEXT NOT NULL DEFAULT '0');
       CREATE TABLE IF NOT EXISTS discarded_deliveries (
         scope TEXT NOT NULL, session TEXT NOT NULL, run TEXT NOT NULL, admission TEXT NOT NULL, request TEXT NOT NULL,
         ordinal INTEGER NOT NULL, PRIMARY KEY(scope,session,run)
       );
+      CREATE INDEX IF NOT EXISTS discarded_delivery_run ON discarded_deliveries(run);
       CREATE TABLE IF NOT EXISTS history_delivery (
         scope TEXT NOT NULL, session TEXT NOT NULL, through INTEGER NOT NULL, PRIMARY KEY(scope,session)
-      );
-      CREATE TABLE IF NOT EXISTS history_commits (
-        scope TEXT NOT NULL, position INTEGER NOT NULL, marker TEXT NOT NULL, PRIMARY KEY(scope,position)
       );
       CREATE TABLE IF NOT EXISTS history_run_gaps (
         scope TEXT NOT NULL, session TEXT NOT NULL, run TEXT NOT NULL, generation TEXT NOT NULL,
@@ -42,7 +40,7 @@ export class InstallationHistory {
       );
       CREATE TABLE IF NOT EXISTS history_facts (
         scope TEXT NOT NULL, position INTEGER NOT NULL, session TEXT NOT NULL, run TEXT NOT NULL,
-        generation TEXT NOT NULL, sequence TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, ordinal INTEGER NOT NULL, state_run_start INTEGER,
+        generation TEXT NOT NULL, sequence TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, ordinal INTEGER NOT NULL, state_run_start INTEGER, marker TEXT NOT NULL,
         PRIMARY KEY(scope,position), UNIQUE(scope,session,run,generation,sequence,kind)
       );
       CREATE TABLE IF NOT EXISTS history_backlog (
@@ -70,12 +68,14 @@ export class InstallationHistory {
   /** An open subscription keeps its live buffer. Idle stores release their SQLite file handles. */
   private withDatabase<T>(action: () => T): T {
     if (this.closed) throw new AgentApiError("history_closed", "Provider history is closed.", 503);
-    if (!this.db.isOpen) {
-      this.db.open();
-      this.db.exec("PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; PRAGMA busy_timeout=4000;");
-    }
-    try { return action(); }
-    finally { if (!this.listeners.size && this.db.isOpen) this.db.close(); }
+    try {
+      if (!this.db.isOpen) {
+        this.db.open();
+        try { this.db.exec("PRAGMA busy_timeout=4000; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON;"); }
+        catch (error) { this.db.close(); throw error; }
+      }
+      return action();
+    } finally { if (!this.listeners.size && this.db.isOpen) this.db.close(); }
   }
   private scope(owner: HistoryOwner) {
     const key = [this.provider.appId, this.provider.installationId, this.provider.key, ownerKey(owner)];
@@ -92,14 +92,14 @@ export class InstallationHistory {
     }
     (run.historyOutbox ??= []).push(item);
   }
-  private boundary(scope: string): { epoch: string; position: number } {
-    let row = this.db.prepare("SELECT epoch,position FROM history_scopes WHERE scope=?").get(scope);
+  private boundary(scope: string): { epoch: string; position: number; marker: string } {
+    let row = this.db.prepare("SELECT epoch,position,marker FROM history_scopes WHERE scope=?").get(scope);
     if (!row) {
       const epoch = randomUUID();
       this.db.prepare("INSERT INTO history_scopes(scope,epoch,position) VALUES(?,?,0)").run(scope, epoch);
-      row = { epoch, position: 0 };
+      row = { epoch, position: 0, marker: "0" };
     }
-    return { epoch: String(row.epoch), position: Number(row.position) };
+    return { epoch: String(row.epoch), position: Number(row.position), marker: String(row.marker) };
   }
   discardedDelivery(owner: HistoryOwner, session: string, run: string) {
     return this.database(db => db.prepare("SELECT admission,request FROM discarded_deliveries WHERE scope=? AND session=? AND run=?")
@@ -172,9 +172,9 @@ export class InstallationHistory {
   }
   private append(scope: string, session: SessionRecord): void {
     let { position } = this.boundary(scope);
-    let firstDurable: number | undefined;
-    const append = this.db.prepare(`INSERT INTO history_facts(scope,position,session,run,generation,sequence,kind,body,ordinal,state_run_start)
-      VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(scope,session,run,generation,sequence,kind) DO NOTHING`);
+    const previous = position, marker = randomUUID();
+    const append = this.db.prepare(`INSERT INTO history_facts(scope,position,session,run,generation,sequence,kind,body,ordinal,state_run_start,marker)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(scope,session,run,generation,sequence,kind) DO NOTHING`);
     const head = this.db.prepare("SELECT MAX(ordinal) AS n FROM history_facts WHERE scope=? AND session=?");
     const retired = this.db.prepare("SELECT MAX(ordinal) AS n FROM discarded_deliveries WHERE scope=? AND session=?");
     let ordinal = Math.max(Number(head.get(scope, session.id)?.n ?? 0), Number(retired.get(scope, session.id)?.n ?? 0));
@@ -191,17 +191,13 @@ export class InstallationHistory {
         runStart ||= position + 1;
         const state = item.kind === "snapshot" || item.event.type === "run.updated";
         if (!append.run(scope, position + 1, session.id, observation.runId, observation.generation,
-          sequenceOf(item), item.kind, body, ordinal + 1, state ? runStart : null).changes) continue;
+          sequenceOf(item), item.kind, body, ordinal + 1, state ? runStart : null, marker).changes) continue;
         ordinal++;
         position++;
-        firstDurable ??= position;
       }
     }
-    if (firstDurable !== undefined) {
-      // An old backup can fork the stream and reuse a position. Every batch gets a fresh marker.
-      this.db.prepare("INSERT INTO history_commits(scope,position,marker) VALUES(?,?,?)").run(scope, firstDurable, randomUUID());
-      this.db.prepare("UPDATE history_scopes SET position=? WHERE scope=?").run(position, scope);
-    }
+    if (previous !== position)
+      this.db.prepare("UPDATE history_scopes SET position=?,marker=? WHERE scope=?").run(position, marker, scope);
   }
   /** Read the public name from the earlier start even when neither the page nor the run snapshot contains it. */
   private readObservation(scope: string, position: number, body: string): HistoryObservation {
@@ -251,8 +247,13 @@ export class InstallationHistory {
   }
   private coordinates(scope: string) {
     const boundary = this.boundary(scope);
-    const marker = this.db.prepare("SELECT marker FROM history_commits WHERE scope=? AND position<=? ORDER BY position DESC LIMIT 1");
-    const cursor = (n: number) => boundary.epoch + "." + n + "." + (marker.get(scope, n)?.marker ?? "0");
+    const marker = this.db.prepare("SELECT marker FROM history_facts WHERE scope=? AND position=?");
+    // The current boundary survives deletion of its last delivery. Older tokens require a retained fact.
+    const cursor = (n: number) => {
+      const value = n === 0 ? "0" : n === boundary.position ? boundary.marker : marker.get(scope, n)?.marker;
+      if (!value) throw new AgentApiError("history_cursor_invalid", "The acknowledged cursor has been reclaimed.", 410);
+      return boundary.epoch + "." + n + "." + value;
+    };
     const position = (value: string | undefined, fallback: number) => {
       if (!value) return fallback;
       const parts = value.split(".");

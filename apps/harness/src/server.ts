@@ -742,7 +742,8 @@ async function route(
 
   if (url.pathname === "/api/sessions" && method === "GET") {
     const records = (await manager.listSessions()).filter(record => record.createdBy === actor.userId)
-      .map(record => ({ ...record, sourceAdmissionInFlight: manager.isSourceAdmissionInFlight(record) || undefined }));
+      .map(record => ({ ...record, sourceAdmissionInFlight: manager.isSourceAdmissionInFlight(record) || undefined,
+        stopUnconfirmed: manager.isProviderStopUnconfirmed(record) || undefined }));
     const roster = records.some(record => record.appIds?.length)
       ? await readContextApps(providers).catch(() => null) : [];
     sendJson(response, 200, { sessions: records.map(record => ({

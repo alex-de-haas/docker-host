@@ -6,19 +6,25 @@ import { activityTime, isWaiting } from "./attention";
 
 /** The selected chat uses SSE; inventory reconciliation also discovers work started elsewhere. */
 export function useSessionListRefresh(enabled: boolean, sessions: AssistantSession[], activeId: string | undefined,
-  setSessions: Dispatch<SetStateAction<AssistantSession[]>>) {
-  const latest = useRef({ sessions, activeId });
-  useEffect(() => { latest.current = { sessions, activeId }; }, [sessions, activeId]);
+  setSessions: Dispatch<SetStateAction<AssistantSession[]>>, acceptSelected: (summary: AssistantSession) => void) {
+  const latest = useRef({ sessions, activeId, acceptSelected });
+  useEffect(() => { latest.current = { sessions, activeId, acceptSelected }; }, [sessions, activeId, acceptSelected]);
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false, pending = false, idleTicks = 0;
     const refresh = async () => {
       if (document.visibilityState !== "visible" || pending) return;
       pending = true; idleTicks = 0;
-      const snapshot = latest.current.sessions;
+      const { sessions: snapshot, activeId: selected } = latest.current;
       try {
         const observed = await listSessions();
-        if (!cancelled) setSessions(current => {
+        if (cancelled) return;
+        const previous = snapshot.find(row => row.id === selected);
+        const summary = observed.find(row => row.id === selected);
+        // A status-only notification may arrive while this list request is in flight.
+        if (summary && selected === latest.current.activeId && latest.current.sessions.find(row => row.id === selected) === previous)
+          latest.current.acceptSelected(summary);
+        setSessions(current => {
           const before = new Map(snapshot.map(row => [row.id, row]));
           const received = new Map(observed.map(row => [row.id, row]));
           // Preserve rows edited while the request was pending, but still reconcile unrelated

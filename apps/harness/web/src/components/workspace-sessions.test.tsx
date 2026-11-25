@@ -317,9 +317,9 @@ it("reflects deletion started elsewhere and freezes controls while the workspace
   expect(button("Open session My chat").disabled).toBe(true);
   expect(button("Session actions for My chat")).toBeUndefined();
 });
-it("offers one Delete confirmation for an own chat with unconfirmed activity", async () => {
+it.each(["running", "waiting", "unknown"])("offers one Delete confirmation for an own %s chat", async status => {
   const space = workspace();
-  space.participation!.sessions[1].status = "unknown";
+  space.participation!.sessions[1].status = status;
   const remove = vi.fn().mockResolvedValue(undefined);
   await act(async () => root.render(<WorkspaceSessions workspace={space} refresh={() => {}} onDelete={remove} />));
   await openSessionMenu("My chat");

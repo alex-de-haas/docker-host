@@ -581,5 +581,8 @@ export abstract class AgentConnections {
 }
 /** The execution runtime depends only on this structural application-owned connection surface. */
 export type ProviderConnections = Pick<AgentConnections, "list" | "binding" | "reserve" | "adapter" | "prepareAdapter" | "models" | "usage" | "shutdown"> & {
+  recoverChildObservations?(input: { sessionId: string; nativeId: string; attemptId: string;
+    checkpoint: import("../harness/adapter.js").NativeObservationCheckpoint;
+    emit(event: import("../harness/adapter.js").HarnessEvent): void }): Promise<void>;
   inspectNativeContext?(sessionId: string, nativeId: string): Promise<"available" | "missing">;
 };

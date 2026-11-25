@@ -47,7 +47,7 @@ export function WorkspaceSessions({ workspace, chats = [], now, sessionId, runni
           <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="size-6 shrink-0 text-muted-foreground" disabled={busy || retry || deletionLocked} aria-label={`Session actions for ${s.title}`}><MoreHorizontal className="size-3.5" aria-hidden /></Button></DropdownMenuTrigger>
           <DropdownMenuContent align="end" onCloseAutoFocus={event => { if (deleting) event.preventDefault(); }}>
             <DropdownMenuItem disabled={busy || retry || deletionLocked || !inactive} onSelect={() => void command("detach", {}, s.sessionId)}>Detach session</DropdownMenuItem>
-            {onDelete && <DropdownMenuItem variant="destructive" disabled={busy || retry || deletionLocked || (!inactive && s.status !== "unknown")} onSelect={() => setDeleting({ sessionId: s.sessionId, title: s.title || "Untitled session" })}>Delete session…</DropdownMenuItem>}
+            {onDelete && <DropdownMenuItem variant="destructive" disabled={busy || retry || deletionLocked} onSelect={() => setDeleting({ sessionId: s.sessionId, title: s.title || "Untitled session" })}>Delete session…</DropdownMenuItem>}
           </DropdownMenuContent>
         </DropdownMenu>}
         {!s.canOpen && <span className="shrink-0 text-muted-foreground">{s.kind === "execution" ? "Agent execution" : "Private chat"}</span>}

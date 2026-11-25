@@ -393,4 +393,32 @@ def check(context):
     final_delete = action(outsider, empty, 'delete-workspace', workspaceId=later_tree['workspaceId'], requestId=str(uuid.uuid4()))
     assert final_delete['state'] == 'removed'
     say('PASS: another operator deletes dirty active source with one request; bulk replay preserves later workspaces; sessionless collection Delete uses the same backend')
+    selected = owner.harness('/sessions', {'title': 'Joint deletion owner'})
+    joint = action(owner, selected, 'prepare', requestId=str(uuid.uuid4()), appId=app, targetBranch='main')
+    joint_route = '/development-workspaces/' + joint['workspaceId']
+    def attach_joint(actor):
+        revision = actor.harness(joint_route + '/participants')['revision']
+        return actor.harness('/workspace-sessions', {'requestId': str(uuid.uuid4()), 'workspaceId': joint['workspaceId'], 'expectedRevision': revision})
+    (pathlib.Path(joint['path'])/'unfinished.txt').write_text('Unfinished selected work.\n')
+    sibling = attach_joint(owner)
+    foreign = attach_joint(member)
+    unselected = owner.harness('/sessions', {'title': 'Sibling outside the joint deletion'})
+    request_id = str(uuid.uuid4())
+    local_sessions = root/'apps'/app/'data'/'execution-v2'/'sessions'
+    assert all((local_sessions/item['id']).is_dir() for item in (selected, sibling))
+    receipt = owner.harness(joint_route + '/delete', {'requestId': request_id, 'removeAttachedSessions': True})
+    assert receipt['requestId'] == request_id and receipt['state'] in ('removed', 'pending')
+    # Drop the original browser after confirmation. Core, Harness, and each owner job finish
+    # the persisted selection before another account checks the resulting inventory.
+    del owner
+    wait_for(lambda: not pathlib.Path(joint['path']).exists() and all(not (local_sessions/item['id']).exists() for item in (selected, sibling)), 90)
+    returned = Browser('activation-fixture@example.test', 'Owner')
+    for item in (selected, sibling):
+        returned.harness('/sessions/' + item['id'], expected=404)
+        status = returned.harness('/sessions/' + item['id'] + '/deletion')
+        assert status['state'] == 'removed' and status['requestId'] == request_id
+    assert member.harness('/sessions/'+foreign['id'])['id'] == foreign['id']
+    assert returned.harness('/sessions/'+unselected['id'])['id'] == unselected['id']
+    assert returned.harness(joint_route + '/delete', {'requestId': request_id, 'removeAttachedSessions': True})['state'] == 'removed'
+    say('PASS: server-owned joint Delete erased its dirty workspace and only the two selected owner chats after the browser disconnected')
     say('Provider prompts were not dispatched; no provider credentials were copied into this sandbox')

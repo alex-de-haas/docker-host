@@ -606,13 +606,16 @@ export class SessionManager {
           resources: await this.providerWorktreeResources(session),
           mcp: currentMcp, limits: { maxDurationMs: 24 * 60 * 60 * 1000 } };
       },
-      unavailable: error => this.serialize(options.sessionId, async () => {
+      unavailable: error => {
+        if (state.runId && !state.run?.stopConfirmed && this.providerStates.get(options.sessionId) === state)
+          return this.updateProviderContact(options.sessionId, "unavailable", state.runId, "providerStatusContact");
+        return this.serialize(options.sessionId, async () => {
         if (session.record.providerRetirement || this.live.get(options.sessionId) !== session || this.providerStates.get(options.sessionId) !== state) return;
         const code = error instanceof AgentApiError || error instanceof AppContextError ? error.code : "provider_observation_unavailable";
         await this.append(options.sessionId, { type: "notice", code,
           message: error instanceof Error ? error.message : "Provider observation is unavailable. Reconnect to reconcile this run." });
-        // Losing observation is not execution failure, cancellation or permission to release a lease.
-      }),
+        });
+      },
     };
   }
 
@@ -3958,6 +3961,7 @@ export class SessionManager {
         await this.store.saveRecord(live.record);
       }));
       this.historyFeeds?.unbind(id);
+      this.providerStates.delete(id);
       if (session) {
         this.live.delete(id);
         // The deletion event has no journal cursor because the journal is gone.
@@ -5317,7 +5321,7 @@ export class SessionManager {
   async shutdown(): Promise<void> {
     this.mcpPolicy.close();
     this.stopping = true;
-    await this.removalPass;
+    await Promise.all([this.removalPass, this.stopRecovery]);
     this.subagents.close();
     // Start the event deadline before native shutdown and final metadata writes. A slow store
     // must not defer the deadline until after its own pending writes have completed.

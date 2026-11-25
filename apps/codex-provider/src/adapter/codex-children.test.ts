@@ -211,3 +211,18 @@ it("recovers the missing start from the exact parent turn before reporting incom
   expect(f.events.filter(event => event.type === "command_result")).toHaveLength(1);
   expect(f.events.filter(event => event.type === "notice")).toEqual([]);
 });
+
+it("hydrates retained child identifiers after physical closure through read-only native history", async () => {
+  let saved: unknown;
+  const checkpoint = { read: () => saved, write: (value: unknown) => { saved = structuredClone(value); } };
+  const events: HarnessEvent[] = [];
+  const read = vi.fn(async (thread: string) => thread === "root-thread"
+    ? { thread: { id: thread, turns: [{ id: "root-turn", items: [activity("started").item] }] } }
+    : history());
+  new CodexChildren("attempt", new Map(), read, () => {}, () => true, undefined, checkpoint)
+    .observe(activity("completed"), "root-thread", "root-turn", 1);
+  await new CodexChildren("attempt", new Map(), read, event => events.push(event), () => true, undefined, checkpoint).recover("root-thread");
+  expect(events.filter(event => event.type === "notice")).toEqual([]);
+  expect(events.filter(event => event.type === "command_result")).toHaveLength(1);
+  expect(saved).toMatchObject({ items: [] });
+});

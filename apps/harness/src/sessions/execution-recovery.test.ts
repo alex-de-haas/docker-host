@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises";
+import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { AgentApiError } from "@hosty-sdk/app/agent";
@@ -299,6 +301,35 @@ it("keeps a confirmed chat hidden across provider loss and Harness restart, then
   expect(f.requests.filter(request => request.path.endsWith("/agent/cleanup/token")).every(request => request.userToken === null)).toBe(true);
   expect(await next.store.readRecord(sibling.id)).not.toBeNull();
   expect(f.starts).toHaveLength(1);
+});
+
+it("erases the local payload and other deliveries before an unavailable original delivery retries after restart", async () => {
+  const f = await fixture();
+  f.complete(f.runId);
+  await vi.waitFor(async () => expect((await f.store.readRecord(f.session.id))?.providerStopProof?.runId).toBe(f.runId));
+  await f.manager.postMessage(f.session.id, "Second immutable input", f.credential);
+  const second = f.starts[1]!.runId, request = randomUUID();
+  const originalDiscard = AgentClient.prototype.discardDelivery;
+  let originalAvailable = false;
+  const discard = vi.spyOn(AgentClient.prototype, "discardDelivery").mockImplementation(function (this: AgentClient, run, id, options) {
+    if (run === f.runId && !originalAvailable) return Promise.reject(new AgentApiError("provider_unavailable", "Original delivery is offline.", 503));
+    return originalDiscard.call(this, run, id, options);
+  });
+  await f.manager.confirmSessionRemoval(f.session.id, f.owner, request, f.credential);
+  await vi.waitFor(() => expect(f.manager.removalStatus(f.session.id, f.owner)).toMatchObject({
+    localErased: true, state: "pending", reason: "provider_unavailable", requestId: request,
+  }));
+  await expect(stat(path.join(f.store.dataDir, "sessions", f.session.id))).rejects.toMatchObject({ code: "ENOENT" });
+  expect(discard.mock.calls.filter(([run]) => run === second)).toHaveLength(1);
+  await f.manager.shutdown();
+  const next = f.makeManager(); originalAvailable = true;
+  await vi.waitFor(() => {
+    next.manager.wakeRemovalCleanup();
+    expect(next.manager.removalStatus(f.session.id, f.owner)?.state).toBe("removed");
+  }, { timeout: 5000 });
+  expect(discard.mock.calls.filter(([run]) => run === second)).toHaveLength(1);
+  expect(discard.mock.calls.every(([, id]) => id === request)).toBe(true);
+  expect(f.starts).toHaveLength(2);
 });
 
 it("removes a confirmed chat after physical Stop with unresolved tool effects and no retirement control", async () => {

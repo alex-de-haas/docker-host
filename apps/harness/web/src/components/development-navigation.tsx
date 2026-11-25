@@ -131,7 +131,7 @@ export function DevelopmentNavigation({ sessions, activeId, workspaces, removals
       </div>
       <div className="relative"><Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" /><Input aria-label={`Search ${title.toLowerCase()}`} placeholder="Search…" className="pl-8" value={query} onChange={event => setQuery(event.target.value)} /></div>
       <div className="flex flex-wrap gap-1" aria-label="Activity filters">{statusFilters.map(({ key, label, Icon, tone }) => {
-        const count = items.filter(item => matchesState(item, key)).length;
+        const count = key === "all" ? items.length : items.reduce((sum, item) => sum + item.counts[key], 0);
         return <Button key={key} size="sm" variant={stateFilter === key ? "secondary" : "ghost"} aria-pressed={stateFilter === key} className="h-7 gap-1 rounded-full px-2 text-xs" onClick={() => setStateFilter(key)}>
           <span aria-hidden="true" className={cn("inline-flex shrink-0", tone, key === "working" && count > 0 && "motion-safe:animate-spin")}><Icon className="size-3.5" /></span>
           {label}<span className="font-mono text-xs font-normal tabular-nums text-muted-foreground">{count}</span>

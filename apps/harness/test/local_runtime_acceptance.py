@@ -155,9 +155,12 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
     workspaces = '/development-workspaces/' + tree['workspaceId']
     tree_route = workspaces + '/worktrees/' + tree['id']
     original_leases = set(owner.harness(tree_route)['leases'])
-    participant = owner.harness(workspaces + '/participants')
-    owner.harness(route + '/workspaces', {'action': 'attach', 'workspaceId': tree['workspaceId'],
-        'expectedRevision': participant['revision'], 'requestId': str(uuid.uuid4())})
+    connection = next(row for row in owner.harness('/connections')['connections'] if row['id'] == connection_id)
+    workspace_writer = 'scope.workspace-writers' in connection['capabilities']
+    if workspace_writer:
+        participant = owner.harness(workspaces + '/participants')
+        owner.harness(route + '/workspaces', {'action': 'attach', 'workspaceId': tree['workspaceId'],
+            'expectedRevision': participant['revision'], 'requestId': str(uuid.uuid4())})
     sentinel = pathlib.Path(tree['path']).resolve()/'retirement-fixture.txt'
     assert sentinel.is_relative_to(context['root'].resolve()) and sentinel.read_text() == 'Preserve this uncommitted work.'
 
@@ -206,7 +209,8 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
         received = stored['runs'][run['ref']['id']]['input']
         assert received['input']['text'] == text
         if record['id'] == chat['id']:
-            assert any(item['kind'] == 'worktree' and item['id'] == tree['id'] for item in received['resources'])
+            linked = [item for item in received.get('resources', []) if item['kind'] == 'worktree']
+            assert [item['id'] for item in linked] == ([tree['id']] if workspace_writer else [])
         return run, stored, received
 
     def choice(options, item, mode, model):
