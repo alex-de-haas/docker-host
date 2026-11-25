@@ -47,10 +47,10 @@ async function useCached(data, entry, execute) {
   return executable;
 }
 
-async function acquireBuildLock(db) {
+async function execWithLockRetry(db, sql) {
   const deadline = Date.now() + compilerTimeout + 3 * probeTimeout;
   for (;;) {
-    try { db.exec('BEGIN IMMEDIATE'); return; }
+    try { db.exec(sql); return; }
     catch (error) {
       const code = Number(error.errcode) & 255;
       if (code !== 5 && code !== 6) throw error;
@@ -74,8 +74,7 @@ export async function prepareWindowsJob(data, source = fileURLToPath(new URL('./
   const db = new DatabaseSync(index);
   let staging;
   try {
-    db.exec('PRAGMA busy_timeout=0; PRAGMA synchronous=FULL');
-    await acquireBuildLock(db);
+    await execWithLockRetry(db, 'PRAGMA busy_timeout=0; PRAGMA synchronous=FULL; BEGIN IMMEDIATE');
     db.exec('CREATE TABLE IF NOT EXISTS helpers (source TEXT PRIMARY KEY, directory TEXT NOT NULL, binary TEXT NOT NULL)');
     const cached = await useCached(data, db.prepare('SELECT directory,binary FROM helpers WHERE source=?').get(key), execute);
     if (cached) return cached;
@@ -102,7 +101,9 @@ export async function prepareWindowsJob(data, source = fileURLToPath(new URL('./
     await checkVersion(executable, execute);
     await unlink(path.join(candidate, 'job.cs'));
     db.prepare('INSERT OR REPLACE INTO helpers(source,directory,binary) VALUES(?,?,?)').run(key, directory, digest);
-    db.exec('COMMIT');
+    // In rollback journal mode a reader can hold a shared lock after BEGIN IMMEDIATE.
+    // A busy COMMIT leaves this transaction open, including its already verified binary.
+    await execWithLockRetry(db, 'COMMIT');
     staging = undefined;
     return executable;
   } finally {

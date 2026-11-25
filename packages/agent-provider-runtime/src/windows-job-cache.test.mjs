@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -106,9 +107,30 @@ it('publishes only one binary across independent provider processes', async () =
     'console.log(await prepareWindowsJob(data, source, { systemRoot, execute }));',
   ].join('\n'));
   const args = [module, cacheModule, data, source, systemRoot];
-  const processes = await Promise.all([run(process.execPath, args), run(process.execPath, args)]);
-  expect(processes[0].stdout.trim()).toBe(processes[1].stdout.trim());
+  const processes = await Promise.all(Array.from({ length: 4 }, () => run(process.execPath, args)));
+  expect(new Set(processes.map(result => result.stdout.trim())).size).toBe(1);
   expect(await readFile(path.join(data, 'compilations'), 'utf8')).toBe('1');
+});
+
+it('finishes publishing a verified binary after a concurrent SQLite reader releases its snapshot', async () => {
+  await installCompiler();
+  const fake = toolchain();
+  const reader = new DatabaseSync(path.join(data, '.windows-job-cache.sqlite'));
+  let release;
+  try {
+    reader.exec('CREATE TABLE fixture(id INTEGER)');
+    const executable = await prepareWindowsJob(data, source, { systemRoot, execute: async (file, args, options) => {
+      const result = await fake.execute(file, args, options);
+      if (args[0] === '--version') {
+        reader.exec('BEGIN; SELECT id FROM fixture');
+        release = delay(150).then(() => reader.exec('COMMIT'));
+      }
+      return result;
+    } });
+    expect(fake.compiles).toHaveLength(1);
+    expect(await prepareWindowsJob(data, source, { systemRoot, execute: fake.execute })).toBe(executable);
+    expect(fake.compiles).toHaveLength(1);
+  } finally { await release; reader.close(); }
 });
 
 it('rebuilt and requalified generations leave older executables and unrelated inputs intact', async () => {
