@@ -23,7 +23,7 @@ internal sealed record CoreAgentInvocation(int Version, string UserId, string Ho
 internal sealed record CoreAgentAuthorization(string Id, CoreCallerAuthority Origin, string UserId, string PrincipalId,
     string CallerAppId, DateTimeOffset CallerInstallation, string? CallerRevision,
     CoreAgentAuthorizeRequest Request, string? ProviderRevision, DateTimeOffset ExpiresAt, bool Admitted = false,
-    CoreAgentLease[]? Leases = null, CoreAgentTaskAuthority? Authority = null, bool WorkspaceLeasesClosed = false, string? Generation = null, string? ImplementationIncarnation = null, int ProtocolVersion = 1, string? GrantEpoch = null);
+    CoreAgentLease[]? Leases = null, CoreAgentTaskAuthority? Authority = null, bool WorkspaceLeasesClosed = false, string? Generation = null, string? ImplementationIncarnation = null, int ProtocolVersion = 1, string? GrantEpoch = null, bool WriterScopeClosed = false);
 internal sealed record CoreAgentLease(string WorkspaceId, string WorktreeId, string SessionId, string LeaseId, string? RequestId = null, bool Released = false, long? Revision = null);
 
 // Only authorization metadata is retained. Prompts, native histories and bearer secrets never enter this store.

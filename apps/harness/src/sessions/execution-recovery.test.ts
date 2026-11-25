@@ -151,6 +151,38 @@ it("settles a lost decision response from the original receipt after a consumer 
   expect(f.requests.slice(requests).every(r => !r.userToken)).toBe(true);
 });
 
+it.each([false, true])("projects each superseded decision before root closure through history=%s", async installationHistory => {
+  const f = await fixture(undefined, installationHistory);
+  const approval = { id: "permission", revision: "1", kind: "approval" as const, delivery: "continue_run" as const,
+    toolName: "Bash", source: { agentId: "root" } };
+  const question = { id: "question", revision: "1", kind: "question" as const, delivery: "continue_run" as const,
+    questions: [{ id: "item", text: "Continue?", allowText: true }], source: { agentId: "root" } };
+  f.runs.get(f.runId)!.pending = [approval, question];
+  for (const decision of [approval, question]) f.emit(f.runId, "decision.requested", { decisionId: decision.id, decision });
+
+  const replay = () => f.store.readEvents(f.session.id);
+  const original = await vi.waitFor(async () => {
+    const events = await replay();
+    const prompt = events.find(event => event.type === "approval_request");
+    const ask = events.find(event => event.type === "question_request");
+    expect(prompt).toBeDefined(); expect(ask).toBeDefined();
+    return { approvalId: prompt!.approvalId, questionId: ask!.questionId };
+  });
+  f.runs.get(f.runId)!.pending = [];
+  for (const decision of [approval, question]) f.emit(f.runId, "decision.resolved", {
+    decisionId: decision.id, decision, state: "superseded",
+  });
+  await vi.waitFor(async () => {
+    const events = await replay();
+    expect(events.filter(event => event.type === "approval_decision")).toMatchObject([
+      { approvalId: original.approvalId, decision: "cancelled" },
+    ]);
+    expect(events.filter(event => event.type === "question_cancelled")).toMatchObject([{ questionId: original.questionId }]);
+    expect(events.some(event => event.type === "session_status" && event.status === "cancelled")).toBe(false);
+  });
+  expect(f.snapshot(f.runId).stopConfirmed).toBe(false);
+});
+
 it("keeps an unadmitted send uncertain until the same Stop request durably fences it", async () => {
   const f = await publicProviderFixture(); fixtures.push(f);
   const session = await f.manager.createSession({ createdBy: f.owner }), requestId = randomUUID();
@@ -391,7 +423,33 @@ it("erases the local payload and other deliveries before an unavailable original
   expect(f.starts).toHaveLength(2);
 });
 
-it("removes a confirmed chat after physical Stop with unresolved tool effects and no retirement control", async () => {
+it("continues an ordinary chat after agent Stop and records later writer closure against only the original attempt", async () => {
+  const f = await fixture(undefined, true);
+  f.update(f.runId, { writerScopeClosed: false });
+  await vi.waitFor(async () => expect((await f.store.readProviderExecution(f.session.id))?.run?.writerScopeClosed).toBe(false));
+  const firstObservation = (await f.manager.getSession(f.session.id))!.agentRunId!;
+  const observed = (id: string) => f.manager.observations.change(state => state.runs.find(run => run.id === id));
+  expect(await observed(firstObservation)).toMatchObject({ stopConfirmed: false, writerScopeClosed: false });
+
+  f.behavior.cancel = "unresolved";
+  expect(await f.manager.cancelSession(f.session.id, f.credential)).toBe(true);
+  expect(await observed(firstObservation)).toMatchObject({ stopConfirmed: true, writerScopeClosed: false });
+  expect(f.manager.isProviderStopUnconfirmed((await f.manager.getSession(f.session.id))!)).toBe(false);
+  await expect(f.manager.postMessage(f.session.id, "Ordinary follow-up", f.credential, [], {
+    actorUserId: f.owner, clientRequestId: randomUUID(),
+  })).resolves.toMatchObject({ state: "accepted" });
+  const second = f.starts.at(-1)!;
+  expect(second.runId).not.toBe(f.runId);
+  expect(second.sessionId).toBe(f.starts[0]!.sessionId);
+  await vi.waitFor(async () => expect((await f.manager.getSession(f.session.id))?.agentRunId).not.toBe(firstObservation));
+
+  f.update(f.runId, { writerScopeClosed: true });
+  await vi.waitFor(async () => expect((await observed(firstObservation))?.writerScopeClosed).toBe(true));
+  const secondObservation = (await f.manager.getSession(f.session.id))!.agentRunId!;
+  expect((await observed(secondObservation))?.writerScopeClosed).toBeUndefined();
+});
+
+it("removes a confirmed chat after agent Stop with unresolved tool effects and no retirement control", async () => {
   const f = await fixture();
   f.capabilities.capabilities = f.capabilities.capabilities.filter(value => value !== "runs.retire");
   f.behavior.cancel = "unresolved";

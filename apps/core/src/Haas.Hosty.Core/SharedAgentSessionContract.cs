@@ -18,7 +18,8 @@ public record HostyNativeSessionRef(HostyProviderRef Provider, string Id);
 public record HostyRunRef(HostyProviderRef Provider, string Id);
 /// <summary>A bounded execution observation; terminal state never implies confirmed process exit.</summary>
 public record HostyAgentRun(HostyRunRef Ref, string Revision, string State, DateTimeOffset ObservedAt,
-    string Freshness, bool StopConfirmed, HostyNativeSessionRef? NativeSession = null, HostyConversationRef? Conversation = null);
+    string Freshness, bool StopConfirmed, HostyNativeSessionRef? NativeSession = null, HostyConversationRef? Conversation = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? WriterScopeClosed = null);
 /// <summary>Public execution metadata, excluding native state, credentials and conversation content.</summary>
 public record HostyAgentSession(HostyNativeSessionRef Ref, string Revision, HostyRunRef[] ActiveRuns,
     string[] Capabilities, HostyConversationRef? Conversation = null);

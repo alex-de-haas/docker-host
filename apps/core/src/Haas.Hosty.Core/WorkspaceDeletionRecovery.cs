@@ -87,7 +87,19 @@ internal sealed partial class WorkspaceCleanupService
 
 internal sealed partial class CoreAgentAuthorizationStore
 {
-    internal async Task<WorkspaceWriterStop[]> WorkspaceWritersAsync(DevelopmentWorkspace[] trees, CancellationToken ct)
+    // A workspace administrator can retire an activity marker. The admitted writer still
+    // owns its separate cleanup obligation against this immutable worktree allocation.
+    internal static bool HasWriterClaim(CoreAgentAuthorization admission, DevelopmentWorkspace[] trees, string? leaseId = null)
+    {
+        return admission.Leases?.Any(lease => !lease.Released && lease.SessionId == admission.Request.SessionId
+            && (leaseId is null || lease.LeaseId == leaseId) && trees.Any(tree => lease.WorktreeId.Length > 0
+                ? lease.WorkspaceId == tree.WorkspaceId && lease.WorktreeId == tree.Id
+                : tree.LeaseClaims?.Any(claim => claim.Id == lease.LeaseId && claim.Session.UserId == admission.UserId
+                    && claim.Session.AppId == admission.Request.Provider.AppId && claim.Session.SessionId == lease.SessionId
+                    && claim.Session.Installation.ToString("O") == admission.Request.Provider.InstallationId) == true)) == true;
+    }
+
+    internal async Task<WorkspaceWriterStop[]> WorkspaceWritersAsync(DevelopmentWorkspace[] trees, CancellationToken ct, WorkspaceLeaseClaim? selectedClaim = null)
     {
         var directory = Path.Combine(paths.CoreRoot, "agent-authorizations");
         if (!Directory.Exists(directory)) return [];
@@ -96,11 +108,10 @@ internal sealed partial class CoreAgentAuthorizationStore
         {
             ct.ThrowIfCancellationRequested();
             var a = await JsonStorage.ReadAsync<CoreAgentAuthorization>(path, ct);
-            if (a?.Request is not { Operation: "runs.start", RunId: { } run, SessionId: { } session } request) continue;
-            if (a.Leases?.Any(l => !l.Released && l.SessionId == session && trees.Any(t =>
-                (l.WorktreeId.Length == 0 || l.WorktreeId == t.Id) && (t.LeaseClaims ?? []).Any(c => c.Id == l.LeaseId &&
-                    c.Session.AppId == request.Provider.AppId && c.Session.UserId == a.UserId && c.Session.SessionId == session &&
-                    c.Session.Installation.ToString("O") == request.Provider.InstallationId))) == true)
+            if (a?.Request is not { Operation: "runs.start", RunId: { } run, SessionId: not null } request) continue;
+            if (selectedClaim is not null && (selectedClaim.Session.UserId != a.UserId || selectedClaim.Session.SessionId != request.SessionId
+                || selectedClaim.Session.AppId != request.Provider.AppId || selectedClaim.Session.Installation.ToString("O") != request.Provider.InstallationId)) continue;
+            if (HasWriterClaim(a, trees, selectedClaim?.Id))
                 writers.Add(new(a.CallerAppId, a.CallerInstallation, request.Provider, a.Id, run));
         }
         return writers.ToArray();

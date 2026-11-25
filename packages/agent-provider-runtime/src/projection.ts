@@ -194,13 +194,15 @@ export function projectReceipt(store: ProviderStore, session: SessionRecord, rec
   const snapshot = record.snapshot;
   const closedState = snapshot.stopConfirmed && snapshot.phase === "terminal" ? snapshot.state : undefined;
   const hadUnresolvedAtExit = snapshot.stopConfirmed && snapshot.effects.unresolvedCallIds.length > 0;
-  const before = valueHash([snapshot.state, snapshot.phase, snapshot.stopConfirmed, snapshot.pending, snapshot.effects, snapshot.selection, snapshot.agents]);
+  const before = valueHash([snapshot.state, snapshot.phase, snapshot.stopConfirmed, snapshot.writerScopeClosed, snapshot.pending, snapshot.effects, snapshot.selection, snapshot.agents]);
   record.nativeRevision = receipt.revision; record.nativeGeneration = receipt.generation;
   if (receipt.usage && Number.isSafeInteger(receipt.usage.sequence) && receipt.usage.sequence >= 0 && (!snapshot.executionUsage || BigInt(receipt.usage.sequence) > BigInt(snapshot.executionUsage.sequence))) {
     snapshot.executionUsage = { sequence: String(receipt.usage.sequence), activeMs: receipt.usage.activeMs, unknown: receipt.usage.unknown };
     store.emit(record, "usage.updated", { execution: structuredClone(snapshot.executionUsage) });
   }
   snapshot.stopConfirmed = receipt.exitConfirmed === true;
+  if (receipt.writerScopeClosed !== undefined && snapshot.writerScopeClosed !== true)
+    snapshot.writerScopeClosed = receipt.writerScopeClosed;
   snapshot.state = ({ accepted: "queued", running: "running", awaiting_input: "waiting_for_input", suggesting: "running", parking: "waiting_for_input", parked: "waiting_for_input", cancelling: "running", completed: snapshot.result?.status === "failed" ? "failed" : "succeeded", failed: "failed", cancelled: "cancelled", interrupted: "unknown" } as const)[receipt.state];
   snapshot.phase = ({ accepted: "preparing", running: "executing", awaiting_input: "waiting", suggesting: "finalizing", parking: "waiting", parked: "parked", cancelling: "cancelling", completed: "terminal", failed: "terminal", cancelled: "terminal", interrupted: "interrupted" } as const)[receipt.state];
   snapshot.freshness = receipt.state === "interrupted" ? "last_known" : "current";
@@ -219,8 +221,9 @@ export function projectReceipt(store: ProviderStore, session: SessionRecord, rec
     for (const agent of snapshot.agents ?? []) {
       const state = ["queued", "running", "waiting_for_input"].includes(agent.state) && receipt.state !== "parked"
         ? "unknown" : agent.state;
-      if (agent.stopConfirmed === true && agent.state === state) continue;
-      agent.stopConfirmed = true; agent.state = state;
+      const stopConfirmed = agent.stopConfirmed === true || snapshot.writerScopeClosed === true;
+      if (agent.stopConfirmed === stopConfirmed && agent.state === state) continue;
+      agent.stopConfirmed = stopConfirmed; agent.state = state;
       const source = { agentId: agent.agentId, ...(agent.parentAgentId ? { parentAgentId: agent.parentAgentId } : {}),
         ...(agent.parentToolCallId ? { parentToolCallId: agent.parentToolCallId } : {}) };
       store.emit(record, "agent.updated", { agent: structuredClone(agent) }, source);
@@ -247,7 +250,7 @@ export function projectReceipt(store: ProviderStore, session: SessionRecord, rec
     record.completedAt ??= new Date().toISOString();
   }
   projectAppliedDecisionControls(store, record);
-  if (before !== valueHash([snapshot.state, snapshot.phase, snapshot.stopConfirmed, snapshot.pending, snapshot.effects, snapshot.selection, snapshot.agents])) {
+  if (before !== valueHash([snapshot.state, snapshot.phase, snapshot.stopConfirmed, snapshot.writerScopeClosed, snapshot.pending, snapshot.effects, snapshot.selection, snapshot.agents])) {
     if (!hadUnresolvedAtExit && receipt.exitConfirmed === true && snapshot.effects.unresolvedCallIds.length)
       store.emit(record, "warning", { code: "native_effect_outcomes_unresolved",
         message: `The native process has stopped, but outcomes of ${snapshot.effects.unresolvedCallIds.length} native tool call(s) remain unresolved. The provider retained the unknown outcomes.` });

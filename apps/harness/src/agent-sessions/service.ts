@@ -34,6 +34,7 @@ export class AgentSessionService {
     return { ref: { provider: this.provider, id: value.id }, revision: value.revision,
       state: !current && ["running", "waiting_for_input", "queued"].includes(value.state) ? "unknown" : value.state,
       observedAt: current ? new Date().toISOString() : value.observedAt, freshness: current ? "current" : "last_known", stopConfirmed: value.stopConfirmed,
+      ...(value.writerScopeClosed !== undefined && { writerScopeClosed: value.writerScopeClosed }),
       nativeSession: value.nativeSession ? { provider: this.provider, id: value.nativeSession } : null,
       conversation: value.conversation && !this.manager.removalStatus(value.conversation, value.owner) ? { provider: this.provider, id: value.conversation } : null };
   }

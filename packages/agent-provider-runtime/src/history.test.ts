@@ -210,9 +210,14 @@ it("discards only the closed run's public replay and fenced delivery, including 
   const request = randomUUID();
   await expect(controller(store).discardDelivery(closed.runId, request, { ...actor, cleanupOnly: false })).rejects.toMatchObject({ status: 403 });
   await expect(controller(store).discardDelivery(closed.runId, request, actor)).rejects.toMatchObject({ code: "discard_pending" });
+  closed.run.input = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start", input: { text: "No initial worktree" } };
   store.emit(closed.run, "message.completed", { messageId: "last", text: "private answer" });
   closed.run.snapshot.state = "cancelled"; closed.run.snapshot.phase = "terminal"; closed.run.snapshot.stopConfirmed = true;
   store.lifecycle(closed.run); await store.save(closed.session);
+  // An admitted native tool can acquire a workspace even without an initial resource.
+  await expect(controller(store).discardDelivery(closed.runId, request, actor)).rejects.toMatchObject({ code: "discard_pending" });
+  closed.run.workspaceRelease = { requestId: randomUUID(), state: "released" };
+  await store.save(closed.session);
   const journal = new WorkerJournal(store.directory, undefined, undefined, "local", store.databasePath);
   const raw = journal.observations(closed.runId)!;
   raw.write({ retained: "private callback" });

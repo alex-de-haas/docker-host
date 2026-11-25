@@ -2,6 +2,7 @@ import { it, expect, vi } from 'vitest';
 import { build } from 'esbuild';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtemp, mkdir, writeFile, copyFile, rm, realpath } from 'node:fs/promises';
@@ -75,6 +76,7 @@ it('stops the original native attempt after an HTTP restart with a full delivery
   const sessionId = randomUUID(), runId = randomUUID(), stopId = randomUUID();
   const provider = { appId, installationId, key: 'default' };
   let activeRun = runId, activeStop = stopId;
+  const siblingSession = randomUUID(), siblingRun = randomUUID(), siblingStop = randomUUID();
   let chats = 0, stopped = 0, releases = 0, admitted = 0, service;
   const peers = createServer(async (request, response) => {
     if (request.url === '/api/chat') {
@@ -90,7 +92,7 @@ it('stops the original native attempt after an HTTP restart with a full delivery
       expiresAt: new Date(Date.now() + 60000).toISOString(), acknowledge: true,
     };
     else if (request.url.endsWith('/introspect')) result = {
-      provider, operation: input.operation, sessionId, runId: input.path?.match(/\/runs\/([^/]+)/)?.[1] ?? runId,
+      provider, operation: input.operation, sessionId: input.path?.match(/\/sessions\/([^/]+)/)?.[1] ?? sessionId, runId: input.path?.match(/\/runs\/([^/]+)/)?.[1] ?? runId,
       principalId: 'principal', userId: 'user', callerAppId: 'test.consumer', callerInstallation: 'consumer-installation', admissionRef: 'admission',
     };
     else if (request.url.endsWith('/admit')) {
@@ -153,7 +155,7 @@ it('stops the original native attempt after an HTTP restart with a full delivery
     await call('sessions/'+sessionId, { configuration: { connection: { id:account, revision:'1' }, nativeTools:'none' } });
     if (!(await call('capabilities')).capabilities.includes('scope.workspace-writers')) {
       await expect(call('sessions/'+sessionId+'/runs/'+runId, { expectedSessionRevision:'1', configurationRevision:'1', continuation:'start',
-        resources:[{ kind:'worktree', id:randomUUID(), revision:'1' }], input:{ text:'Needs a writer.' } })).rejects.toThrow('unsupported_capability');
+        requiredCapabilities:['scope.workspace-writers'], resources:[{ kind:'worktree', id:randomUUID(), revision:'1' }], input:{ text:'Needs exclusive writer containment.' } })).rejects.toThrow('unsupported_capability');
       expect(admitted).toBe(0);
     }
     const first = await call('sessions/'+sessionId+'/runs/'+runId, { expectedSessionRevision:'1',configurationRevision:'1',continuation:'start',input:{ text:'Please wait.' } });
@@ -179,14 +181,35 @@ it('stops the original native attempt after an HTTP restart with a full delivery
     await replayAndAcknowledge({ url: origin + '/api/agent/v2/history/events', token: 'fixture', provider }, sessionId, expectedHash);
     await call(nextRoute, next);
     await vi.waitFor(() => expect(chats).toBe(2), { timeout: 10000 });
-    await call('runs/' + activeRun + '/stop', { requestId: activeStop });
+    await call('sessions/' + siblingSession, { configuration: { connection: { id: account, revision: '1' }, nativeTools: 'none' } });
+    await call('sessions/' + siblingSession + '/runs/' + siblingRun, {
+      expectedSessionRevision: '1', configurationRevision: '1', continuation: 'start', input: { text: 'Independent stream.' },
+    });
+    await vi.waitFor(() => expect(chats).toBe(3), { timeout: 10000 });
+    const stopRoute = 'runs/' + activeRun + '/stop', stopBody = { requestId: activeStop };
+    const db = new DatabaseSync(path.join(data, 'agent-sessions', 'execution-v2.sqlite'));
+    try {
+      // Fail only the target command transaction. The other stream and independent
+      // observer remain live. provider.test.ts separately induces SQLite's real FULL code.
+      db.exec("CREATE TRIGGER blocked_stop BEFORE UPDATE ON execution_runs WHEN NEW.id='" + activeRun
+        + "' AND json_extract(NEW.body,'$.controls.\"" + activeStop + "\"') IS NOT NULL BEGIN SELECT RAISE(ABORT,'injected write failure'); END");
+      await expect(call(stopRoute, stopBody)).rejects.toThrow('storage_unavailable');
+      await vi.waitFor(() => expect(stopped).toBe(2), { timeout: 10000 });
+      expect(await call('runs/' + siblingRun)).toMatchObject({ state: 'running', stopConfirmed: false });
+      await expect(call('runs/' + activeRun + '/controls/' + activeStop)).rejects.toThrow('control_not_found');
+    } finally { db.exec('DROP TRIGGER IF EXISTS blocked_stop'); db.close(); }
+    await call(stopRoute, stopBody);
     await vi.waitFor(async () => {
-      expect(await call('runs/' + activeRun)).toMatchObject({ state: 'cancelled', stopConfirmed: true });
-      expect(stopped).toBe(2); expect(releases).toBe(2);
+      expect(await call(stopRoute, stopBody)).toMatchObject({ state: 'applied' });
+      expect((await call('runs/' + activeRun)).stopConfirmed).toBe(true);
     }, { timeout: 10000 });
+    await call('runs/' + siblingRun + '/stop', { requestId: siblingStop });
+    await vi.waitFor(() => { expect(stopped).toBe(3); expect(releases).toBe(3); });
+    expect(chats).toBe(3);
   } finally {
     if (service?.exitCode === null && service.signalCode === null && chats > stopped) {
-      await call('runs/'+activeRun+'/stop', { requestId:activeStop }).catch(() => {});
+      await Promise.allSettled([call('runs/'+activeRun+'/stop', { requestId:activeStop }),
+        call('runs/'+siblingRun+'/stop', { requestId:siblingStop })]);
       await vi.waitFor(() => expect(stopped).toBe(chats), { timeout:4000 }).catch(() => {});
     }
     await killService(); peers.closeAllConnections(); await new Promise(resolve => peers.close(resolve));

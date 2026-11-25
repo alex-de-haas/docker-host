@@ -5125,6 +5125,9 @@
           "stopConfirmed": {
             "type": "boolean"
           },
+          "writerScopeClosed": {
+            "type": "boolean"
+          },
           "freshness": {
             "enum": [
               "current",
@@ -5989,6 +5992,9 @@
             ]
           },
           "stopConfirmed": {
+            "type": "boolean"
+          },
+          "writerScopeClosed": {
             "type": "boolean"
           },
           "pendingContinuations": {

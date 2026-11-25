@@ -39,6 +39,7 @@ function fixture(initial: Partial<ProviderExecutionState> = {}) {
   } satisfies ProviderExecutionPersistence;
   const watch: AgentWatchItem[] = [];
   const client = {
+    capabilities: vi.fn(async (): Promise<{ capabilities: string[] }> => ({ capabilities: [] })),
     execute: vi.fn(async (_request: AgentPreparedRequest): Promise<unknown> => snapshot()),
     run: vi.fn(async () => snapshot()),
     control: vi.fn(async (_runId: string, requestId: string) => receipt(requestId, "unknown")),
@@ -149,6 +150,20 @@ describe("public provider execution durability", () => {
     expect(f.durable().run?.ref.id).toBe(runId);
     expect(pending(f.state)).toEqual([]);
     expect(f.client.execute).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [["workspace.edit"], "workspace.edit"],
+    [["workspace.edit", "scope.workspace-writers"], "workspace.edit"],
+    [["scope.workspace-writers"], "scope.workspace-writers"],
+  ] as const)("selects an advertised worktree capability from %j", async (capabilities, selected) => {
+    const f = fixture();
+    f.client.capabilities.mockResolvedValue({ capabilities: [...capabilities] });
+    const original = { ...input(), resources: [{ kind: "worktree", id: "tree", revision: "1" }] };
+    await f.execution.start(runId, original);
+    expect(JSON.parse(f.client.execute.mock.calls[0]![0].body)).toMatchObject({
+      resources: original.resources, requiredCapabilities: [selected],
+    });
   });
 
   it("refuses to bind a new turn to an unconfirmed configuration revision", async () => {

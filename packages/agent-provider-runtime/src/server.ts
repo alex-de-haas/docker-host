@@ -55,8 +55,8 @@ export function agentRoutes(controller: ProviderController, attachments: Attachm
       case "runs.discard": result = await controller.discardDelivery(parsed.runId!, parsed.input.requestId, actor); break;
       case "runs.closure": {
         const { record: { snapshot } } = await controller.store.run(parsed.runId!, actor);
-        const { ref, sessionId, generation, revision, state, phase, stopConfirmed, pendingContinuations } = snapshot;
-        result = { ref, sessionId, generation, revision, state, phase, stopConfirmed, pendingContinuations };
+        const { ref, sessionId, generation, revision, state, phase, stopConfirmed, writerScopeClosed, pendingContinuations } = snapshot;
+        result = { ref, sessionId, generation, revision, state, phase, stopConfirmed, writerScopeClosed, pendingContinuations };
         break;
       }
       case "runs.read":

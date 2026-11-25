@@ -69,13 +69,19 @@ internal sealed partial class CoreAgentExecution
         var revision = tree is null ? (long?)null : (await workspaces.ParticipationAsync(tree.WorkspaceId, record.UserId, ct)).Revision;
         await store.RecordLease(record.Id, new(tree?.WorkspaceId ?? "", tree?.Id ?? "", actor.SessionId, leaseId, requestId, Revision: revision), ct);
     }
-    private async Task<CoreAgentWorkspaceResult> ReleaseAll(AppRecord provider, CoreAgentAuthorization record, string? requestId, CancellationToken ct)
+    private async Task<CoreAgentWorkspaceResult> ReleaseAll(AppRecord provider, CoreAgentAuthorization record, CoreAgentWorkspaceInput input, CancellationToken ct)
     {
-        if (!Guid.TryParse(requestId, out _) || record.Request.SessionId is not { } sessionId) throw Invalid("Use a stable cleanup UUID and admitted session.");
+        if (!Guid.TryParse(input.RequestId, out _) || record.Request.SessionId is not { } sessionId) throw Invalid("Use a stable cleanup UUID and admitted session.");
         var actor = new WorkspaceOwner(provider.Id, provider.InstalledAt, record.UserId, sessionId);
-        // Once cleanup is admitted, cancellation must not reopen acquisition after restart.
-        if (!record.WorkspaceLeasesClosed)
-            record = await store.Change(record.Id, current => current with { WorkspaceLeasesClosed = true }, CancellationToken.None);
+        if (record.Generation is not null && input.Generation != record.Generation)
+            throw new CoreProviderException("execution_conflict", "Workspace cleanup belongs to another execution generation.", 409);
+        var proved = input.WriterScopeClosed == true && record.Generation is not null;
+        // Fencing further acquisition and retiring activity claims are independent of the
+        // optional proof that the native writer scope is empty. A later proof only strengthens it.
+        if (!record.WorkspaceLeasesClosed || proved && !record.WriterScopeClosed)
+            record = await store.Change(record.Id, current => current with {
+                WorkspaceLeasesClosed = true, WriterScopeClosed = current.WriterScopeClosed || proved
+            }, CancellationToken.None);
         foreach (var lease in record.Leases ?? [])
         {
             if (lease.Released) continue;

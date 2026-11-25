@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { AgentClient, readAgentHistoryPage, readAgentHistoryRange, readAgentHistoryStates, watchAgentHistory, watchLiveAgentHistory, parseAgentSse, prepareAgentCancel, prepareAgentControl, prepareAgentRun, prepareAgentSessionCreate } from "./agent-client.js";
 import { AGENT_CAPABILITIES, AgentApiError, type AgentAttachmentChunk, type AgentEvent, type AgentRunInput, type AgentRunSnapshot, type AgentSession } from "./agent.js";
-import { agentReplayCursor, encodeAgentSseEvent, validateAgentAttachmentChunk, validateAgentConfiguration, validateAgentEvent, validateAgentRequest, validateAgentResponseInput, validateAgentRunSnapshot } from "./agent-server.js";
+import { agentReplayCursor, encodeAgentSseEvent, validateAgentAttachmentChunk, validateAgentConfiguration, validateAgentEvent, validateAgentRequest, validateAgentResponseInput, validateAgentRunClosure, validateAgentRunSnapshot } from "./agent-server.js";
 import { AGENT_EVENT_SCHEMA, AGENT_OPENAPI } from "./agent-schemas.js";
 
 const provider = { appId: "org.example.unrelated-provider", installationId: "installation-1", key: "execution" };
@@ -113,6 +113,13 @@ describe("agent operation transport", () => {
     const another = new AgentClient({ provider, authorize: async () => authorization(), fetch: vi.fn().mockResolvedValue(Response.json({ ...session(), ref: { provider, id: "another-session" } })) });
     await expect(another.createSession(sessionId, { configuration })).rejects.toMatchObject({ code: "response_invalid" });
     expect(() => validateAgentRunSnapshot({ ...snapshot(), state: "succeeded", stopConfirmed: false })).toThrow();
+    for (const validate of [validateAgentRunClosure, validateAgentRunSnapshot]) {
+      expect(() => validate({ ...snapshot(), writerScopeClosed: true })).toThrow();
+      expect(() => validate({ ...snapshot(), writerScopeClosed: "yes" })).toThrow();
+      expect(() => validate({ ...snapshot(), writerScopeClosed: false })).not.toThrow();
+      expect(() => validate({ ...snapshot("2", true) })).not.toThrow();
+      expect(() => validate({ ...snapshot("2", true), writerScopeClosed: true })).not.toThrow();
+    }
   });
   it("accepts opaque model catalog content revisions while bounding malformed revisions", async () => {
     const catalog = { revision: hash("native catalog"), models: [{ id: "local:model", reasoningEfforts: [], defaultReasoningEffort: null }], defaultModel: "local:model", nextCursor: null };

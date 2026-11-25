@@ -8,7 +8,7 @@ export type Revision = string;
 export type AgentSession = { ref: NativeSessionRef; revision: Revision; activeRuns: RunRef[]; capabilities: string[]; conversation?: ConversationRef | null };
 export type AgentRun = {
   ref: RunRef; revision: Revision; state: "queued" | "running" | "waiting_for_input" | "succeeded" | "failed" | "cancelled" | "unknown";
-  observedAt: string; freshness: "current" | "last_known" | "unavailable"; stopConfirmed: boolean;
+  observedAt: string; freshness: "current" | "last_known" | "unavailable"; stopConfirmed: boolean; writerScopeClosed?: boolean;
   nativeSession?: NativeSessionRef | null; conversation?: ConversationRef | null;
 };
 export type AgentSessionPage = { sessions: AgentSession[]; nextCursor: string | null; availability: "available" | "partial" | "unavailable"; observedAt: string };

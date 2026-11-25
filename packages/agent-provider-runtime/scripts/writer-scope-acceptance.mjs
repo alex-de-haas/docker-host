@@ -26,7 +26,7 @@ try {
   const {probeWriterScope, TrackedNativeProcesses} = await import(pathToFileURL(entry).href);
   const scope = await probeWriterScope(temp, message => console.error(message));
   if (format === 'unavailable') {
-    assert.equal(scope, undefined, 'This host must refuse unrestricted worktree writers.');
+    assert.equal(scope, undefined, 'This host must not advertise verified closure of detached workspace writers.');
   } else {
     assert.ok(scope,'The native writer boundary is unavailable on this runner.');
     if (scope.kind === 'windows-job') {
@@ -56,6 +56,31 @@ try {
         assert.equal((await unit.stop()).stopped, true);
       } finally { await unit.stop(); }
     }
+    // A qualified scope also runs ordinary successful turns. Exercise the shipped bridge and
+    // retain primary exit, complete output and verified exclusive release independently.
+    const outputRun = randomUUID(), outputGeneration = randomUUID();
+    const outputUnit = await TrackedNativeProcesses.create(temp, outputRun, outputGeneration, scope);
+    try {
+      const expected = Buffer.from('agent🙂'.repeat(32768));
+      const child = outputUnit.transport.spawn(process.execPath, ['-e', "process.stdout.write('agent🙂'.repeat(32768))"], { cwd: temp, env: process.env });
+      const chunks = [];
+      child.stdout.on('data', chunk => chunks.push(chunk));
+      child.stderr.pipe(process.stderr);
+      child.stdin.end();
+      const [code] = await once(child, 'close', { signal: AbortSignal.timeout(45000) });
+      assert.equal(code, 0, 'A successful native command must exit successfully after its output drains.');
+      assert.ok(Buffer.concat(chunks).equals(expected), 'The native bridge lost or duplicated output before closure.');
+      const directory = path.join(temp, 'native-processes', outputRun, outputGeneration);
+      const manifest = JSON.parse(await readFile(path.join(directory, 'manifest.json'), 'utf8'));
+      assert.equal(manifest.targets.length, 1);
+      const [nonce] = manifest.targets;
+      const receipt = JSON.parse(await readFile(path.join(directory, nonce + '.json.target'), 'utf8'));
+      assert.deepEqual([receipt.runId, receipt.generation, receipt.nonce, receipt.targetExited, receipt.code],
+        [outputRun, outputGeneration, nonce, true, 0], 'Native primary exit lost its identity or result.');
+      await outputUnit.confirmSdkStop();
+      const proof = await outputUnit.stop();
+      assert.equal(proof.writerScopeClosed, true, 'Exclusive reuse needs a separate scope receipt.');
+    } finally { await outputUnit.stop(); }
     const descendant = "const db=new (require('node:sqlite').DatabaseSync)(process.argv[1]);db.exec('BEGIN EXCLUSIVE; CREATE TABLE held(id)');require('node:fs').writeFileSync(process.argv[2], 'running');setInterval(()=>{},1000)";
     const parent = "require('node:child_process').spawn(process.execPath,['-e',process.argv[1],process.argv[2],process.argv[3]],{detached:true,stdio:'ignore'});setInterval(()=>{},1000)";
     const fixture = path.join(temp,'owner.mjs');

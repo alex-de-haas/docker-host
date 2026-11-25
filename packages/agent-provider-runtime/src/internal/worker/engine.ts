@@ -25,6 +25,7 @@ export class WorkerEngine {
   private readonly healthyClosing = new Set<string>();
   private readonly failureFinalizations = new Map<string, Promise<void>>();
   private readonly queuedEvents = new Map<string, Set<{ event: HarnessEvent; consumed: boolean }>>();
+  private readonly drainingTerminals = new Set<string>();
   private starts = new Set<Promise<void>>();
   private closing = false;
   private usagePersistenceFailed = false;
@@ -117,6 +118,7 @@ export class WorkerEngine {
     const admittedBeforeClose = !this.closing, queued = { event, consumed: false };
     const pending = this.queuedEvents.get(id) ?? new Set();
     pending.add(queued); this.queuedEvents.set(id, pending);
+    let lateTerminal = false;
     try {
       await this.journal.exclusive(async () => {
         pending.delete(queued); if (!pending.size && this.queuedEvents.get(id) === pending) this.queuedEvents.delete(id);
@@ -131,8 +133,15 @@ export class WorkerEngine {
           return;
         }
         if (this.closing && !admittedBeforeClose) return;
-        const state = (await this.journal.load(id)).receipt.state;
-        if (terminal(state)) return;
+        const current = await this.journal.load(id);
+        const state = current.receipt.state;
+        if (terminal(state)) {
+          if (state === "cancelled" && this.drainingTerminals.has(id)) {
+            lateTerminal = true;
+            await this.drainCompletionTerminals(id, current, [queued]);
+          }
+          return;
+        }
         const active = this.active.get(id);
         const source = readHarnessEventSource(event.source);
         if (source && source.agentId !== "root") {
@@ -166,12 +175,13 @@ export class WorkerEngine {
           return;
         }
         if (event.type === "result" || event.type === "error") {
-          await this.stopNative(id);
+          await this.stopNative(id, state === "cancelling");
           await this.journal.update(id, state === "cancelling" ? "cancelled" : event.type === "error" ? "failed" : "completed");
           this.admitted.delete(id);
         }
       });
     } catch (error) {
+      if (lateTerminal) { this.drainingTerminals.delete(id); throw error; }
       const message = error instanceof WorkerApiError && error.code === "event_limit"
         ? "The native output retention limit was reached. Earlier recorded output was preserved. Additional native output could not be recorded."
         : "Worker could not persist or finalize provider output. Execution may require recovery.";
@@ -179,23 +189,33 @@ export class WorkerEngine {
     }
     finally { pending.delete(queued); if (!pending.size && this.queuedEvents.get(id) === pending) this.queuedEvents.delete(id); }
   }
-  private async stopNative(id: string): Promise<void> {
+  private async stopNative(id: string, cancelling = false): Promise<void> {
     const active = this.active.get(id);
     if (!active) return;
     clearTimeout(active.collecting);
     const beforeStop = await this.journal.load(id);
     if (active.run.stopAndWait) {
-      await active.run.stopAndWait();
+      if (cancelling) await this.stopForCancellation(id, active.run);
+      else await active.run.stopAndWait();
       await this.drainCompletionTerminals(id, beforeStop);
     } else await active.run.stop();
     active.release(); this.active.delete(id); this.disabledSuggestions.delete(id);
   }
-  /** Called under the journal lock after confirmed stop, before publishing the final receipt. */
-  private async drainCompletionTerminals(id: string, beforeStop: Awaited<ReturnType<WorkerJournal["load"]>>): Promise<void> {
+  private async stopForCancellation(id: string, run: HarnessRun): Promise<void> {
+    if (!run.stopForCancellation) { await run.stopAndWait!(); return; }
+    const { drained } = await run.stopForCancellation();
+    if (this.drainingTerminals.has(id)) return;
+    this.drainingTerminals.add(id);
+    // The adapter emits its observations before drain completes. Close the window after all
+    // their queued journal handlers can validate the exact original attempt and calls.
+    void drained.catch(() => {}).then(() => this.journal.exclusive(async () => { this.drainingTerminals.delete(id); })).catch(() => {});
+  }
+  /** Accept only correlated observations while finalizing the same native attempt. */
+  private async drainCompletionTerminals(id: string, beforeStop: Awaited<ReturnType<WorkerJournal["load"]>>,
+    queued = [...this.queuedEvents.get(id) ?? []]): Promise<void> {
     // Native cleanup can emit callbacks while its caller owns the journal lock. Consume only
     // already registered terminal facts here; their queued handlers subsequently become no-ops.
     // Snapshot the queue at stop completion so a later callback cannot reopen a closed execution.
-    const queued = [...this.queuedEvents.get(id) ?? []];
     const effects = new Map(Object.entries(beforeStop.receipt.effects ?? {})), effectSources = new Map<string, string>();
     const calls = new Set<string>(), outcomes = new Map<string, string>(), agents = new Map<string, string | undefined>();
     const sourceKey = (source: HarnessEvent["source"]) => JSON.stringify([source?.agentId ?? "root", source?.parentAgentId ?? null, source?.parentToolCallId ?? null]);
@@ -441,7 +461,7 @@ export class WorkerEngine {
           await active.run.stop();
           throw new WorkerApiError(503, "exit_unconfirmed", "Best-effort Stop cannot confirm native execution exit.");
         }
-        await active.run.stopAndWait();
+        await this.stopForCancellation(id, active.run);
         await this.journal.exclusive(async () => {
           const current = (await this.journal.load(id)).receipt;
           if (!terminal(current.state) || current.state === "interrupted" && !current.exitConfirmed) await this.journal.update(id, "cancelled");

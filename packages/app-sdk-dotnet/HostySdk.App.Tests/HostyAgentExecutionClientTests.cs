@@ -9,6 +9,22 @@ namespace HostySdk.App.Tests;
 
 public sealed class HostyAgentExecutionClientTests
 {
+    [Theory]
+    [InlineData(false, null)]
+    [InlineData(false, false)]
+    [InlineData(true, null)]
+    [InlineData(true, true)]
+    public void StopAndWriterClosureAreSeparateEvidence(bool stopped, bool? closed)
+    {
+        var provider = new HostyProviderRef("test.provider", "installation", "native");
+        var observed = new HostyAgentClosure(new(provider, "run"), "session", Guid.NewGuid().ToString(), "1",
+            stopped ? "cancelled" : "running", stopped ? "terminal" : "executing", stopped, WriterScopeClosed: closed);
+        Assert.Equal(observed, JsonSerializer.Deserialize<HostyAgentClosure>(JsonSerializer.Serialize(observed)));
+        var invalid = observed with { StopConfirmed = false, WriterScopeClosed = true };
+        Assert.Equal("provider_response_invalid", Assert.Throws<HostyProviderException>(() =>
+            JsonSerializer.Deserialize<HostyAgentClosure>(JsonSerializer.Serialize(invalid))).Code);
+    }
+
     [Fact]
     public async Task StopIsRevisionIndependentAndDiscardRequiresTheExactReceipt()
     {

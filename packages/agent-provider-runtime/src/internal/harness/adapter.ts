@@ -203,6 +203,8 @@ export interface HarnessRun {
   stop(): Promise<void>;
   /** Confirm native execution exit before a queued ordinary-runtime transition releases source. */
   stopAndWait?(): Promise<void>;
+  /** Confirm the root of an explicit Stop while still draining known observations. */
+  stopForCancellation?(): Promise<{ drained: Promise<void> }>;
   /** Stop observing a remote run without cancelling it. */
   detach?(): Promise<void>;
 }

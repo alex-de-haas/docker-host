@@ -74,6 +74,7 @@ public static class HostyNativeJob
         [DataMember] public string nonce;
         [DataMember] public string state;
         [DataMember] public bool treeStopped;
+        [DataMember] public bool targetExited;
         [DataMember] public uint activeProcesses;
         [DataMember] public bool knownHandlesClosed;
         [DataMember] public int writerPid;
@@ -265,7 +266,7 @@ public static class HostyNativeJob
         if (state == WaitTimeout) return false;
         throw Failure("Native member exit observation failed.");
     }
-    static bool TerminateAndWait(IntPtr job, IntPtr primary) {
+    static bool TerminateAndWait(IntPtr job, IntPtr primary, Action observeTarget = null) {
         // The caller holds the admission guard, so an empty job cannot acquire a new root.
         if ((primary == IntPtr.Zero || Exited(primary)) && ActiveProcesses(job) == 0) return true;
         var handles = CaptureMembers(job); if (primary != IntPtr.Zero) handles.Add(primary);
@@ -273,6 +274,7 @@ public static class HostyNativeJob
             if (!TerminateJobObject(job, 137)) throw Failure("Native job termination failed.");
             var timeout = Stopwatch.StartNew();
             while (timeout.ElapsedMilliseconds < 5000) {
+                if (observeTarget != null) observeTarget();
                 bool exited = true;
                 foreach (IntPtr handle in handles) if (!Exited(handle)) exited = false;
                 if (exited && ActiveProcesses(job) == 0) return true; Thread.Sleep(25);
@@ -308,9 +310,9 @@ public static class HostyNativeJob
         try { return new FileStream(handle, guard ? FileAccess.ReadWrite : FileAccess.Write); }
         catch { handle.Dispose(); throw; }
     }
-    static void Persist(Configuration config, bool stopped, uint pid, int code) {
-        var receipt = new Receipt { runId = config.runId, generation = config.generation, nonce = config.nonce, state = stopped ? "stopped" : "unknown", treeStopped = stopped, activeProcesses = stopped ? 0u : UInt32.MaxValue, knownHandlesClosed = stopped, writerPid = Process.GetCurrentProcess().Id, nativePid = pid, code = code, observedAt = DateTime.UtcNow.ToString("o") };
-        string destination = EvidencePath(config.file);
+    static void Persist(Configuration config, bool stopped, uint pid, int code, bool targetOnly = false) {
+        var receipt = new Receipt { runId = config.runId, generation = config.generation, nonce = config.nonce, state = stopped ? "stopped" : "unknown", treeStopped = stopped, targetExited = targetOnly || stopped, activeProcesses = stopped ? 0u : UInt32.MaxValue, knownHandlesClosed = stopped, writerPid = Process.GetCurrentProcess().Id, nativePid = pid, code = code, observedAt = DateTime.UtcNow.ToString("o") };
+        string destination = EvidencePath(targetOnly ? config.file + ".target" : config.file);
         string temporary = destination.Substring(0, destination.LastIndexOf('\\') + 1) + Guid.NewGuid().ToString("N") + ".tmp";
         using (var file = EvidenceFile(temporary, false)) {
             byte[] bytes = Utf8.GetBytes(Encode(receipt)); file.Write(bytes, 0, bytes.Length); file.Flush(true);
@@ -378,7 +380,18 @@ public static class HostyNativeJob
             }
             finally {
                 if (job != IntPtr.Zero) {
-                    try { stopped = TerminateAndWait(job, process.Process); }
+                    bool targetRecorded = false;
+                    Action noteTarget = delegate {
+                        if (targetRecorded || process.Process == IntPtr.Zero || !Exited(process.Process)) return;
+                        targetRecorded = true;
+                        try {
+                            uint nativeExitCode;
+                            int targetCode = GetExitCodeProcess(process.Process, out nativeExitCode) ? unchecked((int)nativeExitCode) : code;
+                            Persist(config, false, process.ProcessId, targetCode, true);
+                            writer.WriteLine(Encode(new Message { type = "target-exited", nonce = nonce, nativePid = process.ProcessId, code = targetCode }));
+                        } catch (Exception error) { ReportFailure("persist-target-receipt", error); }
+                    };
+                    try { noteTarget(); stopped = TerminateAndWait(job, process.Process, noteTarget); }
                     catch (Exception error) { ReportFailure("verify-closure", error); }
                 }
                 if (config != null) {

@@ -254,6 +254,7 @@ export function validateAgentRunClosure(value: unknown): asserts value is import
   if (!object(value)) responseProblem("Missing execution closure.");
   qualified(value.ref);
   if (!opaque(value.sessionId) || !uuid(value.generation) || !decimal(value.revision, true) || typeof value.stopConfirmed !== "boolean"
+    || value.writerScopeClosed !== undefined && (typeof value.writerScopeClosed !== "boolean" || value.writerScopeClosed && !value.stopConfirmed)
     || !["queued", "running", "waiting_for_input", "succeeded", "failed", "cancelled", "unknown"].includes(String(value.state))
     || !["preparing", "executing", "waiting", "finalizing", "cancelling", "parked", "interrupted", "terminal"].includes(String(value.phase))
     || ["succeeded", "failed", "cancelled"].includes(String(value.state)) && !value.stopConfirmed) responseProblem("Invalid execution closure.");
@@ -272,7 +273,8 @@ export function validateAgentRunSnapshot(value: unknown): asserts value is Agent
   if (!opaque(value.sessionId) || !uuid(value.generation) || !decimal(value.revision, true) || !decimal(value.configurationRevision) || !decimal(value.lastSequence, true)
     || !["queued", "running", "waiting_for_input", "succeeded", "failed", "cancelled", "unknown"].includes(String(value.state))
     || !["preparing", "executing", "waiting", "finalizing", "cancelling", "parked", "interrupted", "terminal"].includes(String(value.phase))
-    || typeof value.stopConfirmed !== "boolean" || !["current", "last_known", "unavailable"].includes(String(value.freshness)) || !bounded(value.observedAt) || !Number.isFinite(Date.parse(value.observedAt)) || !bounded(value.cursor, 8192)
+    || typeof value.stopConfirmed !== "boolean"
+    || value.writerScopeClosed !== undefined && (typeof value.writerScopeClosed !== "boolean" || value.writerScopeClosed && !value.stopConfirmed) || !["current", "last_known", "unavailable"].includes(String(value.freshness)) || !bounded(value.observedAt) || !Number.isFinite(Date.parse(value.observedAt)) || !bounded(value.cursor, 8192)
     || !Array.isArray(value.pending) || value.pending.length > 256 || !object(value.effects) || !["known", "unknown"].includes(String(value.effects.certainty))) responseProblem("Invalid atomic run snapshot.");
   for (const decision of value.pending) validateAgentPendingDecision(decision);
   strings(value.effects.unresolvedCallIds, 1024);

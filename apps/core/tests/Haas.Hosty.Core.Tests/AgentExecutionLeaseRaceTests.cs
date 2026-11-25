@@ -135,6 +135,47 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task AgentLeaseOperatorRecoveryKeepsTheOriginalProviderClaimForAutomaticCleanup()
+    {
+        await using var f = await AgentLeaseRaceFixture.Create();
+        var lease = Guid.NewGuid().ToString();
+        await f.Acquire("direct", Guid.NewGuid().ToString(), lease);
+        var tree = await f.Workspaces.Read(f.Tree.Id, null, default);
+        var owner = tree.Owner;
+        var workflow = await f.Workspaces.WorkflowAsync(owner, default);
+        await f.Workspaces.ChangeWorkflowAsync(owner, owner.UserId, "pause", new(Guid.NewGuid().ToString(), workflow.Revision),
+            new Dictionary<string, string>(), default, prepareOnly: true);
+        var recovery = new WorkspaceLeaseRecovery(Guid.NewGuid().ToString(), tree.Observation!.Head!, lease, true);
+        Assert.Equal("workspace_provider_lease_active", (await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            f.Workspaces.RecoverExternalLeaseAsync(tree.Id, owner, owner.UserId, recovery, default))).Code);
+        Assert.Contains(lease, (await f.Workspaces.Read(tree.Id, null, default)).Leases);
+        await f.ReleaseAll();
+        Assert.DoesNotContain(lease, (await f.Workspaces.Read(tree.Id, null, default)).Leases);
+    }
+
+    [Fact]
+    public async Task AgentLeaseReleaseClosesOnlyTheAdmittedGenerationAndKeepsItsStrongestEvidence()
+    {
+        await using var f = await AgentLeaseRaceFixture.Create();
+        var generation = Guid.NewGuid().ToString();
+        await f.Store.Change(f.Reference, prior => prior with { Generation = generation }, default);
+        var input = new CoreAgentWorkspaceRequest(f.Reference, "release_all",
+            new("", RequestId: Guid.NewGuid().ToString(), Generation: generation, WriterScopeClosed: false));
+        var wrong = input with { Input = input.Input with { Generation = Guid.NewGuid().ToString(), WriterScopeClosed = true } };
+        Assert.Equal("execution_conflict", (await Assert.ThrowsAsync<CoreProviderException>(() => f.Service.Workspace(f.Provider, wrong, default))).Error.Code);
+        Assert.False((await f.Store.Get(f.Reference, default)).WorkspaceLeasesClosed);
+
+        await f.Service.Workspace(f.Provider, input, default);
+        var logical = await f.Store.Get(f.Reference, default);
+        Assert.True(logical.WorkspaceLeasesClosed);
+        Assert.False(logical.WriterScopeClosed);
+
+        await f.Service.Workspace(f.Provider, input with { Input = input.Input with { WriterScopeClosed = true } }, default);
+        await f.Service.Workspace(f.Provider, input, default);
+        Assert.True((await new CoreAgentAuthorizationStore(f.Paths).Get(f.Reference, default)).WriterScopeClosed);
+    }
+
+    [Fact]
     public async Task AgentLeaseUncertainMcpReplyRecoversOnlyItsExactClaimAfterRevocation()
     {
         await using var f = await AgentLeaseRaceFixture.Create();

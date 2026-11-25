@@ -83,7 +83,29 @@ it.skipIf(process.platform === "win32")("stops a stubborn descendant after its n
   await f.tracked.confirmSdkStop();
   expect(await f.tracked.stop()).toMatchObject({ stopped: true, spawnCount: 1 });
   const before = await readFile(marker, "utf8"); await pause(100); expect(await readFile(marker, "utf8")).toBe(before);
+  const directory = path.join(f.data, "native-processes", f.runId, f.generation);
+  const receipt = (await readdir(directory)).find(name => name !== "manifest.json" && name.endsWith(".json"))!;
+  expect(JSON.parse(await readFile(path.join(directory, receipt), "utf8"))).toMatchObject({ treeStopped: true, outputDrained: false });
 });
+
+it.skipIf(process.platform === "win32")("retains root exit while a real ordinary POSIX descendant still writes", async () => {
+  const f = await fixture(), marker = path.join(f.data, "descendant-writes.txt");
+  const descendant = `const {appendFileSync}=require('node:fs'); process.on('SIGTERM',()=>{}); setInterval(()=>appendFileSync(${JSON.stringify(marker)},'.'),25);`;
+  const parent = `const {spawn}=require('node:child_process'); spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'inherit'}); setInterval(()=>{},1000);`;
+  const child = f.tracked.transport.spawn(process.execPath, ["-e", parent], { cwd: f.data, env: { PATH: process.env.PATH, HOME: f.data } });
+  child.stdout.resume(); child.stderr.resume();
+  await until(() => readFile(marker).then(() => true, () => false));
+  child.kill("SIGTERM");
+  await f.tracked.transport.waitForTargetExit!(child);
+  await f.tracked.confirmSdkStop();
+  const evidence = await TrackedNativeProcesses.readEvidence(f.data, f.runId, f.generation);
+  expect(evidence).toMatchObject({ targetStopped: true, allClosed: false });
+  expect(evidence).not.toHaveProperty("writerScopeClosed");
+  const writesAtRootExit = (await readFile(marker)).length;
+  await until(async () => (await readFile(marker)).length > writesAtRootExit);
+  expect(await f.tracked.stop()).toMatchObject({ targetStopped: true, allClosed: true });
+  expect(await f.tracked.evidence()).not.toHaveProperty("writerScopeClosed");
+}, 20000);
 
 it.skipIf(process.platform === "win32")("preserves synchronous native burst notifications and duplex RPC under stdout/stderr backpressure", async () => {
   const f = await fixture(), count = 64, size = 128 * 1024;

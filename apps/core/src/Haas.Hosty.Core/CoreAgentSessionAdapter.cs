@@ -57,7 +57,7 @@ internal sealed partial class CoreAgentSessionAdapter(CoreProviderMediation prov
     private static void Check(HostyAgentRun run, HostyRunRef expected)
     {
         if (run.Ref != expected || run.State is not ("queued" or "running" or "waiting_for_input" or "succeeded" or "failed" or "cancelled" or "unknown")
-            || run.Freshness is not ("current" or "last_known" or "unavailable") || run.StopConfirmed && run.Freshness != "current") throw Invalid();
+            || run.Freshness is not ("current" or "last_known" or "unavailable") || run.StopConfirmed && run.Freshness != "current" || run.WriterScopeClosed == true && !run.StopConfirmed) throw Invalid();
         Revision(run.Revision);
     }
     internal static void Revision(string? revision)

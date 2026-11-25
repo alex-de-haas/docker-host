@@ -294,11 +294,11 @@ export class InstallationHistory {
         if (!row) throw new AgentApiError("history_state_missing", "Retained history lacks an initial run state.", 503, true);
         const { item, userId, principalId }: HistoryObservation = JSON.parse(String(row.body));
         const snapshot = item.kind === "snapshot" ? item.snapshot : item.event.data.snapshot as AgentRunSnapshot;
-        const { ref, generation, revision, state, phase, stopConfirmed, freshness, observedAt,
+        const { ref, generation, revision, state, phase, stopConfirmed, writerScopeClosed, freshness, observedAt,
           configurationRevision, lastSequence, cursor: runCursor, pending, effects } = snapshot;
         const summary: AgentHistorySessionState = { sessionId, userId, principalId, epoch: boundary.epoch,
           head: Number(head.get(scope, sessionId, end)!.ordinal), ...(row.partial ? { sourceHistoryIncomplete: true as const } : {}),
-          snapshot: { ref, sessionId, generation, revision, state, phase, stopConfirmed, freshness, observedAt,
+          snapshot: { ref, sessionId, generation, revision, state, phase, stopConfirmed, writerScopeClosed, freshness, observedAt,
             configurationRevision, lastSequence, cursor: runCursor, pending, effects } };
         const size = Buffer.byteLength(JSON.stringify(summary));
         if (sessions.length && bytes + size > 2 * 1024 * 1024) { more = true; break; }

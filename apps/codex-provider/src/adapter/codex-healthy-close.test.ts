@@ -26,6 +26,7 @@ async function fixture(adapter?: HarnessAdapter) {
   cleanup.push(() => rm(directory, { recursive: true, force: true }));
   const journal = new WorkerJournal(directory); await journal.initialize();
   let options!: HarnessStartOptions;
+  const needsFakeCallback = !adapter;
   const stop = vi.fn(async () => {});
   adapter ??= { name: "isolated-fixture", capabilities: {}, probe: async () => ({ available: true }), start: (value: HarnessStartOptions) => {
     options = value; return { send() {}, stop, stopAndWait: stop };
@@ -33,11 +34,14 @@ async function fixture(adapter?: HarnessAdapter) {
   const engine = new WorkerEngine(journal, { adapter: async () => adapter!, cwd: async () => directory, validateSelection: async () => {}, reserve: async () => () => {} }, 1);
   cleanup.push(() => engine.close());
   const id = randomUUID();
-  return { directory, journal, engine, id, stop, emit: (event: HarnessEvent) => options.onEvent(event) };
+  return { directory, journal, engine, id, stop, ready: () => !needsFakeCallback || !!options, emit: (event: HarnessEvent) => options.onEvent(event) };
 }
 async function start(f: Awaited<ReturnType<typeof fixture>>, input?: string) {
   await f.engine.submit(f.id, request(input));
-  await vi.waitFor(async () => expect(["running", "awaiting_input"]).toContain((await f.journal.load(f.id)).receipt.state));
+  await vi.waitFor(async () => {
+    expect(["running", "awaiting_input"]).toContain((await f.journal.load(f.id)).receipt.state);
+    expect(f.ready()).toBe(true);
+  });
 }
 async function proposed(f: Awaited<ReturnType<typeof fixture>>) {
   f.emit({ type: "native_effect", id: "known-call", state: "started" });

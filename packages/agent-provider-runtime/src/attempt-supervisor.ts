@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -36,6 +36,7 @@ export function needsSupervisor(run: RunRecord): boolean {
 export class AttemptSupervisors implements ExecutionDriver {
   readonly durableCommands = true;
   private readonly launches = new Map<string, number>();
+  private readonly children = new Map<string, { generation: string; process: ChildProcess }>();
   private timer?: NodeJS.Timeout;
   private scan?: Promise<void>;
   private readonly unavailable = new Set<string>();
@@ -63,7 +64,7 @@ export class AttemptSupervisors implements ExecutionDriver {
         return;
       }
       for (const session of sessions) {
-        for (const run of Object.values(session.runs)) if (needsSupervisor(run)) this.wake(run.snapshot.ref.id);
+        for (const run of Object.values(session.runs)) if (needsSupervisor(run)) this.wake(run.snapshot.ref.id, run.snapshot.generation);
       }
       for (const [id, until] of this.launches) if (until <= Date.now()) this.launches.delete(id);
     })().finally(() => { this.scan = undefined; });
@@ -74,7 +75,7 @@ export class AttemptSupervisors implements ExecutionDriver {
       console.warn("[agent-provider] supervisor scheduling will retry", { target: id });
     }
   }
-  private wake(id: string): void {
+  private wake(id: string, generation?: string): void {
     if (this.closed || (this.launches.get(id) ?? 0) > Date.now()) return;
     let available;
     try {
@@ -94,16 +95,27 @@ export class AttemptSupervisors implements ExecutionDriver {
     const child = spawn(process.execPath, args, {
       detached: true, stdio: "ignore", windowsHide: true,
     });
+    if (generation) {
+      this.children.set(id, { generation, process: child });
+      child.once("close", () => { if (this.children.get(id)?.process === child) this.children.delete(id); });
+    }
     child.once("error", () => { this.launches.delete(id); });
     child.unref();
   }
-  async start(_sessionId: string, id: string): Promise<void> { this.wake(id); }
+  stopOwnedOnStorageFailure(id: string, generation: string): void {
+    const owned = this.children.get(id);
+    if (owned?.generation !== generation || owned.process.exitCode !== null || owned.process.signalCode !== null || owned.process.killed) return;
+    // The single-attempt supervisor owns its SDK and private native-runner channels.
+    // Its exit closes them. An unrelated process or a successor is never signalled by a recorded PID.
+    try { owned.process.kill("SIGTERM"); } catch { /* The original storage failure stays retryable. */ }
+  }
+  async start(_sessionId: string, id: string, generation?: string): Promise<void> { this.wake(id, generation); }
   async cancel(id: string, _requestId: string): Promise<void> { this.wake(id); }
   async respond(id: string, _input: AgentResponseInput): Promise<void> { this.wake(id); }
   async control(id: string, _input: AgentRunControlInput): Promise<void> { this.wake(id); }
   async retirementEvidence(run: RunRecord): Promise<{ nativeGeneration: string; nativeRevision: number }> {
     if (!run.snapshot.stopConfirmed || !run.nativeGeneration || run.nativeRevision < 0)
-      throw new Error("The execution scope has not confirmed physical closure.");
+      throw new Error("The native execution target has not confirmed exit.");
     return { nativeGeneration: run.nativeGeneration, nativeRevision: run.nativeRevision };
   }
   async releaseRetired(id: string): Promise<void> { this.wake(id); }

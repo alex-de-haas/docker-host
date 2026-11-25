@@ -14,6 +14,8 @@ import {
 import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { OllamaClient, ollamaUrl } from "./client.js";
 import { OllamaHarnessAdapter } from "./index.js";
 import { OllamaExecutor } from "./executor.js";
@@ -683,6 +685,30 @@ it("does not substitute another model after the selected model disappears", asyn
   resumed.run.send("Continue");
   await wait(resumed.events, "error");
   expect(other.chats).toHaveLength(0);
+});
+
+it("ends an aborted managed tool wait while the attempt still owns subprocess cleanup", async () => {
+  const root = await directory();
+  const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
+  let finishCleanup!: () => void;
+  const retained = new Promise<void>(resolve => { finishCleanup = resolve; });
+  const stopProcess = vi.fn(async () => retained);
+  const executor = new OllamaExecutor(root, {
+    spawn: () => { throw new Error("The in-process adapter does not spawn a primary agent."); },
+    spawnTool: () => child as never,
+    stopProcess,
+    waitForTargetExit: async () => {},
+  });
+  const controller = new AbortController();
+  try {
+    const result = expect(executor.execute("list_directory", {}, controller.signal)).rejects.toThrow("Stop requested");
+    controller.abort(new Error("Stop requested"));
+    await result;
+    expect(stopProcess).toHaveBeenCalledOnce();
+  } finally {
+    finishCleanup();
+    await executor.close();
+  }
 });
 
 it("retains cleanup ownership after a termination failure and retries it explicitly", async () => {

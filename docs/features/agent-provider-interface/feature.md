@@ -509,14 +509,10 @@ tool-source pairing until its authoritative final output arrives; ordinary error
 and new user turns remain separate transcript boundaries. This retains genuine tool results without
 reopening a stopped conversation or treating an unknown command outcome as success.
 
-`state`, `phase`, `freshness`, effect certainty and `stopConfirmed` are independent snapshot fields.
-An accepted cancel/control receipt is not proof of process exit. Supported SDK stop-and-wait,
-provider-owned containment and its recorded closure determine `stopConfirmed`. Each tool call retains its independently observed outcome. POSIX
-launches use a separate receipt writer and anchored process group. Native stdout/stderr receive
-fresh blocking pipe endpoints; Node forwards them with backpressure instead of inheriting its
-nonblocking output descriptors into the native binary. Native exit initiates owned descendant
-cleanup, while pipe EOF and output flush remain separate completion facts. Receipts distinguish
-physical tree closure from output delivery; producer loss never manufactures SDK-stop confirmation.
+A current `stopConfirmed` receipt establishes that the root agent exited or that its start was fenced before launch. It releases the attempt slot. Each tool call keeps its own observed outcome. A qualified writer scope reports `writerScopeClosed: false` while open and `true` after verified closure. A provider lacking that proof can omit the field. A native execution fenced before launch can establish that it created no writers.
+
+On macOS the normal Local profile supports editing under existing source grants. The provider records direct agent exit, attempts cleanup of its owned process group, and tracks output drain separately. A detached command can outlive the root and partial files remain available. Linux can qualify a delegated cgroup v2 for writer closure. Native stdout and stderr use blocking pipes with forwarding and backpressure.
+
 Windows uses a suspended native launch assigned to a non-breakaway kill-on-close Job Object and
 handle/accounting checks. The provider compiles its Job Object helper with the stock .NET Framework
 4.x C# compiler and reuses the executable from its private cache. Native launches and recovery of a
@@ -524,13 +520,10 @@ named Job Object invoke that executable directly. Private control channels
 stay separate from native stdin/stdout/stderr. Native environments exclude Hosty service/control
 credentials and unrelated tool bearers.
 
-A confirmed physical exit releases the attempt's workspace claims using its original admission.
-A tool lacking a matching terminal result remains unresolved in history. Harness can finish
-Stop or Delete with that outcome recorded. Rejected prompts and superseded continuation
-reservations cannot restart a stopped attempt. While exit is unverified the provider keeps
-its writer claims and its supervisor continues reconciliation. A restored PID or an HTTP
-service reporting healthy cannot establish physical closure. For an owner-confirmed chat deletion, the original consumer submits a per-run delivery discard.
-The provider verifies physical closure and the exact admission. One transaction erases the run's
+After root exit the provider releases ordinary activity claims through Core using the original admission and exact run generation. When the attempt has an open qualified writer scope, its activity lease stays with the supervisor until that scope closes. A provider-bound exclusive environment consumer uses a separate registration and requires a current affirmative writer-closure receipt to release. Ordinary chat continuation can proceed after Stop. A tool without a matching terminal result stays unresolved in history, and revoked approvals and superseded continuations remain fenced.
+
+For an owner-confirmed chat deletion, the original consumer submits a per-run delivery discard.
+The provider verifies agent closure, its required workspace cleanup, and the exact admission. One transaction erases the run's
 public replay and queued delivery, retires its immutable identity and records a content-free
 receipt. A delayed callback cannot recreate the erased content. Other runs and the independently
 owned native account context retain their own lifetimes.

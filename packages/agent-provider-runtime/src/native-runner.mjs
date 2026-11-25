@@ -58,15 +58,19 @@ if (process.platform === 'win32') {
   });
 } else {
   let config, anchor, closing = false, stoppingRequested = false, outputAvailable = true, exitCode = 0, nativePid, anchorClosed = Promise.resolve();
-  function persist(state, treeStopped, outputDrained) {
-    if (!config) return;
-    const value = { version: 1, runId: config.runId, generation: config.generation, nonce: config.nonce, state, treeStopped,
-      writerPid: process.pid, groupPid: anchor?.pid, nativePid, observedAt: new Date().toISOString(),
-      ...(outputDrained === undefined ? {} : { outputDrained }) };
-    const temporary = config.file + '.' + randomUUID() + '.tmp'; const fd = openSync(temporary, 'wx', 0o600);
+  let targetExited = false;
+  function persistReceipt(file, facts) {
+    const value = { version: 1, runId: config.runId, generation: config.generation, nonce: config.nonce,
+      writerPid: process.pid, groupPid: anchor?.pid, nativePid, observedAt: new Date().toISOString(), ...facts };
+    const temporary = file + '.' + randomUUID() + '.tmp';
+    const fd = openSync(temporary, 'wx', 0o600);
     try { writeFileSync(fd, JSON.stringify(value)); fsyncSync(fd); } finally { closeSync(fd); }
-    renameSync(temporary, config.file);
-    if (process.platform !== 'win32') { const directory = openSync(path.dirname(config.file), 'r'); try { fsyncSync(directory); } finally { closeSync(directory); } }
+    renameSync(temporary, file);
+    const directory = openSync(path.dirname(file), 'r');
+    try { fsyncSync(directory); } finally { closeSync(directory); }
+  }
+  function persist(state, treeStopped, outputDrained) {
+    persistReceipt(config.file, { state, treeStopped, ...(outputDrained === undefined ? {} : { outputDrained }) });
   }
   async function members(group) {
     const child = spawn('/bin/ps', ['-axo','pid=,pgid=,stat='], { detached: true, stdio: ['ignore','pipe','ignore'] });
@@ -82,9 +86,15 @@ if (process.platform === 'win32') {
     let stopped = false;
     try {
       if (config.cgroup) {
-        if (anchor?.connected) anchor.send({ exit: true });
+        if (alive() && !targetExited) {
+          try { process.kill(-anchor.pid, 'SIGTERM'); } catch { /* Cgroup accounting still owns closure. */ }
+        }
+        if (anchor?.connected) anchor.send({ exit: true }, () => {});
         const empty = () => /^populated 0$/m.test(readFileSync(path.join(config.cgroup, 'cgroup.events'), 'utf8'));
-        for (let n = 0; n < 5 && !empty(); n++) await delay(50);
+        // The anchor forwards output and is itself in the cgroup. Let it finish forwarding
+        // before killing any remaining members, unless owned stop requires escalation.
+        const drainDeadline = Date.now() + (targetExited ? 5000 : 2000);
+        while (alive() && !empty() && Date.now() < drainDeadline) await delay(50);
         if (!empty()) writeFileSync(path.join(config.cgroup, 'cgroup.kill'), '1');
         for (let n = 0; n < 80 && !empty(); n++) await delay(50);
         stopped = empty();
@@ -107,7 +117,9 @@ if (process.platform === 'win32') {
     } catch { stopped = false; }
     if (anchor) { process.stdin.unpipe(anchor.stdin); anchor.stdin.destroy(); }
     let timer;
-    const drained = await Promise.race([anchorClosed.then(() => !outputAvailable || anchor?.exitCode === 70 ? false : drainOutput()).catch(() => false), new Promise(resolve => { timer = setTimeout(() => resolve(false), 5000); })]);
+    const outputDrain = anchorClosed.then(() => outputAvailable
+      && (!anchor || anchor.exitCode === 0 && anchor.signalCode === null) && drainOutput()).catch(() => false);
+    const drained = await Promise.race([outputDrain, new Promise(resolve => { timer = setTimeout(() => resolve(false), 5000); })]);
     clearTimeout(timer);
     // Complete the forwarding attempt before recording physical tree exit. A lost producer
     // cannot receive output, but that does not erase verified exit or establish an SDK stop.
@@ -148,7 +160,15 @@ if (process.platform === 'win32') {
       anchor.stdin.on('error', () => {});
       anchor.on('message', value => {
         if (value?.nativeStarted) { nativePid = value.pid; try { persist('running', false); } catch { void end(); } }
-        if (value?.nativeExit) { exitCode = Number.isInteger(value.code) ? value.code : 1; void end(); }
+        if (value?.nativeExit) {
+          targetExited = true;
+          exitCode = Number.isInteger(value.code) ? value.code : 1;
+          try {
+            persistReceipt(config.file + '.target', { targetExited: true, code: exitCode });
+            safeSend({ targetExited: true, nonce: config.nonce });
+          } catch { /* Group closure can still provide retained exit evidence. */ }
+          void end();
+        }
       });
       anchor.once('error', () => { exitCode = 127; void end(); });
       anchor.once('exit', () => { if (!closing) void end(); });

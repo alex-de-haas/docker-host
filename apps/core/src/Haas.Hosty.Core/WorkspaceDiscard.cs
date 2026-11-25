@@ -56,7 +56,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 || value.State != "removed" && (value.Owner is null || WorkspaceIdFor(value.Owner) != workspaceId
                     || value.Plan is null || value.Plan.WorkspaceId != workspaceId || value.Plan.Digest != value.Command.Digest || value.Snapshots is not { Length: > 0 }
                     || value.Snapshots.Any(w => w.Owner is null || !w.Owner.SameIdentity(value.Owner) || w.WorkspaceId != workspaceId
-                        || w.Id != Hash(OwnerIdentity(value.Owner) + "\n" + w.RepositoryId) || w.RepositoryId != Hash(w.Repository)
+                        || w.Id != AllocatedTreeId(value.Owner, w.RepositoryId, w.AllocationGeneration) || w.RepositoryId != Hash(w.Repository)
                         || w.Path != WorkPath(w.Id) || !ValidWorkspaceBranch(w))
                     || !value.Trees.Select(t => t.Id).Order(StringComparer.Ordinal).SequenceEqual(value.Snapshots.Select(t => t.Id).Order(StringComparer.Ordinal))))
                 throw Error("ownership_invalid", "The removal journal is inconsistent; source was preserved.");

@@ -178,6 +178,10 @@ class ReconfigurableCodexRun implements HarnessRun {
   async disableSuggestions(): Promise<void> { this.options.promptSuggestions = false; await this.active.disableSuggestions(); }
   async stop(): Promise<void> { this.stopped = true; await this.active.stop(); }
   async stopAndWait(): Promise<void> { this.stopped = true; await this.active.stopAndWait(); }
+  stopForCancellation(): Promise<{ drained: Promise<void> }> {
+    this.stopped = true;
+    return this.active.stopForCancellation();
+  }
   async setMcpServers(servers: Record<string, unknown>): Promise<boolean> {
     if (this.stopped || this.replacing || !this.active.resumableThread) return false;
     this.replacing = true;
@@ -318,7 +322,7 @@ class CodexRun implements HarnessRun {
       this.pendingRequests.clear();
       if (!this.stopped) this.emit({ type: "error", message: "Codex process could not start." });
     });
-    this.child.stdout.on("data", (chunk: Buffer) => this.onStdout(chunk));
+    this.child.stdout.setEncoding("utf8").on("data", (chunk: string) => this.onStdout(chunk));
     this.child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString().trim();
       // Codex logs routine startup noise (MCP status, OAuth refreshes) to stderr; only surface a
@@ -483,6 +487,14 @@ class CodexRun implements HarnessRun {
       this.child.once("exit", done);
       void this.stop().catch(error => { clearTimeout(timer); this.child.off("exit", done); reject(error); });
     });
+  }
+
+  async stopForCancellation(): Promise<{ drained: Promise<void> }> {
+    const transport = this.options.processTransport;
+    const drained = this.stopAndWait();
+    if (transport?.waitForTargetExit) await Promise.race([drained, transport.waitForTargetExit(this.child)]);
+    else await drained;
+    return { drained };
   }
 
   async stop(): Promise<void> {
@@ -698,8 +710,8 @@ class CodexRun implements HarnessRun {
     // turnActive is cleared by the turn/completed notification, which also drives the next pump.
   }
 
-  private onStdout(chunk: Buffer): void {
-    this.buffer += chunk.toString();
+  private onStdout(chunk: string): void {
+    this.buffer += chunk;
     for (;;) {
       const newline = this.buffer.indexOf("\n");
       if (newline < 0) {

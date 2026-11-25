@@ -91,8 +91,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 resources.Select(r => new WorkspaceCleanupResource(r.Id, r.Kind, Guid.NewGuid().ToString("D"), r.Revision)).ToArray(),
                 Direct: true, DeleteOwner: deleteOwner, SelectedSessions: selectedSessions, Activity: trees.SelectMany(t => t.Leases.Select(l =>
                     new WorkspaceDeleteActivity("lease", l, "retained", "External process exit is unknown. The lease is retired when source is removed."))).ToArray());
-            if (trees.Any(t => t.Leases.Length > 0))
-                journal = journal with { Writers = await new CoreAgentAuthorizationStore(paths).WorkspaceWritersAsync(trees, ct) };
+            journal = journal with { Writers = await new CoreAgentAuthorizationStore(paths).WorkspaceWritersAsync(trees, ct) };
             await SaveDiscardAsync(journal);
             await EnsureDiscardFence(owner, journal, ct);
             foreach (var tree in trees)
@@ -208,8 +207,7 @@ internal sealed partial class WorkspaceCleanupService
                 {
                     var admissions = new CoreAgentAuthorizationStore(paths);
                     foreach (var writer in writers)
-                        if ((await admissions.Get(writer.AdmissionRef, ct)).Leases?.Any(l => !l.Released &&
-                            journal.Snapshots!.Any(t => t.Leases.Contains(l.LeaseId))) == true)
+                        if (CoreAgentAuthorizationStore.HasWriterClaim(await admissions.Get(writer.AdmissionRef, ct), journal.Snapshots!))
                             throw DevelopmentWorkspaceService.Error("cleanup_pending", "Waiting for the provider to stop the workspace writer and release its original lease.");
                 }
                 if (journal.DeleteOwner is { Returns.Length: > 0, Authority: { } actor } transition)

@@ -64,12 +64,21 @@ public sealed partial class CoreLifecycleServiceTests
         finally { await worker.StopAsync(CancellationToken.None); }
     }
 
-    [Fact]
-    public async Task WorkspaceDelete_FencesNewAdmissionsAndWaitsForTheOriginalVerifiedWriter()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WorkspaceDelete_FencesNewAdmissionsAndWaitsForTheOriginalVerifiedWriter(bool retireActivityMarker)
     {
         await using var f = await AgentLeaseRaceFixture.Create();
         var lease = Guid.NewGuid().ToString();
         await f.Acquire("direct", Guid.NewGuid().ToString(), lease);
+        if (retireActivityMarker)
+        {
+            var released = await f.Workspaces.CommandAsync(f.Tree.Id, f.Owner, "release-lease",
+                new(Guid.NewGuid().ToString(), LeaseId: lease), default);
+            Assert.DoesNotContain(lease, released.Leases);
+            Assert.False(Assert.Single((await f.Store.Get(f.Reference, default)).Leases!).Released);
+        }
         // These synthetic installations have no service processes. Losing contact with them
         // after acquisition must preserve the lease and never count as physical writer exit.
         var registry = f.Host.Services.GetRequiredService<AppRegistryStore>();
@@ -322,6 +331,11 @@ public sealed partial class CoreLifecycleServiceTests
         var first = await cleanup.DeleteBatchAsync("admin", null, command, default);
         Assert.Equal("removed", Assert.Single(first.Targets).State);
         var recreated = await f.Service.PrepareAsync(f.Owner, WorkspaceRequest() with { RequestId = Guid.NewGuid().ToString() }, default);
+        Assert.Equal(f.Tree.WorkspaceId, recreated.WorkspaceId);
+        Assert.NotEqual(f.Tree.Id, recreated.Id);
+        Assert.NotEqual(f.Tree.Path, recreated.Path);
+        Assert.NotEqual(f.Tree.Branch, recreated.Branch);
+        Assert.False(Directory.Exists(f.Tree.Path));
         var other = await f.Service.PrepareAsync(WorkspaceTestOwner(f.F, "later-session"), WorkspaceRequest("later-session"), default);
         await File.WriteAllTextAsync(Path.Combine(recreated.Path, "keep.txt"), "new work");
         var replay = await cleanup.DeleteBatchAsync("another-admin", null, command, default);
@@ -331,6 +345,33 @@ public sealed partial class CoreLifecycleServiceTests
         var singleReplay = await cleanup.ApplyDeleteAsync(recreated.WorkspaceId, "admin", null, new(first.Targets[0].RequestId), default);
         Assert.Equal("removed", singleReplay.State);
         Assert.True(Directory.Exists(recreated.Path));
+    }
+
+    [Fact]
+    public async Task WorkspaceDelete_DetachedPosixFileWriterCannotWriteTheRecreatedAllocationThroughItsOldHandle()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var f = await DiscardFixtureAsync();
+        // This independent process retains a real descriptor and cwd in the old allocation.
+        // The test controls when it writes without making its exit a precondition for Delete.
+        var start = new System.Diagnostics.ProcessStartInfo("/bin/sh") { WorkingDirectory = f.Tree.Path,
+            RedirectStandardInput = true, RedirectStandardOutput = true, UseShellExecute = false,
+            ArgumentList = { "-c", "exec 3>held; echo ready; read line || exit 1; echo late >&3 && test ! -d \"$1\"", "fixture", f.Tree.Path } };
+        using var writer = System.Diagnostics.Process.Start(start)!;
+        try
+        {
+            Assert.Equal("ready", await writer.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+            var removed = await DeleteCleanup(f).ApplyDeleteAsync(f.Tree.WorkspaceId, "admin", null,
+                new(Guid.NewGuid().ToString()), default);
+            Assert.True(removed.State == "removed", removed.Error);
+            var next = await f.Service.PrepareAsync(f.Owner, WorkspaceRequest() with { RequestId = Guid.NewGuid().ToString() }, default);
+            Assert.False(writer.HasExited);
+            await writer.StandardInput.WriteLineAsync("write");
+            await writer.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(0, writer.ExitCode);
+            Assert.False(File.Exists(Path.Combine(next.Path, "held")));
+        }
+        finally { writer.StandardInput.Close(); if (!writer.HasExited) writer.Kill(); }
     }
 
     [Fact]

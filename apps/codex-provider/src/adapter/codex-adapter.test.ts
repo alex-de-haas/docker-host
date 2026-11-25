@@ -448,6 +448,17 @@ describe("codex harness adapter", () => {
     expect(event).toMatchObject({ harnessSessionId: "thread-from-before-restart" });
   });
 
+  it("preserves a final JSON-RPC answer split within a UTF-8 code point before Stop", async () => {
+    const active = start();
+    active.send("split final utf8");
+    await waitFor(() => events.find(event => event.type === "result"), "result after split UTF-8 frame");
+    await active.stopAndWait!();
+    expect(events.filter(event => event.type === "assistant_text")).toEqual([
+      { type: "assistant_text", text: "До остановки 🌍" },
+    ]);
+    expect(events.findIndex(event => event.type === "assistant_text")).toBeLessThan(events.findIndex(event => event.type === "result"));
+  });
+
   it("streams deltas and the final assistant text, then completes the turn", async () => {
     const active = start();
     await waitFor(() => events.find((candidate) => candidate.type === "harness_session"), "handshake");

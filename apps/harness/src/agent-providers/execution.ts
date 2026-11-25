@@ -154,7 +154,10 @@ export class ProviderExecution {
     this.mutations.starting = true;
     try {
       const required = new Set(input.requiredCapabilities ?? []);
-      if (input.resources?.some(resource => resource.kind === "worktree")) required.add("scope.workspace-writers");
+      if (input.resources?.some(resource => resource.kind === "worktree") && !required.has("scope.workspace-writers") && !required.has("workspace.edit")) {
+        const { capabilities } = await this.client.capabilities();
+        required.add(capabilities.includes("workspace.edit") ? "workspace.edit" : "scope.workspace-writers");
+      }
       if (workflow) for (const capability of workflowCapabilities(workflow)) required.add(capability);
       const prepared = prepareAgentRun(this.state.sessionId, runId, required.size ? { ...input, requiredCapabilities: [...required] } : input);
       this.bindConfiguration(prepared, this.state.session);

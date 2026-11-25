@@ -33,7 +33,7 @@ internal sealed partial class DevelopmentWorkspaceService
                 || w.Leases is null || w.SandboxConsumers is null || w.Operations is null || w.Operations.Any(o => o is null)
                 || !w.Owner.SameIdentity(journal.Owner)
                 || w.WorkspaceId != id || w.Path != WorkPath(w.Id) || w.RepositoryId != Hash(w.Repository)
-                || w.Id != Hash(OwnerIdentity(journal.Owner) + "\n" + w.RepositoryId)
+                || w.Id != AllocatedTreeId(journal.Owner, w.RepositoryId, w.AllocationGeneration)
                 || !ValidWorkspaceBranch(w) || w.State != "released")
             || journal.Worktrees.Select(w => w.Id).Distinct().Count() != journal.Worktrees.Length)
             throw Error("ownership_invalid", "Workspace deletion journal is inconsistent; metadata was preserved.");
@@ -157,6 +157,11 @@ internal sealed partial class DevelopmentWorkspaceService
                 }
             }
             await JsonStorage.WriteAsync(DeletionPath(id), journal, restrictToOwner: true, ct);
+            // A stopped agent may have detached a command holding an old path or branch name.
+            // The next allocation of this logical workspace receives new physical identities.
+            // Replaying this exact deletion computes the same next generation.
+            var nextGeneration = Hash("after-deletion\n" + string.Join("\n", journal.Worktrees.Select(t => t.Id).Order(StringComparer.Ordinal)));
+            await JsonStorage.WriteAsync(AllocationGenerationPath(owner), nextGeneration, restrictToOwner: true, ct);
             foreach (var tree in journal.Worktrees)
                 await Locked("publication-record-" + tree.Id, () =>
                 {

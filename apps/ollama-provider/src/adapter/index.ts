@@ -447,9 +447,12 @@ class OllamaRun implements HarnessRun {
       );
     } finally {
       this.catalogRevision = -1;
-      await this.mcp.close();
       try {
-        await this.executor.close();
+        await this.mcp.close();
+        const cleanup = this.executor.close();
+        if (this.controller.signal.aborted && this.options.processTransport?.waitForTargetExit)
+          void cleanup.catch(() => {}); // The attempt supervisor retains and closes the owned writers.
+        else await cleanup;
       } catch (e) {
         this.cleanupError = e;
         throw e;

@@ -26,7 +26,7 @@ export type WorkerEvent = { runId: string; generation: string; sequence: number;
 export type WorkerRecovery = { requestId: string; generation: string; expectedRevision: number; consumerExitConfirmed: true; actorId: string; conversationId?: string };
 export type WorkerReceipt = {
   runId: string; conversationId: string; generation: string; state: RunState; revision: number;
-  boundary?: "container" | "local"; exitConfirmed?: boolean;
+  boundary?: "container" | "local"; exitConfirmed?: boolean; writerScopeClosed?: boolean;
   recovery?: { requestId: string; actorId: string; confirmedAt: string };
   pending?: WorkerEvent[];
   barrier?: WorkerBarrier;

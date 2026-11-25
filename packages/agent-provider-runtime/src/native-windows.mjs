@@ -106,6 +106,8 @@ export async function runWindowsWriter() {
             // The helper has flushed and atomically replaced the proof file before this message.
             if (!proof()) { requestStop(); return; }
             finish(value.code);
+          } else if (value.type === 'target-exited') {
+            if (process.connected) process.send({ targetExited: true, nonce: config.nonce });
           } else if (value.type === 'started') { trace('native process started'); }
           else { requestStop(); candidate.destroy(); return; }
         }

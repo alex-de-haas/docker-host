@@ -47,9 +47,12 @@ export async function startAgentProvider<C extends EngineConnections>(options: {
     } else writerScope = await probeWriterScope(data);
   }
   const capabilities = structuredClone(options.engine.capabilities);
-  capabilities.capabilities = capabilities.capabilities.filter(capability => capability !== writerCapability);
+  capabilities.capabilities = capabilities.capabilities.filter(capability => capability !== writerCapability && !(options.engine.managedNativeScopes && capability === "workspace.edit"));
+  // A process group supports ordinary workspace editing. Exclusive release is a separate OS capability.
   if (writerScope) capabilities.capabilities.push(writerCapability);
-  if (options.engine.managedNativeScopes && !writerScope) {
+  if (options.engine.managedNativeScopes && (writerScope || process.platform === "darwin" || process.platform === "linux")) {
+    capabilities.capabilities.push("workspace.edit");
+  } else if (options.engine.managedNativeScopes) {
     capabilities.capabilities = capabilities.capabilities.filter(capability => capability !== "subagents.native");
     capabilities.capabilities.push("scope.restricted-native-tools");
     delete capabilities.subagents;

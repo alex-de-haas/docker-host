@@ -135,7 +135,9 @@ describe("Harness admission against the actual public provider controller", () =
     expect(f.authorizations.find(request => request.operation === "runs.start")?.configurationDigest).toBe(session.configurationDigest);
     expect(f.state.appliedConfiguration?.digest).toBe(session.configurationDigest);
     expect(f.sent.filter(request => request.path.includes("/configurations/"))).toEqual([]);
-    expect(f.start).toHaveBeenCalledExactlyOnceWith(f.state.sessionId, f.state.runId);
+    const runId = f.state.runId!;
+    const { record } = await f.store.run(runId);
+    expect(f.start).toHaveBeenCalledExactlyOnceWith(f.state.sessionId, runId, record.snapshot.generation);
   });
 
   it("retries a lost admission with its original digest, UUID and exact bytes without a second execution", async () => {
@@ -161,7 +163,8 @@ describe("Harness admission against the actual public provider controller", () =
     await execution.reconcileMutation(prepared);
     expect(f.sent.at(-1)?.body).toBe(prepared.body);
     expect(f.authorizations.at(-1)).toMatchObject({ runId, bodyHash: prepared.bodyHash, configurationDigest: session.configurationDigest });
-    expect(f.start).toHaveBeenCalledExactlyOnceWith(f.state.sessionId, runId);
+    const { record } = await f.store.run(runId);
+    expect(f.start).toHaveBeenCalledExactlyOnceWith(f.state.sessionId, runId, record.snapshot.generation);
   });
 
   it("does not retarget an old unadmitted start after the provider configuration changes", async () => {

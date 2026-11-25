@@ -1,7 +1,7 @@
 ---
 status: Draft
 created: 2026-09-26
-updated: 2026-10-29
+updated: 2026-11-25
 summary: Remaining per-session execution isolation, scoped access and verified shutdown; the shared Docker worker is implemented and verified separately.
 components: [apps/harness, apps/core]
 ---
@@ -9,6 +9,8 @@ components: [apps/harness, apps/core]
 # Agent Host And Session Containment
 
 ## Scope And Owner Direction
+
+On 2026-11-25 the owner accepted ordinary native workspace editing under existing grants. Stop follows the tracked root agent. An exclusive environment consumer separately requires evidence that its writer scope closed. The provider qualifies Linux cgroup v2 or a Windows Job Object where available. On macOS, a detached process can outlive its agent. D9 retains the cross-runtime isolation comparison and D10 retains stronger descendant and mount ownership for isolated execution. Ordinary chat Stop and workspace editing use the shipped [execution contract](../agent-execution-reliability/feature.md).
 
 The 2026-10-15 owner request starts the shared-worker delivery under the separate
 [Shared Docker Agent Runtime](../assistant-shared-docker-runtime/feature.md).

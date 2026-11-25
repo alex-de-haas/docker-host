@@ -73,7 +73,7 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
   Tool: object({ id, source: ref("Source"), name: text(), input: {}, output: { type: "string", maxLength: 1048576 }, state: { enum: ["running", "completed", "failed", "cancelled", "unknown"] }, truncated: boolean,
     command: object({ status: { enum: ["completed", "failed", "cancelled", "unknown"] }, exitCode: { type: "integer" }, durationMs: { type: "integer", minimum: 0 }, summary: text(65536) }, ["status"]) }, ["id", "name", "state"], true),
   RunSnapshot: object({ ref: ref("QualifiedRef"), sessionId: id, generation: uuid, revision: sequence,
-    state: { enum: terminalStates }, phase: { enum: phases }, stopConfirmed: boolean, freshness: { enum: ["current", "last_known", "unavailable"] }, observedAt: { type: "string", format: "date-time" },
+    state: { enum: terminalStates }, phase: { enum: phases }, stopConfirmed: boolean, writerScopeClosed: boolean, freshness: { enum: ["current", "last_known", "unavailable"] }, observedAt: { type: "string", format: "date-time" },
     configurationRevision: revision, lastSequence: sequence, cursor: text(8192), pending: list(ref("PendingDecision"), 256),
     effects: object({ certainty: { enum: ["known", "unknown"] }, unresolvedCallIds: unique(id, 1024) }), result: ref("Result"), messages: list(ref("Message"), 4096), tools: list(ref("Tool"), 4096),
     agents: list(ref("ChildAgent"), 1024),
@@ -101,7 +101,7 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
     resolvedSkills: list(object({ skillId: digest, digest }), 202), configuration: ref("Configuration"), correlation: object({ conversation: ref("QualifiedRef"), task: ref("QualifiedRef") }, []) },
     ["ref", "revision", "configurationRevision", "configurationDigest", "nativeState", "activeRun", "resolvedSkills"], true),
   Closure: object({ ref: ref("QualifiedRef"), sessionId: id, generation: uuid, revision: sequence,
-    state: { enum: terminalStates }, phase: { enum: phases }, stopConfirmed: boolean,
+    state: { enum: terminalStates }, phase: { enum: phases }, stopConfirmed: boolean, writerScopeClosed: boolean,
     pendingContinuations: list(object({ requestId: uuid, run: ref("QualifiedRef"), state: { enum: ["pending", "awaiting_authorization", "admitted", "superseded"] } }), 256)
   }, ["ref", "sessionId", "generation", "revision", "state", "phase", "stopConfirmed"]),
   ControlReceipt: object({ requestId: uuid, state: { enum: ["accepted", "applied", "rejected", "superseded", "unknown"] }, run: ref("QualifiedRef"), revision: sequence, generation: uuid, error: ref("ErrorDetail"),

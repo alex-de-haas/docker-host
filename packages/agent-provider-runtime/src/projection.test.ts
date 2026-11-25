@@ -242,8 +242,8 @@ it.each(["completed", "cancelled"] as const)("shares confirmed whole-tree stop w
   const receipt: WorkerReceipt = { runId: f.record.snapshot.ref.id, conversationId: f.session.id, generation: "native", state, revision: 2,
     selection: { model: null, reasoningEffort: null }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), exitConfirmed: true, effects: {} };
   projectReceipt(f.store, f.session, f.record, { ...receipt, effects: { outstanding: "started" } });
-  expect(f.record.snapshot.agents!.every(agent => agent.stopConfirmed === true)).toBe(true);
-  projectReceipt(f.store, f.session, f.record, receipt);
+  expect(f.record.snapshot.agents!.every(agent => agent.stopConfirmed === false)).toBe(true);
+  projectReceipt(f.store, f.session, f.record, { ...receipt, writerScopeClosed: true });
   expect(f.record.snapshot.agents).toMatchObject([{ state: "unknown", stopConfirmed: true }, { state: "succeeded", stopConfirmed: true }]);
   const count = f.record.events.length;
   projectReceipt(f.store, f.session, f.record, receipt);

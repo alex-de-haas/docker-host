@@ -21,7 +21,7 @@ export const prepareNativeInput: NativeInputPreparer = async ({ text, attachment
 export type EngineConnections = ProviderConnections & ProviderSettingsOptions["connections"];
 export type ProviderEngine<C extends EngineConnections = EngineConnections> = {
   capabilities: AgentCapabilities;
-  /** Opts this adapter into the runtime's qualified and restricted native tool profiles. */
+  /** Uses the runtime's native launcher and OS-specific process supervision. */
   managedNativeScopes?: true;
   createConnections: (context: { data: string; cache: string | null; secrets: ConnectionSecrets }) => C;
   /** Optional app-owned interfaces run beside agent routes under their own verified authority. */

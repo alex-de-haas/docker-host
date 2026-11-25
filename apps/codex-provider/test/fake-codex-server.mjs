@@ -15,6 +15,7 @@
 //   * an approval reply must never be "approved_for_session".
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -71,6 +72,7 @@ let proposalTurn = 0;
 let initialized = false;
 let threadOpened = false;
 let extraSkillRoots = [];
+let pendingSplitWrites;
 
 process.stdin.on("data", (chunk) => {
   buffer += chunk.toString();
@@ -83,7 +85,9 @@ process.stdin.on("data", (chunk) => {
 
 function send(message) {
   if (message.params?.threadId === "t1") message.params.threadId = activeThreadId;
-  process.stdout.write(`${JSON.stringify(message)}\n`);
+  const line = `${JSON.stringify(message)}\n`;
+  if (pendingSplitWrites) pendingSplitWrites.push(line);
+  else process.stdout.write(line);
 }
 function fail(reason) {
   process.stderr.write(`FAKE-CODEX PROTOCOL VIOLATION: ${reason}\n`);
@@ -388,6 +392,23 @@ function handle(msg) {
       const boundary = currentTurnText.lastIndexOf("\n\n", attachment < 0 ? currentTurnText.length : attachment - 1);
       currentTurnText = currentTurnText.slice(boundary + 2);
     }
+    if (currentTurnText === "split final utf8") {
+      const threadId = activeThreadId, turnId = "split-utf8";
+      send({ id: msg.id, result: { turn: { id: turnId } } });
+      send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+      const frame = Buffer.from(JSON.stringify({ jsonrpc: "2.0", method: "item/completed", params: { threadId, turnId,
+        item: { type: "agentMessage", id: "split-answer", text: "До остановки 🌍" } } }) + "\n");
+      const withinCodePoint = frame.indexOf(Buffer.from("🌍")) + 2;
+      const queued = pendingSplitWrites = [];
+      process.stdout.write(frame.subarray(0, withinCodePoint), () => setTimeout(() => {
+        process.stdout.write(frame.subarray(withinCodePoint));
+        pendingSplitWrites = undefined;
+        for (const line of queued) process.stdout.write(line);
+        send({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "completed" } } });
+      }, 150));
+      return;
+    }
+
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
 
     if (currentTurnText.startsWith("question-")) {
@@ -401,6 +422,32 @@ function handle(msg) {
           { id: "second", header: "Second", question: "Same wording", options: null, isOther: false, isSecret: false },
         ] } });
       if (currentTurnText === "question-nonblocking") send({ method: "item/completed", params: { threadId: activeThreadId, item: { type: "agentMessage", id: "independent", text: "Independent work continued." } } });
+      return;
+    }
+    const workspaceEdit = currentTurnText.match(/^MAC_WORKSPACE_EDIT:([a-f0-9]{32}):(initial|follow-up)$/);
+    if (workspaceEdit) {
+      const [, marker, phase] = workspaceEdit;
+      const turnId = marker + "-" + phase;
+      const file = path.join(process.cwd(), "workspace-edit-" + marker + ".txt");
+      send({ id: msg.id, result: { turn: { id: turnId } } });
+      send({ method: "turn/started", params: { threadId: activeThreadId, turn: { id: turnId } } });
+      if (phase === "initial") {
+        writeFileSync(file, "Initial edit\n", { flag: "wx" });
+        // Keep an owned group member alive after the app-server exits. It ignores polite
+        // shutdown so the runner has observable background cleanup, and self-expires if lost.
+        const descendant = spawn(process.execPath, ["-e",
+          'process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(process.argv[1], "ready"); setTimeout(() => {}, 30000)',
+          file + ".ready"], { stdio: "ignore" });
+        descendant.unref();
+        // Leave an exact tool outcome open while the chat waits for Stop.
+        send({ method: "item/started", params: { threadId: activeThreadId, turnId, item: { type: "webSearch", id: "pending-search" } } });
+      } else {
+        assert.equal(readFileSync(file, "utf8"), "Initial edit\n");
+        writeFileSync(file, "Follow-up edit\n", { flag: "a" });
+        send({ method: "item/completed", params: { threadId: activeThreadId, turnId,
+          item: { type: "agentMessage", id: "workspace-follow-up", text: "Workspace follow-up completed." } } });
+        send({ method: "turn/completed", params: { threadId: activeThreadId, turn: { id: turnId, status: "completed" } } });
+      }
       return;
     }
     if (currentTurnText === "completed-with-unknown-search") {

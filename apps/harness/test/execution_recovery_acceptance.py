@@ -3,6 +3,7 @@ import collections
 import json
 from pathlib import Path
 import sqlite3
+import sys
 import urllib.error
 import urllib.request
 import uuid
@@ -46,10 +47,99 @@ def assert_same_attempt(original, later):
         assert later['eventCounts'].get(event, 0) == original['eventCounts'].get(event, 0), 'The attempt replayed ' + event
 
 
-def assert_closed(proof):
-    assert proof['activeRun'] is None and proof['spawns']
-    assert len(proof['receipts']) == len(proof['spawns'])
-    assert all(receipt['state'] == 'stopped' and receipt['treeStopped'] is True for receipt in proof['receipts'])
+def physically_closed(data, target):
+    proof = native_proof(data, target)
+    if proof['activeRun'] is None and proof['spawns'] and len(proof['receipts']) == len(proof['spawns']) and all(
+            receipt['state'] == 'stopped' and receipt['treeStopped'] is True for receipt in proof['receipts']):
+        return proof
+    return None
+
+
+def check_mac_workspace_continuation(context, app, app_origin, call, client, connection):
+    if sys.platform != 'darwin' or context.get('scenario') != 'agent-providers':
+        return
+    wait, say = context['wait_for'], context['say']
+    capabilities = set(connection['capabilities'])
+    assert 'workspace.edit' in capabilities and 'scope.workspace-writers' not in capabilities
+
+    chat = call(app_origin, '/api/sessions',
+        {'title': 'Ordinary macOS worktree editing', 'connectionId': connection['id'], 'profileId': None})
+    route = '/api/sessions/' + chat['id']
+    tree = call(app_origin, route + '/workspaces', {'action': 'prepare', 'requestId': str(uuid.uuid4()),
+        'appId': app, 'targetBranch': 'main', 'name': 'Edit and continue an ordinary Mac chat'})
+    workspace = '/api/development-workspaces/' + tree['workspaceId']
+    participants = call(app_origin, workspace + '/participants')
+    call(app_origin, route + '/workspaces', {'action': 'attach', 'requestId': str(uuid.uuid4()),
+        'workspaceId': tree['workspaceId'], 'expectedRevision': participants['revision']})
+    source = Path(tree['path']).resolve()
+    assert source.is_relative_to(context['root'].resolve()), 'The edit must target the disposable Core worktree'
+    marker = uuid.uuid4().hex
+    edited = source / ('workspace-edit-' + marker + '.txt')
+    descendant_ready = edited.with_name(edited.name + '.ready')
+    data = context['root'] / 'apps' / context['agentProviders'].entries['codex']['appId'] / 'data'
+    queue_route = route + '/message-queue'
+
+    def enqueue(phase):
+        queue = call(app_origin, queue_route)
+        assert not queue['entries']
+        if queue['paused']:
+            call(app_origin, queue_route + '/commands', {'requestId': str(uuid.uuid4()),
+                'expectedRevision': queue['revision'], 'command': {'type': 'resume'}})
+            queue = call(app_origin, queue_route)
+        entry_id = str(uuid.uuid4())
+        queued = call(app_origin, queue_route + '/commands', {'requestId': str(uuid.uuid4()),
+            'expectedRevision': queue['revision'], 'command': {'type': 'enqueue', 'entryId': entry_id,
+                'text': f'MAC_WORKSPACE_EDIT:{marker}:{phase}', 'attachments': []}})
+        assert queued['queue']['entries'][0]['id'] == entry_id
+        return entry_id
+
+    def observation(entry_id):
+        entry = next((row for row in call(app_origin, queue_route)['entries'] if row['id'] == entry_id), None)
+        if entry:
+            assert entry['state'] not in ('unknown', 'failed'), ('Ordinary chat admission failed', (entry.get('error') or {}).get('code'))
+            return None, {}
+        current = call(app_origin, route)
+        assert current.get('agentProfile') is None, 'The native execution must not require a profile'
+        return current, (current.get('providerExecution') or {}).get('run') or {}
+
+    first_entry = enqueue('initial')
+    def running_edit():
+        _, run = observation(first_entry)
+        return run if run.get('state') == 'running' and run.get('effects', {}).get('unresolvedCallIds') and descendant_ready.is_file() else None
+    first = wait(running_edit, 90)
+    assert edited.read_text() == 'Initial edit\n'
+    requested = call(app_origin, route + '/cancel', {})
+    assert isinstance(requested.get('cancelled'), bool)
+
+    def cancelled():
+        current, run = observation(first_entry)
+        if not current or current['status'] != 'cancelled':
+            return None
+        assert run['ref'] == first['ref'] and run['generation'] == first['generation']
+        assert run['stopConfirmed'] and not current.get('stopUnconfirmed')
+        assert run['effects']['unresolvedCallIds'] == first['effects']['unresolvedCallIds']
+        return run
+    stopped = wait(cancelled, 90)
+    proof = native_proof(data, stopped)
+    assert any(receipt['treeStopped'] is not True for receipt in proof['receipts']), 'Stop waited for the descendant cleanup'
+
+    second_entry = enqueue('follow-up')
+    def continued():
+        current, run = observation(second_entry)
+        if not current or run.get('ref') == first['ref'] or current['status'] != 'idle' or not run.get('stopConfirmed'):
+            return None
+        assert run['state'] == 'succeeded' and run['sessionId'] == stopped['sessionId']
+        return run
+    wait(continued, 90)
+    wait(lambda: physically_closed(data, stopped), 90)
+    assert edited.read_text() == 'Initial edit\nFollow-up edit\n'
+
+    # Chat removal is logical. It must not erase the independently selected source tree.
+    with client.open(urllib.request.Request(app_origin + route, headers={'Origin': app_origin}, method='DELETE'), timeout=60) as response:
+        assert response.status in (200, 202) and json.load(response)['deleted']
+    assert all(item['id'] != chat['id'] for item in call(app_origin, '/api/sessions')['sessions'])
+    assert edited.read_text() == 'Initial edit\nFollow-up edit\n'
+    say('PASS: native macOS edited the selected worktree without a profile, stopped with one unknown tool outcome, and edited it again in the same chat while the original descendant cleanup was pending')
 
 
 def check(context, app, app_origin, call, timed, link, client):
@@ -65,13 +155,13 @@ def check(context, app, app_origin, call, timed, link, client):
     def pending():
         state = snapshot()
         return state if state.get('pending') and not state.get('stopConfirmed') else None
-    qualified = 'scope.workspace-writers' in connection['capabilities']
-    gate_prompt = 'write' if qualified else 'question-blocking'
-    gate_kind = 'approval' if qualified else 'question'
-    gate_route = '/approvals/' if qualified else '/questions/'
-    gate_event = 'approval_request' if qualified else 'question_request'
-    gate_key = 'approvalId' if qualified else 'questionId'
-    answer = {'decision': 'allow'} if qualified else {'answers': {'first': 'fixture choice', 'second': 'fixture answer'}}
+    workspace_edit = bool({'workspace.edit', 'scope.workspace-writers'}.intersection(connection['capabilities']))
+    gate_prompt = 'write' if workspace_edit else 'question-blocking'
+    gate_kind = 'approval' if workspace_edit else 'question'
+    gate_route = '/approvals/' if workspace_edit else '/questions/'
+    gate_event = 'approval_request' if workspace_edit else 'question_request'
+    gate_key = 'approvalId' if workspace_edit else 'questionId'
+    answer = {'decision': 'allow'} if workspace_edit else {'answers': {'first': 'fixture choice', 'second': 'fixture answer'}}
     request = {'text': gate_prompt, 'clientRequestId': str(uuid.uuid4())}
     admitted = call(app_origin, route+'/messages', request)
     assert admitted['state'] == 'accepted'
@@ -109,6 +199,8 @@ def check(context, app, app_origin, call, timed, link, client):
     assert completed['ref']['id'] == run_id and completed['state'] == 'succeeded'
     assert completed['result']['status'] == 'succeeded'
     say('PASS: real Harness restart preserves provider PID, exact pending run, immutable input receipt and live decision completion')
+
+    check_mac_workspace_continuation(context, app, app_origin, call, client, connection)
 
     data = context['root'] / 'apps' / provider['appId'] / 'data'
     # Kill the HTTP service while the native agent is waiting for a decision. No operator
@@ -153,9 +245,8 @@ def check(context, app, app_origin, call, timed, link, client):
         raise
     assert stopped['ref'] == crash['ref'] and stopped['generation'] == crash['generation'] and stopped['pending'] == []
     assert stopped['state'] in ('cancelled', 'failed')
-    closed = native_proof(data, stopped)
+    closed = wait(lambda: physically_closed(data, stopped), 90)
     assert_same_attempt(before_crash, closed)
-    assert_closed(closed)
     obsolete_id = 'agent-decision-' + json.dumps([crash['ref']['id'], crash['pending'][0]['id']], separators=(',', ':')).encode().hex()
     try:
         call(app_origin, route + gate_route + obsolete_id, answer)
@@ -180,8 +271,7 @@ def check(context, app, app_origin, call, timed, link, client):
         return value if value.get('stopConfirmed') and value.get('effects', {}).get('unresolvedCallIds') else None
     partial = wait(incomplete_result, 90)
     assert partial['state'] == 'succeeded' and partial['effects']['certainty'] == 'unknown'
-    proof = native_proof(data, partial)
-    assert_closed(proof)
+    proof = wait(lambda: physically_closed(data, partial), 90)
     assert len(proof['effectIds']) == len(partial['effects']['unresolvedCallIds']) == 1
     call(app_origin, fresh_route+'/messages', {'text': 'hello', 'clientRequestId': str(uuid.uuid4())})
     def resumed_partial():
@@ -205,7 +295,7 @@ def check(context, app, app_origin, call, timed, link, client):
     assert tree_path.is_relative_to(context['root'].resolve())
     dirty_file = tree_path/'retirement-fixture.txt'
     dirty_file.write_text('Preserve this uncommitted work.')
-    if 'scope.workspace-writers' in connection['capabilities']:
+    if workspace_edit:
         call(app_origin, delete_route+'/messages', {'text': gate_prompt, 'clientRequestId': str(uuid.uuid4())})
         def waiting_writer():
             value = (call(app_origin, delete_route).get('providerExecution') or {}).get('run') or {}
@@ -214,16 +304,16 @@ def check(context, app, app_origin, call, timed, link, client):
         assert original_leases < set(call(app_origin, worktree_route)['leases'])
     else:
         writer = None
-        say('The host offers no verified workspace writer scope. Resource-free attempts and source retention run on this profile.')
+        say('The provider offers no workspace editing on this host. The resource-free attempt and source retention checks still run.')
     delete = urllib.request.Request(app_origin+delete_route, headers={'Origin': app_origin}, method='DELETE')
     with client.open(delete, timeout=60) as response:
         result = json.load(response)
         assert response.status in (200, 202) and result['deleted'] and result['requestId']
     wait(lambda: call(app_origin, delete_route+'/deletion').get('state') == 'removed', 90)
     if writer:
-        assert_closed(native_proof(data, writer))
+        wait(lambda: physically_closed(data, writer), 90)
     assert dirty_file.read_text() == 'Preserve this uncommitted work.'
-    assert set(call(app_origin, worktree_route)['leases']) == original_leases
+    wait(lambda: set(call(app_origin, worktree_route)['leases']) == original_leases, 90)
     assert not any(item['sessionId'] == disposable['id'] and item['attached'] for item in call(app_origin, workspace_route+'/participants')['sessions'])
     assert call(app_origin, route)['id'] == session['id']
     say('PASS: confirmed session deletion completes cleanup while preserving separately owned workspace files and the sibling conversation.')

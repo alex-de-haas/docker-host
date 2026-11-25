@@ -235,7 +235,7 @@ describe("native authority renewal and stop reconciliation", () => {
     expect(pending).toEqual({ requestId: expect.any(String), state: "pending" });
     expect((await f.store.run(id)).record.workspaces).toBeUndefined(); // Core also owns leases created by MCP tools.
     const first = vi.mocked(f.authority.workspace).mock.calls[0]!;
-    expect(first).toEqual(["original-admission", "release_all", { requestId: pending!.requestId }]);
+    expect(first).toEqual(["original-admission", "release_all", { requestId: pending!.requestId, generation: (await f.store.run(id)).record.snapshot.generation, writerScopeClosed: expect.any(Boolean) }]);
     await f.controller.snapshot(id); await f.controller.snapshot(id);
     expect(f.authority.workspace).toHaveBeenCalledTimes(1);
     coreAvailable = true;
@@ -446,7 +446,7 @@ describe("native authority renewal and stop reconciliation", () => {
     expect(applied).toMatchObject({ requestId: input.requestId, state: "applied", generation: snapshot.generation });
     expect(await reopened.control(id, input, body, f.actor)).toEqual(applied);
     expect(release.mock.calls).toEqual(Array.from({ length: 3 }, () =>
-      ["original-admission", "release_all", { requestId: before.record.workspaceRelease!.requestId }]));
+      ["original-admission", "release_all", { requestId: before.record.workspaceRelease!.requestId, generation: before.record.snapshot.generation, writerScopeClosed: expect.any(Boolean) }]));
     const after = await reopenedStore.run(id);
     expect(after.session.session.activeRun).toBeNull();
     expect(await reopenedStore.list(f.actor)).toEqual([]);
@@ -518,7 +518,7 @@ describe("native authority renewal and stop reconciliation", () => {
       expect(f.authority.workspace).toHaveBeenCalledExactlyOnceWith("original-admission", "release_all", expect.any(Object));
       await maintain();
       expect(f.authority.workspace).toHaveBeenCalledTimes(2);
-      expect(f.authority.workspace).toHaveBeenLastCalledWith("previous-admission", "release_all", { requestId: previousReleaseId });
+      expect(f.authority.workspace).toHaveBeenLastCalledWith("previous-admission", "release_all", { requestId: previousReleaseId, generation: session.runs[previousRunId]!.snapshot.generation, writerScopeClosed: expect.any(Boolean) });
       expect((await f.store.run(previousRunId)).record.workspaceRelease).toEqual({ requestId: previousReleaseId, state: "released" });
     } else {
       await expect(result).rejects.toMatchObject({ code: "retirement_exit_unconfirmed", status: 409 });

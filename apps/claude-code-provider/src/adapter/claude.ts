@@ -1,7 +1,7 @@
 import { activeTool } from "./activity.js";
 import { ClaudeBackgroundLifecycle, type BashCall } from "./claude-background.js";
 import { ClaudeNativeCompletion } from "./claude-native-completion.js";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { shouldRetainToolOutput } from "./tool-output-policy.js";
 import { readNativeQuestions, questionAnswers } from "./questions.js";
 import { UsageReader, absentUsage, claudeUsage, claudeLimitEvent } from "./provider-usage.js";
@@ -195,6 +195,9 @@ class ClaudeRun implements HarnessRun {
   private stopping: Promise<void> | null = null;
   private stopDeadline = 0;
   private readonly nativeProcessClosures: Promise<void>[] = [];
+  private readonly nativeTargets: ChildProcessWithoutNullStreams[] = [];
+  private notifyNativeClosing!: () => void;
+  private readonly closingNative = new Promise<void>(resolve => { this.notifyNativeClosing = resolve; });
   private turnActive = false;
   private suggestionPending = false;
   private completionCancelled = false;
@@ -381,6 +384,17 @@ class ClaudeRun implements HarnessRun {
     })]); } finally { clearTimeout(timer); }
   }
 
+  async stopForCancellation(): Promise<{ drained: Promise<void> }> {
+    const transport = this.options.processTransport;
+    const drained = this.stopAndWait();
+    if (!transport?.waitForTargetExit) { await drained; return { drained }; }
+    await Promise.race([drained, this.closingNative.then(async () => {
+      if (!this.nativeTargets.length) return drained;
+      await Promise.all(this.nativeTargets.map(target => transport.waitForTargetExit!(target)));
+    })]);
+    return { drained };
+  }
+
   stop(): Promise<void> {
     if (this.stopping) return this.stopping;
     this.stopped = true;
@@ -402,6 +416,7 @@ class ClaudeRun implements HarnessRun {
       // Native child terminals can be written only during supported SDK teardown.
       // Finish that stream before reading; keep the manifest open for this owned helper.
       closed = true; this.query?.close();
+      this.notifyNativeClosing();
       await this.finished;
       // Iterator EOF is not native pipe/process EOF. The tracked spawn's close event
       // proves its real output was drained before the read-only history fallback.
@@ -453,6 +468,7 @@ class ClaudeRun implements HarnessRun {
             const child = this.options.processTransport
               ? this.options.processTransport.spawn(input.command, input.args, options)
               : spawn(input.command, input.args, { ...options, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+            this.nativeTargets.push(child);
             this.nativeProcessClosures.push(new Promise<void>(resolve => child.once("close", () => resolve())));
             const completion = new ClaudeNativeCompletion(child.stdout, () => {
               if (!this.stopped && this.nativeCompletion === completion) this.finishNativeResult();

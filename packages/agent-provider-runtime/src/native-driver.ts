@@ -50,7 +50,7 @@ export class NativeExecution implements ExecutionDriver {
   constructor(private readonly controller: ProviderController, private readonly store: ProviderStore, private readonly authority: ProviderAuthority,
     private readonly connections: ProviderConnections, private readonly attachments: AttachmentStore, private readonly data: string, origin: () => string, private readonly prepareInput: NativeInputPreparer = prepareNativeInput, gitSkillWorkflowTimeoutMs?: number, private readonly ownedAttempt?: string, private readonly writerScope?: WriterScope) {
     this.journal = new WorkerJournal(path.join(data, "native-attempts-v2"), undefined, undefined, "local", store.databasePath);
-    this.mcp = new ProviderMcp(authority, origin, (id, event) => this.proxyDecision(id, event), (id, decisionId, _tool, allowed, automatic) => this.proxySettled(id, decisionId, allowed, automatic), gitSkillWorkflowTimeoutMs, !!writerScope);
+    this.mcp = new ProviderMcp(authority, origin, (id, event) => this.proxyDecision(id, event), (id, decisionId, _tool, allowed, automatic) => this.proxySettled(id, decisionId, allowed, automatic), gitSkillWorkflowTimeoutMs, controller.capabilities.capabilities.includes("workspace.edit"));
     const deliver = async <T>(id: string, start: () => Promise<T>): Promise<T> => {
       const started = await store.exclusive(async () => {
         const { session, record } = await store.run(id);
@@ -75,9 +75,8 @@ export class NativeExecution implements ExecutionDriver {
       adapter: async request => { const { session, record } = await store.run(this.requests.get(request)!); const configuration = session.configurations[record.snapshot.configurationRevision]!;
         if (!configuration.skillPath) throw new Error("The immutable skill snapshot is unavailable.");
         const isolated = await connections.prepareAdapter(configuration.binding!, { skillPath: configuration.skillPath, sessionDirectory: path.join(data, "native-sessions", session.id) });
-        const writable = record.input?.resources?.some(resource => resource.kind === "worktree") === true;
-        if (this.ownedAttempt && writable && !this.writerScope) throw new AgentApiError("unsupported_capability", "A verified writable workspace scope is unavailable on this host.", 422);
         const processes = await TrackedNativeProcesses.create(data, record.snapshot.ref.id, record.snapshot.generation, this.writerScope, request.options.restrictedHost); this.processes.set(record.snapshot.ref.id, processes);
+        if (this.writerScope) await this.journal.recordWriterScope(record.snapshot.ref.id, false);
         return trackedAdapter(isolated, processes); },
     }, controller.capacity);
   }
@@ -120,6 +119,9 @@ export class NativeExecution implements ExecutionDriver {
       if (record.decisionsFenced || record.snapshot.phase === "cancelling") { await this.failBeforeStart(runId, "Cancelled before native admission.", true); return; }
       await this.mcp.workflow.configure(runId, record.admissionRef, admittedAuthority?.ceiling?.workflow);
       const input = record.input!, configuration = session.configurations[input.configurationRevision]!;
+      this.controller.requireCapabilities(input.requiredCapabilities);
+      if (this.ownedAttempt && input.resources?.some(item => item.kind === "worktree"))
+        this.controller.requireCapabilities(["workspace.edit"]);
       if (configuration.configuration.skills?.length) {
         if (!configuration.pinRequestId) throw new AgentApiError("skill_snapshot_unavailable", "The original skill snapshot identity is unavailable.", 503);
         const pinned = await this.authority.skills(record.admissionRef, configuration.pinRequestId, configuration.pinRequestId, configuration.configuration.skills);
@@ -198,7 +200,8 @@ export class NativeExecution implements ExecutionDriver {
     if (native) { await this.synchronize(id); return; }
     await this.store.exclusive(async () => { const { session, record } = await this.store.run(id); if (record.snapshot.stopConfirmed) return;
       const stopped = cancelled || record.decisionsFenced || record.snapshot.phase === "cancelling";
-      record.snapshot.state = stopped ? "cancelled" : "failed"; record.snapshot.phase = "terminal"; record.snapshot.stopConfirmed = true;
+      record.snapshot.state = stopped ? "cancelled" : "failed"; record.snapshot.phase = "terminal";
+      record.snapshot.stopConfirmed = true; record.snapshot.writerScopeClosed = true;
       record.snapshot.result = stopped ? { status: "cancelled" } : { status: "failed", error: { code: "native_admission_failed", message, retryable: false } };
       if (session.session.activeRun?.id === id) { session.session.activeRun = null; session.session.revision = increment(session.session.revision); }
       this.store.lifecycle(record); this.store.emit(record, "result.available", { result: record.snapshot.result }); await this.store.save(session);
@@ -222,8 +225,11 @@ export class NativeExecution implements ExecutionDriver {
           for (const frame of native.events) projectEvent(this.store, session, record, frame);
           projectReceipt(this.store, session, record, native.receipt); await this.store.save(session);
         });
+        const { record } = await this.store.run(id);
+        if (record.snapshot.stopConfirmed && !record.reservedFor) await this.observeWriterClosure(id, record);
       } while (this.syncAgain.has(id));
-      const { record } = await this.store.run(id); if (record.snapshot.stopConfirmed && !record.reservedFor) await this.cleanup(id);
+      const { record } = await this.store.run(id);
+      if (record.snapshot.stopConfirmed && !record.reservedFor) await this.cleanup(id);
     })();
     this.pendingSync.set(id, task);
     void task.finally(() => { if (this.pendingSync.get(id) === task) { this.pendingSync.delete(id); if (this.syncAgain.delete(id)) void this.scheduleSync(id).catch(() => {}); } }).catch(() => {});
@@ -304,9 +310,8 @@ export class NativeExecution implements ExecutionDriver {
     if (run.input && !run.reservedFor && !this.engine.ownsExecution(id)
       && receipt?.conversationId === run.snapshot.sessionId && receipt.generation === run.nativeGeneration
       && (receipt.state === "interrupted" || receipt.exitConfirmed === true && ["completed", "failed", "cancelled"].includes(receipt.state))) {
-      // A provider crash can leave an interrupted journal after the tracked SDK and tree have stopped.
-      const evidence = await TrackedNativeProcesses.readEvidence(this.data, id, run.snapshot.generation);
-      if (evidence.stopped && evidence.allClosed)
+      // Retirement ends this chat's logical participation. A separate receipt covers its writers.
+      if (receipt.exitConfirmed || (await TrackedNativeProcesses.readEvidence(this.data, id, run.snapshot.generation)).targetStopped)
         return { nativeGeneration: receipt.generation, nativeRevision: receipt.revision };
     }
     throw new AgentApiError("retirement_exit_unconfirmed", "The provider has not confirmed native exit for this execution.", 409);
@@ -322,8 +327,8 @@ export class NativeExecution implements ExecutionDriver {
     if (!native || native.receipt.state !== "interrupted" || native.receipt.exitConfirmed)
       throw new AgentApiError("exit_unconfirmed", "The retained native execution is not eligible for provider-owned stop reconciliation.", 409);
     if (this.engine.ownsExecution(id)) return;
-    const evidence = await TrackedNativeProcesses.readEvidence(this.data, id, record.snapshot.generation, this.ownedAttempt === id);
-    if (!evidence.stopped || !evidence.allClosed) throw new AgentApiError("exit_unconfirmed", "Awaiting the execution scope's exit receipt.", 409);
+    const evidence = await TrackedNativeProcesses.readEvidence(this.data, id, record.snapshot.generation, this.ownedAttempt === id, true);
+    if (!evidence.targetStopped) throw new AgentApiError("exit_unconfirmed", "Awaiting the native target's exit receipt.", 409);
     await this.journal.exclusive(async () => {
       if ((await this.journal.load(id)).receipt.state === "interrupted")
         await this.journal.update(id, record.decisionsFenced ? "cancelled" : "failed", "The original execution supervisor exited.");
@@ -332,7 +337,7 @@ export class NativeExecution implements ExecutionDriver {
     const nativeId = native.receipt.snapshot?.nativeSessionId, checkpoint = this.journal.observations(id);
     const observations = checkpoint?.read() as { items?: unknown[] } | undefined;
     if (this.ownedAttempt === id && nativeId && checkpoint && observations?.items?.length && this.connections.recoverChildObservations) {
-      // Physical closure was published before reading history. Replay only missing observations;
+      // Root exit was published before reading history. Replay only missing observations;
       // this read-only provider API cannot start a turn or repeat an external tool.
       const writes: Promise<unknown>[] = [];
       await this.connections.recoverChildObservations({ sessionId: record.snapshot.sessionId, nativeId, attemptId: id,
@@ -382,8 +387,10 @@ export class NativeExecution implements ExecutionDriver {
       const id = record.snapshot.ref.id;
       if (this.ownedAttempt && id !== this.ownedAttempt) continue;
       if (this.ownedAttempt && record.snapshot.phase === "interrupted") await this.reconcileOwnedStop(id).catch(() => {});
-      if (record.input && record.snapshot.stopConfirmed && !record.reservedFor && record.workspaceRelease?.state !== "released")
-        await this.cleanup(id, true).catch(() => {});
+      if (record.input && record.snapshot.stopConfirmed && !record.reservedFor) {
+        await this.observeWriterClosure(id, record).catch(() => {});
+        if (record.workspaceRelease?.state !== "released") await this.cleanup(id, true).catch(() => {});
+      }
       if (session.retirement) {
         const { runId, requestId } = session.retirement;
         if (runId === id && record.controls[requestId]?.receipt.state !== "applied")
@@ -470,8 +477,15 @@ export class NativeExecution implements ExecutionDriver {
       await syncDecisionDeliveries(this.store, this.controller, this.authority, id);
     }
   }
+  private async observeWriterClosure(id: string, record: RunRecord): Promise<void> {
+    if (record.snapshot.writerScopeClosed === true || record.nativeRevision < 0) return;
+    const evidence = await TrackedNativeProcesses.readEvidence(this.data, id, record.snapshot.generation, this.ownedAttempt === id);
+    if (evidence.writerScopeClosed === true) await this.journal.recordWriterScope(id, true);
+  }
+
   private cleanup(id: string, retryPending = false): Promise<void> {
     this.mcp.close(id);
+    if (this.processes.get(id)?.drainingOutput) return Promise.resolve();
     const old = this.pendingCleanup.get(id); if (old) return old;
     const task = this.releaseWorkspace(id, retryPending).finally(() => { if (this.pendingCleanup.get(id) === task) this.pendingCleanup.delete(id); });
     this.pendingCleanup.set(id, task); return task;
@@ -482,19 +496,25 @@ export class NativeExecution implements ExecutionDriver {
       // Reservation/cancel-fence placeholders never admitted an execution or acquired its leases.
       const stopped = record.snapshot.stopConfirmed || session.retirement?.runId === id;
       if (!record.input || !stopped || record.reservedFor) return null;
+      // A previously established strong scope can close asynchronously after the root. The
+      // public Stop is already terminal while its workspace lease waits for that proof.
+      if (record.snapshot.writerScopeClosed === false) return null;
       const fresh = !record.workspaceRelease;
       if (fresh) {
         record.workspaceRelease = { requestId: stableUuid(`${id}:release-all`), state: "pending" };
         await this.store.save(session);
       }
-      return { admissionRef: record.admissionRef, release: { ...record.workspaceRelease! }, fresh };
+      return { admissionRef: record.admissionRef, generation: record.snapshot.generation,
+        writerScopeClosed: record.snapshot.writerScopeClosed === true, release: { ...record.workspaceRelease! }, fresh };
     });
     if (!intent) return;
     this.processes.delete(id);
     // Reads may synchronize a terminal run repeatedly; only the maintenance pump retries an existing intent.
     if (intent.release.state === "released" || !intent.fresh && !retryPending) return;
     let receipt: { state?: string } | null;
-    try { receipt = await this.authority.workspace(intent.admissionRef, "release_all", { requestId: intent.release.requestId }); }
+    try { receipt = await this.authority.workspace(intent.admissionRef, "release_all", {
+      requestId: intent.release.requestId, generation: intent.generation, writerScopeClosed: intent.writerScopeClosed,
+    }); }
     catch { return; } // Ambiguous delivery retains the original durable identity for the next pump/restart.
     if (receipt?.state !== "released") return;
     await this.store.exclusive(async () => {

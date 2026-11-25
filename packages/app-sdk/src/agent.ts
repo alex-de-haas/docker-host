@@ -90,7 +90,11 @@ export type AgentToolBlock = { id: string; source?: AgentSource; name: string; i
 export type AgentResult = { status: "succeeded" | "failed" | "cancelled"; messageId?: string; text?: string; value?: unknown; schemaValid?: boolean; error?: AgentErrorDetail };
 export type AgentRunSnapshot = {
   ref: AgentRunRef; sessionId: string; generation: string; revision: Revision; state: AgentRunState; phase: AgentRunPhase;
-  stopConfirmed: boolean; freshness: "current" | "last_known" | "unavailable"; observedAt: string;
+  /** The observed root agent has exited or was fenced before launch. */
+  stopConfirmed: boolean;
+  /** Whether a qualified writer scope has closed. Omitted when the provider has no such evidence. */
+  writerScopeClosed?: boolean;
+  freshness: "current" | "last_known" | "unavailable"; observedAt: string;
   configurationRevision: Revision; lastSequence: Revision; cursor: string; pending: AgentPendingDecision[];
   effects: { certainty: "known" | "unknown"; unresolvedCallIds: string[] };
   result?: AgentResult; messages?: AgentMessageBlock[]; tools?: AgentToolBlock[];
@@ -113,7 +117,7 @@ export type AgentRunSnapshot = {
   pendingContinuations?: Array<{ requestId: string; run: AgentRunRef; state: "pending" | "awaiting_authorization" | "admitted" | "superseded" }>;
 };
 export type AgentDiscardReceipt = { requestId: string; runId: string; state: "discarded" };
-export type AgentRunClosure = Pick<AgentRunSnapshot, "ref" | "sessionId" | "generation" | "revision" | "state" | "phase" | "stopConfirmed" | "pendingContinuations">;
+export type AgentRunClosure = Pick<AgentRunSnapshot, "ref" | "sessionId" | "generation" | "revision" | "state" | "phase" | "stopConfirmed" | "writerScopeClosed" | "pendingContinuations">;
 export type AgentApprovalResponse = { kind: "approval"; decision: "allow" | "deny"; message?: string };
 export type AgentQuestionResponse = { kind: "question"; answers: Record<string, string | string[]> };
 export type AgentResponseInput = { requestId: string; expectedGeneration: string; expectedRevision: Revision; decisionId: string; decisionRevision: Revision; response: AgentApprovalResponse | AgentQuestionResponse };

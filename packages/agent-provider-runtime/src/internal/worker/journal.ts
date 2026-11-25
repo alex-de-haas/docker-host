@@ -219,6 +219,16 @@ export class WorkerJournal {
     if (error) record.receipt.error = error;
     await this.save(record); return record.receipt;
   }
+  async recordWriterScope(id: string, closed: boolean): Promise<void> {
+    await this.exclusive(async () => {
+      const record = await this.load(id);
+      if (record.receipt.writerScopeClosed === closed || record.receipt.writerScopeClosed === true) return;
+      record.receipt.writerScopeClosed = closed;
+      record.receipt.revision++;
+      record.receipt.updatedAt = new Date().toISOString();
+      await this.save(record);
+    });
+  }
   /** Operator attestation and its replay receipt commit together; no native action is replayed. */
   async recover(id: string, input: WorkerRecovery): Promise<WorkerReceipt> {
     if (!input || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.requestId)

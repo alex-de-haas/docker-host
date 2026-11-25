@@ -68,6 +68,7 @@ export function approvalDecisions(events: readonly AssistantEvent[]): Map<string
       if (!decisions.has(id)) pending.add(id);
     } else if (event.type === "approval_decision") {
       pending.delete(id);
+      if (event.decision === "cancelled" && decisions.has(id) && decisions.get(id)?.decision !== "cancelled") continue;
       decisions.set(id, {
         decision: String(event.decision),
         message: typeof event.message === "string" && event.message ? event.message : null,
@@ -86,12 +87,18 @@ export function approvalDecisions(events: readonly AssistantEvent[]): Map<string
 export function cancelledQuestions(events: readonly AssistantEvent[]): Set<string> {
   const cancelled = new Set<string>();
   const pending = new Set<string>();
+  const answered = new Set<string>();
   for (const event of events) {
+    const id = transcriptDecisionId(event);
     if (event.type === "question_request") {
-      pending.add(transcriptDecisionId(event));
+      if (!cancelled.has(id) && !answered.has(id)) pending.add(id);
     } else if (event.type === "question_answered") {
-      pending.delete(transcriptDecisionId(event));
-      cancelled.delete(transcriptDecisionId(event));
+      pending.delete(id);
+      cancelled.delete(id);
+      answered.add(id);
+    } else if (event.type === "question_cancelled") {
+      pending.delete(id);
+      if (!answered.has(id)) cancelled.add(id);
     } else if (event.type === "session_status" && event.status === "cancelled") {
       for (const id of pending) cancelled.add(id);
       pending.clear();
@@ -217,7 +224,7 @@ export function TranscriptEvent({
       );
     case "question_request":
       if (event.providerHistoryEarlier === true && !answers && !questionCancelled) return <p className="p-2 text-xs text-muted-foreground">An earlier run requested an answer. The response is unconfirmed.</p>;
-      if (typeof event.decisionWaitId === "string" && event.providerHistoryEarlier !== true) return <DecisionQuestion waitId={event.decisionWaitId} />;
+      if (typeof event.decisionWaitId === "string" && event.providerHistoryEarlier !== true && !questionCancelled) return <DecisionQuestion waitId={event.decisionWaitId} />;
       return (
         <QuestionCard
           questionId={transcriptDecisionId(event)}

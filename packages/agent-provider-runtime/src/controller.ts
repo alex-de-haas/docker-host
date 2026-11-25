@@ -13,7 +13,8 @@ import type { ConnectionBinding, ProviderConnections } from "./internal/connecti
 
 export interface ExecutionDriver {
   readonly durableCommands?: boolean;
-  start(sessionId: string, runId: string): Promise<void>;
+  start(sessionId: string, runId: string, generation?: string): Promise<void>;
+  stopOwnedOnStorageFailure?(runId: string, generation: string): void;
   cancel(runId: string, requestId: string): Promise<void>;
   respond(runId: string, input: AgentResponseInput): Promise<void>;
   control(runId: string, input: AgentRunControlInput): Promise<void>;
@@ -203,9 +204,11 @@ export class ProviderController {
       this.store.history.requireDeliveryCapacity(actor, sessionId);
       this.requireCapabilities(input.requiredCapabilities);
       const selection = session.configurations[input.configurationRevision]?.configuration;
-      if (this.driver.durableCommands && (input.resources?.some(resource => resource.kind === "worktree")
-        || this.capabilities.capabilities.includes("scope.restricted-native-tools") && (selection?.approvalMode === "autonomous" || selection?.subagents?.enabled === true)))
-        this.requireCapabilities(["scope.workspace-writers"]);
+      if (this.driver.durableCommands && input.resources?.some(resource => resource.kind === "worktree"))
+        this.requireCapabilities(["workspace.edit"]);
+      if (this.capabilities.capabilities.includes("scope.restricted-native-tools") &&
+        (selection?.approvalMode === "autonomous" || selection?.subagents?.enabled === true))
+        throw new AgentApiError("unsupported_capability", "This native host cannot run the requested tool configuration.", 422);
       if (session.session.activeRun) conflict("The previous execution still owns this session.", "session_busy");
       if (session.session.revision !== input.expectedSessionRevision || session.session.configurationRevision !== input.configurationRevision) conflict("The session configuration changed.");
       if (actor.configurationDigest != null && actor.configurationDigest !== session.session.configurationDigest) conflict("Authorization names another configuration.", "configuration_mismatch");
@@ -241,7 +244,7 @@ export class ProviderController {
       this.store.lifecycle(run); await this.store.save(session);
       return { snapshot: run.snapshot, fresh: true };
     });
-    if (accepted.fresh) { onFresh?.(); this.background(this.driver.start(sessionId, runId)); }
+    if (accepted.fresh) { onFresh?.(); this.background(this.driver.start(sessionId, runId, accepted.snapshot.generation)); }
     return accepted.snapshot;
   }
   background(task: Promise<unknown>): void { this.tasks.add(task); void task.catch(() => {}).finally(() => this.tasks.delete(task)); }
@@ -284,7 +287,7 @@ export class ProviderController {
           throw new AgentApiError("permission_denied", "The run belongs to another admission.", 403);
         if (!record.snapshot.stopConfirmed || record.reservedFor || record.snapshot.pending.length ||
           record.snapshot.pendingContinuations?.some(item => item.state === "pending" || item.state === "awaiting_authorization") ||
-          record.workspaces?.length && record.workspaceRelease?.state !== "released" ||
+          (record.input || record.startIntent || record.workspaces?.length) && record.workspaceRelease?.state !== "released" ||
           Object.values(record.controls).some(control => control.receipt.state === "accepted") ||
           Object.values(record.decisionDeliveries ?? {}).some(delivery => !delivery.done))
           throw new AgentApiError("discard_pending", "The attempt still has an open execution, decision or workspace claim.", 409, true);
@@ -334,7 +337,21 @@ export class ProviderController {
         }
       } else { run.snapshot.phase = "cancelling"; this.store.lifecycle(run); }
       receipt.revision = run.snapshot.revision; run.controls[input.requestId] = { hash, receipt, stop: true }; this.store.emit(run, "control.updated", { requestId: input.requestId, receipt });
-      await this.store.save(session); return { receipt, execute: receipt.state !== "applied" };
+      try { await this.store.save(session); }
+      catch (error) {
+        // Authorization, immutable run identity and command replay checks have succeeded.
+        // Stop the live owner if we still hold it. Only a committed transaction can acknowledge Stop.
+        if (error instanceof AgentApiError && error.code === "storage_unavailable" && !run.snapshot.stopConfirmed && run.nativeGeneration)
+          this.driver.stopOwnedOnStorageFailure?.(runId, run.snapshot.generation);
+        throw error;
+      }
+      return { receipt, execute: receipt.state !== "applied" };
+    }).catch(error => {
+      // The database can fail before the caller and generation can be checked.
+      // Keep the exact Stop retryable without signalling an unverified owner.
+      if (error?.code === "ERR_SQLITE_ERROR" && [8, 10, 11, 13, 14, 26].includes(Number(error.errcode) & 255))
+        throw new AgentApiError("storage_unavailable", "The retained execution could not be verified.", 503, true);
+      throw error;
     });
     if (result.execute) this.background(this.dispatchControl(runId, input.requestId, () => this.driver.cancel(runId, input.requestId)));
     return result.receipt;

@@ -48,6 +48,8 @@ internal sealed partial class CoreEnvironmentService
                 var run = await ConsumerRunAsync(actor, input.Run, ct);
                 if (run.Freshness != "current" || run.StopConfirmed)
                     throw new SandboxException("environment_consumer_run_unavailable", "Register a currently accessible execution before it terminates.");
+                if (run.WriterScopeClosed != false)
+                    throw new SandboxException("environment_consumer_scope_unavailable", "The registered environment writer requires an open, qualified execution scope.");
             }
             var consumer = new CoreEnvironmentConsumer(input.ConsumerId, id, principal, input.Run, 1, clock.UtcNow, "active");
             return await SaveConsumerAsync(record, consumer, input.RequestId, "register", principal, fingerprint, ct);
@@ -83,8 +85,8 @@ internal sealed partial class CoreEnvironmentService
             if (consumer.Run is not null)
             {
                 var run = await ConsumerRunAsync(actor, consumer.Run, ct);
-                if (run.Freshness != "current" || !run.StopConfirmed)
-                    throw new SandboxException("environment_consumer_stop_unconfirmed", "The owning executor has not currently confirmed termination. Cancellation acceptance, terminal text or an unavailable provider cannot release this claim.");
+                if (run.Freshness != "current" || !run.StopConfirmed || run.WriterScopeClosed != true)
+                    throw new SandboxException("environment_consumer_stop_unconfirmed", "The owning executor must confirm that this run and its registered writer scope have closed.");
             }
             consumer = consumer with { Revision = consumer.Revision + 1, State = "released", ObservedAt = clock.UtcNow, StopEvidence = evidence };
             return await SaveConsumerAsync(record, consumer, input.RequestId, kind, principal, fingerprint, ct);

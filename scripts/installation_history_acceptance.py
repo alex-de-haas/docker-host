@@ -52,7 +52,7 @@ def check(context, app, app_origin, link, timed):
     folder = context['root'] / 'apps' / app / 'data' / 'execution-v2' / 'sessions'
     provider_folder = context['root'] / 'apps' / providers.entries['codex']['appId'] / 'data' / 'agent-sessions'
     markers = {uuid.uuid4().hex: threading.Event() for _ in range(3)}
-    writer_supported = 'scope.workspace-writers' in connection['capabilities']
+    writer_supported = bool({'workspace.edit', 'scope.workspace-writers'}.intersection(connection['capabilities']))
     source_marker = next(iter(markers)) if writer_supported else None
     def run_rows(session_id):
         with closing(sqlite3.connect((provider_folder / 'execution-v2.sqlite').as_uri() + '?mode=ro', uri=True)) as db:

@@ -156,7 +156,7 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
     tree_route = workspaces + '/worktrees/' + tree['id']
     original_leases = set(owner.harness(tree_route)['leases'])
     connection = next(row for row in owner.harness('/connections')['connections'] if row['id'] == connection_id)
-    workspace_writer = 'scope.workspace-writers' in connection['capabilities']
+    workspace_writer = bool({'workspace.edit', 'scope.workspace-writers'}.intersection(connection['capabilities']))
     if workspace_writer:
         participant = owner.harness(workspaces + '/participants')
         owner.harness(route + '/workspaces', {'action': 'attach', 'workspaceId': tree['workspaceId'],

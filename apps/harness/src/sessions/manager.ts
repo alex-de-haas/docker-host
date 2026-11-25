@@ -128,6 +128,14 @@ function historyTranscriptRunId(record: SessionRecord, provider: AgentProviderRe
   const contextId = index === -1 ? changes.at(-1)?.requestId : changes[index - 1]?.requestId;
   return transcriptRunId(runId, contextId);
 }
+function supersededDecision(runId: string, decision: import("@hosty-sdk/app/agent").AgentPendingDecision) {
+  const id = providerDecisionCardId(runId, decision.id);
+  return decision.kind === "approval"
+    ? { type: "approval_decision" as const, approvalId: id, toolName: decision.toolName ?? "Agent action", decision: "cancelled",
+      message: "The provider closed this approval request." }
+    : { type: "question_cancelled" as const, questionId: id };
+}
+
 function positionKey(identity: string, value: HistoryPosition): string {
   return JSON.stringify([identity, value.sessionId, value.epoch, value.archiveGeneration, value.position]);
 }
@@ -1112,6 +1120,7 @@ export class SessionManager {
           await this.projectProviderItem(session, applied, state, true, projection, fact.replayed || !advances, partial, clock);
           if (!fact.replayed && advances && handle instanceof ProviderHarnessRun) handle.onHistoryObserved(item);
         }
+        if (historical()) await this.observations.observeWriterScope(id, projection.snapshot);
         if (!archived && !fenced && historical() && session.record.parentSessionId && session.record.subagentAssignmentRunId === fact.runId && projection.snapshot.stopConfirmed)
           this.trackSubagents(this.subagents.observe(session.record.parentSessionId, id, projection.snapshot, stateOnly || clock.details !== clock.lifecycle));
         await renderFact();
@@ -1137,6 +1146,7 @@ export class SessionManager {
       // Older turns may gain evidence after a newer turn starts. Preserve the origin in the
       // journal and leave the current turn's controls, status, usage and pending questions alone.
       await this.importHistoricalTranscript(session, projection, item, historical());
+      await this.observations.observeWriterScope(id, projection.snapshot);
       if (!archived && !fenced && session.record.parentSessionId && session.record.subagentAssignmentRunId === fact.runId && projection.snapshot.stopConfirmed)
         this.trackSubagents(this.subagents.observe(session.record.parentSessionId, id, projection.snapshot, false));
     }
@@ -1149,7 +1159,7 @@ export class SessionManager {
     const seen = this.providerProjectedIds.get(id) ?? projectedIds(await this.store.readEvents(id));
     const specific = (position || session.record.providerRetirement) && item.kind === "event" && item.event.type !== "run.updated" ? item.event : undefined;
     this.providerProjectedIds.set(id, seen);
-    const append = async (key: string, event: HarnessEvent | ({ type: "approval_decision" | "question_answered" } & Record<string, unknown>), source?: AgentSource) => {
+    const append = async (key: string, event: HarnessEvent | ({ type: "approval_decision" | "question_answered" | "question_cancelled" } & Record<string, unknown>), source?: AgentSource) => {
       const identity = runId + ":" + key;
       if (seen.has(identity)) {
         // A prior snapshot or a pre-upgrade chat may have shown this item without its original position.
@@ -1157,7 +1167,7 @@ export class SessionManager {
           || specific.type === "tool.started" && event.type === "tool_use"
           || specific.type === "tool.completed" && (event.type === "command_result" || event.type === "tool_result")
           || specific.type === "decision.requested" && (event.type === "approval_request" || event.type === "question_request")
-          || specific.type === "decision.resolved" && (event.type === "approval_decision" || event.type === "question_answered"));
+          || specific.type === "decision.resolved" && (event.type === "approval_decision" || event.type === "question_answered" || event.type === "question_cancelled"));
         if (position && original && !seen.has(positionKey(identity, position))) {
           const key = positionKey(identity, position);
           // Recover display content clipped by the summary. Status-only completions carry no replacement.
@@ -1229,6 +1239,7 @@ export class SessionManager {
         if (state === "resolved" && response?.kind === "question") await append("resolved:" + decision.id,
           { type: "question_answered", questionId: card, answers: response.answers }, decision.source);
       }
+      if (state === "superseded") await append("superseded:" + decision.id, supersededDecision(runId, decision), decision.source);
     }
     if (!specific && (snapshot.phase === "interrupted" || snapshot.state === "unknown")) await append("observation-unavailable",
       { type: "notice", message: "Provider observation was interrupted. This run's native exit is unconfirmed." });
@@ -1284,6 +1295,8 @@ export class SessionManager {
       if (session.record.providerObservedRunId !== projection.snapshot.ref.id) {
         session.record.agentRunId = await this.observations.begin(session.record);
         session.record.providerObservedRunId = projection.snapshot.ref.id;
+      } else {
+        await this.observations.observeWriterScope(id, projection.snapshot, session.record.agentRunId);
       }
       if (session.record.taskBarrier?.state === "resuming" && session.record.taskBarrier.runId !== next.runId && next.runId)
         (session.record.decisionRunIds ??= {})[session.record.taskBarrier.commandId] = next.runId;
@@ -1412,6 +1425,14 @@ export class SessionManager {
         for (const entry of projection.snapshot.decisions ?? []) {
           const decision = entry.decision;
           const cardId = providerDecisionCardId(displayRunId, decision.id);
+          if (entry.state === "superseded") {
+            const key = `${displayRunId}:superseded:${decision.id}`;
+            if (!seen.has(key)) {
+              await this.append(id, { ...supersededDecision(displayRunId, decision),
+                providerSource: providerTranscriptSource(projection.snapshot, decision.source, displayRunId), providerEventId: key });
+              seen.add(key);
+            }
+          }
           if (entry.state !== "resolved" || !entry.response) continue;
           if (decision.kind === "approval" && entry.response.kind === "approval") {
             await append(`decision:${decision.id}:${decision.revision}`, { type: "approval_request", approvalId: cardId,
@@ -4199,7 +4220,8 @@ export class SessionManager {
           // content expires. A late full snapshot can still fill in the historical result.
           snapshot = await client.run(runId).catch(() => undefined);
           if (!snapshot && retained.run) snapshot = { ...retained.run, state: closure.state, phase: closure.phase,
-            revision: closure.revision, stopConfirmed: true, pending: [], pendingContinuations: closure.pendingContinuations };
+            revision: closure.revision, stopConfirmed: true, writerScopeClosed: closure.writerScopeClosed ?? retained.run.writerScopeClosed,
+            pending: [], pendingContinuations: closure.pendingContinuations };
           if (!snapshot) {
             if (session.run instanceof ProviderHarnessRun) await session.run.detach();
             session.run = null;
@@ -5842,7 +5864,7 @@ export class SessionManager {
   private fanOut(session: LiveSession, event: StoredEvent): void {
     if (["session_status", "session_created", "session_deleted", "session_title"].includes(event.type))
       for (const listener of this.summaryListeners.get(session.record.createdBy) ?? []) listener();
-    if (["session_status", "session_created", "approval_request", "approval_decision", "question_request", "question_answered"].includes(event.type))
+    if (["session_status", "session_created", "approval_request", "approval_decision", "question_request", "question_answered", "question_cancelled"].includes(event.type))
       this.notifyToolActivity();
     for (const listener of session.listeners) {
       try {

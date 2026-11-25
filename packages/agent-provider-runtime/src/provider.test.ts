@@ -1,6 +1,6 @@
 import { fixtureCapabilities } from "./test-support/provider.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -142,6 +142,28 @@ describe("independent provider admission", () => {
       expect(f.store.occupiedSlots()).toBe(2);
       expect(f.driver.start).toHaveBeenCalledTimes(2);
     } finally { await close(); }
+  });
+
+  it("recovers the original Stop after its ownership store becomes unreadable", async () => {
+    const f = await fixture(), { client, close } = await httpClient(f);
+    const id = randomUUID(), stop = prepareAgentCancel(id, { requestId: randomUUID() });
+    const database = f.store.databasePath, saved = database + ".offline";
+    f.driver.stopOwnedOnStorageFailure = vi.fn();
+    try {
+      await client.startRun(f.sessionId, id, input("1"));
+      await rename(database, saved);
+      try {
+        await mkdir(database);
+        await expect(client.execute(stop)).rejects.toMatchObject({ status: 503, code: "storage_unavailable", retryable: true });
+        expect(f.driver.cancel).not.toHaveBeenCalled();
+        expect(f.driver.stopOwnedOnStorageFailure).not.toHaveBeenCalled();
+      } finally {
+        await rm(database, { recursive: true, force: true });
+        await rename(saved, database);
+      }
+      expect(await client.execute(stop)).toMatchObject({ state: "accepted" });
+      await vi.waitFor(() => expect(f.driver.cancel).toHaveBeenCalledOnce());
+    } finally { await f.controller.close(); await close(); }
   });
 
   it("retries the same HTTP Stop exactly once after a full database cannot commit its intent", async () => {

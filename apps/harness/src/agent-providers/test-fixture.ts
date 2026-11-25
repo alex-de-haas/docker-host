@@ -238,7 +238,8 @@ export async function publicProviderFixture(installationHistory = false, impleme
         return json({ runId, requestId, state: "discarded" });
       }
       if (parts[2] === "closure") return json({ ref: snapshot.ref, sessionId: snapshot.sessionId, generation: snapshot.generation,
-        revision: snapshot.revision, stopConfirmed: snapshot.stopConfirmed, state: snapshot.state, phase: snapshot.phase, pendingContinuations: snapshot.pendingContinuations });
+        revision: snapshot.revision, stopConfirmed: snapshot.stopConfirmed, writerScopeClosed: snapshot.writerScopeClosed,
+        state: snapshot.state, phase: snapshot.phase, pendingContinuations: snapshot.pendingContinuations });
       if (parts.length === 2 && behavior.snapshotIssue === "denied") return error("permission_denied", "Owner credential expired.", 403);
       if (parts.length === 2 && behavior.snapshotIssue === "timeout") throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
       if (parts.length === 2) return json(snapshot);

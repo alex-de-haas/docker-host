@@ -35,7 +35,7 @@ export const nativeRunKey = (source: ProviderTranscriptSource): string => JSON.s
   ...providerIdentityParts(source.provider), source.transcriptRunId ?? source.runId, source.generation,
 ]);
 export const nativeAgentKey = (source: ProviderTranscriptSource): string => JSON.stringify([nativeRunKey(source), source.agentId]);
-export const isNativeDecision = (event: AssistantEvent): boolean => ["approval_request", "approval_decision", "question_request", "question_answered"].includes(event.type);
+export const isNativeDecision = (event: AssistantEvent): boolean => ["approval_request", "approval_decision", "question_request", "question_answered", "question_cancelled"].includes(event.type);
 
 /** A child's final message clears only its own partial text, including interleaved children. */
 export function receiveTranscriptText(current: TranscriptStreams, event: AssistantEvent): TranscriptStreams {

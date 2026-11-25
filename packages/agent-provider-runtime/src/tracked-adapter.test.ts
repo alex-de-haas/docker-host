@@ -28,7 +28,7 @@ function fixture(options: { sdkError?: Error; supported?: boolean; stopped?: boo
   const wrapped = trackedAdapter(adapter, processes as unknown as TrackedNativeProcesses).start({} as never);
   return { wrapped, run, processes, order };
 }
-it("requires SDK stop and owned receipts before returning a confirmed stop", async () => {
+it("confirms SDK stop and asks the owned runners to clean up", async () => {
   const f = fixture(); await f.wrapped.stopAndWait!();
   expect(f.order).toEqual(["sdk", "marker", "receipts"]);
 });
@@ -44,10 +44,15 @@ it("cannot confirm a best-effort stop when the SDK has no supported wait operati
   expect(f.run.stop).toHaveBeenCalledOnce(); expect(f.processes.confirmSdkStop).not.toHaveBeenCalled();
   expect(f.processes.stop).toHaveBeenCalledOnce();
 });
-it("keeps incomplete owned tree evidence unknown even after a successful SDK wait", async () => {
-  const f = fixture({ stopped: false });
-  await expect(f.wrapped.stopAndWait!()).rejects.toMatchObject({ code: "exit_unconfirmed" });
-  expect(f.processes.confirmSdkStop).toHaveBeenCalledOnce();
+it("returns after SDK exit even when descendant cleanup is still pending", async () => {
+  const f = fixture();
+  let cleanupFinished!: (proof: { stopped: boolean; allClosed: boolean }) => void;
+  f.processes.stop.mockImplementation(() => new Promise(resolve => { cleanupFinished = resolve; }));
+  try {
+    await expect(f.wrapped.stopAndWait!()).resolves.toBeUndefined();
+    expect(f.processes.confirmSdkStop).toHaveBeenCalledOnce();
+    expect(f.processes.stop).toHaveBeenCalledOnce();
+  } finally { cleanupFinished?.({ stopped: false, allClosed: false }); }
 });
 it("always disposes a pre-start probe without recording SDK completion, including cleanup failure", async () => {
   const dispose = vi.fn(async () => {}), failure = new Error("Receipt storage unavailable");

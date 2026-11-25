@@ -29,7 +29,7 @@ type Hook = (input: Record<string, unknown>) => Promise<unknown>;
 type FixtureOptions = { capture?: boolean; deliver?: boolean; parent?: boolean; duplicate?: boolean; toolName?: string;
   background?: boolean; conflictingCapture?: boolean; post?: Record<string, unknown>; observedInput?: Record<string, unknown>;
   reader?: boolean; assistantUuid?: boolean; assistantMessageId?: boolean; historyPath?: boolean; closeDelay?: number; nativeCloseDelay?: number; nativeCloseDelays?: number[]; noNativeHandle?: boolean;
-  observedAgentId?: string | null; observedSessionId?: string | null };
+  observedAgentId?: string | null; observedSessionId?: string | null; targetExit?: boolean };
 async function fixture(options: FixtureOptions = {}) {
   const events: HarnessEvent[] = [];
   let interrupt!: () => void, finish!: () => void, preHook!: Hook, postHook!: Hook;
@@ -84,7 +84,8 @@ async function fixture(options: FixtureOptions = {}) {
   });
   const run = new ClaudeHarnessAdapter().start({ sessionId: "consumer-session", cwd: "/unused-fixture", autonomy: "autonomous", onEvent: event => events.push(event),
     ...(options.reader ? { nativeHome: "/owned/native", nativeHistoryHome: { home: "/owned/history", directories: { projects: "/owned/history/projects" } },
-      processTransport: { spawn: vi.fn(() => nativeChildren[nextNative++] as never), spawnTool: vi.fn() } } : {}) });
+      processTransport: { spawn: vi.fn(() => nativeChildren[nextNative++] as never), spawnTool: vi.fn(),
+        ...(options.targetExit ? { waitForTargetExit: vi.fn(async () => {}) } : {}) } } : {}) });
   runs.push(run); run.send("Run the harmless child fixture");
   await vi.waitFor(() => {
     expect(events.filter(event => event.type === "tool_use")).toHaveLength((options.parent === false ? 1 : 2) + (options.duplicate ? 2 : 0));
@@ -269,4 +270,18 @@ it.each([
     .map(value => JSON.parse(value.slice("[claude-child-history] ".length))).find(value => value.outcome === "binding_unavailable");
   expect(diagnostic?.admissionReasons?.[reason]).toBe(1);
   expect(await publicStop(f.events)).toMatchObject({ stopConfirmed: true, effects: { certainty: "unknown" } });
+});
+
+it("confirms explicit Stop from the primary exit while retaining the prior child-history drain", async () => {
+  const f = await fixture({ reader: true, deliver: false, nativeCloseDelay: 750, targetExit: true });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const stopping = f.run.stopForCancellation!();
+  await vi.advanceTimersByTimeAsync(2050);
+  const { drained } = await stopping;
+  expect(f.nativeClosed).toBe(false);
+  expect(history.read).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(800);
+  await drained;
+  expect(f.nativeClosed).toBe(true);
+  expect(history.read).toHaveBeenCalledOnce();
 });

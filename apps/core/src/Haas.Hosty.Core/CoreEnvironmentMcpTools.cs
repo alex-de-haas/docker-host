@@ -102,19 +102,19 @@ internal sealed class CoreEnvironmentMcpTools(IHttpContextAccessor accessor, Cor
         => CoreCapabilityResults.Run(async () => await child.SendAsync(await Actor(cancellationToken, true, true), environmentId, input, cancellationToken));
 
     [McpServerTool(Name = "environment_consumer_register", ReadOnly = false, Destructive = false, Idempotent = true)]
-    [Description("Register a consumer before it starts using an environment. Core binds your current principal. Claims survive disconnects and block Stop/Restart/Finish until confirmed release; they grant no resource access. Optional run references require current execution-provider access.")]
+    [Description("Register a consumer before it starts using an environment. Core binds your current principal. Claims survive disconnects and block Stop/Restart/Finish until confirmed release; they grant no resource access. A provider-bound claim requires current access to the run and an open qualified writer scope.")]
     public Task<CallToolResult> RegisterConsumer([Description("Core-issued environment ID.")] string environmentId,
         [Description("Stable consumer/request UUIDs, expected environment revision and optional qualified run.")] CoreEnvironmentConsumerRegister input, CancellationToken cancellationToken)
         => CoreCapabilityResults.Run(async () => await environments.RegisterConsumerAsync(await Actor(cancellationToken, true), environmentId, input, cancellationToken));
 
     [McpServerTool(Name = "environment_consumer_release", ReadOnly = false, Destructive = false, Idempotent = true)]
-    [Description("Release your own consumer after its processes exit. Native consumers require an explicit native-stopped attestation; provider runs additionally require current provider-confirmed termination. A cancellation request or disconnected client is insufficient.")]
+    [Description("Release your own consumer after its processes exit. For native consumers supply a native-stopped attestation. For provider runs Core verifies current agent exit and closure of the registered writer scope.")]
     public Task<CallToolResult> ReleaseConsumer([Description("Core-issued environment ID.")] string environmentId,
         [Description("Consumer/request UUIDs, expected consumer revision and timestamped stop evidence.")] CoreEnvironmentConsumerRelease input, CancellationToken cancellationToken)
         => CoreCapabilityResults.Run(async () => await environments.ReleaseConsumerAsync(await Actor(cancellationToken, true), environmentId, input, false, cancellationToken));
 
     [McpServerTool(Name = "environment_consumer_reconcile", ReadOnly = false, Destructive = true, Idempotent = true)]
-    [Description("Explicit owner recovery for a claim whose original principal cannot release it. Supply operator-confirmed-stop evidence after verifying termination. Provider-managed consumers still require native stop confirmation. This is audited recovery, never a timeout or force-stop bypass.")]
+    [Description("Explicit owner recovery for a claim whose original principal cannot release it. Supply operator-confirmed-stop evidence after verifying termination. For a provider-managed consumer Core also verifies current agent exit and closure of the registered writer scope. Core records the result in the audit receipt.")]
     public Task<CallToolResult> ReconcileConsumer([Description("Core-issued environment ID.")] string environmentId,
         [Description("Consumer/request UUIDs, expected consumer revision and explicit operator stop attestation.")] CoreEnvironmentConsumerRelease input, CancellationToken cancellationToken)
         => CoreCapabilityResults.Run(async () => await environments.ReleaseConsumerAsync(await Actor(cancellationToken, true), environmentId, input, true, cancellationToken));

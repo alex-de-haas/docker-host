@@ -24,7 +24,7 @@ export class ProviderMcp {
   constructor(private readonly authority: ProviderAuthority, private readonly origin: () => string,
     notify: (runId: string, event: { type: "approval_request"; approvalId: string; toolName: string; input: unknown }) => Promise<void>,
     settled: (runId: string, id: string, tool: string, allowed: boolean, automatic: boolean) => Promise<void>,
-    private readonly gitSkillWorkflowTimeoutMs?: number, writerScope = false) {
+    private readonly gitSkillWorkflowTimeoutMs?: number, workspaceEditing = false) {
     this.policy = new McpToolPolicy({ read: async () => structuredClone(this.preferences), transform: async change => {
       for (;;) {
         const previous = this.preferences, patch = await change(structuredClone(previous));
@@ -45,7 +45,7 @@ export class ProviderMcp {
     this.proxy.policy = this.policy;
     this.proxy.identity = async key => this.targets.has(key) ? mcpTargetKey(this.targets.get(key)!.target) : "unavailable";
     this.proxy.allowedTool = (runId, key, name) => { const target = this.targets.get(key); return !!target && target.runId === runId && (!target.tools || target.tools.includes(name))
-      && (writerScope || target.target.kind !== "core" || !workspaceAcquisition.has(name)); };
+      && (workspaceEditing || target.target.kind !== "core" || !workspaceAcquisition.has(name)); };
   }
   async configure(runId: string, admissionRef: string, selection: AgentMcpSelection | undefined, autonomous: boolean): Promise<{ servers: Record<string, unknown>; prefixes: string[] }> {
     if (selection?.connections?.length) throw new AgentApiError("unsupported_capability", "External MCP connections must be configured by this provider; arbitrary URLs and commands are not accepted.", 422);

@@ -62,10 +62,22 @@ public record HostyAgentExecutionSnapshot(HostyRunRef Ref, string SessionId, str
     string ConfigurationRevision, string LastSequence, string Cursor, JsonElement[] Pending, JsonElement Effects,
     JsonElement? Result = null, JsonElement[]? Messages = null, JsonElement[]? Tools = null,
     JsonElement[]? Agents = null, JsonElement? Selection = null, string? AdmissionRef = null,
-    JsonElement? LatestContext = null);
+    JsonElement? LatestContext = null, bool? WriterScopeClosed = null) : IJsonOnDeserialized
+{
+    void IJsonOnDeserialized.OnDeserialized() => HostyAgentClosure.ValidateWriterEvidence(StopConfirmed, WriterScopeClosed);
+}
 /// <summary>Physical execution state, accessible to its original cleanup owner.</summary>
 public record HostyAgentClosure(HostyRunRef Ref, string SessionId, string Generation, string Revision, string State,
-    string Phase, bool StopConfirmed, JsonElement[]? PendingContinuations = null);
+    string Phase, bool StopConfirmed, JsonElement[]? PendingContinuations = null, bool? WriterScopeClosed = null) : IJsonOnDeserialized
+{
+    void IJsonOnDeserialized.OnDeserialized() => ValidateWriterEvidence(StopConfirmed, WriterScopeClosed);
+
+    internal static void ValidateWriterEvidence(bool stopped, bool? writerScopeClosed)
+    {
+        if (writerScopeClosed == true && !stopped)
+            throw new HostyProviderException("provider_response_invalid", "A closed writer scope requires confirmed agent stop.", 502);
+    }
+}
 /// <summary>A requested control receipt, independent of terminal execution truth.</summary>
 public record HostyAgentExecutionControlReceipt(string RequestId, string State, HostyRunRef Run, string Revision,
     string? Generation = null, JsonElement? Error = null, JsonElement? Continuation = null);

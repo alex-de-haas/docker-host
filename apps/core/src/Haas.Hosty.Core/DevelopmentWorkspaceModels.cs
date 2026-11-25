@@ -54,6 +54,8 @@ internal sealed record DevelopmentWorkspace
     public string WorkspaceId => DevelopmentWorkspaceService.Hash("workspace\n" + DevelopmentWorkspaceService.OwnerIdentity(Owner));
     public required string Repository { get; init; }
     public required string RepositoryId { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AllocationGeneration { get; init; }
     public required string Path { get; init; }
     public required string Branch { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
