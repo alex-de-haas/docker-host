@@ -314,6 +314,13 @@ try:
         sys.dont_write_bytecode = True
         from workspace_permission_acceptance import check
         check(globals())
+    if scenario == 'agent-cutover':
+        assert managed, 'Execution cutover acceptance requires a managed child Core'
+        sys.dont_write_bytecode = True
+        from execution_cutover_acceptance import check
+        check(globals())
+        success = True
+        sys.exit(0)
     if scenario == 'skills':
         assert managed, 'Skills acceptance requires a managed child Core'
         sys.dont_write_bytecode = True

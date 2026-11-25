@@ -39,7 +39,7 @@ Core persists a confirmed workspace deletion with its exact selection. The opera
 
 ## Data and deployment
 
-The execution contract is v2 and keeps the structured `agent-event.1` envelope. Core discards incompatible providers during contract selection. New execution and conversation stores start in their own generation. Old active writers require quiescence. Legacy data does not participate in v2 discovery or automatic execution. The cutover preserves separate account settings and secret references. A scoped rehearsal can use disposable test data independently of the user's working chats.
+The execution contract is v2 and keeps the structured `agent-event.1` envelope. Core discards incompatible providers during contract selection. New execution and conversation stores start in their own generation. Old active writers require quiescence. Legacy data does not participate in v2 discovery or automatic execution. The cutover preserves separate account settings and secret references. A managed rehearsal starts the packaged Docker Harness and Local Codex Provider against disposable v1-shaped stores. The packages refuse an active writer, an unreleased lease, a reserved continuation and contradictory terminal receipts. After the independent test process exits and the legacy receipts agree, the packages start with empty v2 chat history. An existing Core-backed connection and unrelated files survive. Restarting both services and repeating the same request ID preserves the run and native spawn identities. The rehearsal uses a scripted Codex peer and synthetic legacy inventory.
 
 ## Testing Expectations
 
