@@ -1,4 +1,4 @@
-// A Windows-only bridge compiled by stock Windows PowerShell. The receipt writer owns the job
+// A Windows-only bridge compiled with the .NET Framework C# compiler. The receipt writer owns the job
 // outside its member tree. It never opens a retained PID to terminate an unrelated process.
 // Win32 contracts: https://learn.microsoft.com/windows/win32/procthread/job-objects
 // https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
@@ -22,6 +22,25 @@ public static class HostyNativeJob
     const uint KillOnClose = 0x2000, Synchronize = 0x100000, QueryLimitedInformation = 0x1000;
     const uint WaitTimeout = 258, Infinite = 0xffffffff;
     static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
+
+    public static int Main(string[] args) {
+        if (args.Length == 1 && args[0] == "--version") {
+            Console.WriteLine("hosty-windows-job/1");
+            return 0;
+        }
+        const string prefix = "hosty-native-";
+        if ((args.Length != 1 && args.Length != 2) || !args[0].StartsWith(prefix, StringComparison.Ordinal)) return 70;
+        string nonce = args[0].Substring(prefix.Length);
+        Guid id;
+        if (!Guid.TryParseExact(nonce, "D", out id) || id.ToString("D") != nonce) return 70;
+        try {
+            return args.Length == 2 ? CloseOrFence(args[1], nonce) : Run(args[0]);
+        } catch (Exception error) {
+            var failure = error.GetBaseException();
+            Console.Error.WriteLine("The provider Windows job bridge failed ({0}, 0x{1:X8}).", failure.GetType().Name, failure.HResult);
+            return 70;
+        }
+    }
 
     [DataContract] public sealed class Configuration {
         [DataMember(IsRequired = true)] public int version;

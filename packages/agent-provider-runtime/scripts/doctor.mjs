@@ -2,6 +2,7 @@ import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { resolveWindowsCompiler } from '../src/windows-job-cache.mjs';
 
 /** Presence/version checks only: no installs, login, provider requests, shell edits or secret output. */
 export async function providerDoctor({kind,env=process.env,platform=process.platform,arch=process.arch,probe}={}) {
@@ -20,10 +21,15 @@ export async function providerDoctor({kind,env=process.env,platform=process.plat
     ['python3','optional','Python is needed only for Python workloads. Install the version selected by that project.'],
     ['cargo','optional','Rust/Cargo is needed only for Rust workloads. Install it when a project requires it.'],
   ])checks.push({name,role,available:await find(name),recommendation});
-  if(platform==='win32')checks.push({name:'powershell',role:'startup',available:await find('powershell'),recommendation:'Enable the stock Windows PowerShell 5.1 component for the provider-owned process Job Object helper.'});
+  if(platform==='win32') {
+    const systemRoot = env.SystemRoot ?? env.SYSTEMROOT;
+    const compiler = systemRoot && await resolveWindowsCompiler(systemRoot).catch(() => undefined);
+    checks.push({ name: 'csc.exe', role: 'startup', available: Boolean(compiler),
+      recommendation: 'Enable or repair the Windows .NET Framework 4.x component so the provider can prepare its native Job Object helper.' });
+  }
   else checks.push({name:'/bin/ps',role:'startup',available:await find('/bin/ps'),recommendation:platform==='darwin'?'Restore the macOS system /bin/ps utility; the provider requires it to verify its owned process tree stopped.':'Install the Linux procps package (procps-ng on distributions using that name), providing executable /bin/ps for owned process-tree stop verification.'});
   const recommendations=platform==='darwin'?['Install Node.js 24 or newer and npm with the macOS installer or your chosen package manager.','Install Git using Xcode Command Line Tools or your package manager; install project tools only as needed.']
-    :platform==='win32'?['Install Node.js 24 or newer with the Windows installer, including npm and its PATH entry.','Enable Windows PowerShell 5.1; install Git for Windows and use the project-selected .NET, Python or Rust installers only when needed.']
+    :platform==='win32'?['Install Node.js 24 or newer with the Windows installer, including npm and its PATH entry.','Use the built-in .NET Framework 4.x C# compiler for native process supervision. Install Git for Windows and the SDKs your projects require.']
     :['Install Node.js 24 or newer and npm using a supported Linux distribution package or the official Node.js distribution.','Install Git and optional project tools using the distribution package manager; match project-pinned SDK versions.'];
   const core={configured:Boolean(env.HOSTY_APP_ID&&env.HOSTY_CORE_ORIGIN&&env.HOSTY_APP_SERVICE_TOKEN),note:'Use a Core-managed launch to verify identity, declared permissions and configured provider endpoints. Account credentials are configured explicitly in provider settings.'};
   return{version:1,kind:kind??null,platform,arch,ready:checks.filter(c=>c.role==='startup').every(c=>c.available),checks,recommendations,core};

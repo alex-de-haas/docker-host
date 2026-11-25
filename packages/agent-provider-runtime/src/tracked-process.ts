@@ -1,6 +1,7 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
 import { linuxWriterArgs, type WriterScope } from "./writer-scope.js";
+import { prepareWindowsJob } from "./windows-job-cache.mjs";
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, openSync, renameSync, mkdirSync, statSync, statfsSync, realpathSync, rmdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -36,7 +37,7 @@ export class TrackedNativeProcesses {
   private readonly handles = new WeakMap<ChildProcessWithoutNullStreams, { ended: Promise<void>; file: string; nonce: string }>();
   private readonly closed = new Set<Promise<void>>();
   private stopped = false;
-  private constructor(private readonly root: string, private readonly manifest: Manifest, private readonly scope?: WriterScope) {
+  private constructor(private readonly root: string, private readonly manifest: Manifest, private readonly scope?: WriterScope, private readonly jobHelper?: string) {
     this.transport = {
       stopProcess: child => this.stopProcess(child),
       spawn: (command, args, options) => this.launch(options.command ?? command, args, options),
@@ -46,13 +47,16 @@ export class TrackedNativeProcesses {
   }
   static async create(dataRoot: string, runId: string, generation: string, scope?: WriterScope, restrictedHost?: true): Promise<TrackedNativeProcesses> {
     const root = directory(dataRoot, runId, generation);
+    const jobHelper = process.platform === "win32"
+      ? scope?.kind === "windows-job" && scope.helper ? scope.helper : await prepareWindowsJob(dataRoot)
+      : undefined;
     await durableMkdir(root);
     const manifest: Manifest = { version: 1, runId, generation, sealed: false, spawns: [], producerPid: process.pid, producerNonce, sdkStopConfirmed: false, ...(restrictedHost ? { restrictedHost } : {}) };
     const file = path.join(root, "manifest.json");
     const fd = openSync(file, "wx", 0o600);
     try { writeFileSync(fd, JSON.stringify(manifest)); fsyncSync(fd); } finally { closeSync(fd); }
     if (process.platform !== "win32") { const parent = openSync(root, "r"); try { fsyncSync(parent); } finally { closeSync(parent); } }
-    return new TrackedNativeProcesses(root, manifest, scope);
+    return new TrackedNativeProcesses(root, manifest, scope, jobHelper);
   }
   private launch(command: string, args: string[], options: AgentSpawnOptions): ChildProcessWithoutNullStreams {
     if (this.stopped || this.manifest.sealed) throw new Error("The native execution is sealed.");
@@ -87,7 +91,7 @@ export class TrackedNativeProcesses {
         this.children.delete(child); resolve();
       }
     });
-    child.send({ version: 1, runId: this.manifest.runId, generation: this.manifest.generation, nonce, file, command: cgroup ? "/usr/bin/bwrap" : command, args: cgroup ? [...linuxWriterArgs, "--", command, ...args] : args, cwd: options.cwd, cgroup }, error => {
+    child.send({ version: 1, runId: this.manifest.runId, generation: this.manifest.generation, nonce, file, command: cgroup ? "/usr/bin/bwrap" : command, args: cgroup ? [...linuxWriterArgs, "--", command, ...args] : args, cwd: options.cwd, cgroup, jobHelper: this.jobHelper }, error => {
       if (error) requestStop();
     });
     return child;
@@ -161,13 +165,8 @@ export class TrackedNativeProcesses {
             const previous = JSON.parse(await readFile(recoveredFile, "utf8"));
             if (previous.runId === runId && previous.generation === generation && previous.nonce === nonce && previous.treeStopped === true) continue;
           } catch { /* Incomplete or missing proof requires kernel verification. */ }
-          const system = process.env.SystemRoot ?? process.env.SYSTEMROOT;
-          if (!system || !path.isAbsolute(system)) return { ...base, reason: "job_unavailable" };
-          const helper = fileURLToPath(new URL("./windows-native-job.ps1", import.meta.url));
-          await promisify(execFile)(path.join(system, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-            ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", helper,
-              "-PipeName", "hosty-native-" + nonce, "-RecoveryFile", receiptFile],
-            { windowsHide: true, timeout: 15000 });
+          const helper = await prepareWindowsJob(dataRoot);
+          await promisify(execFile)(helper, ["hosty-native-" + nonce, receiptFile], { windowsHide: true, timeout: 15000 });
           durable(recoveredFile, { version: 1, runId, generation, nonce, state: "stopped", treeStopped: true, mechanism: "windows-job-successor.2" });
           continue;
         }

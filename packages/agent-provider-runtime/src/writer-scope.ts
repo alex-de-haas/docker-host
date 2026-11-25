@@ -4,9 +4,10 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { once } from "node:events";
+import { prepareWindowsJob } from "./windows-job-cache.mjs";
 
 export const writerCapability = "scope.workspace-writers";
-export type WriterScope = { kind: "windows-job" } | { kind: "linux-cgroup"; directory: string };
+export type WriterScope = { kind: "windows-job"; helper?: string } | { kind: "linux-cgroup"; directory: string };
 
 /** Only an already delegated cgroup may be used. The provider never changes host delegation. */
 export function linuxWriterScope(): WriterScope | undefined {
@@ -36,11 +37,12 @@ export async function probeWriterScope(data: string, diagnostic?: (message: stri
   if (process.platform !== "win32") return linuxWriterScope();
   const trial = await mkdtemp(path.join(data, "job-probe-"));
   const { TrackedNativeProcesses } = await import("./tracked-process.js");
-  const processes = await TrackedNativeProcesses.create(trial, randomUUID(), randomUUID());
+  let processes: Awaited<ReturnType<typeof TrackedNativeProcesses.create>> | undefined;
   try {
+    const scope: WriterScope = { kind: "windows-job", helper: await prepareWindowsJob(data) };
+    processes = await TrackedNativeProcesses.create(trial, randomUUID(), randomUUID(), scope);
     const system = process.env.SystemRoot ?? process.env.SYSTEMROOT;
     if (!system || !path.isAbsolute(system)) return;
-    // Stock PowerShell compiles the private bridge in the writable per-probe temporary directory.
     const env = { SystemRoot: system, WINDIR: system, TEMP: trial, TMP: trial, USERPROFILE: trial,
       PATH: path.join(system, "System32"), ComSpec: path.join(system, "System32", "cmd.exe") };
     const child = processes.transport.spawn(process.execPath, ["-e", "process.exit(0)"], { cwd: trial, env });
@@ -52,9 +54,11 @@ export async function probeWriterScope(data: string, diagnostic?: (message: stri
     if (exit !== 0) { diagnostic?.(`Windows no-op exited ${exit ?? signal}. ${stderr.trim()}`); return; }
     await processes.confirmSdkStop();
     const proof = await processes.stop();
-    if (proof.allClosed && proof.stopped && proof.spawnCount === 1) return { kind: "windows-job" };
+    if (proof.allClosed && proof.stopped && proof.spawnCount === 1) return scope;
     diagnostic?.(`Windows no-op has no physical receipt (${proof.reason ?? "invalid proof"}).`);
-  } catch (error) { diagnostic?.(`Windows no-op probe failed (${(error as Error).name}).`); }
-  finally { await processes.stop(); await rm(trial, { recursive: true, force: true }); }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown bridge setup error";
+    diagnostic?.(`Windows Job probe failed: ${message.replace(/[\r\n]+/g, " ").slice(0, 700)}`);
+  } finally { await processes?.stop(); await rm(trial, { recursive: true, force: true }); }
   return undefined;
 }

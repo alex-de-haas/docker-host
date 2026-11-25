@@ -3,7 +3,6 @@ import { createConnection } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { openSync, closeSync, writeFileSync, fsyncSync, renameSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 const MAX_CONTROL_BYTES = 1024 * 1024;
 export function isWindowsJobProof(receipt, config, writerPid) {
@@ -30,7 +29,7 @@ async function within(promise, milliseconds = 5000) {
   finally { clearTimeout(timer); }
 }
 
-/** The PowerShell bridge owns a non-inheritable Job Object handle outside the command's job.
+/** The prepared Windows bridge owns a non-inheritable Job Object handle outside the command's job.
  * Control uses a private named pipe; native stdin/stdout/stderr remain unchanged byte streams.
  */
 export async function runWindowsWriter() {
@@ -106,12 +105,10 @@ export async function runWindowsWriter() {
       });
       candidate.on('close', () => { if (!closed && socket === candidate && connected && !stopping) requestStop(); });
     };
-      const system = process.env.SystemRoot || process.env.SYSTEMROOT;
-      if (!system || !path.isAbsolute(system)) { finish(70); return; }
-      const powershell = path.join(system, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+      if (typeof config.jobHelper !== 'string' || !path.isAbsolute(config.jobHelper)) { finish(70); return; }
       const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('NODE_CHANNEL_')));
-      trace('starting bridge');
-      bridge = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(new URL('./windows-native-job.ps1', import.meta.url)), '-PipeName', pipeName, ...(tracing ? ['-TraceBootstrap'] : [])], { cwd: config.cwd, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      trace('starting prepared bridge');
+      bridge = spawn(config.jobHelper, [pipeName], { cwd: config.cwd, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
       bridgeClosed = Promise.all([
         new Promise(resolve => { bridge.once('exit', resolve); bridge.once('error', resolve); }),
         new Promise(resolve => bridge.stdout.once('close', resolve)),

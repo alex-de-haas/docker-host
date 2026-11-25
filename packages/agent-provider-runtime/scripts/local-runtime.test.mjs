@@ -12,7 +12,7 @@ const roots = [];
 const fontAssets = ['plex-sans', 'jetbrains-mono'].flatMap(family => [
   ...['latin', 'latin-ext', 'cyrillic'].map(subset => `fonts/${family}-${subset}.woff2`), `fonts/${family}-LICENSE.txt`,
 ]);
-const bundleAssets = ['main.mjs','native-runner.mjs','native-windows.mjs','windows-native-job.ps1','windows-native-job.cs',
+const bundleAssets = ['main.mjs','native-runner.mjs','native-windows.mjs','windows-job-cache.mjs','windows-native-job.cs',
   'adapter-helper.mjs','settings-browser.mjs','hosty-theme.css','settings-bootstrap.js','settings.css',...fontAssets];
 async function writeFixtureOutput(output, file, contents) {
   const target = path.join(output,file); await mkdir(path.dirname(target),{recursive:true}); await writeFile(target,contents);
@@ -186,7 +186,7 @@ it('copies canonical CSS, font subsets and license notices into every provider b
     ...fontAssets.map(file => [file,'shared/web/'+file]),
   ]);
   for (const source of copies.values()) await writeFixtureOutput(f.root,source,await readFile(path.join(repository,source)));
-  for (const file of ['native-runner.mjs','native-windows.mjs','windows-native-job.ps1','windows-native-job.cs'])
+  for (const file of ['native-runner.mjs','native-windows.mjs','windows-job-cache.mjs','windows-native-job.cs'])
     await writeFixtureOutput(f.root,'packages/agent-provider-runtime/src/'+file,'fixture');
   for (const slug of ['codex-provider','claude-code-provider','ollama-provider','independent-provider']) {
     await writeFixtureOutput(f.root,`apps/${slug}/src/helper.mjs`,'app-owned helper '+slug);

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export const commonAssets = ['native-runner.mjs', 'native-windows.mjs', 'windows-native-job.ps1', 'windows-native-job.cs'];
+export const commonAssets = ['native-runner.mjs', 'native-windows.mjs', 'windows-job-cache.mjs', 'windows-native-job.cs'];
 export function applicationSlug(slug) {
   if (typeof slug !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new Error('Select an application directory.');
   return slug;

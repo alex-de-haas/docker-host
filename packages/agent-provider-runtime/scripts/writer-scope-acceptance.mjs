@@ -3,7 +3,8 @@
 import { build } from 'esbuild';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -28,6 +29,20 @@ try {
     assert.equal(scope, undefined, 'This host must refuse unrestricted worktree writers.');
   } else {
     assert.ok(scope,'The native writer boundary is unavailable on this runner.');
+    if (scope.kind === 'windows-job') {
+      const { prepareWindowsJob } = await import('../src/windows-job-cache.mjs');
+      const executable = await prepareWindowsJob(temp);
+      const invoke = args => promisify(execFile)(executable, args, { timeout: 10000, windowsHide: true });
+      const nonce = randomUUID(), pipe = 'hosty-native-' + nonce, receipt = path.join(temp, nonce + '.json');
+      assert.equal((await invoke(['--version'])).stdout.trimEnd(), 'hosty-windows-job/1');
+      await assert.rejects(invoke([]), { code: 70 });
+      await assert.rejects(invoke([pipe, path.join(temp, 'wrong-receipt.json')]), { code: 70 });
+      await writeFile(receipt, '{}');
+      for (let delivery = 0; delivery < 2; delivery++) {
+        await invoke([pipe, receipt]);
+        assert.deepEqual(await readFile(receipt + '.guard'), Buffer.from([1]));
+      }
+    }
     const descendant = "const db=new (require('node:sqlite').DatabaseSync)(process.argv[1]);db.exec('BEGIN EXCLUSIVE; CREATE TABLE held(id)');require('node:fs').writeFileSync(process.argv[2], 'running');setInterval(()=>{},1000)";
     const parent = "require('node:child_process').spawn(process.execPath,['-e',process.argv[1],process.argv[2],process.argv[3]],{detached:true,stdio:'ignore'});setInterval(()=>{},1000)";
     const fixture = path.join(temp,'owner.mjs');

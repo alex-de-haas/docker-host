@@ -518,8 +518,9 @@ nonblocking output descriptors into the native binary. Native exit initiates own
 cleanup, while pipe EOF and output flush remain separate completion facts. Receipts distinguish
 physical tree closure from output delivery; producer loss never manufactures SDK-stop confirmation.
 Windows uses a suspended native launch assigned to a non-breakaway kill-on-close Job Object and
-handle/accounting checks. Windows PowerShell compiles the bridge against the .NET Framework
-serialization and XML assemblies before it accepts a native command. Private control channels
+handle/accounting checks. The provider compiles its Job Object helper with the stock .NET Framework
+4.x C# compiler and reuses the executable from its private cache. Native launches and recovery of a
+named Job Object invoke that executable directly. Private control channels
 stay separate from native stdin/stdout/stderr. Native environments exclude Hosty service/control
 credentials and unrelated tool bearers.
 
@@ -654,9 +655,12 @@ account-secret cleanup.
 
 The read-only provider doctor reports startup prerequisites and workload-dependent tools without
 installing packages, altering a shell or importing credentials. Startup requires Node.js and npm,
-plus executable `/bin/ps` on POSIX hosts or stock Windows PowerShell 5.1 on Windows for native
-process-stop verification. The doctor recommends installing Linux procps or restoring the macOS
-system utility when `/bin/ps` is missing. Git remains a workspace prerequisite, and project SDKs
+plus executable `/bin/ps` on POSIX hosts for native process-stop verification. On Windows the
+provider prepares its Job Object helper with `csc.exe` under the system root's
+`Microsoft.NET/Framework64/v4.0.30319` or `Microsoft.NET/Framework/v4.0.30319` directory.
+The doctor checks those paths and recommends repairing the Windows .NET Framework 4.x component
+when the compiler is missing. On Linux it recommends installing procps, and on macOS it recommends
+restoring the system utility when `/bin/ps` is missing. Git remains a workspace prerequisite, and project SDKs
 remain optional workload tools. Independent source-only provider
 releases and selected lock closures are described in the
 [repository release model](../repository-release-model/feature.md).
@@ -746,7 +750,7 @@ working account. A synthetic protocol check does not establish real OpenAI accou
 - Local packaging tests cover concurrent independent providers, preserved source dependencies,
   cache reuse, source changes, damaged/failed generations and direct-SDK dependency selection.
   Cover compact published paths, legacy generation pointers, malformed pointer rejection and actual
-  Windows native process launch from a prepared generation. Codex sign-in startup verification uses
+  Windows native process launch and recovery with the same prepared Job Object helper. Codex sign-in startup verification uses
   the pinned npm wrapper with an empty isolated home and confirms initialization and shutdown.
   CI/release fixtures require a Codex-only SDK pin to leave Claude, Ollama and Harness unselected.
 - Delete fixtures cover explicit owner confirmation, provider partitions, changed content-read

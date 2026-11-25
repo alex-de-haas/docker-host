@@ -75,7 +75,7 @@ async function fixture() {
 }
 
 describe("Harness admission against the actual public provider controller", () => {
-  it("keeps an applied cancellation's exact bytes across repeated Stop and serialized consumer recovery while exit remains unknown", async () => {
+  it("keeps an accepted cancellation's exact bytes across repeated Stop and serialized consumer recovery while exit remains unknown", async () => {
     const f = await fixture(), run = f.run(); cleanup.push(() => run.detach());
     f.controller.driver.cancel = vi.fn(async runId => {
       await f.store.exclusive(async () => {
@@ -100,7 +100,7 @@ describe("Harness admission against the actual public provider controller", () =
       await expect(run.stopAndWait()).rejects.toMatchObject({ code: "stop_unconfirmed" });
       const original = f.durable().cancellations![runId]!.request;
       const input = JSON.parse(original.body);
-      await vi.waitFor(async () => expect((await f.client.control(runId, input.requestId)).state).toBe("applied"));
+      expect((await f.client.control(runId, input.requestId)).state).toBe("accepted");
       const controls = vi.spyOn(f.client, "control");
       // The public revision advances independently after command acknowledgement.
       await f.store.exclusive(async () => {
@@ -109,8 +109,8 @@ describe("Harness admission against the actual public provider controller", () =
       });
       await expect(run.stopAndWait()).rejects.toMatchObject({ code: "stop_unconfirmed" });
       expect(controls).toHaveBeenCalledWith(runId, input.requestId);
-      expect(f.durable().mutations).toEqual({});
-      expect(f.durable().cancellations![runId]).toEqual({ request: original, receipt: expect.objectContaining({ state: "applied", requestId: input.requestId }) });
+      expect(Object.values(f.durable().mutations ?? {})).toEqual([original]);
+      expect(f.durable().cancellations![runId]).toEqual({ request: original, receipt: expect.objectContaining({ state: "accepted", requestId: input.requestId }) });
       expect(run.stopProof).toBeNull();
       await run.detach();
       const serialized: ProviderExecutionState = JSON.parse(JSON.stringify(f.durable()));
