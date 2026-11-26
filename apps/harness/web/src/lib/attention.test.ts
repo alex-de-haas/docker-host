@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isWaiting, orderSessions, waitingCount } from "./attention.js";
 
-const session = (id: string, status: string, createdAt: string) => ({ id, status, createdAt });
+const session = (id: string, status: string, lastUserPromptAt?: string | null) => ({ id, status, lastUserPromptAt });
 
 describe("attention", () => {
   it("counts only what needs a person", () => {
@@ -10,10 +10,10 @@ describe("attention", () => {
     expect(isWaiting("running")).toBe(false);
   });
 
-  it("orders by last change, without pinning older waiting sessions", () => {
+  it("orders by last user prompt regardless of status or activity", () => {
     const ordered = orderSessions([
       session("new-running", "running", "2026-08-20T10:00:00Z"),
-      session("old-blocked", "awaiting_approval", "2026-08-19T10:00:00Z"),
+      { ...session("old-blocked", "awaiting_approval", "2026-08-19T10:00:00Z"), updatedAt: "2026-08-21T10:00:00Z" },
       session("old-running", "running", "2026-08-18T10:00:00Z"),
       session("new-blocked", "awaiting_question", "2026-08-20T11:00:00Z"),
     ]);
@@ -42,12 +42,12 @@ describe("attention", () => {
   });
 });
 
-it("uses saved activity over creation time with safe legacy and invalid-date fallbacks", () => {
+it("keeps chats without a valid prompt date at the end in stable ID order", () => {
   const records = [
-    { ...session("active-old-chat", "idle", "2026-01-01"), updatedAt: "2026-10-18" },
-    session("new-chat", "idle", "2026-10-17"),
-    { ...session("invalid-update", "idle", "2026-10-16"), updatedAt: "bad" },
-    session("z-unknown", "awaiting_approval", "bad"), session("a-unknown", "idle", "bad"),
+    { ...session("dated", "idle", "2026-01-01"), createdAt: "2026-01-01" },
+    { ...session("new-chat", "idle", null), createdAt: "2026-10-17" },
+    { ...session("invalid-prompt", "idle", "bad"), updatedAt: "2026-10-18" },
+    session("z-unknown", "awaiting_approval"), session("a-unknown", "idle"),
   ];
-  expect(orderSessions(records.reverse()).map(s => s.id)).toEqual(["active-old-chat", "new-chat", "invalid-update", "a-unknown", "z-unknown"]);
+  expect(orderSessions(records.reverse()).map(s => s.id)).toEqual(["dated", "a-unknown", "invalid-prompt", "new-chat", "z-unknown"]);
 });

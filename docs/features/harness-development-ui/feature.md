@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-25
+updated: 2026-11-26
 summary: Harness combines conversations and workspace groups in Sessions, with shared navigation, multi-repository details, environment previews and verified lifecycle actions.
 components: [apps/harness, apps/core, apps/shell, packages/app-sdk]
 ---
@@ -163,18 +163,12 @@ Pending approvals appear in the transcript. Pending questions have a pinned Revi
 scrolls to and focuses their card. During active work, the live activity row appears at the end of
 the transcript and Stop appears in the composer. When the composer is blocked, Stop is available
 in the header. Repository summaries use bordered cards. Search and activity chips change navigation without
-changing conversation identity. The mixed list is ordered by most recent activity, with
-stable ID ordering for equal or unavailable dates. Waiting sessions keep their indicators without
-being pinned above newer work. Sessions fall back to their creation date on older records; Core
-aggregates workspace activity across its repositories and workflow; participant state/title changes
-also affect ordering, while heartbeat observation times do not. Status polling, reconnects and
-opening details do not count as new activity. Autonomy, provider and app-context changes update
-the list immediately and persist across reloads, using the same activity timestamp in the record
-and its change event; replayed events and late responses cannot regress its activity timestamp. Reordering keeps the selected conversation/workspace.
-Core records managed operations, lease/consumer changes, workflow changes and observed Git-visible
-source metadata changes; ignored build output does not affect order. Legacy workspace records use
-their last saved observation as a baseline until new activity is recorded. A Core predating this
-field leaves activity unknown, sorted deterministically after dated records.
+changing conversation identity. Chats are ordered by the time the operator last submitted a prompt.
+A workspace uses the newest prompt among its visible chats, including when the list is filtered.
+Rows without a saved prompt follow dated rows, with stable ID ordering for ties. Existing chats use
+their retained prompt history. Queued prompts count when Harness saves them to the queue.
+Agent replies, execution status, settings, and workspace changes update the displayed details while
+keeping the order based on prompts. Reordering keeps the selected conversation or workspace.
 Opening a chat shows a loading state until its existing event stream finishes the initial historical
 replay and reports the current session status. The message scroller then mounts with the complete
 history and positions at the end before showing it, without animating through earlier messages.
@@ -1085,8 +1079,9 @@ records the startup/recovery measurements; Linux and Windows lifecycle checks ar
   not flash before empty results. Verify populated results, visible read errors/retries, retained
   content during refresh, rejected late results and the full Feedback page's loading state.
 
-- Verify the single Sessions navigation entry, mixed activity ordering, shared selection memory and
-  counts, workspace grouping without duplicate or lost accessible chats, all creation actions and
+- Verify the single Sessions navigation entry, prompt ordering for chats and workspace groups,
+  stable order during parallel agent replies and workspace updates, enqueue time across dispatch
+  and reload, shared selection memory and counts, workspace grouping without duplicate or lost accessible chats, all creation actions and
   empty-page app creation. Keep existing workspace deep links, per-session drafts and assistant promotion.
 - Verify workspace-row trash opens the existing target-specific dialog without switching the
   selected chat or deleting anything before confirmation. Cover manage permission, Cancel/focus,

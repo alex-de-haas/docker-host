@@ -39,6 +39,35 @@ it("reconciles a long journal once across streaming append/checkpoint pairs and 
   expect(reads).toBe(2);
 });
 
+it("recovers prompt recency from retained input without re-reading the warm transcript", async () => {
+  const legacyPrompt = "2026-11-13T00:00:00.000Z";
+  const submittedAt = "2026-11-14T00:00:00.000Z";
+  const activityAt = "2026-11-15T00:00:00.000Z";
+  const events = [
+    { seq: 1, type: "user_message", ts: legacyPrompt, text: "First prompt" },
+    { seq: 2, type: "user_message", ts: activityAt, text: "Continue with the saved answer." },
+    { seq: 3, type: "subagent_continuation", ts: activityAt },
+    { seq: 4, type: "assistant_text", ts: activityAt },
+  ];
+  await actual.writeFile(target, events.map(value => JSON.stringify(value)).join("\n") + "\n");
+  expect((await store.readRecord(record.id))?.lastUserPromptAt).toBe(legacyPrompt);
+
+  await store.appendEvent(record.id, { seq: 5, type: "user_message", ts: activityAt, lastUserPromptAt: submittedAt });
+  await store.appendEvent(record.id, { seq: 6, type: "user_message", ts: activityAt, lastUserPromptAt: null });
+  expect((await store.readRecord(record.id))?.lastUserPromptAt).toBe(submittedAt);
+  expect(reads).toBe(1);
+  expect((await new SessionStore(root).readRecord(record.id))?.lastUserPromptAt).toBe(submittedAt);
+});
+
+it("preserves a saved queue submission when an older conversation snapshot is written", async () => {
+  const stale = (await store.readRecord(record.id))!;
+  const submittedAt = "2026-11-13T00:00:00.000Z";
+  await store.saveRecord({ ...stale, lastUserPromptAt: submittedAt });
+  await store.saveRecord(stale);
+  expect(stale.lastUserPromptAt).toBe(submittedAt);
+  expect((await new SessionStore(root).readRecord(record.id))?.lastUserPromptAt).toBe(submittedAt);
+});
+
 it("invalidates a warm generation after same-size corruption even when mtime is restored", async () => {
   await actual.writeFile(target, JSON.stringify(event(1)) + "\n");
   const exact = new Date("2026-11-12T00:00:00.000Z"); await actual.utimes(target, exact, exact);

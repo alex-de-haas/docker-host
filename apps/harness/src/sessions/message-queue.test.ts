@@ -240,12 +240,17 @@ describe("durable queue commands and immutable attachments", () => {
 describe("background dispatch and receipt recovery", () => {
   it("continues ordered messages without a browser subscription and rejects legacy overtaking", async () => {
     await liveCommand(enqueue("first")); await vi.waitFor(() => expect(sent).toEqual(["first"]));
-    await liveCommand(enqueue("second")); await liveCommand(enqueue("third"));
+    await liveCommand(enqueue("second"));
+    const third = await liveCommand(enqueue("third"));
+    const submittedAt = third.queue.entries.find(entry => entry.text === "third")!.createdAt;
+    expect((await manager.getSession(record.id))?.lastUserPromptAt).toBe(submittedAt);
     await expect(manager.postMessage(record.id, "overtake")).rejects.toMatchObject({ code: "queue_pending" });
     await finish(); await vi.waitFor(() => expect(sent).toEqual(["first", "second"]));
     await finish(); await vi.waitFor(() => expect(sent).toEqual(["first", "second", "third"]));
     await finish(); await vi.waitFor(async () => expect((await manager.messageQueue(record.id, "owner")).entries).toEqual([]));
-    expect((await store.readEvents(record.id)).filter(e => e.type === "user_message")).toHaveLength(3);
+    const prompts = (await store.readEvents(record.id)).filter(e => e.type === "user_message");
+    expect(prompts.map(event => event.lastUserPromptAt)).toEqual([null, null, null]);
+    expect((await new SessionStore(dir).readRecord(record.id))?.lastUserPromptAt).toBe(submittedAt);
   });
   it("requires current owner authority before dispatch and refreshes queued chats after restart", async () => {
     await liveCommand(enqueue("saved"), "");

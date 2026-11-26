@@ -43,7 +43,7 @@ import type { HarnessAdapter, HarnessEvent, HarnessRun } from "../harness/adapte
 import { sanitizeCommandResult } from "../harness/command-result.js";
 import { sanitizeToolResult, shouldRetainToolOutput } from "../harness/tool-result.js";
 import { workingActivity, type SessionActivity, type HarnessActivity } from "../harness/activity.js";
-import { SessionStorageError, messageRequestId, type MessageReceipt, type StoredMessageReceipt, type SessionRecord, type SessionStatus, type SessionStore, type StoredEvent } from "./store.js";
+import { SessionStorageError, latestUserPromptAt, messageRequestId, type MessageReceipt, type StoredMessageReceipt, type SessionRecord, type SessionStatus, type SessionStore, type StoredEvent } from "./store.js";
 import type { FeedbackMessageReference } from "../feedback/presentation.js";
 import type { AuditReporter } from "../audit.js";
 import type { SettingsStore } from "../settings/store.js";
@@ -2051,7 +2051,8 @@ export class SessionManager {
   }
 
   private queueEvent(session: LiveSession): StoredEvent {
-    return { type: "session_message_queue", seq: -3, ts: new Date().toISOString(), sessionId: session.record.id, queue: this.messageQueues.snapshot(session.record) };
+    return { type: "session_message_queue", seq: -3, ts: new Date().toISOString(), sessionId: session.record.id,
+      lastUserPromptAt: session.record.lastUserPromptAt, queue: this.messageQueues.snapshot(session.record) };
   }
   private queueBinding(record: SessionRecord): string {
     return createHash("sha256").update(JSON.stringify([record.connectionId, record.connectionRevision, record.connectionIdentity, record.harnessKind,
@@ -2062,7 +2063,9 @@ export class SessionManager {
     const { payloadFingerprint: _stored, ...payload } = attempt;
     return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
   }
-  private publishMessageQueue(session: LiveSession): void { this.fanOut(session, this.queueEvent(session)); }
+  private publishMessageQueue(session: LiveSession, promptTimeChanged = false): void {
+    this.fanOut(session, this.queueEvent(session), promptTimeChanged);
+  }
   async messageQueue(id: string, owner: string): Promise<QueueSnapshot> {
     return this.serialize(id, async () => {
       const session = await this.requireLive(id);
@@ -2103,7 +2106,10 @@ export class SessionManager {
         throw new AppContextError(409, "stop_unconfirmed", QUEUE_STOP_UNCONFIRMED);
       if (!replay && ["enqueue", "resume", "retry"].includes(String(command?.type))) await this.assertQueueWorkspace(session, credential);
       if (credential) { session.workspaceCredential = credential; session.credential = credential; }
-      const result = await this.messageQueues.command(session.record, input); this.publishMessageQueue(session); return result;
+      const previousPromptTime = session.record.lastUserPromptAt;
+      const result = await this.messageQueues.command(session.record, input);
+      this.publishMessageQueue(session, session.record.lastUserPromptAt !== previousPromptTime);
+      return result;
     });
     this.wakeMessageQueue(id); return result;
   }
@@ -3139,6 +3145,7 @@ export class SessionManager {
         status: "idle",
         createdAt: now,
         updatedAt: now,
+        lastUserPromptAt: null,
         createdBy: input.createdBy,
         harnessSessionId: null,
         lastEventSeq: 0,
@@ -4347,6 +4354,8 @@ export class SessionManager {
   }
 
   async postMessage(id: string, text: string, credential?: string, attachments: string[] = [], context: { subagentInput?: "assignment" | "result"; subagentRunId?: string; queueEntryId?: string; feedback?: FeedbackMessageReference; taskContinuation?: { id: string; generation: number; owner: string; snapshot: string }; decisionContinuation?: Pick<DecisionWait, "id" | "owner" | "snapshot" | "cancellationGeneration">; promptSuggestions?: boolean; taskDispatch?: boolean; selectionRevision?: unknown; expectedRevision?: unknown; withoutDetails?: boolean; dispatchId?: string; workspaceCredential?: string | null; clientRequestId?: unknown; actorUserId?: string } = {}): Promise<MessageReceipt | void> {
+    const submittedAt = context.queueEntryId || context.subagentInput || context.taskDispatch || context.taskContinuation
+      || context.decisionContinuation || context.feedback ? null : new Date().toISOString();
     const clientRequestId = context.clientRequestId === undefined ? undefined : this.messageRequest(context.clientRequestId);
     const actorUserId = clientRequestId ? this.messageActor(context.actorUserId) : undefined;
     if (context.feedback && (context.feedback.version !== 1 || typeof context.feedback.dispatchId !== "string"
@@ -4606,6 +4615,7 @@ export class SessionManager {
           && (event.type === "subagent_assignment" || event.type === "subagent_continuation")) : undefined;
         const messageEventSeq = previousInput?.seq ?? await this.append(id, {
           type: context.subagentInput === "result" ? "subagent_continuation" : context.subagentInput === "assignment" ? "subagent_assignment" : "user_message",
+          ...(context.subagentInput ? {} : { lastUserPromptAt: submittedAt }),
           ...(clientRequestId ? { clientRequestId } : {}),
           ...(feedback ? { feedback } : {}),
           executionSelection: session.record.executionSelection ?? { model: null, reasoningEffort: null },
@@ -5847,11 +5857,14 @@ export class SessionManager {
     const previous = this.sourceAppends.get(id) ?? Promise.resolve();
     const committed = previous.catch(() => undefined).then(async () => {
       const after = session.record.lastEventSeq;
+      const previousPromptTime = session.record.lastUserPromptAt;
       const event: StoredEvent = { seq: after + 1, ts: new Date().toISOString(), ...payload };
       await this.store.appendEvent(id, event, { after });
       session.record.lastEventSeq = Math.max(session.record.lastEventSeq, event.seq);
+      if (typeof event.lastUserPromptAt === "string")
+        session.record.lastUserPromptAt = latestUserPromptAt(session.record.lastUserPromptAt, event.lastUserPromptAt);
       await this.store.saveRecord(session.record);
-      this.fanOut(session, event);
+      this.fanOut(session, event, session.record.lastUserPromptAt !== previousPromptTime);
       if (typeof event.providerEventId === "string" && event.providerHistoryPosition)
         this.providerProjectedIds.get(id)?.add(positionKey(event.providerEventId, event.providerHistoryPosition as HistoryPosition));
       return event.seq;
@@ -5861,8 +5874,8 @@ export class SessionManager {
     finally { if (this.sourceAppends.get(id) === committed) this.sourceAppends.delete(id); }
   }
 
-  private fanOut(session: LiveSession, event: StoredEvent): void {
-    if (["session_status", "session_created", "session_deleted", "session_title"].includes(event.type))
+  private fanOut(session: LiveSession, event: StoredEvent, promptTimeChanged = false): void {
+    if (promptTimeChanged || ["session_status", "session_created", "session_deleted", "session_title"].includes(event.type))
       for (const listener of this.summaryListeners.get(session.record.createdBy) ?? []) listener();
     if (["session_status", "session_created", "approval_request", "approval_decision", "question_request", "question_answered", "question_cancelled"].includes(event.type))
       this.notifyToolActivity();

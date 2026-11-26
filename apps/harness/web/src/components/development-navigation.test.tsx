@@ -10,11 +10,12 @@ vi.mock("@/lib/development-api", async original => ({ ...await original<object>(
 let root: Root; let container: HTMLDivElement;
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(developmentRequest).mockReset(); localStorage.clear(); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} }); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
-it("lists each conversation once across app contexts in activity order without group headings", async () => {
-  const multi = { id: "same", title: "Shared work", status: "running", appIds: ["one", "two"], createdAt: "2026-10-16" } as AssistantSession;
-  const quick = { id: "quick", title: "Quick chat", status: "completed", appIds: [], createdAt: "2026-10-16" } as AssistantSession;
+it("lists each conversation once across app contexts in prompt order without group headings", async () => {
+  const multi = { id: "same", title: "Shared work", status: "running", appIds: ["one", "two"], createdAt: "2026-10-16", lastUserPromptAt: "2026-10-18" };
+  const quick = { id: "quick", title: "Quick chat", status: "completed", appIds: [], createdAt: "2026-10-16", lastUserPromptAt: "2026-10-17" };
   const onPick = vi.fn();
   await act(async () => root.render(<DevelopmentNavigation sessions={[multi,quick]} activeId="same" workspaces={[]} onPick={onPick} onNew={() => {}} onDelete={vi.fn()} />));
+  expect([...container.querySelectorAll("nav button span.block[title]")].map(node => node.textContent)).toEqual(["Shared work", "Quick chat"]);
   const rows = [...container.querySelectorAll('button[aria-current="page"]')]; expect(rows).toHaveLength(1);
   for (const row of rows) await act(async () => (row as HTMLButtonElement).click());
   expect(onPick.mock.calls).toEqual([[multi]]);
@@ -86,8 +87,8 @@ it("keeps remaining chats available and returns focus to New session when deleti
 });
 
 it("combines search and state filters without changing session identity or order", async () => {
-  const older = { ...disposable, id: "older", title: "Older task", status: "awaiting_approval", appIds: [], createdAt: "2026-10-18" };
-  const newer = { ...older, id: "newer", title: "Newer task", createdAt: "2026-10-20" };
+  const older = { ...disposable, id: "older", title: "Older task", status: "awaiting_approval", appIds: [], lastUserPromptAt: "2026-10-18" };
+  const newer = { ...older, id: "newer", title: "Newer task", lastUserPromptAt: "2026-10-20" };
   const running = { ...older, id: "working", title: "Working task", status: "running" };
   const pick = vi.fn();
   await act(async () => root.render(<DevelopmentNavigation sessions={[older, running, newer]} workspaces={[]} onPick={pick} onNew={vi.fn()} onDelete={vi.fn()} />));

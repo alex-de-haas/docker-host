@@ -2,7 +2,7 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { listSessions, type AssistantSession } from "./assistant-api";
 import { subscribeWorkspaceEvents } from "./workspace-events";
-import { activityTime, isWaiting } from "./attention";
+import { activityTime, isWaiting, latestUserPromptAt } from "./attention";
 
 /** The selected chat uses SSE; inventory reconciliation also discovers work started elsewhere. */
 export function useSessionListRefresh(enabled: boolean, sessions: AssistantSession[], activeId: string | undefined,
@@ -33,7 +33,9 @@ export function useSessionListRefresh(enabled: boolean, sessions: AssistantSessi
             if (before.get(row.id) !== row) return [row];
             const value = received.get(row.id);
             if (!value) return [];
-            return [activityTime(value) >= activityTime(row) && (value.lastEventSeq ?? 0) >= (row.lastEventSeq ?? 0) ? value : row];
+            const latest = activityTime(value) >= activityTime(row) && (value.lastEventSeq ?? 0) >= (row.lastEventSeq ?? 0) ? value : row;
+            const lastUserPromptAt = latestUserPromptAt(row.lastUserPromptAt, value.lastUserPromptAt);
+            return [latest.lastUserPromptAt === lastUserPromptAt ? latest : { ...latest, lastUserPromptAt }];
           });
           // A concurrent local create/delete can involve an id absent from both snapshots.
           // Defer new discoveries to the next stable read in that case.

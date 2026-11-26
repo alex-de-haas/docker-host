@@ -63,6 +63,7 @@ export type AssistantSession = {
   status: string;
   createdAt: string;
   updatedAt?: string;
+  lastUserPromptAt?: string | null;
   lastEventSeq?: number;
   createdBy?: string;
   appIds?: string[];

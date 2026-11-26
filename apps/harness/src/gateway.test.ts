@@ -74,9 +74,13 @@ describe("gateway", () => {
     expect(await (await call(uploadPath, { method: "PUT", body: "original bytes" })).json()).toEqual({ attachment: expect.objectContaining(file) });
     const payload = { requestId: randomUUID(), expectedRevision: snapshot.revision, command: { type: "enqueue", entryId: randomUUID(), text: "inspect", attachments: [file.name] } };
     const first = await call(base + "/commands", { method: "POST", body: JSON.stringify(payload) }); expect(first.status).toBe(200);
-    const accepted = await first.json() as { result: unknown; queue: { entries: unknown[] } };
+    const accepted = await first.json() as { result: unknown; queue: { entries: { createdAt: string }[] } };
     const replay = await call(base + "/commands", { method: "POST", body: JSON.stringify(payload) }); expect(replay.status).toBe(200);
     expect(await replay.json()).toMatchObject({ result: accepted.result, queue: { entries: [expect.objectContaining({ text: "inspect" })] } });
+    const listed = await call("/api/sessions");
+    expect(await listed.json()).toMatchObject({ sessions: [expect.objectContaining({
+      id: session.id, lastUserPromptAt: accepted.queue.entries[0]!.createdAt,
+    })] });
     const bytes = await call(`${base}/attachments/${file.id}`); expect(bytes.status).toBe(200); expect(await bytes.text()).toBe("original bytes");
     expect((await call(base, {}, null)).status).toBe(401);
     const other = mintToken("host.admin", "hosty.harness", "another-owner");
@@ -121,6 +125,8 @@ describe("gateway", () => {
 
   it("recovers an admitted message through an actor-bound uncached receipt without resending", async () => {
     const session = await manager.createSession({ createdBy: "user_admin" });
+    const getRecord = () => call(`/api/sessions/${session.id}`).then(response => response.json());
+    expect(await getRecord()).toMatchObject({ lastUserPromptAt: null });
     const clientRequestId = randomUUID();
     const payload = { text: "receipt fixture", attachments: [], appContextRevision: 0, selectionRevision: 0, withoutAppDetails: false, clientRequestId };
     const send = () => call(`/api/sessions/${session.id}/messages`, { method: "POST", body: JSON.stringify(payload) });
@@ -133,7 +139,9 @@ describe("gateway", () => {
     expect(recovered.status).toBe(200); expect(recovered.headers.get("cache-control")).toBe("no-store");
     expect(await recovered.json()).toEqual({ clientRequestId, state: "accepted", eventSeq: receipt.eventSeq });
     expect((await send()).status).toBe(202);
-    expect((await store.readEvents(session.id)).filter(event => event.type === "user_message")).toHaveLength(1);
+    const events = (await store.readEvents(session.id)).filter(event => event.type === "user_message");
+    expect(events).toEqual([expect.objectContaining({ lastUserPromptAt: expect.any(String) })]);
+    expect(await getRecord()).toMatchObject({ lastUserPromptAt: events[0]!.lastUserPromptAt });
     const mismatch = await call(`/api/sessions/${session.id}/messages`, { method: "POST", body: JSON.stringify({ ...payload, text: "different" }) });
     expect(mismatch.status).toBe(409); expect(await mismatch.json()).toMatchObject({ code: "message_request_conflict" });
     const other = { authorization: `Bearer ${mintToken("host.admin", "hosty.harness", "other")}`, "content-type": "application/json" };
