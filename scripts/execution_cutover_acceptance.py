@@ -96,7 +96,7 @@ with pathlib.Path(sys.argv[1]).open('w') as writer:
         try:
             wait(lambda: sentinel.exists() and sentinel.read_text() == 'active')
             refuse(codex, 'previous provider has an unclosed execution')
-            refuse(harness, 'legacy conversation inventory has an unconfirmed writer')
+            refuse(harness, 'has an unconfirmed writer')
             assert writer.poll() is None and sentinel.read_text() == 'active'
             assert admitted() == [] and not (harness_data/'execution-v2'/'agent-consumer-format.json').exists()
         finally:
@@ -119,7 +119,13 @@ with pathlib.Path(sys.argv[1]).open('w') as writer:
     save(raw_journal, {'version': 1, 'receipt': {'runId': old_run, 'exitConfirmed': True}})
     chat['status'] = 'idle'
     save(consumer_record, chat)
-    protected = {path: path.read_bytes() for path in (provider_record, raw_journal, consumer_record, retained, native_file)}
+    retired = str(uuid.uuid4())
+    observations = harness_data/'agent-observations.json'
+    save(observations, {'sessions': [], 'runs': [{
+        'id': retired, 'owner': context['user'], 'conversation': None, 'nativeSession': None,
+        'state': 'unknown', 'stopConfirmed': False, 'generation': None, 'retired': True,
+    }], 'cancellations': [{'key': 'a'*64, 'fingerprint': 'b'*64, 'runId': retired, 'state': 'pending'}]})
+    protected = {path: path.read_bytes() for path in (provider_record, raw_journal, consumer_record, retained, native_file, observations)}
     start(codex)
     start(harness)
     link = json.loads(run([*cli, 'open', harness, '--format', 'json']))['url']

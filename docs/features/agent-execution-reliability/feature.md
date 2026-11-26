@@ -1,6 +1,6 @@
 ---
 created: 2026-11-25
-updated: 2026-11-25
+updated: 2026-11-26
 summary: Provider-owned attempts, durable chat delivery and server-owned removal in the agent v2 execution protocol.
 components: [apps/core, apps/harness, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -45,6 +45,53 @@ Core persists a confirmed workspace deletion with its exact selection. The opera
 
 The execution contract is v2 and keeps the structured `agent-event.1` envelope. Core discards incompatible providers during contract selection. New execution and conversation stores start in their own generation. Old active writers require quiescence. Legacy data does not participate in v2 discovery or automatic execution. The cutover preserves separate account settings and secret references. A managed rehearsal starts the packaged Docker Harness and Local Codex Provider against disposable v1-shaped stores. The packages refuse an active writer, an unreleased lease, a reserved continuation and contradictory terminal receipts. After the independent test process exits and the legacy receipts agree, the packages start with empty v2 chat history. An existing Core-backed connection and unrelated files survive. Restarting both services and repeating the same request ID preserves the run and native spawn identities. The rehearsal uses a scripted Codex peer and synthetic legacy inventory.
 
+Harness recognizes a v1 retirement record after the corresponding conversation is removed.
+A pending legacy cancellation can stay in the offline journal when its run has confirmed
+native exit or was retired. The original observations, cancellation state and tool outcomes
+stay intact. An unresolved observation identifies its run in the startup error.
+
+For an archived conversation whose retained Harness projection lacks confirmation, an
+operator can verify the original provider evidence offline. Stop Harness and any services
+still writing v1 data through Core, and keep a verified backup. Select the archived v1
+conversation record and its provider app directory for each blocked run. If the original
+provider session file was moved out of the active inventory, include its archived path
+under that provider's `data/diagnostic-quarantine`. The evidence file uses absolute paths.
+Keep the archived conversation record with its companion provider execution file when present.
+
+```json
+{
+  "version": 1,
+  "records": [
+    {
+      "archivedRecord": "/absolute/archive/conversation/record.json",
+      "providerRoot": "/absolute/hosty/apps/provider-app-id",
+      "archivedProviderSession": "/absolute/hosty/apps/provider-app-id/data/diagnostic-quarantine/old-session.json"
+    }
+  ]
+}
+```
+
+On the host, use a source checkout containing the recovery command with dependencies
+installed by `npm ci`. Run the command from its repository root as the OS user that owns the
+Harness coordinator files. That user needs read access to the selected evidence.
+
+```sh
+npm run recover:legacy-cutover --workspace @haas/hosty-harness -- \
+  --data-dir /absolute/hosty/apps/hosty.harness/data \
+  --evidence /absolute/archive/cutover-evidence.json
+```
+
+The command takes the coordinator ownership lock and checks the archived observation against
+the provider installation, run, session and generation. It requires the provider's terminal
+journal receipt and sealed native exit receipts for that generation. If the provider was
+reinstalled, an exact retained provider session record must establish the original installation.
+The archive's selected execution file must agree with the recorded attempt. Outstanding commands
+can remain in its archive only when they cancel that same run. A retained admitted continuation
+is allowed when it identifies the same provider run whose native exit is verified. An active
+conversation still has to pass the ordinary writer checks. A successful verification
+creates the v2 store marker while preserving the original evidence. Start Harness through Core
+afterward.
+
 ## Testing Expectations
 
 - Exercise dropped and reordered submissions, duplicate Stop, generation changes, concurrent owners and service loss on either side of admission. Count native dispatches and check the durable public outcome.
@@ -52,3 +99,6 @@ The execution contract is v2 and keeps the structured `agent-event.1` envelope. 
 - Run three chats for two users while Harness is offline. Deliver native terminal results, introduce disjoint history gaps and reconnect actual browsers. Compare final content, ownership, ordering and duplicate counts. Check status on all surfaces during the outage.
 - Exercise confirmed deletion of a working chat and dirty workspace with a lost HTTP reply, browser closure, resource lock, authority loss and self-hosted Return. Verify logical removal, cleanup evidence and retained unrelated data.
 - Build the selected Local and Docker artifacts. Exercise incomplete and in-use build generations. Qualify writer scope closure on the actual OS, including a detached child holding an external resource.
+- Verify cutover with retired and archived v1 runs, including a pending cancellation for an
+  already closed run. Assert that unrelated or incomplete evidence blocks cutover and keeps
+  the original journal intact.

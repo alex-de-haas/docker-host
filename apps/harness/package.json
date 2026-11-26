@@ -1,6 +1,6 @@
 {
   "name": "@haas/hosty-harness",
-  "version": "0.109.1",
+  "version": "0.109.2",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -10,7 +10,8 @@
     "test": "vitest run",
     "build:web": "npm run build --workspace @haas/hosty-harness-web",
     "build:local": "node scripts/local-runtime.mjs prepare",
-    "build:api": "node scripts/build-local.mjs --api-only"
+    "build:api": "node scripts/build-local.mjs --api-only",
+    "recover:legacy-cutover": "tsx src/recover-legacy-cutover.ts"
   },
   "dependencies": {
     "@hosty-sdk/app": "*",
