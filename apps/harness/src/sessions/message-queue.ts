@@ -5,7 +5,7 @@ import path from "node:path";
 import type { Readable } from "node:stream";
 import { AppContextError } from "./app-context.js";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_SESSION, MAX_SESSION_ATTACHMENT_BYTES, sanitizeAttachmentName, fitToBytes, listAttachments } from "./attachments.js";
-import { messageRequestId, type SessionRecord, type SessionStore, type MessageReceipt } from "./store.js";
+import { latestUserPromptAt, messageRequestId, type SessionRecord, type SessionStore, type MessageReceipt } from "./store.js";
 
 export interface QueueAttachment { id: string; name: string; size: number; displayName?: string }
 export interface StoredQueueAttachment extends QueueAttachment { digest: string }
@@ -78,9 +78,12 @@ export class MessageQueue {
         ...(entry.edit ? { edit: { ...entry.edit, attachments: entry.edit.attachments.map(attachment),
           stashedDraft: { ...entry.edit.stashedDraft, attachments: entry.edit.stashedDraft.attachments.map(attachment) } } } : {}) })) };
   }
-  async save(record: SessionRecord, next: MessageQueueRecord): Promise<void> {
+  async save(record: SessionRecord, next: MessageQueueRecord, submittedAt?: string): Promise<void> {
     next.revision++; next.updatedAt = new Date().toISOString();
-    await this.store.saveRecord({ ...record, messageQueue: next }); record.messageQueue = next;
+    const updated = { ...record, messageQueue: next, lastUserPromptAt: latestUserPromptAt(record.lastUserPromptAt, submittedAt) };
+    await this.store.saveRecord(updated);
+    record.messageQueue = next;
+    record.lastUserPromptAt = latestUserPromptAt(record.lastUserPromptAt, updated.lastUserPromptAt);
     // Removal is conservative housekeeping after the durable ownership change. An IO failure
     // retains bytes; it never rolls back accepted work or permits another execution.
     await this.collect(record).catch(() => undefined);
@@ -267,7 +270,8 @@ export class MessageQueue {
     if (input.expectedRevision !== next.revision) return fail("queue_revision_conflict", "The message queue changed. Refresh it and retry your change.");
     const command = input.command as QueueCommand | null;
     if (!command || typeof command !== "object") return fail("queue_command_invalid", "Provide a queue command.", 400);
-    let entry: StoredEntry | undefined, result: QueueResult = { revision: next.revision + 1 };
+    let entry: StoredEntry | undefined, submittedAt: string | undefined;
+    const result: QueueResult = { revision: next.revision + 1 };
     const claimFiles = (files: StoredQueueAttachment[]) => { for (const file of files) next.claimedAttachments[file.id] = true; };
     const draftKey = (viewId: string) => createHash("sha256").update(viewId).digest("hex");
     const pinDraft = (viewId: string, files: StoredQueueAttachment[]) => {
@@ -292,10 +296,11 @@ export class MessageQueue {
         if (next.entryIdentities[uuid(command.entryId)]) return fail(next.entryIdentities[uuid(command.entryId)] === entryFingerprint ? "queue_entry_exists" : "queue_entry_conflict", "This message identity was already accepted. Refresh its original queue result.");
         if (entry) return fail("queue_entry_conflict", "This message identity is already queued.");
         if (next.entries.length >= 100) return fail("queue_capacity", "The message queue already holds 100 messages.", 413);
+        submittedAt = new Date().toISOString();
         const text = boundedText(command.text), attached = await this.attachments(record, command.attachments);
         if (!text.trim() && !attached.length) return fail("text_required", "Provide text or an attachment.", 400);
         claimFiles(attached);
-        next.entries.push({ id: uuid(command.entryId), text, attachments: attached, createdAt: new Date().toISOString(), state: "queued",
+        next.entries.push({ id: uuid(command.entryId), text, attachments: attached, createdAt: submittedAt, state: "queued",
           ...(command.promptSuggestions === true ? { promptSuggestions: true } : {}), ...(command.withoutAppDetails === true ? { withoutAppDetails: true } : {}) });
         next.entryIdentities[uuid(command.entryId)] = entryFingerprint; break;
       }
@@ -342,7 +347,7 @@ export class MessageQueue {
     next.receipts[requestId] = { fingerprint, result };
     const handoffDraft = record.handoffDraft;
     if (command.type === "enqueue") record.handoffDraft = undefined;
-    try { await this.save(record, next); }
+    try { await this.save(record, next, submittedAt); }
     catch (error) { record.handoffDraft = handoffDraft; throw error; }
     return { queue: this.snapshot(record), result };
   }

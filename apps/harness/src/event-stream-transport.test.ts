@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { connect, type AddressInfo } from "node:net";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { WebSocket } from "ws";
 import { EventStreamTransport } from "./event-stream-transport.js";
 import { createGatewayServer } from "./server.js";
@@ -101,6 +101,20 @@ it("revalidates the captured actor credential, ignores upgrade cookies and consu
   expect(await refused(socketFor(admission))).toBe(401);
   const noTicket = new WebSocket(`${origin.replace(/^http/, "ws")}/api/event-stream`, ["hosty-events-v1"], { origin, headers: { cookie: "hosty_harness_identity=hostyg_owner" } });
   noTicket.on("error", () => {}); sockets.push(noTicket); expect(await refused(noTicket)).toBe(401);
+});
+
+it("invalidates the owner session summary when a prompt is queued without starting a turn", async () => {
+  const view = await connected(await ticket("/api/session-summaries/events"));
+  await vi.waitFor(() => expect(view.chunks.join("")).toContain("event: stream.ready"));
+
+  const snapshot = await manager.messageQueue(sessionId, "owner");
+  const { queue } = await manager.messageQueueCommand(sessionId, "owner", { requestId: randomUUID(), expectedRevision: snapshot.revision,
+    command: { type: "enqueue", entryId: randomUUID(), text: "Make a change", attachments: [] } });
+  await vi.waitFor(() => expect(view.chunks.join("")).toContain("event: sessions.changed\ndata: {}\n\n"));
+
+  const response = await fetch(origin + "/api/sessions", { headers: { authorization: "Bearer hostyg_owner" } });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ sessions: [{ id: sessionId, status: "idle", lastUserPromptAt: queue.entries[0]!.createdAt }] });
 });
 
 it("retains ticket authority through real WebSocket upgrade and later remote usage sampling", async () => {

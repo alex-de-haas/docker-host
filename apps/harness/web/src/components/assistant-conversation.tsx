@@ -70,7 +70,7 @@ import { composeAskDraft } from "@/lib/ask-draft";
 import { clearDraft, draftStorageText, pruneDrafts, readDraft, writeDraft, readDraftAttachments, writeDraftAttachments } from "@/lib/draft-store";
 import { forgetPendingSend, readPendingSend, PENDING_SEND_PREFIX, PENDING_SEND_CHANGED, withPendingSendLock, retryPendingSend, type PendingSend } from "@/lib/pending-send";
 import { useSessionListRefresh } from "@/lib/use-session-list-refresh";
-import { activityTime, lastSeenStatus, lastSeenText, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
+import { activityTime, lastSeenStatus, lastSeenText, latestUserPromptAt, orderSessions, publishAttention, waitingCount } from "@/lib/attention";
 import {
   createSession,
   getHealth,
@@ -209,6 +209,7 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
       } : {}),
       lastEventSeq: Math.max(record.lastEventSeq ?? 0, current.lastEventSeq ?? 0) || undefined,
       updatedAt: activityTime(record) >= activityTime(current) ? record.updatedAt : current.updatedAt,
+      lastUserPromptAt: latestUserPromptAt(current.lastUserPromptAt, record.lastUserPromptAt),
       // Admission is permanent even if a pre-admission mutation reply arrives before its status event.
       ...(current.profileLocked === true ? { profileLocked: true } : {}),
       ...(current.providerLocked === true ? { providerLocked: true } : {}),
@@ -246,11 +247,15 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
   const inventory = useDevelopmentInventory(ready);
   const acceptSelectedSummary = useCallback((summary: AssistantSession) => {
     const selected = sessionSnapshot.current;
-    if (!selected || selected.id !== summary.id || (summary.lastEventSeq ?? 0) < (selected.lastEventSeq ?? 0)
-      || activityTime(summary) < activityTime(selected)) return;
-    const next = { ...selected, status: summary.status, providerStatusContact: summary.providerStatusContact,
-      stopUnconfirmed: summary.stopUnconfirmed, sourceAdmission: summary.sourceAdmission,
-      sourceAdmissionInFlight: summary.sourceAdmissionInFlight, updatedAt: summary.updatedAt, lastEventSeq: summary.lastEventSeq };
+    if (!selected || selected.id !== summary.id) return;
+    const fresh = (summary.lastEventSeq ?? 0) >= (selected.lastEventSeq ?? 0) && activityTime(summary) >= activityTime(selected);
+    const lastUserPromptAt = latestUserPromptAt(selected.lastUserPromptAt, summary.lastUserPromptAt);
+    if (!fresh && lastUserPromptAt === selected.lastUserPromptAt) return;
+    const next = { ...selected, lastUserPromptAt, ...(fresh ? {
+      status: summary.status, providerStatusContact: summary.providerStatusContact, stopUnconfirmed: summary.stopUnconfirmed,
+      sourceAdmission: summary.sourceAdmission, sourceAdmissionInFlight: summary.sourceAdmissionInFlight,
+      updatedAt: summary.updatedAt, lastEventSeq: summary.lastEventSeq,
+    } : {}) };
     sessionSnapshot.current = next;
     setSession(next);
     setStatus(next.status);
@@ -599,6 +604,25 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
         if (abort.signal.aborted) return;
         suggestionsReceive(event);
         queueReceive(event);
+        if ((event.type === "user_message" || event.type === "session_message_queue") && typeof event.lastUserPromptAt === "string") {
+          const observed = event.lastUserPromptAt;
+          const applyPrompt = (item: AssistantSession) => {
+            if (item.id !== record.id) return item;
+            const lastUserPromptAt = latestUserPromptAt(item.lastUserPromptAt, observed);
+            return lastUserPromptAt === item.lastUserPromptAt ? item : { ...item, lastUserPromptAt };
+          };
+          if (sessionSnapshot.current) sessionSnapshot.current = applyPrompt(sessionSnapshot.current);
+          setSession(current => current ? applyPrompt(current) : current);
+          setSessions(current => {
+            const index = current.findIndex(item => item.id === record.id);
+            if (index < 0) return current;
+            const updated = applyPrompt(current[index]);
+            if (updated === current[index]) return current;
+            const next = [...current];
+            next[index] = updated;
+            return next;
+          });
+        }
         if (event.type === "provider_history_gaps") {
           setHistoryGaps(event.gaps as ProviderHistoryGap[]);
           return;
@@ -1071,8 +1095,12 @@ export function AssistantConversation({ fullPage = false }: { fullPage?: boolean
     const draft = requestedDraftRef.current;
     void getSession(requestedSessionId).then(async record => {
       if (cancelled) return;
-      setSessions(current => [record, ...current.filter(item => item.id !== record.id)]);
       if (record.id !== requestedSessionId) throw new Error("The requested session is unavailable.");
+      setSessions(current => {
+        const listed = current.find(item => item.id === record.id);
+        const lastUserPromptAt = latestUserPromptAt(listed?.lastUserPromptAt, record.lastUserPromptAt);
+        return [{ ...record, lastUserPromptAt }, ...current.filter(item => item.id !== record.id)];
+      });
       if (selectedRoute.current === record.id) {
         selectedRoute.current = null;
         await navigateSelection(record.id);

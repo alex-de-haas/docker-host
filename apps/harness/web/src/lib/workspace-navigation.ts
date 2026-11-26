@@ -1,6 +1,6 @@
 import type { AssistantSession } from "./assistant-api";
 import type { DevelopmentWorkspace, WorkspaceParticipation } from "./development-api";
-import { activityTime, isWaiting, lastSeenStatus, observedSessionStatus, orderSessions, type LastSeen } from "./attention";
+import { isWaiting, lastSeenStatus, observedSessionStatus, orderSessions, promptTime, type LastSeen } from "./attention";
 
 export type ActivityCounts = { working: number; waiting: number; failed: number; unknown: number; lastSeen?: LastSeen[] };
 export const emptyCounts = (): ActivityCounts => ({ working: 0, waiting: 0, failed: 0, unknown: 0 });
@@ -60,14 +60,14 @@ export function navigationItems(workspaces: readonly DevelopmentWorkspace[], ses
     const chats = workspaceChats(workspace, sessions);
     const label = workspace.name?.trim() || workspace.owner.label?.trim() || "Workspace";
     return { key: `workspace:${workspace.id}`, label, workspace, matches: chats, counts: workspaceCounts(workspace, sessions, now),
-      at: Math.max(activityTime(workspace), ...chats.map(activityTime), ...(workspace.participation?.sessions.filter(s => s.attached).map(s => Date.parse(s.changedAt ?? "") || 0) ?? [])),
+      at: promptTime(chats[0]?.lastUserPromptAt),
       search: [label, ...workspace.participation?.sessions.filter(s => s.attached).map(s => s.title) ?? [], ...chats.flatMap(s => [s.title, ...s.contextApps?.map(a => a.displayName) ?? [], ...s.appIds ?? []])].join(" ").toLowerCase() };
   });
   for (const session of sessions) {
     if (represented.has(session.id)) continue;
     const counts = emptyCounts(); countStatus(counts, observedSessionStatus(session), lastSeenStatus(session));
     const label = session.title?.trim() || "Untitled session";
-    items.push({ key: `session:${session.id}`, label, session, counts, at: activityTime(session), matches: [],
+    items.push({ key: `session:${session.id}`, label, session, counts, at: promptTime(session.lastUserPromptAt), matches: [],
       search: [label, ...session.contextApps?.map(a => a.displayName) ?? [], ...session.appIds ?? []].join(" ").toLowerCase() });
   }
   return items.sort((a, b) => b.at - a.at || a.key.localeCompare(b.key));

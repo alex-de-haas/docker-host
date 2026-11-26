@@ -24,7 +24,7 @@ export function lastSeenText(seen: LastSeen) {
   return "Last seen " + seen.status.replaceAll("_", " ") + " · " + (Number.isFinite(date.getTime()) ? date.toLocaleString() : "time unavailable");
 }
 
-export type Listed = Pick<AssistantSession, "id" | "status" | "providerStatusContact" | "createdAt" | "updatedAt">;
+export type Listed = Pick<AssistantSession, "id" | "status" | "providerStatusContact" | "lastUserPromptAt">;
 
 export function activityTime(value: { updatedAt?: string | null; createdAt?: string | null }): number {
   const updated = Date.parse(value.updatedAt ?? "");
@@ -32,9 +32,18 @@ export function activityTime(value: { updatedAt?: string | null; createdAt?: str
   return Number.isFinite(updated) ? updated : Number.isFinite(created) ? created : 0;
 }
 
-/** Most recently changed first; waiting state remains a badge, not a sorting priority. */
+export function promptTime(lastUserPromptAt: AssistantSession["lastUserPromptAt"]): number {
+  const time = Date.parse(lastUserPromptAt ?? "");
+  return Number.isFinite(time) ? time : 0;
+}
+
+export function latestUserPromptAt(current: AssistantSession["lastUserPromptAt"], observed: AssistantSession["lastUserPromptAt"]) {
+  return promptTime(observed) > promptTime(current) ? observed : current;
+}
+
+/** Most recent operator prompt first. */
 export function orderSessions<T extends Listed>(sessions: readonly T[]): T[] {
-  return [...sessions].sort((left, right) => activityTime(right) - activityTime(left) || left.id.localeCompare(right.id));
+  return [...sessions].sort((left, right) => promptTime(right.lastUserPromptAt) - promptTime(left.lastUserPromptAt) || left.id.localeCompare(right.id));
 }
 
 export function waitingCount(sessions: readonly Listed[]): number {

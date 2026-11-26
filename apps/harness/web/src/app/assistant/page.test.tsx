@@ -704,41 +704,41 @@ it("preserves a newer inventory title against a delayed local rename and later s
   } finally { visible.mockRestore(); }
 });
 
-const renderActivityOrder = async () => {
-  record = { ...record, appIds: ["one"], appContextRevision: 1, updatedAt: "2026-10-18T10:00:00Z" };
-  const newer = { ...record, id: "newer", title: "Newer conversation", updatedAt: "2026-10-18T11:00:00Z" };
+const renderPromptOrder = async () => {
+  record = { ...record, appIds: ["one"], appContextRevision: 1, updatedAt: "2026-10-18T10:00:00Z", lastUserPromptAt: "2026-10-18T10:00:00Z" };
+  const newer = { ...record, id: "newer", title: "Newer conversation", updatedAt: "2026-10-18T11:00:00Z", lastUserPromptAt: "2026-10-18T11:00:00Z" };
   vi.mocked(api.listSessions).mockResolvedValue([record, newer]);
   vi.mocked(api.getSession).mockImplementation(async id => id === newer.id ? newer : record);
   await renderDeletion();
   expect(navigationTitles()).toEqual(["Newer conversation", "Conversation"]);
 };
-it("orders a locally changed autonomy immediately and retains its activity after switching chats", async () => {
-  await renderActivityOrder();
+it("keeps prompt order when changing autonomy and switching chats", async () => {
+  await renderPromptOrder();
   vi.mocked(api.setSessionAutonomy).mockResolvedValue({ ...record, autonomy: "autonomous", updatedAt: "2026-10-18T12:00:00Z" });
   await act(async () => button("Autonomy: Normal")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
   await act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent?.startsWith("Autonomous"))!.click());
-  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  expect(navigationTitles()).toEqual(["Newer conversation", "Conversation"]);
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>('nav button')].find(item => item.textContent?.startsWith("Newer conversation"))!.click());
-  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  expect(navigationTitles()).toEqual(["Newer conversation", "Conversation"]);
 });
-it.each(["session_autonomy_changed", "session_provider_changed", "app_context_changed"])("orders %s activity without allowing replay or late responses to move it backwards", async type => {
-  await renderActivityOrder();
+it.each(["session_autonomy_changed", "session_provider_changed", "app_context_changed"])("keeps prompt order during %s and replay", async type => {
+  await renderPromptOrder();
   vi.mocked(api.getSession).mockResolvedValue({ ...record, autonomy: "autonomous", updatedAt: "2026-10-18T12:00:00Z" });
   await act(async () => emit({ type, seq: 3, ts: "2026-10-18T12:00:00Z", appIds: ["one"], appContextRevision: 2 }));
-  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  expect(navigationTitles()).toEqual(["Newer conversation", "Conversation"]);
   vi.mocked(api.getSession).mockResolvedValue({ ...record, updatedAt: "2026-10-18T10:30:00Z" });
   await act(async () => emit({ type, seq: 1, ts: "2026-10-18T10:30:00Z", appIds: ["one"], appContextRevision: 1 }));
-  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  expect(navigationTitles()).toEqual(["Newer conversation", "Conversation"]);
   if (type !== "app_context_changed") expect(button("Autonomy: Autonomous")).not.toBeNull();
 });
 
 it.each(["session_autonomy_changed", "session_provider_changed"])("uses %s activity when the record refresh fails", async type => {
-  await renderActivityOrder();
+  await renderPromptOrder();
   vi.mocked(api.getSession).mockRejectedValue(new Error("Record refresh unavailable"));
   const settings = type === "session_autonomy_changed" ? { autonomy: "autonomous" }
     : { connectionId: "new-provider", connectionRevision: 2, harnessKind: "claude", providerLocked: false };
   await act(async () => emit({ type, seq: 3, ts: "2026-10-18T12:00:00Z", ...settings }));
-  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  expect(navigationTitles()).toEqual(["Newer conversation", "Conversation"]);
   await openSettings();
   expect(type === "session_autonomy_changed" ? button("Autonomy: Autonomous") : button("Provider: claude")).not.toBeNull();
   await act(async () => emit({ type, seq: 1, ts: "2026-10-18T10:30:00Z", autonomy: "normal", connectionId: "old-provider", connectionRevision: 1, harnessKind: "codex", providerLocked: false }));
@@ -747,12 +747,35 @@ it.each(["session_autonomy_changed", "session_provider_changed"])("uses %s activ
   expect(input().value).toBe("My retained draft");
 });
 
+it.each(["user_message", "session_message_queue"])("promotes a chat only when %s carries a newer prompt timestamp", async type => {
+  await renderPromptOrder();
+  await act(async () => emit({ type, seq: 2, ts: "2026-10-18T13:00:00Z", text: "Saved continuation" }));
+  await act(async () => emit({ type, seq: 3, ts: "2026-10-18T13:01:00Z", lastUserPromptAt: "2026-10-18T10:30:00Z", text: "Earlier queued prompt" }));
+  expect(navigationTitles()).toEqual(["Newer conversation", "Conversation"]);
+  await act(async () => emit({ type, seq: 4, ts: "2026-10-18T13:02:00Z", lastUserPromptAt: "2026-10-18T12:00:00Z", text: "New prompt" }));
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  vi.mocked(api.getSession).mockResolvedValue({ ...record, lastEventSeq: 5, updatedAt: "2026-10-18T13:03:00Z", autonomy: "autonomous" });
+  await act(async () => emit({ type: "session_autonomy_changed", seq: 5, ts: "2026-10-18T13:03:00Z", autonomy: "autonomous" }));
+  await act(async () => emit({ type, seq: 3, ts: "2026-10-18T13:01:00Z", lastUserPromptAt: "2026-10-18T10:30:00Z", text: "Earlier queued prompt" }));
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+});
+
+it("retains a prompt observed on the stream when switching to a stale session detail", async () => {
+  await renderPromptOrder();
+  await act(async () => emit({ type: "user_message", seq: 2, ts: "2026-10-18T12:00:00Z", lastUserPromptAt: "2026-10-18T12:00:00Z", text: "New prompt" }));
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+  const pick = (title: string) => act(async () => [...container.querySelectorAll<HTMLButtonElement>('nav button')].find(item => item.textContent?.startsWith(title))!.click());
+  await pick("Newer conversation");
+  await pick("Conversation");
+  expect(navigationTitles()).toEqual(["Conversation", "Newer conversation"]);
+});
+
 it("refreshes non-selected running sessions through waiting and completion without losing the selected draft", async () => {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
   const visible = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   try {
-    record = { ...record, appIds: ["one"], updatedAt: "2026-10-18T11:00:00Z" };
-    const other = { ...record, id: "background", title: "Background work", status: "running", updatedAt: "2026-10-18T10:00:00Z" };
+    record = { ...record, appIds: ["one"], updatedAt: "2026-10-18T11:00:00Z", lastUserPromptAt: "2026-10-18T11:00:00Z" };
+    const other = { ...record, id: "background", title: "Background work", status: "running", updatedAt: "2026-10-18T10:00:00Z", lastUserPromptAt: "2026-10-18T10:00:00Z" };
     vi.mocked(api.listSessions).mockResolvedValue([record, other]);
     await renderDeletion();
     expect(navigationTitles()).toEqual(["Conversation", "Background work"]);
@@ -761,7 +784,7 @@ it("refreshes non-selected running sessions through waiting and completion witho
     await act(async () => { vi.advanceTimersByTime(5000); });
     await act(async () => emit({ type: "session_status", seq: 2, ts: "2026-10-18T11:30:00Z", status: "running" }));
     await act(async () => refresh([record, { ...other, status: "awaiting_approval", updatedAt: "2026-10-18T12:00:00Z" }]));
-    expect(navigationTitles()).toEqual(["Background work", "Conversation"]);
+    expect(navigationTitles()).toEqual(["Conversation", "Background work"]);
     expect(container.querySelector('[aria-label="Needs attention"]')).not.toBeNull();
     vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "idle", updatedAt: "2026-10-18T13:00:00Z" }]);
     await act(async () => { vi.advanceTimersByTime(5000); });
@@ -773,8 +796,11 @@ it("refreshes non-selected running sessions through waiting and completion witho
     await act(async () => { vi.advanceTimersByTime(15000); });
     expect(api.listSessions).toHaveBeenCalledTimes(calls + 1);
     expect(container.querySelector('[aria-label="Working"]')).not.toBeNull();
+    expect(navigationTitles()).toEqual(["Conversation", "Background work"]);
+    vi.mocked(api.listSessions).mockResolvedValue([record, { ...other, status: "running", updatedAt: "2026-10-18T14:00:00Z", lastUserPromptAt: "2026-10-18T14:05:00Z" }]);
     await act(async () => { vi.advanceTimersByTime(5000); });
     expect(api.listSessions).toHaveBeenCalledTimes(calls + 2);
+    expect(navigationTitles()).toEqual(["Background work", "Conversation"]);
     expect(input().value).toBe("My retained draft");
     expect(window.location.search).toBe("?session=session-one");
   } finally { visible.mockRestore(); vi.useRealTimers(); }
@@ -810,7 +836,7 @@ it("pauses hidden list refreshes and rejects a snapshot overtaken by session del
 });
 
 it("ignores a settings fetch overtaken by a later event even when both share a timestamp", async () => {
-  await renderActivityOrder();
+  await renderPromptOrder();
   let oldReply!: (value: api.AssistantSession) => void;
   vi.mocked(api.getSession).mockImplementationOnce(() => new Promise(resolve => { oldReply = resolve; }));
   await act(async () => emit({ type: "session_autonomy_changed", seq: 2, ts: "2026-10-18T12:00:00Z", autonomy: "normal" }));

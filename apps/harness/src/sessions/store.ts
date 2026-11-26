@@ -165,6 +165,7 @@ export interface SessionRecord {
   status: SessionStatus;
   createdAt: string;
   updatedAt: string;
+  lastUserPromptAt?: string | null;
   createdBy: string;
   harnessSessionId: string | null;
   lastEventSeq: number;
@@ -197,6 +198,22 @@ export interface StoredEvent {
   [key: string]: unknown;
 }
 
+export function latestUserPromptAt(current: string | null | undefined, candidate: unknown): string | null {
+  if (typeof candidate !== "string") return current ?? null;
+  const time = Date.parse(candidate);
+  if (!Number.isFinite(time)) return current ?? null;
+  return current && Date.parse(current) >= time ? current : candidate;
+}
+
+function promptTime(event: StoredEvent): unknown {
+  if (event.type !== "user_message") return null;
+  if (event.lastUserPromptAt !== undefined) return event.lastUserPromptAt;
+  // Older transcripts used user_message for these private continuation envelopes as well.
+  if (event.feedback || event.text === "Continue the task with its saved child results."
+    || event.text === "Continue with the saved answer.") return null;
+  return event.ts;
+}
+
 export class SessionStorageError extends Error {
   readonly status = 503;
   constructor(readonly sessionId: string, readonly code: "session_storage_corrupt" | "session_storage_uncertain", message: string, options?: ErrorOptions) {
@@ -209,7 +226,7 @@ const attachmentGeneration = (info: BigIntStats) => [info.dev, info.ino, info.si
 const MAX_VERIFIED_ATTACHMENT_GENERATIONS = 256;
 
 interface JournalRead { missing?: boolean; events: StoredEvent[]; raw: Buffer; keepBytes: number; repair: boolean; needsNewline: boolean }
-interface JournalTail { high: number; bytes: number; needsNewline: boolean; generation?: string; identity?: string; repair?: JournalRead }
+interface JournalTail { high: number; bytes: number; needsNewline: boolean; lastUserPromptAt?: string | null; generation?: string; identity?: string; repair?: JournalRead }
 const MAX_VALIDATED_JOURNAL_TAILS = 256;
 const fileIdentity = (info: BigIntStats) => [info.dev, info.ino].join(":");
 const absent = (error: unknown): boolean => (error as NodeJS.ErrnoException)?.code === "ENOENT";
@@ -447,6 +464,8 @@ export class SessionStore {
         const lastChange = committed.contextChanges?.at(-1);
         staleContext = Boolean(lastChange && next.contextChanges?.[committed.contextChanges!.length - 1]?.requestId !== lastChange.requestId);
         committedHigh = committed.lastEventSeq;
+        if (committed.lastUserPromptAt)
+          next.lastUserPromptAt = latestUserPromptAt(next.lastUserPromptAt, committed.lastUserPromptAt);
       } catch (error) { if (!absent(error)) throw this.problem(record.id, error); }
       if (staleContext) throw new Error("A newer conversation context has already been committed.");
       const journalHigh = journal.high;
@@ -455,6 +474,8 @@ export class SessionStore {
       next.lastEventSeq = Math.max(next.lastEventSeq, committedHigh, journal.high);
       await durableWriteFile(path.join(this.sessionDir(record.id), "record.json"), JSON.stringify(next, null, 2));
       record.lastEventSeq = Math.max(record.lastEventSeq, next.lastEventSeq);
+      if (next.lastUserPromptAt)
+        record.lastUserPromptAt = latestUserPromptAt(record.lastUserPromptAt, next.lastUserPromptAt);
     }, true);
     await this.changed(record.id);
   }
@@ -626,12 +647,17 @@ export class SessionStore {
         if (record.lastEventSeq > journalHigh && !(record.lastEventSeq === journalHigh + 1 && record.appContextEvent?.seq === record.lastEventSeq))
           throw this.problem(id, new Error("checkpoint exceeds retained transcript"), "The checkpoint references missing transcript input. Preserve this conversation for recovery.");
         record.lastEventSeq = Math.max(record.lastEventSeq, journal.high);
+        if (Array.isArray(record.messageQueue?.entries))
+          for (const entry of record.messageQueue.entries)
+            record.lastUserPromptAt = latestUserPromptAt(record.lastUserPromptAt, entry?.createdAt);
+        if (!record.taskExecutionId || record.taskAdoptionApplied)
+          record.lastUserPromptAt = latestUserPromptAt(record.lastUserPromptAt, journal.lastUserPromptAt);
         const issue = this.sealed.get(id);
         if (issue) record.storageRecovery = { state: "required", code: issue.code, message: issue.message };
       } catch (error) {
         const issue = this.problem(id, error); record.storageRecovery = { state: "required", code: issue.code, message: issue.message };
       }
-      return { ...record, appIds: record.appIds ?? [], appContextRevision: record.appContextRevision ?? 0 };
+      return { ...record, lastUserPromptAt: latestUserPromptAt(null, record.lastUserPromptAt), appIds: record.appIds ?? [], appContextRevision: record.appContextRevision ?? 0 };
     });
   }
   async listRecordInventory(): Promise<{ records: SessionRecord[]; unavailableIds: string[] }> {
@@ -702,7 +728,8 @@ export class SessionStore {
     try { after = await lstat(target, { bigint: true }); }
     catch (error) { throw this.problem(id, error); }
     if (attachmentGeneration(after) !== generation) throw this.problem(id, new Error("transcript changed during reconciliation"));
-    const tail: JournalTail = { high: journal.events.at(-1)?.seq ?? 0, bytes: journal.raw.length,
+    const lastUserPromptAt = journal.events.reduce<string | null>((latest, event) => latestUserPromptAt(latest, promptTime(event)), null);
+    const tail: JournalTail = { high: journal.events.at(-1)?.seq ?? 0, bytes: journal.raw.length, lastUserPromptAt,
       needsNewline: journal.needsNewline, generation, identity: fileIdentity(after) };
     if (journal.repair) return { ...tail, repair: journal };
     this.rememberJournalTail(id, tail); return tail;
@@ -788,7 +815,8 @@ export class SessionStore {
         if (!after.isFile() || after.isSymbolicLink() || after.size !== BigInt(bytes)
           || !journal.repair && journal.identity && fileIdentity(after) !== journal.identity)
           throw new Error("transcript changed during durable append");
-        this.rememberJournalTail(id, { high: appended.seq, bytes, needsNewline: false, generation: attachmentGeneration(after), identity: fileIdentity(after) });
+        const lastUserPromptAt = latestUserPromptAt(journal.lastUserPromptAt, promptTime(appended));
+        this.rememberJournalTail(id, { high: appended.seq, bytes, lastUserPromptAt, needsNewline: false, generation: attachmentGeneration(after), identity: fileIdentity(after) });
       } catch (error) { throw new DurableWriteError(target, error); }
     }, true);
     await this.changed(id);
