@@ -107,6 +107,72 @@ it("verifies an exact archived provider exit and preserves its pending cancellat
   expect(await Promise.all(legacyFiles.map(file => readFile(file)))).toEqual(before);
 });
 
+it.each(["record", "sidecar"] as const)("accepts an exact legacy cancellation retained in the %s", async location => {
+  const f = await fixture();
+  const record = JSON.parse(await readFile(f.archivedRecord, "utf8"));
+  const sidecar = path.join(path.dirname(f.archivedRecord), "provider-execution.json");
+  const cancelBody = JSON.stringify({ requestId: randomUUID(), expectedGeneration: f.providerGeneration });
+  const cancelling = {
+    ...record.providerExecution,
+    mutations: { cancel: {
+      operation: "runs.cancel", method: "POST", path: "/runs/" + f.providerRun + "/cancel",
+      runId: f.providerRun, body: cancelBody, bodyHash: createHash("sha256").update(cancelBody).digest("hex"),
+    } },
+  };
+  if (location === "record") {
+    await writeJson(sidecar, record.providerExecution);
+    await writeJson(f.archivedRecord, { ...record, providerExecution: cancelling });
+  } else {
+    await writeJson(sidecar, cancelling);
+  }
+  const sourceFiles = [f.archivedRecord, sidecar, f.observations];
+  const before = await Promise.all(sourceFiles.map(file => readFile(file)));
+
+  await f.open();
+
+  expect(JSON.parse(await readFile(f.marker, "utf8"))).toEqual({ version: 2 });
+  expect(await Promise.all(sourceFiles.map(file => readFile(file)))).toEqual(before);
+});
+
+it.each(["different run", "pending start", "source admission", "missing selected sidecar"] as const)(
+  "rejects a verified archive that retains %s",
+  async issue => {
+    const f = await fixture();
+    const record = JSON.parse(await readFile(f.archivedRecord, "utf8"));
+    const sidecar = path.join(path.dirname(f.archivedRecord), "provider-execution.json");
+    const nextRun = randomUUID();
+    if (issue === "different run") {
+      await writeJson(sidecar, {
+        ...record.providerExecution, runId: nextRun,
+        run: { ...record.providerExecution.run, ref: { id: nextRun, provider: f.provider } },
+      });
+    } else if (issue === "pending start") {
+      await writeJson(sidecar, {
+        ...record.providerExecution,
+        mutations: { start: {
+          operation: "runs.start", method: "PUT", path: "/sessions/" + f.providerSession + "/runs/" + nextRun,
+          sessionId: f.providerSession, runId: nextRun,
+        } },
+      });
+    } else if (issue === "source admission") {
+      await writeJson(f.archivedRecord, { ...record, sourceAdmission: { runId: nextRun, state: "dispatching" } });
+    } else {
+      const contextId = randomUUID();
+      await writeJson(sidecar, record.providerExecution);
+      await writeJson(f.archivedRecord, {
+        ...record, contextChanges: [{ requestId: contextId }],
+        providerExecution: { ...record.providerExecution, contextId },
+      });
+    }
+    const before = await readFile(f.observations);
+
+    await expect(f.open()).rejects.toThrow(f.observationId);
+
+    await expect(readFile(f.marker)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(f.observations)).toEqual(before);
+  },
+);
+
 it.each(["provider installation", "process generation", "provider session"] as const)(
   "blocks an archived run whose exit evidence has a different %s",
   async difference => {

@@ -56,6 +56,7 @@ still writing v1 data through Core, and keep a verified backup. Select the archi
 conversation record and its provider app directory for each blocked run. If the original
 provider session file was moved out of the active inventory, include its archived path
 under that provider's `data/diagnostic-quarantine`. The evidence file uses absolute paths.
+Keep the archived conversation record with its companion provider execution file when present.
 
 ```json
 {
@@ -84,7 +85,9 @@ The command takes the coordinator ownership lock and checks the archived observa
 the provider installation, run, session and generation. It requires the provider's terminal
 journal receipt and sealed native exit receipts for that generation. If the provider was
 reinstalled, an exact retained provider session record must establish the original installation.
-An active conversation still has to pass the ordinary writer checks. A successful verification
+The archive's selected execution file must agree with the recorded attempt. Outstanding commands
+can remain in its archive only when they cancel that same run. An active conversation still has
+to pass the ordinary writer checks. A successful verification
 creates the v2 store marker while preserving the original evidence. Start Harness through Core
 afterward.
 
