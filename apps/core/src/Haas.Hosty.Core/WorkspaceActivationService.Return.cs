@@ -7,7 +7,10 @@ internal sealed partial class WorkspaceActivationService
     internal async Task<WorkspaceRuntimeActivation> ValidateRuntimeAuthorityAsync(string id, CancellationToken ct)
     {
         var a = WorkspaceRuntimeFiles.Read(paths.DataRoot, id);
-        if (a.Authority is not null)
+        if (a.Authority?.Deletion is not null && a.Phase.StartsWith("return-", StringComparison.Ordinal) && a.Returns?.LastOrDefault() is { Request.Core: true } returning)
+            await (access ?? throw Error("authority_invalid", "Return authority is unavailable."))
+                .ValidateReturnAsync(a.Authority, "core", a.Id, returning.Request.RequestId, ct);
+        else if (a.Authority is not null)
             await (access ?? throw Error("authority_invalid", "Activation authority is unavailable.")).ValidateAsync(a.Authority,
                 a.Phase.StartsWith("return-", StringComparison.Ordinal) ? a.Returns!.Last().Request.Core : a.CoreProject is not null && !a.CoreReturned, ct);
         if (a.CoreProject is not null && a.PreparedExecutable is null && a.Phase is "prepared" or "applying" or "apps-active")
@@ -77,7 +80,9 @@ internal sealed partial class WorkspaceActivationService
         {
             var a = WorkspaceRuntimeFiles.Read(paths.DataRoot, id);
             var receipt = a.Returns?.LastOrDefault() ?? throw Error("return_missing", "Prepare Return before applying it.");
-            if (a.Authority is not null) await (access ?? throw Error("authority_invalid", "Return authority is unavailable.")).ValidateAsync(a.Authority, receipt.Request.Core, ct);
+            if (a.Authority?.Deletion is not null && receipt.Request is { Core: true, Apps.Length: 0 })
+                await (access ?? throw Error("authority_invalid", "Return authority is unavailable.")).ValidateReturnAsync(a.Authority, "core", a.Id, receipt.Request.RequestId, ct);
+            else if (a.Authority is not null) await (access ?? throw Error("authority_invalid", "Return authority is unavailable.")).ValidateAsync(a.Authority, receipt.Request.Core, ct);
             if (receipt.State != "pending" || a.Phase != "return-apps") return a;
             WorkspaceActivationReturn.RequireCompatibility(receipt.Request);
             return await lifecycle.WithActivationAppLocksAsync(receipt.Request.Apps.Order(StringComparer.Ordinal).ToArray(), async () =>

@@ -65,6 +65,6 @@ it("turns only a confirmed parked callback into a revised next-turn decision and
 });
 it("cannot convert a parked receipt whose external effect certainty is unresolved", async () => {
   const f=await fixture();projectReceipt(f.store,f.session,f.record,{...f.native.receipt,state:"parked",exitConfirmed:true,effects:{unknown:"unknown"}});
-  expect(f.record.snapshot).toMatchObject({stopConfirmed:false,state:"unknown",phase:"interrupted"});
+  expect(f.record.snapshot).toMatchObject({stopConfirmed:true,state:"waiting_for_input",phase:"parked",effects:{certainty:"unknown"}});
   expect(f.record.snapshot.pending[0]?.delivery).toBe("continue_run");
 });

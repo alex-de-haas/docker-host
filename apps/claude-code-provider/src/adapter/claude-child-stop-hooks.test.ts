@@ -29,7 +29,7 @@ type Hook = (input: Record<string, unknown>) => Promise<unknown>;
 type FixtureOptions = { capture?: boolean; deliver?: boolean; parent?: boolean; duplicate?: boolean; toolName?: string;
   background?: boolean; conflictingCapture?: boolean; post?: Record<string, unknown>; observedInput?: Record<string, unknown>;
   reader?: boolean; assistantUuid?: boolean; assistantMessageId?: boolean; historyPath?: boolean; closeDelay?: number; nativeCloseDelay?: number; nativeCloseDelays?: number[]; noNativeHandle?: boolean;
-  observedAgentId?: string | null; observedSessionId?: string | null };
+  observedAgentId?: string | null; observedSessionId?: string | null; targetExit?: boolean };
 async function fixture(options: FixtureOptions = {}) {
   const events: HarnessEvent[] = [];
   let interrupt!: () => void, finish!: () => void, preHook!: Hook, postHook!: Hook;
@@ -84,7 +84,8 @@ async function fixture(options: FixtureOptions = {}) {
   });
   const run = new ClaudeHarnessAdapter().start({ sessionId: "consumer-session", cwd: "/unused-fixture", autonomy: "autonomous", onEvent: event => events.push(event),
     ...(options.reader ? { nativeHome: "/owned/native", nativeHistoryHome: { home: "/owned/history", directories: { projects: "/owned/history/projects" } },
-      processTransport: { spawn: vi.fn(() => nativeChildren[nextNative++] as never), spawnTool: vi.fn() } } : {}) });
+      processTransport: { spawn: vi.fn(() => nativeChildren[nextNative++] as never), spawnTool: vi.fn(),
+        ...(options.targetExit ? { waitForTargetExit: vi.fn(async () => {}) } : {}) } } : {}) });
   runs.push(run); run.send("Run the harmless child fixture");
   await vi.waitFor(() => {
     expect(events.filter(event => event.type === "tool_use")).toHaveLength((options.parent === false ? 1 : 2) + (options.duplicate ? 2 : 0));
@@ -99,14 +100,14 @@ async function stop(f: Awaited<ReturnType<typeof fixture>>) {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const stopping = f.run.stopAndWait!(); await vi.advanceTimersByTimeAsync(4500); await stopping;
 }
-async function publicStop(events: HarnessEvent[]) {
+async function publicStop(events: HarnessEvent[], physicalExitConfirmed = true) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "hosty-child-hook-proof-")); directories.push(directory);
   const journal = new WorkerJournal(path.join(directory, "journal")); await journal.initialize();
   const request = { conversationId: "conversation", binding: { connectionId: "account", connectionRevision: 1, harnessKind: "claude" as const },
     selection: { model: null, reasoningEffort: null }, resource: { kind: "conversation" as const, id: "conversation" }, input: "fixture", options: {}, autoAllowedPrefixes: [] };
   const runId = randomUUID(); await journal.accept(runId, request); await journal.update(runId, "running");
   for (const event of events) await journal.append(runId, event);
-  await journal.update(runId, "cancelled"); // The synthetic SDK stream really closed; command outcome is independent.
+  await journal.update(runId, physicalExitConfirmed ? "cancelled" : "interrupted");
   const native = await journal.load(runId), provider = { appId: "unrelated.provider", installationId: "installation", key: "agent" };
   const actor: VerifiedOperation = { userId: "user", principalId: "principal", callerAppId: "unrelated.consumer", callerInstallation: "consumer-installation",
     admissionRef: "admission", operation: "runs.start", provider };
@@ -146,7 +147,7 @@ it.each([
   const f = await fixture(options); await stop(f);
   expect(f.events.filter(event => event.type === "command_result")).toEqual([]);
   const snapshot = await publicStop(f.events);
-  expect(snapshot).toMatchObject({ state: "unknown", phase: "interrupted", stopConfirmed: false });
+  expect(snapshot).toMatchObject({ state: "cancelled", phase: "terminal", stopConfirmed: true, effects: { certainty: "unknown" } });
   expect(snapshot.effects.unresolvedCallIds.length).toBeGreaterThan(0);
 });
 
@@ -154,7 +155,7 @@ it("does not accept a matching hook after the bounded stop drain and never captu
   const f = await fixture({ deliver: false }); await stop(f); const count = f.events.length;
   await f.postHook(); expect(f.events).toHaveLength(count);
   expect(await f.preHook()).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
-  expect((await publicStop(f.events)).stopConfirmed).toBe(false);
+  expect(await publicStop(f.events)).toMatchObject({ stopConfirmed: true, effects: { certainty: "unknown" } });
 });
 
 it("recovers only the exact failed child invocation through SDK history after its parent terminal", async () => {
@@ -219,7 +220,7 @@ it("does not admit a history helper when SDK teardown consumed its original clea
   vi.useFakeTimers();
   const stopping = f.run.stopAndWait!(); await vi.advanceTimersByTimeAsync(8500); await stopping;
   expect(f.iteratorFinished).toBe(true); expect(history.read).not.toHaveBeenCalled();
-  expect((await publicStop(f.events)).stopConfirmed).toBe(false);
+  expect(await publicStop(f.events)).toMatchObject({ stopConfirmed: true, effects: { certainty: "unknown" } });
 });
 it("does not admit a history helper after an unconfirmed SDK iterator times out", async () => {
   const f = await fixture({ deliver: false, reader: true, closeDelay: 12000 });
@@ -232,7 +233,7 @@ it.each([{ capture: false }, { duplicate: true }, { background: true }, { assist
   { observedAgentId: null }, { observedAgentId: "foreign-child" }, { observedSessionId: null }, { observedSessionId: "foreign-session" },
   { observedInput: { command: "foreign" } }, { toolName: "mcp__remote__write" }])("does not read guessed or unbound child history %j", async options => {
   const f = await fixture({ ...options, deliver: false, reader: true }); await stop(f);
-  expect(history.read).not.toHaveBeenCalled(); expect((await publicStop(f.events)).stopConfirmed).toBe(false);
+  expect(history.read).not.toHaveBeenCalled(); expect(await publicStop(f.events)).toMatchObject({ stopConfirmed: true, effects: { certainty: "unknown" } });
 });
 it("withholds SDK stop when the owned history helper has not confirmed exit", async () => {
   history.read.mockRejectedValue(new Error("The owned Claude history helper has not confirmed exit."));
@@ -240,7 +241,7 @@ it("withholds SDK stop when the owned history helper has not confirmed exit", as
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const assertion = expect(f.run.stopAndWait!()).rejects.toThrow("history helper has not confirmed exit");
   await vi.advanceTimersByTimeAsync(4500); await assertion;
-  expect(f.query.close).toHaveBeenCalledOnce(); expect((await publicStop(f.events)).stopConfirmed).toBe(false);
+  expect(f.query.close).toHaveBeenCalledOnce(); expect(await publicStop(f.events, false)).toMatchObject({ stopConfirmed: false, effects: { certainty: "unknown" } });
 });
 it("logs one bounded diagnostic with hashed bindings without exposing command input or native paths", async () => {
   history.read.mockImplementation(async (_request, _transport, report) => {
@@ -253,7 +254,7 @@ it("logs one bounded diagnostic with hashed bindings without exposing command in
     children: [{ calls: [{ liveUuid: expect.stringMatching(/^[a-f0-9]{64}$/), messageId: expect.stringMatching(/^[a-f0-9]{64}$/), input: expect.stringMatching(/^[a-f0-9]{64}$/) }] }] } });
   for (const raw of ["/owned/native", "/owned/history", "/unused-fixture", "native-child", "native-session", "node -e harmless_fixture", "child-command"])
     expect(calls[0]).not.toContain(raw);
-  expect((await publicStop(f.events)).stopConfirmed).toBe(false);
+  expect(await publicStop(f.events)).toMatchObject({ stopConfirmed: true, effects: { certainty: "unknown" } });
 });
 it.each([
   { options: { assistantMessageId: false }, reason: "missing_message_id" },
@@ -268,5 +269,19 @@ it.each([
   const diagnostic = vi.mocked(console.warn).mock.calls.map(call => String(call[0])).filter(value => value.startsWith("[claude-child-history] "))
     .map(value => JSON.parse(value.slice("[claude-child-history] ".length))).find(value => value.outcome === "binding_unavailable");
   expect(diagnostic?.admissionReasons?.[reason]).toBe(1);
-  expect((await publicStop(f.events)).stopConfirmed).toBe(false);
+  expect(await publicStop(f.events)).toMatchObject({ stopConfirmed: true, effects: { certainty: "unknown" } });
+});
+
+it("confirms explicit Stop from the primary exit while retaining the prior child-history drain", async () => {
+  const f = await fixture({ reader: true, deliver: false, nativeCloseDelay: 750, targetExit: true });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const stopping = f.run.stopForCancellation!();
+  await vi.advanceTimersByTimeAsync(2050);
+  const { drained } = await stopping;
+  expect(f.nativeClosed).toBe(false);
+  expect(history.read).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(800);
+  await drained;
+  expect(f.nativeClosed).toBe(true);
+  expect(history.read).toHaveBeenCalledOnce();
 });

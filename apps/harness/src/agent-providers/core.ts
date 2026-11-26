@@ -1,6 +1,6 @@
 import { AgentApiError, type AgentCapabilities, type AgentConnectionUsage, type AgentModelCatalog,
-  type AgentOperationAuthorization, type AgentProviderRef } from "@hosty-sdk/app/agent";
-import { AgentClient, readAgentHistoryPage, readAgentHistoryRange, readAgentHistoryStates, watchAgentHistory, watchLiveAgentHistory } from "@hosty-sdk/app/agent/client";
+  type AgentAuthorizationRequest, type AgentOperationAuthorization, type AgentProviderRef } from "@hosty-sdk/app/agent";
+import { AgentClient, acknowledgeAgentHistory, readAgentHistoryPage, readAgentHistoryRange, readAgentHistoryStates, watchAgentHistory, watchLiveAgentHistory } from "@hosty-sdk/app/agent/client";
 
 import type { AgentConsumerAuthority, AgentDirectoryBackend, AgentProviderEntry } from "./types.js";
 
@@ -40,31 +40,69 @@ export class CoreAgentBackend implements AgentDirectoryBackend {
       displayName: string; available: boolean; version: number | null }> }>("/providers/agent", authority);
     return result.providers.filter(provider => Boolean(provider.installationId)).map(provider => ({
       ref: { appId: provider.appId, installationId: provider.installationId!, key: provider.key, ...(provider.implementationId != null ? { implementationId: provider.implementationId } : {}) },
-      displayName: provider.displayName, available: provider.available && provider.version === 1,
-      ...(provider.version !== 1 ? { reason: "This provider does not support agent interface v1." } : {}),
+      displayName: provider.displayName, available: provider.available && provider.version === 2,
+      ...(provider.version !== 2 ? { reason: "This provider does not support agent interface v2." } : {}),
     }));
   }
 
   client(provider: AgentProviderRef, authority: AgentConsumerAuthority, conversation?: { sessionId: string; viewerPath: string; title: string },
-    onWorkflowCapabilities?: (capabilities: readonly string[]) => void): AgentClient {
+    onWorkflowCapabilities?: (capabilities: readonly string[]) => void,
+    saveAdmission?: (request: AgentAuthorizationRequest, admissionRef: string) => Promise<void>): AgentClient {
     return new AgentClient({ provider, fetch: this.fetcher, authorize: async (request, signal) => {
-      const authorization = await this.core<AgentOperationAuthorization>("/agent/authorize", authority, { provider, ...request,
-        ...(request.operation === "runs.start" && conversation ? { conversation } : {}) }, signal);
+      const bound = { ...request, ...(request.operation === "runs.start" && conversation ? { conversation } : {}) };
+      const authorization = await this.core<AgentOperationAuthorization>("/agent/authorize", authority, { provider, ...bound }, signal);
       if (request.operation === "capabilities") onWorkflowCapabilities?.(authorization.supportedWorkflowCapabilities ?? []);
+      if (request.method !== "GET" && authorization.admissionRef)
+        await saveAdmission?.(bound, authorization.admissionRef);
+      return this.binding(authorization);
+    } });
+  }
+
+  async recoverStartAuthorization(provider: AgentProviderRef, prepared: AgentAuthorizationRequest, actorUserId: string, signal: AbortSignal) {
+    const { operation, method, path, bodyHash, sessionId, runId } = prepared;
+    const request = { operation, method, path, bodyHash, sessionId, runId };
+    const original = await this.core<AgentOperationAuthorization>("/agent/replay/token", null, { provider, actorUserId, ...request }, signal);
+    if (!original.admissionRef) throw new AgentApiError("invalid_replay_receipt", "Core did not identify the original authorization.", 502);
+    return { request, reference: original.admissionRef };
+  }
+
+  replayClient(provider: AgentProviderRef, binding: { request: AgentAuthorizationRequest; reference: string }, signal: AbortSignal): AgentClient {
+    return new AgentClient({ provider, fetch: (input, init) => this.fetcher(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal }),
+      authorize: async request => {
+        if (request.operation !== binding.request.operation || request.method !== binding.request.method ||
+            request.path !== binding.request.path || request.bodyHash !== binding.request.bodyHash)
+          throw new AgentApiError("replay_scope_changed", "The retained authorization belongs to another operation.", 403);
+        return this.binding(await this.core<AgentOperationAuthorization>("/agent/replay/token", null,
+          { provider, admissionRef: binding.reference, ...binding.request }, signal));
+      } });
+  }
+
+  cleanupClient(provider: AgentProviderRef, admissionRef: string): AgentClient {
+    return new AgentClient({ provider, fetch: this.fetcher, authorize: async (request, signal) => {
+      const authorization = await this.core<AgentOperationAuthorization>("/agent/cleanup/token", null, { provider, admissionRef, ...request }, signal);
+      return this.binding(authorization);
+    } });
+  }
+
+  private binding(authorization: AgentOperationAuthorization): AgentOperationAuthorization {
       const url = new URL(authorization.baseUrl);
       if (this.options.runningInContainer && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
         url.hostname = "host.docker.internal";
       return { ...authorization, baseUrl: url.href.replace(/\/$/, "") };
-    } });
   }
 
   async historyOptions(provider: AgentProviderRef, signal: AbortSignal) {
-    const grant = await this.core<{ token: string; endpoint: string }>("/agent/history/token", null, { provider }, signal);
+    const grant = await this.core<{ token: string; endpoint: string }>("/agent/history/token", null, { provider, acknowledge: true }, signal);
     const base = new URL(grant.endpoint);
     if (this.options.runningInContainer && ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname))
       base.hostname = "host.docker.internal";
     base.pathname = base.pathname.replace(/\/$/, "") + "/history/events";
     return { url: base.href, provider, token: grant.token, fetch: this.fetcher };
+  }
+
+  async acknowledgeHistory(provider: AgentProviderRef, receipt: { sessionId: string; epoch: string; through: number }, signal: AbortSignal) {
+    const options = await this.historyOptions(provider, signal);
+    await acknowledgeAgentHistory({ ...options, signal }, receipt);
   }
 
   async liveHistory(provider: AgentProviderRef, signal: AbortSignal, grant?: Awaited<ReturnType<CoreAgentBackend["historyOptions"]>>) {

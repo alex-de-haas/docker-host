@@ -26,7 +26,7 @@ public sealed partial class CoreLifecycleServiceTests
             GrantedCorePermissions = [CoreAppPermissions.AgentProviders, CoreAppPermissions.Sources] };
         var provider = consumer with { Id = owner.AppId, InstalledAt = owner.Installation, GrantedCorePermissions = [], RuntimeState = "running",
             ConfirmedRoles = ["agent"], Endpoints = [new("api", "http", "http://127.0.0.1:3999", true)],
-            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v1", 1, [])] } };
+            Interfaces = new Dictionary<string, IReadOnlyList<AppInterfaceContract>> { ["agent"] = [new("native", "api", "/api/agent/v2", 2, [])] } };
         await f.F.Apps.UpsertAppAsync(consumer);
         await f.F.Apps.UpsertAppAsync(provider);
         await host.Services.GetRequiredService<AgentPolicyStore>().ChangeAsync(AgentMcpDirectory.CoreId,

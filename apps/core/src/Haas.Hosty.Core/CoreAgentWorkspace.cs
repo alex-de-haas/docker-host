@@ -4,7 +4,7 @@ namespace Haas.Hosty.Core;
 
 internal sealed record CoreAgentWorkspaceInput(string WorkspaceId, long? ExpectedRevision = null,
     string? LeaseId = null, string? RequestId = null, string? Status = null, long? Sequence = null,
-    string? Title = null, string? ViewerPath = null);
+    string? Title = null, string? ViewerPath = null, string? Generation = null, bool? WriterScopeClosed = null);
 internal sealed record CoreAgentWorkspaceRequest(string AdmissionRef, string Operation, CoreAgentWorkspaceInput Input);
 internal sealed record CoreAgentWorkspaceResult(string Id, long Revision, string Path, string? LeaseId = null,
     bool StopRequested = false, string? State = null);
@@ -24,7 +24,7 @@ internal sealed partial class CoreAgentExecution
         if (record.Request.Provider.AppId != provider.Id || record.Request.Provider.InstallationId != PanelIdentity.Installation(provider))
             throw new AppIdentityException("permission_denied", "The provider installation changed.");
         var release = input.Operation is "release" or "release_all";
-        if (input.Operation == "release_all") return await ReleaseAll(provider, record, value.RequestId, ct);
+        if (input.Operation == "release_all") return await ReleaseAll(provider, record, value, ct);
         if (!release)
         {
             var (_, origin) = await ValidateRecord(provider, record, ct);

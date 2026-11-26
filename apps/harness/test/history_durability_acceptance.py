@@ -9,7 +9,7 @@ def check(context, app, app_origin, client, call, timed):
     root, run, say = (context[key] for key in ('root', 'run', 'say'))
     session = call(app_origin, '/api/sessions', {'title': 'History durability acceptance'})
     session_id = session['id']
-    data = root/'apps'/app/'data'
+    data = root/'apps'/app/'data'/'execution-v2'
     queue_path = '/api/sessions/'+session_id+'/message-queue'
     queue = call(app_origin, queue_path)
     pause = {'requestId': str(uuid.uuid4()), 'expectedRevision': queue['revision'], 'command': {'type': 'pause'}}
@@ -48,7 +48,7 @@ def check(context, app, app_origin, client, call, timed):
     evidence = record.with_name('fixture-original-record.json.evidence')
     evidence.write_bytes(original)
     record.write_bytes(b'\0'*64)
-    assert json.loads((data/'agent-consumer-format.json').read_text())['version'] == 1
+    assert json.loads((data/'agent-consumer-format.json').read_text())['version'] == 2
     timed('start')
     issues = call(app_origin, '/api/storage-recovery')['issues']
     assert any(issue['sessionId'] == damaged['id'] for issue in issues)

@@ -1,4 +1,6 @@
 using Haas.Hosty.Core;
+using Haas.Hosty.Core.Tests.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Haas.Hosty.Launch;
 
 namespace Haas.Hosty.Core.Tests;
@@ -11,6 +13,126 @@ public sealed partial class CoreLifecycleServiceTests
         var environments = new CoreEnvironmentService(store, new ResourceControlRuntime(), f.F.Clock, f.Service);
         return new(f.F.Paths, new(f.Service, f.F.Apps, f.F.Clock), f.Service, null!, f.F.Apps,
             store, environments, new(store, environments));
+    }
+
+    [Fact]
+    public async Task WorkspaceDelete_ReturnsConfirmedLiveAppAfterBrowserClosesBeforeRemovingSource()
+    {
+        const string appId = "test.created", browser = "deletion-reviewer";
+        var (f, owner, workspaces, tree, _, _) = await LocalHandoffFixture();
+        await AddManifestPackageRuntime(f, tree);
+        await f.Service.StartAsync(appId);
+        await f.Service.ExecuteTargetAsync(await ExecutionRequest(f, owner, "workspace", tree), default);
+        await using var host = await CoreHttpHarness.StartAsync(f.Clock, services =>
+        {
+            services.AddSingleton(f.Paths); services.AddSingleton(f.Apps); services.AddSingleton(f.Service); services.AddSingleton(workspaces);
+        });
+        var users = host.Services.GetRequiredService<UserDirectoryStore>();
+        var now = f.Clock.UtcNow;
+        await users.WriteAsync(new(1, [new(owner.UserId, "operator@example.test", "Operator", "host.admin", false, now, now)], [], [],
+            [new(browser, owner.UserId, now, now.AddHours(1), null, now, BrowserOrigin: "http://localhost")]));
+        var cleanup = host.Services.GetRequiredService<WorkspaceCleanupService>();
+        var worker = host.Services.GetRequiredService<AppExecutionTargetService>();
+        var inspection = await cleanup.DeleteDetailsAsync(tree.WorkspaceId, owner.UserId, null, default);
+        var target = Assert.Single(inspection.ReturnTargets!);
+        Assert.Equal(appId, target.Name);
+        var command = new WorkspaceDeleteCommand(Guid.NewGuid().ToString(), ReturnTargets: [target.Key]);
+        var actor = new WorkspaceActivationActor(owner.UserId, "browser", Principal: "browser:" + DevelopmentWorkspaceService.Hash(browser));
+        var wrong = await Assert.ThrowsAsync<AppLifecycleException>(() => cleanup.ApplyDeleteAsync(tree.WorkspaceId, owner.UserId, null,
+            command with { ReturnTargets = [new string('a', 64)] }, default, authority: actor));
+        Assert.Equal("workspace_selection_changed", wrong.Code);
+        var pending = await cleanup.ApplyDeleteAsync(tree.WorkspaceId, owner.UserId, null, command, default, authority: actor);
+        Assert.Equal("pending", pending.State);
+        Assert.True(Directory.Exists(tree.Path));
+        var state = await users.ReadAsync();
+        await users.WriteAsync(state with { Sessions = [] });
+        var token = new CancellationTokenSource(TimeSpan.FromSeconds(25)).Token;
+        await worker.StartAsync(token);
+        try
+        {
+            while (Directory.Exists(tree.Path))
+            {
+                await cleanup.RecoverDeletesAsync(token);
+                if (Directory.Exists(tree.Path)) await Task.Delay(50, token);
+            }
+            var status = await cleanup.DeleteStatusAsync(tree.WorkspaceId, owner.UserId, null, command.RequestId, token);
+            Assert.Equal("removed", status.State);
+            var app = (await f.Apps.GetAppAsync(appId, token))!;
+            Assert.Equal("running", app.RuntimeState);
+            Assert.Equal(target.Replacement, app.SelectedRuntime);
+        }
+        finally { await worker.StopAsync(CancellationToken.None); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WorkspaceDelete_FencesNewAdmissionsAndWaitsForTheOriginalVerifiedWriter(bool retireActivityMarker)
+    {
+        await using var f = await AgentLeaseRaceFixture.Create();
+        var lease = Guid.NewGuid().ToString();
+        await f.Acquire("direct", Guid.NewGuid().ToString(), lease);
+        if (retireActivityMarker)
+        {
+            var released = await f.Workspaces.CommandAsync(f.Tree.Id, f.Owner, "release-lease",
+                new(Guid.NewGuid().ToString(), LeaseId: lease), default);
+            Assert.DoesNotContain(lease, released.Leases);
+            Assert.False(Assert.Single((await f.Store.Get(f.Reference, default)).Leases!).Released);
+        }
+        // These synthetic installations have no service processes. Losing contact with them
+        // after acquisition must preserve the lease and never count as physical writer exit.
+        var registry = f.Host.Services.GetRequiredService<AppRegistryStore>();
+        foreach (var app in (await registry.ListAppRecordsAsync()).Where(app => string.IsNullOrWhiteSpace(app.ManifestPath)))
+            await registry.UpsertAppAsync(app with { RuntimeState = "stopped" });
+        var cleanup = f.Host.Services.GetRequiredService<WorkspaceCleanupService>();
+        var command = new WorkspaceDeleteCommand(Guid.NewGuid().ToString());
+        var result = await cleanup.ApplyDeleteAsync(f.Tree.WorkspaceId, f.Owner.UserId, null, command, default);
+        Assert.Equal("pending", result.State);
+        Assert.Contains("provider", result.Error);
+        Assert.True(Directory.Exists(f.Tree.Path));
+        var writer = Assert.Single(await cleanup.WriterStopsAsync(f.Consumer.Id, f.Consumer.InstalledAt, default));
+        Assert.Equal(f.Reference, writer.AdmissionRef);
+        Assert.Empty(await cleanup.WriterStopsAsync(f.Consumer.Id, f.Consumer.InstalledAt.AddSeconds(1), default));
+        Assert.Empty(await cleanup.WriterStopsAsync(f.Provider.Id, f.Provider.InstalledAt, default));
+        await f.ReleaseAll();
+        await cleanup.RecoverDeletesAsync(default);
+        Assert.False(Directory.Exists(f.Tree.Path));
+        Assert.Empty(await cleanup.WriterStopsAsync(f.Consumer.Id, f.Consumer.InstalledAt, default));
+        Assert.Equal("removed", (await cleanup.DeleteStatusAsync(f.Tree.WorkspaceId, f.Owner.UserId, null, command.RequestId, default)).State);
+    }
+
+    [Fact]
+    public async Task WorkspaceDelete_DeliversFrozenOwnedChatsAfterRemovalUntilOwningInstallationAcknowledges()
+    {
+        using var f = await DiscardFixtureAsync();
+        var participation = await f.Service.ParticipationAsync(f.Tree.WorkspaceId, f.Owner.UserId, default);
+        var sibling = f.Owner with { SessionId = "also-selected" };
+        participation = await f.Service.ChangeSessionAsync(participation.Id, sibling, "attach",
+            new(Guid.NewGuid().ToString(), participation.Revision, "Sibling chat", "/sibling"), default);
+        var other = f.Owner with { SessionId = "private-other", UserId = "other-member" };
+        participation = await f.Service.ChangeMemberAsync(participation.Id, f.Owner.UserId, "grant",
+            new(Guid.NewGuid().ToString(), participation.Revision, other.UserId, [f.Tree.Id]), default);
+        await f.Service.ChangeSessionAsync(participation.Id, other, "attach",
+            new(Guid.NewGuid().ToString(), participation.Revision, "Other chat", "/other"), default);
+        var request = Guid.NewGuid().ToString();
+        await f.Service.AdmitDeleteAsync(f.Owner, f.Owner.UserId, request, [], default,
+            deleteOwner: new(f.Owner.AppId, f.Owner.Installation, true));
+        var cleanup = DeleteCleanup(f);
+        var installation = f.Owner.Installation;
+        var delivery = Assert.Single(await cleanup.ChatRemovalsAsync(f.Owner.AppId, installation, default));
+        Assert.Equal(new[] { f.Owner.SessionId, sibling.SessionId }.Order(), delivery.SessionIds);
+        Assert.Empty(await cleanup.ChatRemovalsAsync(f.Owner.AppId, installation.AddSeconds(1), default));
+        await Assert.ThrowsAsync<AppLifecycleException>(() => cleanup.AcceptChatRemovalsAsync(f.Owner.AppId,
+            installation.AddSeconds(1), f.Tree.WorkspaceId, request, default));
+        var journal = await f.Service.ReadDiscardAsync(f.Tree.WorkspaceId, request, f.Owner.UserId, default);
+        await f.Service.FinishDiscardAsync(f.Owner, f.Owner.UserId, journal!.Command, default);
+        Assert.Single(await cleanup.ChatRemovalsAsync(f.Owner.AppId, installation, default));
+        var sourceRemoved = await cleanup.DeleteStatusAsync(f.Tree.WorkspaceId, f.Owner.UserId, null, request, default);
+        Assert.Equal("removed", sourceRemoved.State);
+        Assert.Equal("pending", sourceRemoved.AttachedChatDelivery);
+        Assert.True(await cleanup.AcceptChatRemovalsAsync(f.Owner.AppId, installation, f.Tree.WorkspaceId, request, default));
+        Assert.Empty(await cleanup.ChatRemovalsAsync(f.Owner.AppId, installation, default));
+        Assert.Equal("accepted", (await cleanup.DeleteStatusAsync(f.Tree.WorkspaceId, f.Owner.UserId, null, request, default)).AttachedChatDelivery);
     }
 
     [Theory]
@@ -209,6 +331,11 @@ public sealed partial class CoreLifecycleServiceTests
         var first = await cleanup.DeleteBatchAsync("admin", null, command, default);
         Assert.Equal("removed", Assert.Single(first.Targets).State);
         var recreated = await f.Service.PrepareAsync(f.Owner, WorkspaceRequest() with { RequestId = Guid.NewGuid().ToString() }, default);
+        Assert.Equal(f.Tree.WorkspaceId, recreated.WorkspaceId);
+        Assert.NotEqual(f.Tree.Id, recreated.Id);
+        Assert.NotEqual(f.Tree.Path, recreated.Path);
+        Assert.NotEqual(f.Tree.Branch, recreated.Branch);
+        Assert.False(Directory.Exists(f.Tree.Path));
         var other = await f.Service.PrepareAsync(WorkspaceTestOwner(f.F, "later-session"), WorkspaceRequest("later-session"), default);
         await File.WriteAllTextAsync(Path.Combine(recreated.Path, "keep.txt"), "new work");
         var replay = await cleanup.DeleteBatchAsync("another-admin", null, command, default);
@@ -218,6 +345,33 @@ public sealed partial class CoreLifecycleServiceTests
         var singleReplay = await cleanup.ApplyDeleteAsync(recreated.WorkspaceId, "admin", null, new(first.Targets[0].RequestId), default);
         Assert.Equal("removed", singleReplay.State);
         Assert.True(Directory.Exists(recreated.Path));
+    }
+
+    [Fact]
+    public async Task WorkspaceDelete_DetachedPosixFileWriterCannotWriteTheRecreatedAllocationThroughItsOldHandle()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var f = await DiscardFixtureAsync();
+        // This independent process retains a real descriptor and cwd in the old allocation.
+        // The test controls when it writes without making its exit a precondition for Delete.
+        var start = new System.Diagnostics.ProcessStartInfo("/bin/sh") { WorkingDirectory = f.Tree.Path,
+            RedirectStandardInput = true, RedirectStandardOutput = true, UseShellExecute = false,
+            ArgumentList = { "-c", "exec 3>held; echo ready; read line || exit 1; echo late >&3 && test ! -d \"$1\"", "fixture", f.Tree.Path } };
+        using var writer = System.Diagnostics.Process.Start(start)!;
+        try
+        {
+            Assert.Equal("ready", await writer.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+            var removed = await DeleteCleanup(f).ApplyDeleteAsync(f.Tree.WorkspaceId, "admin", null,
+                new(Guid.NewGuid().ToString()), default);
+            Assert.True(removed.State == "removed", removed.Error);
+            var next = await f.Service.PrepareAsync(f.Owner, WorkspaceRequest() with { RequestId = Guid.NewGuid().ToString() }, default);
+            Assert.False(writer.HasExited);
+            await writer.StandardInput.WriteLineAsync("write");
+            await writer.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(0, writer.ExitCode);
+            Assert.False(File.Exists(Path.Combine(next.Path, "held")));
+        }
+        finally { writer.StandardInput.Close(); if (!writer.HasExited) writer.Kill(); }
     }
 
     [Fact]

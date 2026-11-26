@@ -1,11 +1,13 @@
 import { sameProvider } from "./provider-ref.js";
 import { afterEach, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { startAgentProvider } from "./index.js";
+import * as writerScopes from "./writer-scope.js";
 import { captureEnv } from "./internal/test-env.js";
 import type { AgentCapabilities } from "@hosty-sdk/app/agent";
 import { AgentConnections } from "./internal/connections/registry.js";
@@ -32,29 +34,69 @@ async function unusedPort(): Promise<number> {
   const address = reservation.address(); if (!address || typeof address === "string") throw new Error("No fixture port.");
   await new Promise<void>(resolve => reservation.close(() => resolve())); return address.port;
 }
-it("starts an unrelated injected engine with its declared settings and capability contract", async () => {
+it.each([false, true])("admits ordinary workspace edits independently of exclusive writer containment (managed scopes: %s)", async managed => {
+  const probe = vi.spyOn(writerScopes, "probeWriterScope").mockResolvedValue(undefined);
   const root = await mkdtemp(path.join(os.tmpdir(), "hosty-provider-surface-")), port = await unusedPort();
   const provider = { appId: "independent.fixture.engine", installationId: "fixture-installation", key: "default" };
   const restore = captureEnv({ HOSTY_APP_ID: provider.appId, HOSTY_APP_INSTALLATION_ID: provider.installationId,
     HOSTY_APP_DATA_DIR: root, HOSTY_APP_CACHE_DIR: path.join(root, "cache"), HOSTY_CORE_ORIGIN: "http://core.invalid",
     HOSTY_APP_SERVICE_TOKEN: "synthetic-service", HOSTY_PORT_HTTP: String(port) });
   const signals = new Map((["SIGTERM", "SIGINT"] as const).map(signal => [signal, process.listeners(signal)]));
-  const app = await startAgentProvider({ engine: independentEngine, defaultPort: port });
+  const engine: ProviderEngine = {
+    ...independentEngine,
+    ...(managed ? { managedNativeScopes: true } : {}),
+    capabilities: { ...independentEngine.capabilities, capabilities: ["session.resume", "scope.workspace-writers"] },
+  };
+  const app = await startAgentProvider({ engine, defaultPort: port });
   const native = vi.spyOn(app.controller.connections, "adapter"), origin = `http://127.0.0.1:${port}`;
-  const authorize = vi.spyOn(app.controller.authority, "introspect").mockResolvedValue({ provider, userId: "fixture-user", principalId: "fixture-principal",
-    callerAppId: "independent.consumer", callerInstallation: "consumer-installation", admissionRef: "metadata-only", operation: "capabilities" });
+  const sessionId = randomUUID(), runId = randomUUID();
+  const authorize = vi.spyOn(app.controller.authority, "introspect").mockImplementation(async (_token, operation) => ({
+    provider, userId: "fixture-user", principalId: "fixture-principal", callerAppId: "independent.consumer",
+    callerInstallation: "consumer-installation", admissionRef: "fixture-admission", operation, sessionId, runId,
+  }));
   try {
     expect((await fetch(origin + "/healthz")).status).toBe(200);
     expect(await (await fetch(origin + "/settings")).text()).toContain("Sign in through Hosty");
-    const capabilities = await (await fetch(origin + "/api/agent/v1/capabilities", { headers: { authorization: "Bearer exact-operation" } })).json() as AgentCapabilities;
-    expect(capabilities.version).toBe(1);
-    expect(capabilities).toEqual(independentEngine.capabilities);
+    const capabilities = await (await fetch(origin + "/api/agent/v2/capabilities", { headers: { authorization: "Bearer exact-operation" } })).json() as AgentCapabilities;
+    expect(capabilities.version).toBe(2);
+    expect(probe).toHaveBeenCalledTimes(managed ? 1 : 0);
+    const ordinary = managed && ["darwin", "linux"].includes(process.platform);
+    expect(capabilities.capabilities).toEqual(managed
+      ? ["session.resume", ordinary ? "workspace.edit" : "scope.restricted-native-tools"]
+      : ["session.resume"]);
+    if (!managed) expect(capabilities).toEqual(independentEngine.capabilities);
+    vi.spyOn(app.controller.connections, "binding").mockResolvedValue({
+      connectionId: "local", connectionRevision: 1, harnessKind: "independent-engine",
+    });
+    const sessionUrl = origin + "/api/agent/v2/sessions/" + sessionId;
+    const headers = { authorization: "Bearer exact-operation", "content-type": "application/json" };
+    const create = await fetch(sessionUrl, { method: "PUT", headers, body: JSON.stringify({
+      configuration: { connection: { id: "local", revision: "1" } },
+    }) });
+    expect(create.status).toBe(201);
+    const dispatch = vi.spyOn(app.controller.driver, "start").mockResolvedValue();
+    const runUrl = sessionUrl + "/runs/" + runId;
+    const input = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start",
+      input: { text: "Use the workspace" }, resources: [{ kind: "worktree", id: randomUUID(), revision: "1" }] };
+    const strict = await fetch(runUrl, { method: "PUT", headers, body: JSON.stringify({ ...input, requiredCapabilities: ["scope.workspace-writers"] }) });
+    expect(strict.status).toBe(422);
+    expect(await strict.json()).toMatchObject({ error: { code: "unsupported_capability" } });
+    expect(dispatch).not.toHaveBeenCalled();
+    const start = await fetch(runUrl, { method: "PUT", headers, body: JSON.stringify(input) });
+    if (ordinary) {
+      expect(start.ok).toBe(true);
+      expect(dispatch).toHaveBeenCalledOnce();
+    } else {
+      expect(start.status).toBe(422);
+      expect(await start.json()).toMatchObject({ error: { code: "unsupported_capability" } });
+      expect(dispatch).not.toHaveBeenCalled();
+    }
     for (const [method, route] of [["GET", "/api/translation/v1/default/capabilities"], ["POST", "/api/translation/v1/default/translations"]]) {
       const response = await fetch(origin + route, { method, headers: { authorization: "Bearer retired-translation", "content-type": "application/json" },
         ...(method === "POST" ? { body: JSON.stringify({ text: "Example", targetLanguage: "ru" }) } : {}) });
       expect(response.status).toBe(404); expect(await response.json()).toMatchObject({ error: { code: "not_found" } });
     }
-    expect(authorize).toHaveBeenCalledTimes(1); expect(native).not.toHaveBeenCalled();
+    expect(authorize).toHaveBeenCalledTimes(4); expect(native).not.toHaveBeenCalled();
   } finally {
     const closed = once(app.server, "close"); await app.close(); await closed;
     for (const signal of ["SIGTERM", "SIGINT"] as const)

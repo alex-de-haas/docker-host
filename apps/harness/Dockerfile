@@ -31,6 +31,7 @@ COPY apps/harness/shared apps/harness/shared
 COPY apps/harness/scripts apps/harness/scripts
 COPY packages/app-sdk/src packages/app-sdk/src
 COPY scripts/npm-workspace.mjs scripts/npm-workspace.mjs
+COPY packages/agent-provider-runtime/scripts/generation-use.mjs packages/agent-provider-runtime/scripts/generation-use.mjs
 RUN node apps/harness/scripts/build-local.mjs --api-only
 
 FROM api AS package

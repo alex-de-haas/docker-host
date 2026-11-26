@@ -31,7 +31,7 @@ vi.mock("@/lib/assistant-api", async original => ({
   ...await original<typeof api>(),
   workspaceAction: vi.fn().mockResolvedValue({}), getSuggestionPreference: vi.fn(), setSuggestionPreference: vi.fn(), resolvePromptSuggestion: vi.fn(), getPromptSuggestions: vi.fn(), getHealth: vi.fn(), listSessions: vi.fn(), getSession: vi.fn(), createSession: vi.fn(), deleteSession: vi.fn(),
   listAppNames: vi.fn(), listContextApps: vi.fn(), setSessionApps: vi.fn(), postMessage: vi.fn(), stopSession: vi.fn(), streamEvents: vi.fn(), setSessionAutonomy: vi.fn(), listAgentConnections: vi.fn(), getSessionModels: vi.fn(), renameSession: vi.fn(),
-  getStorageRecovery: vi.fn(), getExecutionRecovery: vi.fn(),
+  getStorageRecovery: vi.fn(),
 }));
 vi.mock("@/lib/profiles-api", () => ({ listProfiles: vi.fn(), selectSessionProfile: vi.fn() }));
 vi.mock("@/lib/prompt-templates-api", () => ({ loadPromptTemplates: vi.fn() }));
@@ -73,7 +73,6 @@ beforeEach(() => {
   vi.mocked(api.getSuggestionPreference).mockResolvedValue({ enabled: false, revision: 0 });
   vi.mocked(api.getHealth).mockResolvedValue({ name: "fake", available: true });
   vi.mocked(api.getStorageRecovery).mockResolvedValue({ issues: [] });
-  vi.mocked(api.getExecutionRecovery).mockResolvedValue(null);
   vi.mocked(api.listSessions).mockResolvedValue([record]);
   vi.mocked(api.getSession).mockImplementation(async () => ({ ...record }));
   vi.mocked(api.createSession).mockResolvedValue(record);
@@ -212,9 +211,9 @@ it("preserves the draft after a failed stop and permits retry", async () => {
   vi.mocked(api.stopSession).mockRejectedValueOnce(new Error("Connection lost"));
   await render(); await type("Keep this draft");
   await act(async () => button("Stop")!.click());
-  const notice = container.querySelector('[role="status"][aria-label="Session recovery"]');
+  const notice = container.querySelector('[role="status"][aria-label="Execution status"]');
   expect(notice?.textContent).toContain("Connection lost");
-  expect(notice?.textContent).toContain("Check status");
+  expect(notice?.textContent).toContain("Dismiss");
   expect(input().value).toBe("Keep this draft");
   expect(button("Stop")?.disabled).toBe(false);
   await act(async () => button("Stop")!.click());

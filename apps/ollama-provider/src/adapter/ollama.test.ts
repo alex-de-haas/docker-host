@@ -14,6 +14,8 @@ import {
 import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { OllamaClient, ollamaUrl } from "./client.js";
 import { OllamaHarnessAdapter } from "./index.js";
 import { OllamaExecutor } from "./executor.js";
@@ -685,6 +687,30 @@ it("does not substitute another model after the selected model disappears", asyn
   expect(other.chats).toHaveLength(0);
 });
 
+it("ends an aborted managed tool wait while the attempt still owns subprocess cleanup", async () => {
+  const root = await directory();
+  const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
+  let finishCleanup!: () => void;
+  const retained = new Promise<void>(resolve => { finishCleanup = resolve; });
+  const stopProcess = vi.fn(async () => retained);
+  const executor = new OllamaExecutor(root, {
+    spawn: () => { throw new Error("The in-process adapter does not spawn a primary agent."); },
+    spawnTool: () => child as never,
+    stopProcess,
+    waitForTargetExit: async () => {},
+  });
+  const controller = new AbortController();
+  try {
+    const result = expect(executor.execute("list_directory", {}, controller.signal)).rejects.toThrow("Stop requested");
+    controller.abort(new Error("Stop requested"));
+    await result;
+    expect(stopProcess).toHaveBeenCalledOnce();
+  } finally {
+    finishCleanup();
+    await executor.close();
+  }
+});
+
 it("retains cleanup ownership after a termination failure and retries it explicitly", async () => {
   if (process.platform === "win32") return;
   const root = await directory(),
@@ -1073,4 +1099,16 @@ it("cancels an actual pending remote MCP request promptly during the longer huma
   await s.run.stopAndWait!();
   expect(s.events.filter(event => event.type === "tool_result")).toContainEqual(expect.objectContaining({ status: "unknown" }));
   expect(s.events.filter(event => event.type === "native_effect")).not.toContainEqual(expect.objectContaining({ state: "settled" }));
+});
+
+it("rejects an unrestricted resource-less run and refuses model calls to tools absent from the restricted catalog", async () => {
+  const f = fixture([tool("run_command", { command: "echo unexpected" }), tool("apply_patch", { path: "outside", old_text: "", new_text: "unexpected" }), answer("Done")]);
+  const restricted = { restrictedHost: true as const };
+  await expect(start(f, { ...restricted, autonomy: "autonomous" })).rejects.toThrow(/qualified native writer/);
+  const s = await start(f, restricted);
+  s.run.send("Fixture");
+  await wait(s.events, "result");
+  expect(s.events.some(event => event.type === "approval_request")).toBe(false);
+  expect(s.events.filter(event => event.type === "tool_result")).toMatchObject([{ status: "failed" }, { status: "failed" }]);
+  await expect(readFile(path.join(s.root, "outside"))).rejects.toMatchObject({ code: "ENOENT" });
 });

@@ -12,7 +12,9 @@ import type { ProviderAuthority } from "./core.js";
 import type { ConnectionBinding, ProviderConnections } from "./internal/connections/registry.js";
 
 export interface ExecutionDriver {
-  start(sessionId: string, runId: string): Promise<void>;
+  readonly durableCommands?: boolean;
+  start(sessionId: string, runId: string, generation?: string): Promise<void>;
+  stopOwnedOnStorageFailure?(runId: string, generation: string): void;
   cancel(runId: string, requestId: string): Promise<void>;
   respond(runId: string, input: AgentResponseInput): Promise<void>;
   control(runId: string, input: AgentRunControlInput): Promise<void>;
@@ -32,11 +34,10 @@ function assertContinuityIdle(record: SessionRecord): void {
   if (record.retirement) conflict("This native session has been retired.", "session_retired");
   const pendingContinuation = (value?: { state: string }) => value?.state === "pending" || value?.state === "awaiting_authorization";
   const busy = Object.values(record.runs).some(run =>
-    run.reservedFor || run.snapshot.phase !== "terminal" || !run.snapshot.stopConfirmed || run.snapshot.effects.certainty !== "known"
-    || run.snapshot.effects.unresolvedCallIds.length || run.snapshot.pending.length
+    run.reservedFor || run.snapshot.phase !== "terminal" || !run.snapshot.stopConfirmed || run.snapshot.pending.length
     || run.snapshot.pendingContinuations?.some(pendingContinuation)
-    || Object.values(run.controls).some(({ receipt }) => receipt.state === "accepted" || receipt.state === "unknown" || pendingContinuation(receipt.continuation))
-    || run.snapshot.agents?.some(child => child.stopConfirmed === false || ["queued", "running", "waiting_for_input", "unknown"].includes(child.state))
+    || Object.values(run.controls).some(({ receipt }) => receipt.state === "accepted" || pendingContinuation(receipt.continuation))
+    || run.snapshot.agents?.some(child => child.stopConfirmed === false)
     || (run.input || run.startIntent || run.workspaces?.length) && run.workspaceRelease?.state !== "released");
   if (record.session.activeRun || busy) conflict("The previous execution still has outstanding work.", "session_busy");
 }
@@ -189,11 +190,25 @@ export class ProviderController {
   }
   async startRun(sessionId: string, runId: string, input: AgentRunInput, body: string, actor: VerifiedOperation, onFresh?: () => void): Promise<AgentRunSnapshot> {
     const accepted = await this.store.exclusive(async () => {
-      const session = await this.store.load(sessionId, actor), old = session.runs[runId], hash = bytesHash(body);
+      const session = await this.store.load(sessionId, actor, runId), old = session.runs[runId], hash = bytesHash(body);
       if (old && !old.reservedFor) { if (old.hash !== hash) conflict("Run identity has different exact input bytes.", "request_conflict"); return { snapshot: old.snapshot, fresh: false }; }
       if (session.retirement) conflict("This native session has been retired.", "session_retired");
+      const stops = this.store.pendingStops(runId, actor);
+      if (stops.length) {
+        const run = this.fenceUnstarted(session, runId, actor, hash);
+        this.store.lifecycle(run);
+        await this.store.save(session);
+        return { snapshot: run.snapshot, fresh: false };
+      }
       if (this.closing) throw new AgentApiError("provider_stopping", "Provider is stopping; this new run was not admitted.", 503, true);
+      this.store.history.requireDeliveryCapacity(actor, sessionId);
       this.requireCapabilities(input.requiredCapabilities);
+      const selection = session.configurations[input.configurationRevision]?.configuration;
+      if (this.driver.durableCommands && input.resources?.some(resource => resource.kind === "worktree"))
+        this.requireCapabilities(["workspace.edit"]);
+      if (this.capabilities.capabilities.includes("scope.restricted-native-tools") &&
+        (selection?.approvalMode === "autonomous" || selection?.subagents?.enabled === true))
+        throw new AgentApiError("unsupported_capability", "This native host cannot run the requested tool configuration.", 422);
       if (session.session.activeRun) conflict("The previous execution still owns this session.", "session_busy");
       if (session.session.revision !== input.expectedSessionRevision || session.session.configurationRevision !== input.configurationRevision) conflict("The session configuration changed.");
       if (actor.configurationDigest != null && actor.configurationDigest !== session.session.configurationDigest) conflict("Authorization names another configuration.", "configuration_mismatch");
@@ -213,6 +228,7 @@ export class ProviderController {
       if (!ownReservation && occupied >= this.capacity) conflict("Provider capacity is occupied, including executions whose stop is unconfirmed.", "provider_busy");
       const reservation = old?.reservedFor;
       const run = old ?? this.store.makeRun(session, runId, actor, body, input);
+      if (actor.expiresAt) run.authorityExpiresAt = actor.expiresAt;
       if (reservation) {
         run.hash = hash; run.input = structuredClone(input); run.admissionRef = actor.admissionRef; delete run.reservedFor;
         run.snapshot.stopConfirmed = false; run.snapshot.admissionRef = actor.admissionRef; run.snapshot.revision = increment(run.snapshot.revision);
@@ -228,7 +244,7 @@ export class ProviderController {
       this.store.lifecycle(run); await this.store.save(session);
       return { snapshot: run.snapshot, fresh: true };
     });
-    if (accepted.fresh) { onFresh?.(); this.background(this.driver.start(sessionId, runId)); }
+    if (accepted.fresh) { onFresh?.(); this.background(this.driver.start(sessionId, runId, accepted.snapshot.generation)); }
     return accepted.snapshot;
   }
   background(task: Promise<unknown>): void { this.tasks.add(task); void task.catch(() => {}).finally(() => this.tasks.delete(task)); }
@@ -239,38 +255,105 @@ export class ProviderController {
     const old = run.controls[id]; if (old && old.hash !== hash) conflict("Control identity has different exact bytes.", "request_conflict"); return old?.receipt;
   }
   private receipt(run: RunRecord, id: string): AgentControlReceipt { return { requestId: id, state: "accepted", run: run.snapshot.ref, revision: run.snapshot.revision, generation: run.snapshot.generation }; }
+  private fenceUnstarted(session: SessionRecord, runId: string, actor: VerifiedOperation, startDigest: string): RunRecord {
+    const run = this.store.makeRun(session, runId, actor, "");
+    const stops = this.store.pendingStops(runId, actor);
+    if (stops.length) run.snapshot.generation = stops[0]!.generation;
+    for (const stop of stops) run.controls[stop.request] = { hash: stop.hash, stop: true,
+      receipt: { ...this.receipt(run, stop.request), revision: "1", state: "applied" } };
+    run.hash = startDigest;
+    run.cancelFence = true;
+    run.decisionsFenced = true;
+    this.store.markNotAdmitted(run);
+    run.snapshot.state = "cancelled";
+    run.snapshot.phase = "terminal";
+    run.snapshot.stopConfirmed = true;
+    run.completedAt = new Date().toISOString();
+    session.runs[runId] = run;
+    return run;
+  }
+  async discardDelivery(runId: string, requestId: string, actor: VerifiedOperation) {
+    if (!actor.cleanupOnly || !actor.sessionId || actor.runId !== runId || actor.operation !== "runs.discard")
+      throw new AgentApiError("permission_denied", "Discard requires the original attempt cleanup authorization.", 403);
+    const sessionId = actor.sessionId;
+    return this.store.exclusive(async () => {
+      const old = this.store.history.discardedDelivery(actor, sessionId, runId);
+      if (old) {
+        if (old.admission !== actor.admissionRef || old.request !== requestId)
+          throw new AgentApiError("request_conflict", "A different confirmed request owns this delivery receipt.", 409);
+      } else {
+        const { session, record } = await this.store.run(runId, actor);
+        if (session.id !== sessionId || record.admissionRef !== actor.admissionRef)
+          throw new AgentApiError("permission_denied", "The run belongs to another admission.", 403);
+        if (!record.snapshot.stopConfirmed || record.reservedFor || record.snapshot.pending.length ||
+          record.snapshot.pendingContinuations?.some(item => item.state === "pending" || item.state === "awaiting_authorization") ||
+          (record.input || record.startIntent || record.workspaces?.length) && record.workspaceRelease?.state !== "released" ||
+          Object.values(record.controls).some(control => control.receipt.state === "accepted") ||
+          Object.values(record.decisionDeliveries ?? {}).some(delivery => !delivery.done))
+          throw new AgentApiError("discard_pending", "The attempt still has an open execution, decision or workspace claim.", 409, true);
+        delete session.runs[runId];
+        if (session.session.activeRun?.id === runId) session.session.activeRun = null;
+        await this.store.save(session, { run: runId, admission: actor.admissionRef, request: requestId });
+      }
+      return { runId, requestId, state: "discarded" as const };
+    });
+  }
   async cancel(runId: string, input: AgentCancelInput, body: string, actor: VerifiedOperation): Promise<AgentControlReceipt> {
     const result = await this.store.exclusive(async () => {
       let existing = await this.store.run(runId, actor).catch(error => { if (error instanceof AgentApiError && error.status === 404) return null; throw error; });
       const hash = bytesHash(body);
-      if (!existing && input.fenceIfNotAdmitted) {
-        const session = await this.store.load(input.fenceIfNotAdmitted.sessionId, actor);
+      const original = actor.originalStartDigest && actor.sessionId ? { sessionId: actor.sessionId, startDigest: actor.originalStartDigest } : undefined;
+      const fence = input.fenceIfNotAdmitted ?? original;
+      if (original && fence && (fence.sessionId !== original.sessionId || fence.startDigest !== original.startDigest))
+        conflict("Stop must target the originally authorized session and bytes.", "request_conflict");
+      if (!existing && fence) {
+        const session = await this.store.load(fence.sessionId, actor, runId);
         if (session.retirement) conflict("This native session has been retired.", "session_retired");
-        const run = this.store.makeRun(session, runId, actor, body);
-        run.hash = input.fenceIfNotAdmitted.startDigest; run.cancelFence = true;
-        this.store.markNotAdmitted(run);
-        run.snapshot.state = "cancelled"; run.snapshot.phase = "terminal"; run.snapshot.stopConfirmed = true; run.completedAt = new Date().toISOString();
-        this.store.lifecycle(run); session.runs[runId] = run; existing = { session, record: run };
+        const run = this.fenceUnstarted(session, runId, actor, fence.startDigest);
+        this.store.lifecycle(run);
+        if (run.controls[input.requestId]) await this.store.save(session);
+        existing = { session, record: run };
       }
-      if (!existing) throw new AgentApiError("run_not_found", "Run not found.", 404);
+      if (!existing) {
+        if (input.expectedGeneration !== undefined) throw new AgentApiError("run_not_found", "Run generation not found.", 404);
+        return { receipt: this.store.stopBeforeAdmission(runId, actor, input.requestId, hash), execute: false };
+      }
       const { session, record: run } = existing, old = this.oldControl(run, input.requestId, hash);
       if (old) return { receipt: old, execute: !session.retirement && !run.snapshot.stopConfirmed };
       if (session.retirement) conflict("This native session has been retired.", "session_retired");
-      if (input.fenceIfNotAdmitted) { if (session.id !== input.fenceIfNotAdmitted.sessionId || run.hash !== input.fenceIfNotAdmitted.startDigest) conflict("Cancellation fence names different admission bytes.", "request_conflict"); }
-      else this.checkControl(run, input);
+      if (fence) { if (session.id !== fence.sessionId || run.hash !== fence.startDigest) conflict("Cancellation fence names different admission bytes.", "request_conflict"); }
+      else if (input.expectedGeneration !== undefined && input.expectedGeneration !== run.snapshot.generation) conflict("Stop names a different execution generation.");
       const receipt = this.receipt(run, input.requestId);
       run.decisionsFenced = true;
-      for (const decision of run.snapshot.pending) if (decision.delivery === "next_turn") this.store.emit(run, "decision.resolved", { decisionId: decision.id, decision, state: "superseded" });
-      run.snapshot.pending = run.snapshot.pending.filter(decision => decision.delivery !== "next_turn");
+      for (const decision of run.snapshot.pending) this.store.emit(run, "decision.resolved", { decisionId: decision.id, decision, state: "superseded" }, decision.source);
+      run.snapshot.pending = [];
       this.store.lifecycle(run);
       if (run.reservedFor) this.supersedeReservations(session);
       for (const control of Object.values(run.controls)) if (control.receipt.continuation?.state === "awaiting_authorization") this.supersedeReservations(session);
-      if (run.snapshot.stopConfirmed) receipt.state = "applied";
-      else { run.snapshot.phase = "cancelling"; this.store.lifecycle(run); }
-      receipt.revision = run.snapshot.revision; run.controls[input.requestId] = { hash, receipt }; this.store.emit(run, "control.updated", { requestId: input.requestId, receipt });
-      await this.store.save(session); return { receipt, execute: receipt.state !== "applied" };
+      if (run.snapshot.stopConfirmed) {
+        receipt.state = "applied";
+        if (run.snapshot.phase === "parked") {
+          run.snapshot.state = "cancelled"; run.snapshot.phase = "terminal"; this.store.lifecycle(run);
+        }
+      } else { run.snapshot.phase = "cancelling"; this.store.lifecycle(run); }
+      receipt.revision = run.snapshot.revision; run.controls[input.requestId] = { hash, receipt, stop: true }; this.store.emit(run, "control.updated", { requestId: input.requestId, receipt });
+      try { await this.store.save(session); }
+      catch (error) {
+        // Authorization, immutable run identity and command replay checks have succeeded.
+        // Stop the live owner if we still hold it. Only a committed transaction can acknowledge Stop.
+        if (error instanceof AgentApiError && error.code === "storage_unavailable" && !run.snapshot.stopConfirmed && run.nativeGeneration)
+          this.driver.stopOwnedOnStorageFailure?.(runId, run.snapshot.generation);
+        throw error;
+      }
+      return { receipt, execute: receipt.state !== "applied" };
+    }).catch(error => {
+      // The database can fail before the caller and generation can be checked.
+      // Keep the exact Stop retryable without signalling an unverified owner.
+      if (error?.code === "ERR_SQLITE_ERROR" && [8, 10, 11, 13, 14, 26].includes(Number(error.errcode) & 255))
+        throw new AgentApiError("storage_unavailable", "The retained execution could not be verified.", 503, true);
+      throw error;
     });
-    if (result.execute) this.background(this.applyControl(runId, input.requestId, () => this.driver.cancel(runId, input.requestId)));
+    if (result.execute) this.background(this.dispatchControl(runId, input.requestId, () => this.driver.cancel(runId, input.requestId)));
     return result.receipt;
   }
   async respond(runId: string, input: AgentResponseInput, body: string, actor: VerifiedOperation): Promise<AgentControlReceipt> {
@@ -296,7 +379,7 @@ export class ProviderController {
       this.store.emit(run, "control.updated", { requestId: input.requestId, receipt }); await this.store.save(session);
       return { receipt, execute: decision!.delivery === "continue_run" };
     });
-    if (result.execute) this.background(this.applyControl(runId, input.requestId, () => this.driver.respond(runId, input)));
+    if (result.execute) this.background(this.dispatchControl(runId, input.requestId, () => this.driver.respond(runId, input)));
     return result.receipt;
   }
   async control(runId: string, input: AgentRunControlInput, body: string, actor: VerifiedOperation): Promise<AgentControlReceipt> {
@@ -307,11 +390,11 @@ export class ProviderController {
       if (session.retirement) conflict("This native session has been retired.", "session_retired");
       this.checkControl(run, input);
       if (Object.keys(run.controls).length >= this.capabilities.limits.maxControls) throw new AgentApiError("control_limit", "Ordinary control limit exceeded; cancellation remains available.", 413);
-      const receipt = this.receipt(run, input.requestId); run.controls[input.requestId] = { hash, receipt };
+      const receipt = this.receipt(run, input.requestId); run.controls[input.requestId] = { hash, receipt, command: structuredClone(input) };
       this.store.lifecycle(run); receipt.revision = run.snapshot.revision;
       this.store.emit(run, "control.updated", { requestId: input.requestId, receipt }); await this.store.save(session); return { receipt, execute: true };
     });
-    if (result.execute) this.background(this.applyControl(runId, input.requestId, () => this.driver.control(runId, input)));
+    if (result.execute) this.background(this.dispatchControl(runId, input.requestId, () => this.driver.control(runId, input)));
     return result.receipt;
   }
 
@@ -324,8 +407,9 @@ export class ProviderController {
       if (session.retirement) conflict("Reuse the original retirement request.", "session_retired");
       if (this.closing) throw new AgentApiError("provider_stopping", "The provider is stopping; retirement was not admitted.", 503, true);
       this.checkControl(record, input);
-      if (session.session.activeRun?.id !== runId)
-        conflict("The reviewed run no longer owns this native session.", "retirement_stale");
+      if (session.session.activeRun ? session.session.activeRun.id !== runId
+        : !record.snapshot.stopConfirmed || Object.keys(session.runs).at(-1) !== runId)
+        conflict("A newer attempt owns this session.", "retirement_stale");
       if (!this.driver.retirementEvidence || !this.driver.releaseRetired)
         throw new AgentApiError("unsupported_capability", "The provider cannot retire this execution.", 422);
       const evidence = await this.driver.retirementEvidence(record);
@@ -380,11 +464,37 @@ export class ProviderController {
       delete record.reservedFor; record.snapshot.state = "cancelled"; record.snapshot.phase = "terminal"; record.snapshot.stopConfirmed = true; this.store.lifecycle(record);
     }
   }
+  private dispatchControl(id: string, requestId: string, dispatch: () => Promise<void>): Promise<void> {
+    // The detached supervisor settles its durable command inside its own lifetime.
+    return this.driver.durableCommands ? dispatch() : this.applyControl(id, requestId, dispatch);
+  }
+  async resumeCommands(id: string): Promise<void> {
+    const { record } = await this.store.run(id);
+    for (const [requestId, command] of Object.entries(record.controls)) {
+      if (command.receipt.state !== "accepted") continue;
+      if (command.stop) {
+        await this.applyControl(id, requestId, async () => {
+          await this.driver.cancel(id, requestId);
+          await this.driver.synchronize(id);
+          if (!(await this.store.run(id)).record.snapshot.stopConfirmed)
+            throw new AgentApiError("stop_in_progress", "The supervisor is closing the attempt.", 503, true);
+        });
+      } else if (command.decision && command.response && command.decision.delivery === "continue_run") {
+        const response = { requestId, expectedGeneration: record.snapshot.generation, expectedRevision: command.receipt.revision,
+          decisionId: command.decision.id, decisionRevision: command.decision.revision, response: command.response as AgentResponseInput["response"] };
+        await this.applyControl(id, requestId, () => this.driver.respond(id, response));
+      } else if (command.command) {
+        await this.applyControl(id, requestId, () => this.driver.control(id, command.command!));
+      }
+    }
+  }
   private async applyControl(id: string, requestId: string, apply: () => Promise<void>): Promise<void> {
     let error: unknown;
     try { await apply(); await this.driver.synchronize(id); } catch (caught) { error = caught; }
     await this.store.exclusive(async () => {
       const { session, record } = await this.store.run(id), control = record.controls[requestId]; if (!control) return;
+      if (control.stop && (control.receipt.state === "applied" || !error && !record.snapshot.stopConfirmed)) return;
+      if (error instanceof AgentApiError && ["core_unavailable", "core_response_invalid", "stop_in_progress"].includes(error.code)) return;
       control.receipt.state = error ? error instanceof AgentApiError && error.status >= 400 && error.status < 500 ? "rejected" : "unknown" : "applied";
       projectAppliedDecisionControls(this.store, record);
       this.store.lifecycle(record); control.receipt.revision = record.snapshot.revision;

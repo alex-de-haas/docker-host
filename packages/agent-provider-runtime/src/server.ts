@@ -8,7 +8,7 @@ import type { AttachmentStore } from "./attachments.js";
 import { bytesHash, type VerifiedOperation } from "./store.js";
 import { serveHistory } from "./history-route.js";
 
-export const API_PREFIX = "/api/agent/v1";
+export const API_PREFIX = "/api/agent/v2";
 export const json = (response: ServerResponse, status: number, value: unknown) => { const payload = JSON.stringify(value); response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "content-length": Buffer.byteLength(payload) }); response.end(payload); };
 export async function readCommand(request: IncomingMessage, max = 1024 * 1024): Promise<string> {
   const parts: Buffer[] = []; let length = 0;
@@ -18,7 +18,7 @@ export async function readCommand(request: IncomingMessage, max = 1024 * 1024): 
 export function agentRoutes(controller: ProviderController, attachments: AttachmentStore) {
   return async (request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> => {
     if (!url.pathname.startsWith(API_PREFIX + "/")) return false;
-    if (["/history/events", "/history/live", "/history/states", "/history/range"].includes(url.pathname.slice(API_PREFIX.length))) {
+    if (["/history/events", "/history/live", "/history/states", "/history/range", "/history/ack"].includes(url.pathname.slice(API_PREFIX.length))) {
       const page = await serveHistory(controller, request, response, url);
       if (page) json(response, 200, page);
       return true;
@@ -49,18 +49,28 @@ export function agentRoutes(controller: ProviderController, attachments: Attachm
       case "sessions.create": result = await controller.createSession(parsed.sessionId!, parsed.input, body, actor, () => { status = 201; }); break;
       case "sessions.configure": result = await controller.configureSession(parsed.sessionId!, parsed.input, body, actor, () => { status = 201; }); break;
       case "sessions.read":
-        await controller.store.refreshUncertainSession(parsed.sessionId!, actor);
         result = await controller.readSession(parsed.sessionId!, actor); break;
       case "sessions.list": result = page(await controller.store.list(actor), parsed.query.cursor, parsed.query.limit, value => value.ref.id, "sessions"); break;
       case "runs.start": result = await controller.startRun(parsed.sessionId!, parsed.runId!, parsed.input, body, actor, () => { status = 202; }); break;
+      case "runs.discard": result = await controller.discardDelivery(parsed.runId!, parsed.input.requestId, actor); break;
+      case "runs.closure": {
+        const { record: { snapshot } } = await controller.store.run(parsed.runId!, actor);
+        const { ref, sessionId, generation, revision, state, phase, stopConfirmed, writerScopeClosed, pendingContinuations } = snapshot;
+        result = { ref, sessionId, generation, revision, state, phase, stopConfirmed, writerScopeClosed, pendingContinuations };
+        break;
+      }
       case "runs.read":
-        await controller.store.refreshUncertainRun(parsed.runId!, actor);
         await controller.store.pruneReplay(parsed.runId!, actor);
         result = await controller.snapshot(parsed.runId!, actor, { committedOnly: true }); break;
       case "runs.respond": result = await controller.respond(parsed.runId!, parsed.input, body, actor); break;
       case "runs.cancel": result = await controller.cancel(parsed.runId!, parsed.input, body, actor); break;
       case "runs.control": result = await controller.control(parsed.runId!, parsed.input, body, actor); break;
-      case "runs.controls.read": { const { record } = await controller.store.run(parsed.runId!, actor); const control = record.controls[parsed.requestId!]; if (!control) throw new AgentApiError("control_not_found", "Control not found.", 404); result = control.receipt; break; }
+      case "runs.controls.read": {
+        const receipt = await controller.store.controlReceipt(parsed.runId!, actor, parsed.requestId!);
+        result = actor.cleanupOnly ? { requestId: receipt.requestId, run: receipt.run, state: receipt.state,
+          generation: receipt.generation, revision: receipt.revision, continuation: receipt.continuation } : receipt;
+        break;
+      }
       case "runs.events": {
         await controller.store.pruneReplay(parsed.runId!, actor);
         const after = agentReplayCursor(parsed.query.after, typeof request.headers["last-event-id"] === "string" ? request.headers["last-event-id"] : undefined);
@@ -91,10 +101,10 @@ async function eventStream(controller: ProviderController, request: IncomingMess
     for (const event of current.events) if (BigInt(event.sequence) > BigInt(position.sequence)) { await send(encodeAgentSseEvent(event, store.cursor(event.generation, event.sequence))); position = { generation: event.generation, sequence: event.sequence }; }
   }).catch(() => { response.end(); }); };
   // Subscribe before the first catch-up read so no committed event can fall between replay and live.
-  const unsubscribe = store.subscribe(id, flush);
+  const unsubscribe = store.history.subscribe(actor, flush);
   response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
   await send(": ready\n\n"); flush();
-  const heartbeat = setInterval(() => { void send(": keepalive\n\n").catch(() => response.end()); }, 15_000); heartbeat.unref();
+  const heartbeat = setInterval(() => { flush(); void send(": keepalive\n\n").catch(() => response.end()); }, 15_000); heartbeat.unref();
   const authority = setInterval(() => { void revalidate().catch(() => response.end()); }, 30_000); authority.unref();
   const remaining = actor.expiresAt ? Math.max(0, Date.parse(actor.expiresAt) - Date.now()) : 115_000;
   const expiry = setTimeout(() => response.end("event: renew\ndata: {}\n\n"), Math.min(115_000, Number.isFinite(remaining) ? remaining : 0)); expiry.unref();

@@ -1,6 +1,6 @@
 ---
 created: 2026-10-16
-updated: 2026-11-10
+updated: 2026-11-25
 summary: Core coordinates pause, verified completion and explicit workspace deletion while protecting source used by Core or ordinary applications.
 components: [apps/core, apps/harness]
 ---
@@ -46,7 +46,7 @@ feature progress. An unfinished workspace remains `in-progress`; closing does no
 merge evidence or an expiry deadline. It keeps source, previews, conversation and unsent drafts.
 
 Core persists the pause UUID/revision before Harness begins cancellation. Pausing or closed source
-cannot acquire a new activity/shared-worker lease, prepare a worktree, mutate through managed source
+cannot acquire a new activity lease, prepare a worktree, mutate through managed source
 or publication operations, or allocate an attached preview. Recovery/release of already accepted
 source operations remains possible. Existing previews remain available; their independent lifecycle
 and source-consumer checks still govern physical cleanup.
@@ -54,15 +54,7 @@ and source-consumer checks still govern physical cleanup.
 The operator's Harness `POST /api/development-workspaces/{id}/workflow/pause` first calls Core's
 `pause` admission endpoint. It resolves current participant bindings from Core and cancels each current-installation local
 execution through that session's own credential, serialized with new turns.
-The existing shared Docker worker verifies container removal before releasing its persistent worker
-lease and all recovered worktree leases. Only then does `pause-confirm` acknowledge `closed`.
-No new process supervisor or per-session Docker container is introduced.
-
-A failed stop or lease release retains the worker generation, source and pending Core operation.
-The panel displays Pausing and Retry action. Retry uses the original UUID/revision from Core even
-when browser storage is unavailable, and survives Core/Harness restarts. Direct Pause retries load the persisted worker generation
-before checking ownership, without requiring an earlier health or runtime request. Ordinary source mutations cannot replace an unfinished pause. Delete remains available and supersedes
-pending workflow intent after recording its own durable request.
+Providers retain the stop requests for their admitted runs and release their own workspace activity leases. Core checks the remaining worktree leases and pending source operations before acknowledging `closed`. A failed stop or lease release retains the source and the original pause request. The panel can retry using Core's UUID and revision after a browser, Harness or Core restart. Delete can supersede pending workflow intent after recording its own durable request.
 New publication commands, including PR metadata, merge, completion and policy changes, require
 Resume while closure is Pausing or Paused. Existing request receipts retain replay/recovery instead
 of becoming new publication authority. Publication receipt admission and Pause share the source-owner
@@ -70,8 +62,7 @@ gate: slow connection or dependency checks cannot admit a new operation after cl
 Previously requested publication cleanup cannot start while closure is Pausing or Paused. An
 already-admitted cleanup retains its recovery path; pending source cleanup prevents Pause from
 being acknowledged until that earlier operation is resolved. Replaying a successful pause after Resume returns its receipt without
-cancelling the new run. Terminal session events refresh worker availability in the chat, so recovered
-Docker health does not remain stale until a page reload.
+cancelling the new run.
 
 Harness reads Core's workspace owner after pause admission. It resolves and stops hosted participants
 for both internal and external allocations, then submits the original pause UUID/revision for Core
@@ -80,15 +71,7 @@ source operations still block confirmation; recovery of a stopped external lease
 pause even when no hosted sessions are attached.
 Unavailable or unrecognized ownership retains the pending request for an explicit retry.
 
-External agents and older assistant installations are not impersonated. Unrelated sessions are not stopped.
-Their outstanding source operations and leases block acknowledgement. Since the shared worker can
-see the shared source area, another session's active worker lease also blocks confirmation; this
-coordinator never releases it. This is a stop/admission lifecycle, not a per-workspace filesystem
-boundary: later authorized sessions still receive the shared worktree root, including retained
-closed source. Pause does not make those files read-only or block unrelated sessions; source
-separation belongs to the separately scoped containment work. Native execution without verified stop/lease acknowledgement remains
-a blocker. API admission is not revocation of arbitrary native filesystem access or a guarantee that
-an external process has stopped. Delete coordinates managed consumer shutdown and reports unknown external activity without requiring a pause acknowledgement.
+Only the current installation's hosted sessions are stopped through Harness. Outstanding source operations or activity leases from other participants continue to block pause confirmation. Closing the managed workflow fences new managed operations. External commands can retain operating-system access to files. Delete separately coordinates managed consumers and records the outcome of removing the selected source.
 
 Resume explicitly reopens retained source and clears completion, recorded heads/time and closure.
 It starts no agent or preview automatically. A closed conversation retains readable history and its
@@ -145,7 +128,7 @@ available. The confirmation stays disabled while known application or sandbox so
 remain. A stopped sandbox still holds its binding; Delete releases it through Finish/Dispose.
 Core independently rechecks known consumers; confirmation does not terminate processes.
 
-The POST `/{workspaceId}/worktrees/{id}/recover-lease` inspection route requires the existing full
+A lease still recorded against an admitted provider run remains with that provider for automatic cleanup. The POST `/{workspaceId}/worktrees/{id}/recover-lease` inspection route requires the existing full
 source grant and active administrator app identity, plus closing/closed admission. It supports internal shared workspaces and external owners. It rejects stale/unavailable HEAD,
 pending or unknown source operations, active known consumers and unverified native service ownership.
 It never uses lease age or revoked OAuth as evidence of process exit. Arbitrary native execution is
@@ -250,6 +233,8 @@ Dirty, untracked, ignored, conflicted and unmerged files do not veto authorized 
 repository and allocation checks still prevent removal of unrelated source. Partial preparation with
 no Git metadata can be removed. Deletion removes worktrees, their local branches and workspace metadata;
 published PRs, shared repository caches and ordinary application data retain their own lifetimes.
+
+Core confirms removal after it verifies the original directory, Git branch and worktree registration have gone. A later allocation for the same logical workspace receives a different worktree ID, path and branch. On POSIX, a detached process can retain an open deleted file until it closes the descriptor. An admitted provider retains its cleanup obligation even if an administrator already removed its workspace activity marker. Busy managed resources, a sharing violation, denied filesystem access or a failed cleanup leave the admitted request pending with its cause.
 
 On Windows, physical cleanup removes directory links themselves without following their targets and
 handles read-only generated files. Git worktree registration paths use filesystem path comparison,

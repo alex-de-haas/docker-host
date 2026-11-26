@@ -1,3 +1,4 @@
+import { WorkerJournal } from "./internal/worker/journal.js";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -44,6 +45,42 @@ async function admitted(store: ProviderStore, actor = alice) {
   return { session, run, runId };
 }
 const eventType = (item: AgentWatchItem) => item.kind === "event" ? item.event.type : item.kind;
+
+it("throttles only the chat with an unacknowledged backlog and releases it after a durable receipt", async () => {
+  const store = await openStore();
+  const { session, run } = await admitted(store);
+  store.emit(run, "message.completed", { messageId: "large", text: "content".repeat(64) });
+  await store.save(session);
+  expect(() => store.history.requireDeliveryCapacity(alice, session.id, 32)).toThrow(/durable delivery/);
+  expect(() => store.history.requireDeliveryCapacity(alice, randomUUID(), 32)).not.toThrow();
+  const state = store.history.states(alice, store.history.currentBoundary(alice), undefined, 10).sessions[0]!;
+  store.history.acknowledgeThrough(alice, session.id, state.epoch, state.head);
+  store.history.acknowledgeThrough(alice, session.id, state.epoch, state.head);
+  expect(() => store.history.requireDeliveryCapacity(alice, session.id, 32)).not.toThrow();
+});
+
+it("keeps recording an active chat past its admission watermark and commits its Stop while the receiver is offline", async () => {
+  const store = await openStore(), active = await admitted(store), sibling = await admitted(store);
+  for (const [index, text] of ["before the watermark", "after the watermark"].entries()) {
+    store.emit(active.run, "message.completed", { messageId: "message-" + index, text });
+    await store.save(active.session);
+    expect(() => store.history.requireDeliveryCapacity(alice, active.session.id, 32)).toThrow(/durable delivery/);
+  }
+  const before = store.history.states(alice, store.history.currentBoundary(alice), undefined, 10);
+  const owner = before.sessions.find(chat => chat.sessionId === active.session.id)!;
+  const rows = store.history.range(alice, before.through, active.session.id, owner.epoch, 1, owner.head, 10);
+  expect(rows.observations.flatMap(({ item }) => item.kind === "event" && item.event.type === "message.completed" ? [item.event.data.text] : []))
+    .toEqual(["before the watermark", "after the watermark"]);
+  store.emit(sibling.run, "message.completed", { messageId: "healthy", text: "independent" }); await store.save(sibling.session);
+  active.run.snapshot.stopConfirmed = true; active.run.snapshot.state = "cancelled"; active.run.snapshot.phase = "terminal";
+  store.lifecycle(active.run); await store.save(active.session);
+  const after = store.history.states(alice, store.history.currentBoundary(alice), undefined, 10);
+  const stopped = after.sessions.find(chat => chat.sessionId === active.session.id)!;
+  expect(stopped.head).toBeGreaterThan(owner.head);
+  expect((await store.run(active.runId)).record.snapshot.stopConfirmed).toBe(true);
+  store.history.acknowledgeThrough(alice, active.session.id, stopped.epoch, stopped.head);
+  expect(() => store.history.requireDeliveryCapacity(alice, active.session.id, 32)).not.toThrow();
+});
 
 it("recovers three offline conversations for two owners through one installation, retaining facts beyond replay", async () => {
   const store = await openStore();
@@ -111,7 +148,7 @@ it("recovers evicted tool names for isolated live and range completions without 
   expect(live[4]?.item).toMatchObject({ event: { data: { name: "Command", output: "named from start" } } });
   expect(JSON.stringify(live)).not.toMatch(/private setup result|unclassified result/);
 
-  const db = new DatabaseSync(path.join(store.directory, "installation-history.sqlite"));
+  const db = new DatabaseSync(store.databasePath);
   try { db.exec("DROP INDEX history_tool_start"); } finally { db.close(); }
   const reopened = await openStore(store.directory);
   const inventory = reopened.history.states(alice), state = inventory.sessions[0]!;
@@ -148,76 +185,90 @@ it("retains an interrupted execution and its later confirmed outcome at distinct
   expect(late[1]?.item).toMatchObject({ event: { data: { snapshot: { state: "failed", stopConfirmed: true } } } });
 });
 
-it("recovers a committed outbox after interruption and replays the same cursors only once", async () => {
-  const store = await openStore(), { session, run } = await admitted(store);
-  const cursor = store.history.page(alice).through;
-  const fault = vi.spyOn(store.history, "publish").mockImplementationOnce(() => { throw new Error("simulated interruption"); });
-  store.emit(run, "message.completed", { messageId: "last", text: "final answer" });
-  await expect(store.save(session)).resolves.toBeUndefined();
-  expect((await store.run(run.snapshot.ref.id, alice)).record.historyOutbox?.at(-1)).toMatchObject({
-    kind: "event", event: { type: "message.completed" },
-  });
-  fault.mockRestore();
-  const restored = await openStore(store.directory);
-  const backfill = restored.history.page(alice, cursor);
-  expect(backfill.observations).toHaveLength(1);
-  const reopened = await openStore(store.directory);
-  expect(reopened.history.page(alice, cursor)).toEqual(backfill);
-});
-
-it("continues to serve committed execution and retries every unpublished fact without duplicating a committed page", async () => {
+it("retries the entire transition after a failed history insert and publishes one event", async () => {
   const store = await openStore(), { session, run, runId } = await admitted(store);
-  const cursor = store.history.page(alice).through, notify = vi.fn();
-  const unsubscribe = store.subscribe(runId, notify);
-  const publish = store.history.publish.bind(store.history);
-  const fault = vi.spyOn(store.history, "publish")
-    .mockImplementationOnce(() => { throw Object.assign(new Error("synthetic database lock"), { code: "SQLITE_BUSY" }); })
-    .mockImplementationOnce(record => { publish(record); throw new Error("synthetic lost acknowledgement"); });
-  store.emit(run, "message.completed", { messageId: "first", text: "first" });
+  const cursor = store.history.page(alice).through;
+  store.emit(run, "message.completed", { messageId: "last", text: "final answer" });
+  store.history.database(db => db.exec("CREATE TRIGGER block_history BEFORE INSERT ON history_facts BEGIN SELECT RAISE(ABORT,'simulated I/O failure'); END"));
+  await expect(store.save(session)).rejects.toMatchObject({ code: "storage_unavailable" });
+  const reopened = await openStore(store.directory);
+  expect(reopened.history.page(alice, cursor).observations).toEqual([]);
+  expect((await reopened.run(runId)).record.snapshot.lastSequence).not.toEqual(run.snapshot.lastSequence);
+  reopened.history.database(db => db.exec("DROP TRIGGER block_history"));
   await store.save(session);
-  expect(notify).toHaveBeenCalledOnce();
-  const { session: current, record } = await store.run(runId, alice);
-  expect(record.historyOutbox?.some(item => eventType(item) === "message.completed")).toBe(true);
-  store.emit(record, "message.completed", { messageId: "second", text: "second" });
-  await store.save(current);
-  expect(notify).toHaveBeenCalledTimes(2);
-  const committed = store.history.page(alice, cursor);
-  expect(committed.observations.map(row => eventType(row.item))).toEqual(["message.completed", "message.completed"]);
-  fault.mockRestore();
-  await store.retryHistory();
-  expect((await store.run(runId, alice)).record.historyOutbox).toBeUndefined();
-  expect(store.history.page(alice, cursor)).toEqual(committed);
-  unsubscribe();
+  const committed = reopened.history.page(alice, cursor);
+  expect(committed.observations.map(row => eventType(row.item))).toEqual(["message.completed"]);
+  await store.save(session);
+  expect(reopened.history.page(alice, cursor)).toEqual(committed);
 });
 
-it.each(["lost", "rolled back"])("recovers retained evidence and rejects obsolete cursors when the archive is %s", async damage => {
+it("discards only the closed run's public replay and fenced delivery, including lost responses and late writes", async () => {
+  const store = await openStore(), closed = await admitted(store);
+  const other = await admitted(store, bob);
+  const controller = (value: ProviderStore) => new ProviderController(value, {} as never, {} as never, fixtureCapabilities);
+  const actor = { ...alice, cleanupOnly: true, operation: "runs.discard", runId: closed.runId, sessionId: closed.session.id };
+  const request = randomUUID();
+  await expect(controller(store).discardDelivery(closed.runId, request, { ...actor, cleanupOnly: false })).rejects.toMatchObject({ status: 403 });
+  await expect(controller(store).discardDelivery(closed.runId, request, actor)).rejects.toMatchObject({ code: "discard_pending" });
+  closed.run.input = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start", input: { text: "No initial worktree" } };
+  store.emit(closed.run, "message.completed", { messageId: "last", text: "private answer" });
+  closed.run.snapshot.state = "cancelled"; closed.run.snapshot.phase = "terminal"; closed.run.snapshot.stopConfirmed = true;
+  store.lifecycle(closed.run); await store.save(closed.session);
+  // An admitted native tool can acquire a workspace even without an initial resource.
+  await expect(controller(store).discardDelivery(closed.runId, request, actor)).rejects.toMatchObject({ code: "discard_pending" });
+  closed.run.workspaceRelease = { requestId: randomUUID(), state: "released" };
+  await store.save(closed.session);
+  const journal = new WorkerJournal(store.directory, undefined, undefined, "local", store.databasePath);
+  const raw = journal.observations(closed.runId)!;
+  raw.write({ retained: "private callback" });
+  expect(raw.read()).toEqual({ retained: "private callback" });
+  const sibling = store.makeRun(closed.session, randomUUID(), alice, "{}");
+  closed.session.runs[sibling.snapshot.ref.id] = sibling;
+  store.lifecycle(sibling); await store.save(closed.session);
+  const stale = await store.load(closed.session.id);
+  await expect(controller(store).discardDelivery(closed.runId, request, { ...actor, admissionRef: "other-admission" })).rejects.toMatchObject({ status: 403 });
+  const proof = { runId: closed.runId, requestId: request, state: "discarded" };
+  expect(await controller(store).discardDelivery(closed.runId, request, actor)).toEqual(proof);
+  const next = await openStore(store.directory);
+  expect(await controller(next).discardDelivery(closed.runId, request, actor)).toEqual(proof);
+  expect(next.history.page(alice).observations.map(item => item.runId)).toEqual([other.runId, sibling.snapshot.ref.id]);
+  await expect(next.run(closed.runId, alice)).rejects.toMatchObject({ status: 404 });
+  store.emit(stale.runs[closed.runId]!, "message.completed", { messageId: "late", text: "delayed private answer" });
+  await expect(store.save(stale)).rejects.toMatchObject({ code: "state_changed" });
+  expect(next.history.page(alice).observations.map(item => item.runId)).toEqual([other.runId, sibling.snapshot.ref.id]);
+  const statePage = next.history.states(alice);
+  const state = statePage.sessions.find(session => session.sessionId === closed.session.id)!;
+  const remaining = next.history.range(alice, statePage.through, closed.session.id, state.epoch, state.head, state.head, 1);
+  expect(remaining.observations[0]?.runId).toBe(sibling.snapshot.ref.id);
+  expect(next.historicalRunIds.has(closed.runId)).toBe(true);
+  expect(raw.read()).toBeNull();
+  expect(() => raw.write({ retained: "late callback" })).toThrow("was discarded");
+  journal.close();
+});
+
+it("retains unacknowledged facts and prunes only the owning installation's acknowledged window", async () => {
   const store = await openStore(), { session, run } = await admitted(store);
-  const archive = path.join(store.directory, "installation-history.sqlite");
-  const oldCursor = store.history.page(alice).through;
-  await copyFile(archive, archive + ".backup");
-  store.emit(run, "message.completed", { messageId: "old", text: "an older fact" });
+  const foreign = { ...alice, callerInstallation: "other-installation" };
+  for (let i = 0; i < 300; i++) store.emit(run, "message.delta", { messageId: "draft", text: String(i) });
   await store.save(session);
-  run.snapshot.messages = [{ id: "latest", role: "assistant", state: "complete", text: "last known answer" }];
-  run.snapshot.state = "failed"; run.snapshot.phase = "terminal"; run.snapshot.stopConfirmed = true;
-  store.lifecycle(run);
-  await store.save(session);
-  await store.save(session); // Clear the crash outbox; the final snapshot and previous journal receipt still exist.
-  store.history.close();
-  if (damage === "lost") await rm(archive);
-  else await copyFile(archive + ".backup", archive);
-  const restored = await openStore(store.directory);
-  expect(() => restored.history.page(alice, oldCursor)).toThrowError(expect.objectContaining({ status: 410 }));
-  const page = restored.history.page(alice);
-  expect(page.observations.at(-1)?.item).toMatchObject({ kind: "snapshot", snapshot: {
-    state: "failed", stopConfirmed: true, messages: [{ text: "last known answer" }],
-    coverage: { messages: "truncated", tools: "truncated", decisions: "truncated" },
-  } });
-  expect((await openStore(store.directory)).history.page(alice)).toEqual(page);
+  const page = store.history.states(alice), state = page.sessions[0]!;
+  expect(state.head).toBe(301);
+  const current = await openStore(store.directory);
+  for (const owner of [foreign, alice]) {
+    if (owner === foreign) expect(() => current.history.acknowledgeThrough(owner, session.id, state.epoch, 301)).toThrow();
+    else expect(current.history.range(owner, page.through, session.id, state.epoch, 2, 2, 1).observations[0]!.item)
+      .toMatchObject({ event: { data: { text: "0" } } });
+  }
+  for (const ack of [301, 280, 301]) current.history.acknowledgeThrough(alice, session.id, state.epoch, ack);
+  expect(() => current.history.range(alice, page.through, session.id, state.epoch, 2, 2, 1))
+    .toThrowError(expect.objectContaining({ status: 410 }));
+  expect(current.history.range(alice, page.through, session.id, state.epoch, 301, 301, 1).observations[0]!.item)
+    .toMatchObject({ event: { data: { text: "299" } } });
 });
 
 it("rejects a cursor from a discarded timeline after a consistent backup grows past its old position", async () => {
   const store = await openStore(), { session, run, runId } = await admitted(store);
-  const files = [path.join(store.directory, "installation-history.sqlite"), path.join(store.directory, session.id + ".json")];
+  const files = [store.databasePath];
   for (const file of files) await copyFile(file, file + ".backup");
   const common = store.history.page(alice).through;
   store.emit(run, "message.completed", { messageId: "before", text: "old result" });
@@ -235,7 +286,7 @@ it("rejects a cursor from a discarded timeline after a consistent backup grows p
   ]);
 });
 
-it("serves live deltas only while observed and retains the completed message across disconnect", async () => {
+it("retains acknowledged-order deltas and the completed message across disconnect", async () => {
   const store = await openStore(), { session, run } = await admitted(store);
   const after = store.history.page(alice).through, changed = vi.fn();
   const close = store.history.subscribe(alice, changed);
@@ -245,26 +296,17 @@ it("serves live deltas only while observed and retains the completed message acr
   expect(changed).toHaveBeenCalledOnce();
   expect(store.history.page(alice, after, undefined, 4, true).observations.map(row => eventType(row.item))).toEqual(["message.delta", "message.completed"]);
   close();
-  expect(store.history.page(alice, after).observations.map(row => eventType(row.item))).toEqual(["message.completed"]);
+  expect(store.history.page(alice, after).observations.map(row => eventType(row.item))).toEqual(["message.delta", "message.completed"]);
 });
 
-it("adopts legacy snapshots with an explicit coverage gap when detailed replay is unavailable", async () => {
-  const store = await openStore(), { session, run } = await admitted(store);
-  const old = await openStore();
-  delete run.historyVersion; delete run.historyOutbox;
-  run.events = []; run.firstSequence = "9"; run.snapshot.lastSequence = "8"; run.snapshot.cursor = store.cursor(run.snapshot.generation, "8");
-  run.snapshot.messages = [{ id: "latest", role: "assistant", state: "complete", text: "last known answer" }];
-  await writeFile(path.join(old.directory, session.id + ".json"), JSON.stringify(session));
-  const upgraded = await openStore(old.directory);
-  const entries = upgraded.history.page(alice).observations;
-  expect(entries).toHaveLength(2);
-  const states = upgraded.history.states(alice), state = states.sessions[0]!;
-  expect(state.sourceHistoryIncomplete).toBe(true);
-  expect(upgraded.history.range(alice, states.through, state.sessionId, state.epoch, 1, 2, 2)
-    .observations.every(row => row.sourceHistoryIncomplete)).toBe(true);
-  expect(entries[0]!.item).toMatchObject({ kind: "snapshot", snapshot: { lastSequence: "0", state: "unknown", freshness: "unavailable" } });
-  expect(entries[1]!.item).toMatchObject({ kind: "snapshot", snapshot: { lastSequence: "8", coverage: { messages: "truncated" }, messages: [{ text: "last known answer" }] } });
-  for (const entry of entries) if (entry.item.kind === "snapshot") validateAgentRunSnapshot(entry.item.snapshot);
+it("opens an empty generation beside legacy data and never imports an old writer", async () => {
+  const store = await openStore(), { session } = await admitted(store);
+  const other = await openStore();
+  await writeFile(path.join(other.directory, session.id + ".json"), JSON.stringify(session));
+  const clean = await openStore(other.directory);
+  expect(clean.history.page(alice).observations).toEqual([]);
+  expect(clean.occupiedSlots()).toBe(0);
+  await expect(clean.load(session.id, alice)).rejects.toMatchObject({ code: "session_not_found" });
 });
 
 it("reads a committed status even while native synchronization is awaiting further output", async () => {
@@ -276,31 +318,22 @@ it("reads a committed status even while native synchronization is awaiting furth
   finally { settle(); }
 });
 
-it("migrates v1 per-installation history into stable session positions across runs and restarts", async () => {
+it("keeps session positions stable across runs and restarts", async () => {
   const store = await openStore(), { session, run } = await admitted(store);
   const another = await admitted(store, bob);
   store.emit(run, "message.completed", { messageId: "old", text: "from v1" }); await store.save(session);
   const original = store.history.page(alice);
-  const database = new DatabaseSync(path.join(store.directory, "installation-history.sqlite"));
-  try {
-    database.exec(`
-      DROP INDEX history_session_ordinal;
-      DROP INDEX history_session_position;
-      DROP INDEX history_session_state;
-      ALTER TABLE history_facts DROP COLUMN ordinal;
-      ALTER TABLE history_facts DROP COLUMN state_run_start;
-    `);
-  } finally { database.close(); }
   const reopened = await openStore(store.directory);
   const states = reopened.history.states(alice, original.through);
   const first = states.sessions.find(s => s.sessionId === session.id)!;
   expect(first.head).toBe(2);
   expect(states.sessions.find(s => s.sessionId === another.session.id)?.head).toBe(1);
-  const later = reopened.makeRun(session, randomUUID(), alice, "{}");
-  session.runs[later.snapshot.ref.id] = later;
-  reopened.lifecycle(later); await reopened.save(session);
+  const retained = await reopened.load(session.id, alice);
+  const later = reopened.makeRun(retained, randomUUID(), alice, "{}");
+  retained.runs[later.snapshot.ref.id] = later;
+  reopened.lifecycle(later); await reopened.save(retained);
   // Late evidence about the previous run must not promote it above the newer run.
-  reopened.lifecycle(run); await reopened.save(session);
+  reopened.lifecycle(retained.runs[run.snapshot.ref.id]!); await reopened.save(retained);
   expect(reopened.history.states(alice).sessions.find(s => s.sessionId === session.id)).toMatchObject({ head: 4, snapshot: { ref: later.snapshot.ref } });
   expect(reopened.history.states(alice, original.through).sessions.find(s => s.sessionId === session.id)).toEqual(first);
   const data = reopened.history.range(alice, original.through, session.id, first.epoch, 1, 2, 10);
@@ -322,7 +355,7 @@ it("streams new observations across a fixed boundary while the SDK independently
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Expected test port");
   const signal = new AbortController();
-  const options = { url: "http://127.0.0.1:" + address.port + "/api/agent/v1/history/events", token: "history", provider, signal: signal.signal };
+  const options = { url: "http://127.0.0.1:" + address.port + "/api/agent/v2/history/events", token: "history", provider, signal: signal.signal };
   let onReady!: (boundary: string) => void;
   const ready = new Promise<string>(resolve => { onReady = resolve; });
   const stream = watchLiveAgentHistory({ ...options, onReady });
@@ -334,9 +367,9 @@ it("streams new observations across a fixed boundary while the SDK independently
     run.snapshot.state = "succeeded"; run.snapshot.phase = "terminal"; run.snapshot.stopConfirmed = true;
     store.lifecycle(run); await store.save(session);
     const transient = (await first).value!;
-    expect(transient.sessionId).toBe(session.id); expect(transient.sessionPosition).toBeUndefined();
+    expect(transient.sessionId).toBe(session.id); expect(transient.sessionPosition).toBe(2);
     const complete = (await stream.next()).value!;
-    expect(complete.sessionPosition).toBe(2); expect(complete.item).toMatchObject({ event: { type: "message.completed" } });
+    expect(complete.sessionPosition).toBe(3); expect(complete.item).toMatchObject({ event: { type: "message.completed" } });
     const initial = await readAgentHistoryStates({ ...options, through, limit: 1 });
     const second = await readAgentHistoryStates({ ...options, through, afterSession: initial.nextSession!, limit: 1 });
     const sessions = [...initial.sessions, ...second.sessions];
@@ -345,11 +378,11 @@ it("streams new observations across a fixed boundary while the SDK independently
     expect(boundaryState.head).toBe(1); expect(boundaryState.snapshot.stopConfirmed).toBe(false);
     const current = await readAgentHistoryStates(options);
     const state = current.sessions.find(s => s.sessionId === session.id)!;
-    expect(state).toMatchObject({ head: 3, snapshot: { state: "succeeded", stopConfirmed: true } });
-    const range = { ...options, through: current.through, sessionId: session.id, epoch: state.epoch, from: 1, to: 3, limit: 2 };
+    expect(state).toMatchObject({ head: 4, snapshot: { state: "succeeded", stopConfirmed: true } });
+    const range = { ...options, through: current.through, sessionId: session.id, epoch: state.epoch, from: 1, to: 4, limit: 2 };
     const page = await readAgentHistoryRange(range);
     expect(page.observations.map(f => f.sessionPosition)).toEqual([1, 2]);
-    expect(page.observations[1]).toEqual(complete);
+    expect(page.observations[1]).toEqual(transient);
     expect(page.observations[1]).not.toHaveProperty("sourceHistoryIncomplete");
     expect(page.nextPosition).toBe(3);
     expect((await readAgentHistoryRange({ ...range, from: 3 })).nextPosition).toBeNull();
@@ -377,7 +410,7 @@ it("serves the same scoped facts through HTTP paging and SSE, and closes a quiet
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Expected a test port.");
-  const root = "http://127.0.0.1:" + address.port + "/api/agent/v1", url = root + "/history/events";
+  const root = "http://127.0.0.1:" + address.port + "/api/agent/v2", url = root + "/history/events";
   const headers = { authorization: "Bearer history" };
   try {
     expect((await fetch(url)).status).toBe(401);
@@ -407,4 +440,55 @@ it("serves the same scoped facts through HTTP paging and SSE, and closes a quiet
   } finally {
     const ended = once(server, "close"); server.close(); server.closeAllConnections(); await ended;
   }
+});
+
+
+it("delivers the original native message independently of its clipped snapshot, using one stable completion", async () => {
+  const store = await openStore(), { session, run } = await admitted(store);
+  const text = "α🦋".repeat(50_000) + "exact terminal suffix";
+  projectEvent(store, session, run, { runId: run.snapshot.ref.id, generation: run.snapshot.generation, sequence: 1, event: { type: "assistant_delta", text } });
+  projectEvent(store, session, run, { runId: run.snapshot.ref.id, generation: run.snapshot.generation, sequence: 2, event: { type: "assistant_text", text } });
+  await store.save(session);
+  expect(run.snapshot.messages?.[0]?.text.length).toBeLessThan(text.length);
+  expect(run.snapshot.coverage?.messages).toBe("truncated");
+  const page = store.history.page(alice, undefined, undefined, 40);
+  const events = page.observations.flatMap(({ item }) => item.kind === "event" ? [item.event] : []);
+  const final = events.filter(e => e.type === "message.completed");
+  expect(final).toHaveLength(1);
+  expect(final[0]?.data.text === text).toBe(true);
+  const deltas = events.filter(e => e.type === "message.delta");
+  expect(deltas.map(e => e.data.text).join("") === text).toBe(true);
+  expect(deltas.every(e => e.data.messageId === final[0]!.data.messageId)).toBe(true);
+});
+
+
+it("replays the exact near-limit final on its original ID after a different streamed draft", async () => {
+  const store = await openStore(), { session, run } = await admitted(store);
+  const frame = { runId: run.snapshot.ref.id, generation: run.snapshot.generation, sequence: 1, event: { type: "assistant_delta" as const, text: "" } };
+  const limit = 1024 * 1024;
+  frame.event.text = "x".repeat(limit - Buffer.byteLength(JSON.stringify(frame)) - 3) + "α";
+  expect(Buffer.byteLength(JSON.stringify(frame))).toBeLessThanOrEqual(limit);
+  projectEvent(store, session, run, frame);
+  const original = "z" + frame.event.text.slice(1);
+  projectEvent(store, session, run, { ...frame, sequence: 2, event: { type: "assistant_text", text: original } });
+  await store.save(session);
+  let page = store.history.page(alice, undefined, undefined, 40);
+  const observations = [...page.observations];
+  while (page.nextCursor) {
+    page = store.history.page(alice, page.nextCursor, page.through, 40);
+    observations.push(...page.observations);
+  }
+  const events = observations.flatMap(({ item }) => item.kind === "event" ? [item.event] : []);
+  const finals = events.filter(e => e.type === "message.completed");
+  expect(finals).toHaveLength(1);
+  const same = events.filter(e => e.data.messageId === finals[0]!.data.messageId);
+  let result = "";
+  for (const event of same) {
+    if (event.type === "message.started" && typeof event.data.text === "string") result = event.data.text;
+    if (event.type === "message.delta") result += String(event.data.text);
+    if (event.type === "message.completed" && typeof event.data.text === "string") result = event.data.text;
+  }
+  expect(result === original).toBe(true);
+  expect(same.filter(event => event.type === "message.started" && event.data.text === "")).toHaveLength(1);
+  expect(events.every(e => Buffer.byteLength(JSON.stringify(e)) <= limit)).toBe(true);
 });

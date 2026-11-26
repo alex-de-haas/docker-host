@@ -18,13 +18,13 @@ const pinnedRun: AgentMcpPolicy = { default: "ask", tools: {
 } };
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
-function fixture() {
+function fixture(workspaceEditing = false) {
   const notify = vi.fn(async (_run: string, _event: { approvalId: string }) => {});
   const settled = vi.fn(async () => {});
   const credential = { url: "http://unrelated.invalid/mcp", token: "test-only-token", expiresAt: "2099-01-01T00:00:00Z" };
   const mint = vi.fn(async () => credential);
   const authority = { mcp: mint } as unknown as ProviderAuthority;
-  const mcp = new ProviderMcp(authority, () => "http://provider.invalid", notify, settled), runs = new Set<string>();
+  const mcp = new ProviderMcp(authority, () => "http://provider.invalid", notify, settled, undefined, workspaceEditing), runs = new Set<string>();
   cleanups.push(() => { for (const run of runs) mcp.close(run); });
   const configure = async (run: string, targets: NonNullable<AgentMcpSelection["targets"]>, autonomous = false) => {
     runs.add(run);
@@ -131,4 +131,17 @@ it("does not restore removed exceptions through concurrent catalog publication",
   const discovery = f.catalog(key!);
   await replacement; await discovery;
   expect(await f.mode(key!, "write")).toBe("ask"); expect(await f.mode(key!, "blocked")).toBe("ask");
+});
+
+
+it("allows both Core workspace acquisition tools only when ordinary editing is enabled", async () => {
+  for (const workspaceEditing of [false, true]) {
+    const f = fixture(workspaceEditing), run = randomUUID();
+    const [core, app] = await f.configure(run, [{ target }, { target: other }]);
+    for (const tool of ["prepare_workspace", "acquire_workspace_lease"]) {
+      expect(f.mcp.proxy.allowedTool!(run, core!, tool)).toBe(workspaceEditing);
+      expect(f.mcp.proxy.allowedTool!(run, app!, tool)).toBe(true);
+    }
+    expect(f.mcp.proxy.allowedTool!(run, core!, "get_workspace_diff")).toBe(true);
+  }
 });

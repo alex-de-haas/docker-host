@@ -71,7 +71,7 @@ export function createConsumer(options: { env?: NodeJS.ProcessEnv; fetch?: typeo
   const probe = async (input: Record<string, unknown>, token: string) => {
     assert(typeof input.providerAppId === "string" && typeof input.connectionId === "string" && typeof input.connectionRevision === "string", "Select the exact test provider account.");
     const discovery = await coreJson<{ providers: Array<AgentProviderRef & { available: boolean; version: number }> }>(`/api/internal/apps/${encodeURIComponent(appId)}/providers/agent`, undefined, token);
-    const provider = discovery.providers.find(item => item.appId === input.providerAppId && item.available && item.version === 1);
+    const provider = discovery.providers.find(item => item.appId === input.providerAppId && item.available && item.version === 2);
     assert(provider?.installationId, "The explicit provider installation is unavailable.");
     const ref: AgentProviderRef = { appId: provider.appId, installationId: provider.installationId, key: provider.key }, agent = client(ref, token);
     const noActor = await denied(() => client(ref).capabilities());

@@ -9,7 +9,7 @@ internal sealed partial class CoreAgentExecution
 {
     // Cancellation revokes new execution effects while retaining the exact current attempt's
     // observation and Stop authority. A pre-admission cancellation fence must not need admission.
-    private static bool TaskObservationOrStop(string operation) => operation is "runs.cancel" or "runs.read" or "runs.events" or "runs.controls.read";
+    private static bool TaskObservationOrStop(string operation) => operation is "runs.cancel" or "runs.closure" or "runs.read" or "runs.events" or "runs.controls.read";
 
     private async Task<(CoreCapabilityCaller Caller, CoreCallerAuthority Origin, DateTimeOffset Expires)> TaskAuthority(
         AppRecord consumer, CoreAgentTaskAuthority authority, string operation, CancellationToken ct)

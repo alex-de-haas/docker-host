@@ -28,6 +28,9 @@ internal sealed partial class DevelopmentWorkspaceService
                 throw Error("exit_unconfirmed", "Verify that the agent executions and all native consumers have exited before recovering its lease.");
             if (!Guid.TryParse(input.LeaseId, out _) || !tree.Leases.Contains(input.LeaseId))
                 throw Error("lease_invalid", "The selected activity lease is no longer present. Refresh this workspace.");
+            if (tree.LeaseClaims?.SingleOrDefault(claim => claim.Id == input.LeaseId) is { Session.IsExternal: false } claim
+                && (await new CoreAgentAuthorizationStore(paths).WorkspaceWritersAsync([tree], ct, claim)).Length > 0)
+                throw Error("provider_lease_active", "The admitted run still owns this lease. Its provider releases it when the run closes.");
             var workflow = await WorkflowAsync(owner, ct);
             if (workflow.Closure is not ("closing" or "closed"))
                 throw Error("close_required", "Close the workspace first to block new managed work.");

@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, readdir, lstat, stat, rename, rm, rmdir, readlink } from 'node:fs/promises';
@@ -5,6 +6,8 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { projectNpm } from '../../../scripts/npm-workspace.mjs';
 import { applicationSlug, commonAssets, providerBuildConfig } from './build-config.mjs';
+
+import { initializeGeneration, useGeneration, generationBuildEnvironment, reclaimGenerations } from './generation-use.mjs';
 
 export const repository = fileURLToPath(new URL('../../../', import.meta.url));
 const selected = applicationSlug;
@@ -124,7 +127,7 @@ export function buildEnvironment(input = process.env) {
 }
 async function run(command, args, cwd) {
   await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env: buildEnvironment(), stdio: 'inherit', shell: process.platform === 'win32' && command === 'npm' });
+    const child = spawn(command, args, { cwd, env: { ...buildEnvironment(), ...generationBuildEnvironment(cwd) }, stdio: 'inherit', shell: process.platform === 'win32' && command === 'npm' });
     child.once('error', reject); child.once('exit', (code, signal) => code === 0 ? resolve() : reject(new Error(command + ' failed (' + (signal || code) + ').')));
   });
 }
@@ -166,11 +169,13 @@ export async function prepare({ root = repository, slug, cache = process.env.HOS
   await mkdir(store, { recursive: true }); const release = await lock(store);
   try {
     const previous = await generationFor(store, key);
+    await reclaimGenerations(store, previous);
     if (previous && await completeBundle(previous, key, slug)) { log('[provider-runtime] Reusing ' + slug + ' ' + key.slice(0,12)); return previous; }
     // A full hash here pushes packaged native executables past Windows CreateProcess limits.
     // The pointer and bundle receipt still retain the full source/toolchain fingerprint.
     const id = randomUUID(), staging = path.join(store, '.build-' + id), generation = path.join(store, 'g-' + id);
     await mkdir(staging);
+    initializeGeneration(staging);
     try {
       for (const file of files) {
         const target = path.join(staging, file.path); await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, file.bytes);
@@ -189,12 +194,19 @@ export async function prepare({ root = repository, slug, cache = process.env.HOS
 }
 export async function start({ root = repository, slug, cache = process.env.HOSTY_APP_CACHE_DIR } = {}) {
   const store = cacheStore(cache, root, slug), key = fingerprint(await inputSnapshot(root, slug));
-  const generation = await generationFor(store, key);
-  if (!generation || !await completeBundle(generation, key, slug)) throw new Error('Provider bundle is absent or incomplete; run its Core-managed setup first.');
+  const release = await lock(store);
+  let generation;
+  try {
+    generation = await generationFor(store, key);
+    if (!generation || !await completeBundle(generation, key, slug)) throw new Error('Provider bundle is absent or incomplete; run its Core-managed setup first.');
+    useGeneration(generation);
+  } finally { await release(); }
+  process.env.HOSTY_PROVIDER_GENERATION = generation;
+  process.env.HOSTY_PROVIDER_ENTRY = path.join(generation, 'apps', slug, 'dist/main.mjs');
   process.env.NODE_ENV = 'production';
   return import(pathToFileURL(path.join(generation, 'apps', slug, 'dist/main.mjs')).href);
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   try {
     if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('Local providers require Node.js 24 or newer.');
     if (process.argv[2] === 'prepare') await prepare({ slug: process.argv[3] });

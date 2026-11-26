@@ -79,11 +79,16 @@ export class OllamaExecutor {
     signal.throwIfAborted();
     const operation = this.run(name, args, signal, expectedHash);
     this.active.add(operation);
-    try {
-      return await operation;
-    } finally {
-      this.active.delete(operation);
-    }
+    void operation.then(() => this.active.delete(operation), () => this.active.delete(operation));
+    if (!this.transport?.waitForTargetExit) return operation;
+    let abort: () => void;
+    const interrupted = new Promise<never>((_, reject) => {
+      abort = () => reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    });
+    try { return await Promise.race([operation, interrupted]); }
+    finally { signal.removeEventListener("abort", abort!); }
   }
   private async terminate(
     child: ChildProcessWithoutNullStreams,

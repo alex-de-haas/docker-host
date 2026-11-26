@@ -5,6 +5,7 @@ import type { ProviderEngine } from "@hosty/agent-provider-runtime";
 import { OllamaConnections, ollamaCapabilities, ollamaSettings } from "./connections.js";
 
 export const ollamaEngine: ProviderEngine = {
+  managedNativeScopes: true,
   capabilities: ollamaCapabilities,
   settings: ollamaSettings,
   createConnections: ({ data, cache, secrets }) => new OllamaConnections(data, cache, secrets, "native"),

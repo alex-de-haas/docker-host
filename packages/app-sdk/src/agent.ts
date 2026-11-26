@@ -26,7 +26,7 @@ export type AgentLimits = {
   maxSkillSnapshotBytes?: number; maxSkillSnapshotFiles?: number;
 };
 export type AgentCapabilities = {
-  version: 1; eventVersions: string[]; capabilities: AgentCapability[]; limits: AgentLimits;
+  version: 2; eventVersions: string[]; capabilities: AgentCapability[]; limits: AgentLimits;
   configuration: { resumeCompatible: string[] };
   nativeTools?: { default: "none" | "provider_default"; none: boolean };
   subagents?: { defaultEnabled: boolean; policy: "enforceable" | "observed" | "unavailable"; observation: "full" | "partial" | "summary" | "unavailable" };
@@ -90,7 +90,11 @@ export type AgentToolBlock = { id: string; source?: AgentSource; name: string; i
 export type AgentResult = { status: "succeeded" | "failed" | "cancelled"; messageId?: string; text?: string; value?: unknown; schemaValid?: boolean; error?: AgentErrorDetail };
 export type AgentRunSnapshot = {
   ref: AgentRunRef; sessionId: string; generation: string; revision: Revision; state: AgentRunState; phase: AgentRunPhase;
-  stopConfirmed: boolean; freshness: "current" | "last_known" | "unavailable"; observedAt: string;
+  /** The observed root agent has exited or was fenced before launch. */
+  stopConfirmed: boolean;
+  /** Whether a qualified writer scope has closed. Omitted when the provider has no such evidence. */
+  writerScopeClosed?: boolean;
+  freshness: "current" | "last_known" | "unavailable"; observedAt: string;
   configurationRevision: Revision; lastSequence: Revision; cursor: string; pending: AgentPendingDecision[];
   effects: { certainty: "known" | "unknown"; unresolvedCallIds: string[] };
   result?: AgentResult; messages?: AgentMessageBlock[]; tools?: AgentToolBlock[];
@@ -112,11 +116,14 @@ export type AgentRunSnapshot = {
   decisions?: Array<{ decision: AgentPendingDecision; state: "pending" | "resolved" | "superseded" | "unknown"; response?: AgentApprovalResponse | AgentQuestionResponse }>;
   pendingContinuations?: Array<{ requestId: string; run: AgentRunRef; state: "pending" | "awaiting_authorization" | "admitted" | "superseded" }>;
 };
+export type AgentDiscardReceipt = { requestId: string; runId: string; state: "discarded" };
+export type AgentRunClosure = Pick<AgentRunSnapshot, "ref" | "sessionId" | "generation" | "revision" | "state" | "phase" | "stopConfirmed" | "writerScopeClosed" | "pendingContinuations">;
 export type AgentApprovalResponse = { kind: "approval"; decision: "allow" | "deny"; message?: string };
 export type AgentQuestionResponse = { kind: "question"; answers: Record<string, string | string[]> };
 export type AgentResponseInput = { requestId: string; expectedGeneration: string; expectedRevision: Revision; decisionId: string; decisionRevision: Revision; response: AgentApprovalResponse | AgentQuestionResponse };
 export type AgentCancelInput = { requestId: string } & (
-  { expectedGeneration: string; expectedRevision: Revision; fenceIfNotAdmitted?: never }
+  { expectedGeneration?: never; expectedRevision?: never; fenceIfNotAdmitted?: never }
+  | { expectedGeneration: string; expectedRevision: Revision; fenceIfNotAdmitted?: never }
   | { fenceIfNotAdmitted: { sessionId: string; startDigest: string }; expectedGeneration?: never; expectedRevision?: never }
 );
 /** Optional execution controls share the same durable public control journal. */
@@ -160,7 +167,7 @@ export class AgentApiError extends Error {
 }
 export type AgentOperation = "capabilities" | "connections.list" | "connections.models" | "connections.usage" | "attachments.write"
   | "sessions.create" | "sessions.configure" | "sessions.read" | "sessions.list"
-  | "runs.start" | "runs.read" | "runs.events" | "runs.respond" | "runs.cancel" | "runs.control" | "runs.controls.read";
+  | "runs.start" | "runs.read" | "runs.closure" | "runs.discard" | "runs.events" | "runs.respond" | "runs.cancel" | "runs.control" | "runs.controls.read";
 /** Core transport names for the optional consumer-bound task workflow, without general Core tools. */
 export const AGENT_SESSION_WORKFLOW_TOOLS = [
   "task_executor_options", "task_options", "task_list", "task_get", "task_create", "task_edit", "task_action",

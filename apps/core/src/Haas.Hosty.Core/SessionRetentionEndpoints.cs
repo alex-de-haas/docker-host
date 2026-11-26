@@ -1,6 +1,6 @@
 namespace Haas.Hosty.Core;
 
-internal sealed record SessionRetentionRequest(string UserId, WorkspaceWorkflowCommand? Cleanup = null);
+internal sealed record SessionRetentionRequest(string UserId, WorkspaceWorkflowCommand? Cleanup = null, string? DetachRequestId = null);
 internal sealed record SessionRetentionSnapshot(string Kind, WorkspaceWorkflow? Workflow, bool ResourcesFinished, bool WorkspaceAbsent = false, bool SessionDetached = false, bool IndependentEnvironments = false);
 
 internal static class SessionRetentionEndpoints
@@ -25,6 +25,17 @@ internal static class SessionRetentionEndpoints
                     throw new AppIdentityException("admin_required", "The session owner must still be an enabled administrator.");
                 var owner = new WorkspaceOwner(appId, caller.InstalledAt, input.UserId, sessionId);
                 var association = await workspaces.SessionParticipationAsync(owner, ct);
+                if (input.DetachRequestId is { } detach)
+                {
+                    if (input.Cleanup is not null || !Guid.TryParseExact(detach, "D", out _) ||
+                        !AppManagementAuthorization.HasPermission(caller, CoreAppPermissions.Sources))
+                        throw new AppIdentityException("permission_denied", "The assistant may detach only its own verified session.");
+                    // The source belongs to the workspace. Detach only this installation/user/session,
+                    // using the normal mutation lock and its check for still-owned writers.
+                    if (association is not null)
+                        await workspaces.ChangeSessionAsync(association.Id, owner, "detach", new(detach, association.Revision), ct);
+                    association = await workspaces.SessionParticipationAsync(owner, ct);
+                }
                 var detached = await workspaces.SessionDetachedAsync(owner, ct);
                 var trees = (await workspaces.ListAsync(null, true, ct)).Workspaces.Where(t =>
                     association is not null ? t.WorkspaceId == association.Id : !detached && t.Owner.SameIdentity(owner)).ToArray();

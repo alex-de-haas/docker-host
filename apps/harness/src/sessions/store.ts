@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { ChatTranscript } from "./chat-transcript.js";
 import { lstat, open, readdir, readFile, rm, stat } from "node:fs/promises";
 import { constants, type BigIntStats } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
@@ -41,11 +43,11 @@ export interface SessionRecord {
   subagentStartPending?: boolean;
   subagentAssignmentRunId?: string;
   subagentsPending?: boolean;
-  agentConsumerVersion?: 1;
+  agentConsumerVersion?: 2;
   /** Immutable admitted input versions remain available independently of working-file cache. */
   sourceAttachments?: import("./message-queue.js").StoredQueueAttachment[];
   /** Unsettled durable input never authorizes a new physical execution after reopening. */
-  sourceAdmission?: { clientRequestId?: string; subagentRunId?: string; previousProviderRunId?: string; runId: string; state: "preparing" | "dispatching" };
+  sourceAdmission?: { clientRequestId?: string; subagentRunId?: string; previousProviderRunId?: string; needsAuthority?: true; draft?: { text: string; attachments: { name: string; size: number }[] }; runId: string; state: "preparing" | "dispatching" };
   storageRecovery?: { state: "required"; code: SessionStorageError["code"]; message: string };
   messageQueue?: import("./message-queue.js").MessageQueueRecord;
   suggestionHistoryVersion?: 1;
@@ -53,6 +55,7 @@ export interface SessionRecord {
   agentRunId?: string;
   providerObservedRunId?: string;
   providerHistoryGaps?: import("../agent-providers/history.js").ProviderHistoryGap[];
+  providerStatusContact?: { runId: string; observedAt: string; reason: "unavailable" | "denied" | "invalid" };
   providerHistoryContact?: { runId: string; observedAt: string; reason: import("../agent-providers/history.js").HistoryContactIssue };
   /** Harness's explicit caller guidance is stable with this conversation's provider configuration. */
   providerPlatformContext?: import("../skills.js").PlatformSkillContext;
@@ -142,6 +145,7 @@ export interface SessionRecord {
   providerUploads?: Record<string, string>;
   providerStopProof?: { runId: string; generation: string; revision: string; observedAt: string };
   providerStopRequestedRunId?: string;
+  providerStopRetry?: { runId: string; failures: number; due: number; code: string };
   providerLocked?: boolean;
   title: string | null;
   /**
@@ -252,8 +256,16 @@ function utf8StringPosition(text: string): boolean {
 }
 
 export class SessionStore {
-  constructor(readonly dataDir: string, private readonly workspaceRoot: string | null = null) {}
+  constructor(readonly dataDir: string, private readonly workspaceRoot: string | null = null, readonly preferencesDir = dataDir) {}
+  private isRemoving?: (id: string) => boolean;
+  private readonly removalScope = new AsyncLocalStorage<string>();
+  setRemovalFence(check: (id: string) => boolean): void { this.isRemoving = check; }
+
+  /** Cleanup retains private access to only the selected payload while all public paths see its tombstone. */
+  withRemoval<T>(id: string, work: () => Promise<T>): Promise<T> { return this.removalScope.run(id, work); }
+
   private sessionsRoot(): string { return path.join(this.dataDir, "sessions"); }
+  private readonly providerTranscripts = new Set<string>();
   private readonly writes = new Map<string, Promise<unknown>>();
   private readonly sealed = new Map<string, SessionStorageError>();
   private readonly issues = new Map<string, SessionStorageError>();
@@ -338,6 +350,7 @@ export class SessionStore {
   }
   private deletionRoot(): string { return path.join(this.dataDir, "session-deletions"); }
   private async deleted(id: string): Promise<boolean> {
+    if (this.removalScope.getStore() !== id && this.isRemoving?.(id)) return true;
     let raw: string;
     try { raw = await readFile(path.join(this.deletionRoot(), id + ".json"), "utf8"); }
     catch (error) { if (absent(error)) return false; throw this.problem(id, error); }
@@ -355,6 +368,11 @@ export class SessionStore {
     const content = JSON.stringify(record, null, 2);
     await this.serialize(record.id, async () => {
       await durableMkdir(this.sessionDir(record.id));
+      if (record.agentConsumerVersion === 2) {
+        const transcript = new ChatTranscript(path.join(this.sessionDir(record.id), "chat.sqlite"));
+        transcript.create();
+        this.providerTranscripts.add(record.id);
+      }
       await durableCreateFile(path.join(this.sessionDir(record.id), "record.json"), content);
     }, true);
     await this.changed(record.id);
@@ -602,6 +620,7 @@ export class SessionStore {
           || typeof record.createdAt !== "string" || typeof record.updatedAt !== "string") throw new Error("invalid session record");
       } catch (error) { throw this.problem(id, error); }
       try {
+        if (record.agentConsumerVersion === 2) this.providerTranscripts.add(id);
         const journal = await this.journalTail(id);
         const journalHigh = journal.high;
         if (record.lastEventSeq > journalHigh && !(record.lastEventSeq === journalHigh + 1 && record.appContextEvent?.seq === record.lastEventSeq))
@@ -647,8 +666,25 @@ export class SessionStore {
     this.journalTails.set(id, tail);
     if (this.journalTails.size > MAX_VALIDATED_JOURNAL_TAILS) this.journalTails.delete(this.journalTails.keys().next().value!);
   }
+  private async hasProviderTranscript(id: string) {
+    if (this.providerTranscripts.has(id)) return true;
+    try {
+      const record = JSON.parse(await readFile(path.join(this.sessionDir(id), "record.json"), "utf8")) as SessionRecord;
+      if (record.agentConsumerVersion === 2) this.providerTranscripts.add(id);
+    } catch (error) { if (!absent(error)) throw this.problem(id, error); }
+    return this.providerTranscripts.has(id);
+  }
+
+  async withTranscript<T>(id: string, work: (transcript: ChatTranscript) => T): Promise<T | undefined> {
+    return this.serialize(id, async () => {
+      if (await this.deleted(id) || !await this.hasProviderTranscript(id)) return undefined;
+      return work(new ChatTranscript(path.join(this.sessionDir(id), "chat.sqlite")));
+    });
+  }
+
   private async journalTail(id: string): Promise<JournalTail> {
     if (await this.deleted(id)) { this.journalTails.delete(id); return { high: 0, bytes: 0, needsNewline: false }; }
+    if (await this.hasProviderTranscript(id)) return { high: new ChatTranscript(path.join(this.sessionDir(id), "chat.sqlite")).highWater(), bytes: 0, needsNewline: false };
     const target = path.join(this.sessionDir(id), "events.ndjson");
     let before: BigIntStats;
     try { before = await lstat(target, { bigint: true }); }
@@ -735,6 +771,10 @@ export class SessionStore {
       if (!Number.isSafeInteger(appended.seq) || appended.seq <= high || appended.seq !== event.seq
         || typeof appended.type !== "string" || !appended.type || typeof appended.ts !== "string")
         throw this.problem(id, new Error("event sequence conflict"));
+      if (this.providerTranscripts.has(id)) {
+        new ChatTranscript(path.join(this.sessionDir(id), "chat.sqlite")).append(appended);
+        return;
+      }
       const target = path.join(this.sessionDir(id), "events.ndjson");
       if (journal.repair) {
         const repair = journal.repair, recovery = path.join(this.sessionDir(id), "recovery"); await durableMkdir(recovery);
@@ -754,7 +794,11 @@ export class SessionStore {
     await this.changed(id);
   }
   async readEvents(id: string, afterSeq = 0): Promise<StoredEvent[]> {
-    return this.serialize(id, async () => applyProviderHistoryContent((await this.journal(id)).events.filter(event => event.seq > afterSeq)));
+    return this.serialize(id, async () => {
+      if (await this.deleted(id)) return [];
+      if (await this.hasProviderTranscript(id)) return new ChatTranscript(path.join(this.sessionDir(id), "chat.sqlite")).read(afterSeq);
+      return applyProviderHistoryContent((await this.journal(id)).events.filter(event => event.seq > afterSeq));
+    });
   }
   async deleteSession(id: string): Promise<void> {
     await this.serialize(id, async () => {

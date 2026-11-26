@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
@@ -38,7 +39,51 @@ export class WorkerJournal {
     });
   }
   private listeners = new Map<string, Set<() => void>>();
-  constructor(private readonly directory: string, private readonly replayMs = REPLAY_MS, private readonly maxBytes = MAX_EVENT_BYTES, private readonly boundary: "container" | "local" = "local") {}
+  constructor(private readonly directory: string, private readonly replayMs = REPLAY_MS, private readonly maxBytes = MAX_EVENT_BYTES, private readonly boundary: "container" | "local" = "local", private readonly databasePath?: string) {}
+  private database?: DatabaseSync;
+  close(): void { this.database?.close(); this.database = undefined; }
+  static discardPayload(db: DatabaseSync, run: string): void {
+    for (const table of ["native_attempts", "native_observations"]) {
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))
+        db.prepare(`DELETE FROM ${table} WHERE id=?`).run(run);
+    }
+  }
+
+  private get db(): DatabaseSync | undefined {
+    if (!this.databasePath) return;
+    if (!this.database) {
+      const database = new DatabaseSync(this.databasePath);
+      database.exec(`PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON;
+        CREATE TABLE IF NOT EXISTS native_attempts (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS native_observations (id TEXT PRIMARY KEY, payload TEXT NOT NULL);`);
+      if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='discarded_deliveries'").get()) {
+        for (const table of ["native_attempts", "native_observations"])
+          database.exec(`CREATE TRIGGER IF NOT EXISTS ${table}_discard_fence BEFORE INSERT ON ${table}
+            WHEN EXISTS(SELECT 1 FROM discarded_deliveries WHERE run=NEW.id)
+            BEGIN SELECT RAISE(ABORT, 'The original attempt was discarded'); END`);
+      }
+      this.database = database;
+    }
+    return this.database;
+  }
+  observations(id: string): import("../harness/adapter.js").NativeObservationCheckpoint | undefined {
+    const db = this.db;
+    if (!db) return;
+    return {
+      flush: () => this.exclusive(async () => {}),
+      read: () => JSON.parse(String(db.prepare("SELECT payload FROM native_observations WHERE id = ?").get(id)?.payload ?? "null")),
+      write: value => {
+        const data = JSON.stringify(value);
+        if (Buffer.byteLength(data) > 2 * 1024 * 1024) throw new Error("Native correlation checkpoint exceeds its bound.");
+        db.prepare("INSERT INTO native_observations VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload").run(id, data);
+      },
+    };
+  }
+  private async entries(only?: string): Promise<string[]> {
+    if (only) return [only + ".json"];
+    if (this.db) return this.db.prepare("SELECT id FROM native_attempts").all().map(row => String(row.id) + ".json");
+    return readdir(this.directory);
+  }
   exclusive<T>(action: () => Promise<T>): Promise<T> {
     const next = this.tail.catch(() => {}).then(action); this.tail = next; return next;
   }
@@ -49,7 +94,11 @@ export class WorkerJournal {
   async load(id: string, normalizeReplay = true): Promise<StoredRun> {
     if (this.uncertain.has(id)) throw new WorkerApiError(503, "run_storage_uncertain", "Reopen the Worker to reconcile the retained execution before reporting its admission.");
     try {
-      const record = JSON.parse(await retrySharingViolation(() => readFile(this.file(id), "utf8"))) as StoredRun;
+      const db = this.db;
+      const bytes = db ? db.prepare("SELECT payload FROM native_attempts WHERE id = ?").get(id)?.payload
+        : await retrySharingViolation(() => readFile(this.file(id), "utf8"));
+      if (bytes === undefined) throw new WorkerApiError(404, "run_not_found", "Run not found.");
+      const record = JSON.parse(String(bytes)) as StoredRun;
       if (record.version !== 1 || record.receipt.runId !== id || !Array.isArray(record.events) || !record.controls) throw new Error("Invalid worker journal record.");
       // Normalize retained command metadata and bounded tool output before replay; discard envelope fields.
       record.events = record.events.flatMap(frame => {
@@ -73,7 +122,8 @@ export class WorkerJournal {
     const id = record.receipt.runId;
     if (this.uncertain.has(id)) throw new WorkerApiError(503, "run_storage_uncertain", "Reopen the Worker to reconcile the retained execution before another write.");
     try {
-      await durableWriteFile(this.file(id), JSON.stringify(record));
+      if (this.db) this.db.prepare("INSERT INTO native_attempts (id, payload) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload").run(id, JSON.stringify(record));
+      else await durableWriteFile(this.file(id), JSON.stringify(record));
       const clock = this.chargedClocks.get(record);
       if (clock) { this.usageClocks.set(id, clock); this.chargedClocks.delete(record); }
       for (const listener of this.listeners.get(id) ?? []) {
@@ -84,16 +134,17 @@ export class WorkerJournal {
       throw error;
     }
   }
-  private historicalRuns: ReadonlySet<string> = new Set();
-  async initialize(historicalRuns: ReadonlySet<string> = new Set()): Promise<void> {
+  private historicalRuns: Pick<ReadonlySet<string>, "has"> = new Set();
+  async initialize(historicalRuns: Pick<ReadonlySet<string>, "has"> = new Set(), only?: string): Promise<void> {
     this.historicalRuns = historicalRuns;
-    await durableMkdir(this.directory);
-    for (const file of await readdir(this.directory)) {
+    if (!this.databasePath) await durableMkdir(this.directory);
+    for (const file of await this.entries(only)) {
       if (!file.endsWith(".json")) continue;
       if (!safeIdentity(file.slice(0, -5)) || this.historicalRuns.has(file.slice(0, -5))) continue;
       let record: StoredRun;
       try { record = await this.load(file.slice(0, -5)); }
       catch (error) {
+        if (only && error instanceof WorkerApiError && error.status === 404) continue;
         if (!(error instanceof WorkerApiError) || error.code !== "run_storage_unavailable") throw error;
         // Keep the file at its identity: moving it away would allow the same ID to be admitted.
         console.warn("[worker] Retained execution requires storage recovery.", { runId: file.slice(0, -5), code: error.code });
@@ -131,7 +182,7 @@ export class WorkerJournal {
   }
   async prune(): Promise<void> {
     await this.exclusive(async () => {
-      for (const file of await readdir(this.directory)) {
+      for (const file of await this.entries()) {
         if (!file.endsWith(".json")) continue;
         if (!safeIdentity(file.slice(0, -5)) || this.historicalRuns.has(file.slice(0, -5))) continue;
         let record: StoredRun;
@@ -167,6 +218,16 @@ export class WorkerJournal {
     record.receipt.revision++; record.receipt.updatedAt = new Date().toISOString();
     if (error) record.receipt.error = error;
     await this.save(record); return record.receipt;
+  }
+  async recordWriterScope(id: string, closed: boolean): Promise<void> {
+    await this.exclusive(async () => {
+      const record = await this.load(id);
+      if (record.receipt.writerScopeClosed === closed || record.receipt.writerScopeClosed === true) return;
+      record.receipt.writerScopeClosed = closed;
+      record.receipt.revision++;
+      record.receipt.updatedAt = new Date().toISOString();
+      await this.save(record);
+    });
   }
   /** Operator attestation and its replay receipt commit together; no native action is replayed. */
   async recover(id: string, input: WorkerRecovery): Promise<WorkerReceipt> {

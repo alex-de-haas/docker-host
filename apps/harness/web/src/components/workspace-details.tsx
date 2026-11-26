@@ -49,7 +49,7 @@ export function WorkspaceDetails({ workspace, title, sessionId, running, refresh
   refresh: () => void; workspaceDeletion?: WorkspaceDeletion; deletingSessionIds?: ReadonlySet<string>; onReview?: (tree: Worktree, choice?: ReviewChoice) => void;
 }) {
   const canManage = workspace.permissions?.manage !== false;
-  const localWorkspaceDeletion = useWorkspaceDeletion(onDeleteSession, refresh);
+  const localWorkspaceDeletion = useWorkspaceDeletion(refresh);
   const workspaceRemovals = workspaceDeletion ?? localWorkspaceDeletion;
   const deletingWorkspace = workspaceRemovals.pending.has(workspace.id);
   const deletionError = !workspaceDeletion && workspaceRemovals.failures.get(workspace.id)?.error;

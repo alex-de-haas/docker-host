@@ -18,7 +18,7 @@ const config = JSON.parse(input);
 input = "";
 const execute = promisify(execFile);
 const browser = await chromium.launch({ channel: process.env.HOSTY_HISTORY_BROWSER_CHANNEL || "chrome", headless: true });
-const archive = new DatabaseSync(path.join(config.root, "apps", config.provider, "data", "agent-sessions", "installation-history.sqlite"), { readOnly: true });
+const archive = new DatabaseSync(path.join(config.root, "apps", config.provider, "data", "agent-sessions", "execution-v2.sqlite"), { readOnly: true });
 archive.exec("PRAGMA busy_timeout=3000");
 const requests = new Map();
 const native = createServer((request, response) => {
@@ -42,7 +42,7 @@ async function json(response) {
   return response.json();
 }
 async function signIn(email) {
-  const context = await browser.newContext();
+  const context = await browser.newContext({ viewport: { width: 1760, height: 1000 } });
   const page = await context.newPage();
   await page.goto(config.core + "/login?returnTo=%2Fapi%2Fauth%2Fsession");
   const core = new URL(page.url()).origin;
@@ -86,7 +86,7 @@ async function openChat(owner) {
   await eventually(() => requests.has("/" + key + "/0"), "native run " + key);
   const current = await json(await owner.context.request.get(sessionUrl(session.id)));
   assert.ok(current.providerExecution.sessionId);
-  return { page, owner, key, id: session.id, providerSession: current.providerExecution.sessionId, texts: [], streamStatuses, batch: 0 };
+  return { page, owner, key, id: session.id, providerSession: current.providerExecution.sessionId, runId: current.providerExecution.runId, texts: [], streamStatuses, batch: 0 };
 }
 async function emit(chat, labels, done = false) {
   const key = "/" + chat.key + "/" + chat.batch++;
@@ -145,6 +145,65 @@ async function awaitGaps(chat, count, accept = () => true) {
 const ordinal = (chat, label) => archive.prepare(
   "SELECT ordinal FROM history_facts WHERE session=? AND json_extract(body,'$.item.event.data.text')=?"
 ).get(chat.providerSession, chat.texts.find(t => t.endsWith("-" + label))).ordinal;
+async function verifyAttemptViews(chats) {
+  const { owner } = chats[0];
+  const workspaceIds = new Set();
+  for (const chat of chats) {
+    // Selection happens after launch. These attempts were admitted with no source writer.
+    const tree = await json(await owner.context.request.post(sessionUrl(chat.id) + "/workspaces", {
+      headers: { Origin: config.harness }, data: { action: "prepare", appId: config.app, targetBranch: "main",
+        name: "Status verification " + chat.key.slice(0, 8), requestId: randomUUID() }
+    }));
+    assert.ok(tree.workspaceId);
+    workspaceIds.add(tree.workspaceId);
+  }
+  assert.equal(workspaceIds.size, 3);
+  // Deliver genuinely authorized Core rosters, with the three owner-participation facts
+  // deliberately frozen at an old idle report, as happens during a reporting outage.
+  const roster = "**/api/development-workspaces";
+  const old = new Date(Date.now() - 60_000).toISOString();
+  await owner.context.route(roster, async route => {
+    const response = await route.fetch();
+    const data = await json(response);
+    for (const workspace of data.workspaces) {
+      if (!workspaceIds.has(workspace.id)) continue;
+      for (const binding of workspace.participation.sessions)
+        if (chats.some(chat => chat.id === binding.sessionId)) Object.assign(binding, { activityAt: old, status: "idle" });
+    }
+    await route.fulfill({ response, json: data });
+  });
+  const verify = async unknown => {
+    for (const chat of chats) {
+      const expected = chat.id === unknown ? "Last seen running · " : "running";
+      await eventually(async () => {
+        const badge = chat.page.locator("header [data-slot=badge]").filter({ hasText: new RegExp("^" + expected + (chat.id === unknown ? "." : "$")) });
+        const panel = chat.page.getByRole("region", { name: "Workspace sessions" });
+        const activity = chat.page.locator('[aria-label="Activity filters"]').getByRole("button", { name: /Working/ });
+        return (await badge.count()) > 0 && (await activity.allTextContents())[0]?.replace(/\s/g, "") === (unknown ? "Working2·1lastseenrunning" : "Working3")
+          && await panel.getByRole("button", { name: /Open session/ }).filter({ hasText: " · " + expected }).count() === 1;
+      }, "agreement between the header, workspace participants and global working count for " + chat.id + " as " + expected);
+    }
+  };
+  try {
+    await policy({ silentLive: true });
+    await Promise.all(chats.map(chat => {
+      const url = new URL(chat.page.url());
+      url.pathname = "/chats/";
+      return chat.page.goto(url.href);
+    }));
+    await verify();
+    await wait(46_000);
+    await verify();
+    await policy({ silentLive: true, disconnectedRun: chats[0].runId });
+    await verify(chats[0].id);
+    await policy({ silentLive: true });
+    await verify();
+    console.log("PASS: three silent attempts stay current beyond 45s despite old idle participation; status loss and restoration change all three views together (3 → 2 → 3)");
+  } finally {
+    await policy({});
+    await owner.context.unroute(roster);
+  }
+}
 try {
   const alice = await signIn("activation-fixture@example.test"), bob = await signIn("history-second@example.test");
   assert.notEqual(alice.user, bob.user);
@@ -208,12 +267,22 @@ try {
       return latest.providerExecution?.run?.stopConfirmed && latest.providerExecution.run;
     }, "final provider state");
     assert.equal(run.state, "succeeded");
-    const journal = await readFile(path.join(config.root, "apps", config.app, "data", "sessions", chat.id, "events.ndjson"), "utf8");
-    const persisted = journal.trimEnd().split("\n").map(line => JSON.parse(line))
+    const db = new DatabaseSync(path.join(config.root, "apps", config.app, "data", "execution-v2", "sessions", chat.id, "chat.sqlite"), { readOnly: true });
+    let events;
+    try { events = db.prepare("SELECT body FROM transcript ORDER BY seq").all().map(row => JSON.parse(row.body)); } finally { db.close(); }
+    const persisted = events
       .filter(event => event.type === "assistant_text" && event.text?.startsWith("GAP-CHECK-")).map(event => event.text);
     assert.deepEqual(persisted.sort(), [...chat.texts].sort(), "exactly one durable copy of each message for its chat owner");
   }
   console.log("PASS: later range recovered first, then full ordered transcripts with no duplicates, terminal state, and ownership isolation for two signed-in users and three chats");
+  const working = [];
+  for (let index = 0; index < 3; index++) working.push(await openChat(alice));
+  await verifyAttemptViews(working);
+  for (const chat of working) {
+    const [done] = await emit(chat, ["STATUS-VERIFIED"], true);
+    await visible(chat, done);
+    await chat.page.close();
+  }
 } finally {
   native.closeAllConnections();
   native.close();

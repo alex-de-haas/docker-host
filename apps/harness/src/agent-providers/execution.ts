@@ -153,9 +153,13 @@ export class ProviderExecution {
       throw new Error("Reconcile the previous provider execution before starting another turn.");
     this.mutations.starting = true;
     try {
-      const prepared = prepareAgentRun(this.state.sessionId, runId, workflow ? { ...input,
-        requiredCapabilities: [...new Set([...(input.requiredCapabilities ?? []), ...workflowCapabilities(workflow)])],
-      } : input);
+      const required = new Set(input.requiredCapabilities ?? []);
+      if (input.resources?.some(resource => resource.kind === "worktree") && !required.has("scope.workspace-writers") && !required.has("workspace.edit")) {
+        const { capabilities } = await this.client.capabilities();
+        required.add(capabilities.includes("workspace.edit") ? "workspace.edit" : "scope.workspace-writers");
+      }
+      if (workflow) for (const capability of workflowCapabilities(workflow)) required.add(capability);
+      const prepared = prepareAgentRun(this.state.sessionId, runId, required.size ? { ...input, requiredCapabilities: [...required] } : input);
       this.bindConfiguration(prepared, this.state.session);
       const deadline = originalDeadline ?? (input.limits?.maxDurationMs ? new Date(Date.now() + input.limits.maxDurationMs).toISOString() : undefined);
       if (deadline) prepared.ceiling = { ...prepared.ceiling, deadline };
@@ -188,7 +192,7 @@ export class ProviderExecution {
   }
 
   /** Retry the exact persisted mutation; transport renewal cannot change its input or identity. */
-  async reconcileMutation(prepared: AgentPreparedRequest): Promise<unknown> {
+  async reconcileMutation(prepared: AgentPreparedRequest, beforeSettlement?: (receipt: AgentControlReceipt) => Promise<void>): Promise<unknown> {
     if (!this.state.mutations?.[this.key(prepared)]) throw new Error("The exact pending request is not retained.");
     if (prepared.operation === "runs.cancel") await this.change(async () => {
       const next = structuredClone(this.state);
@@ -209,6 +213,7 @@ export class ProviderExecution {
     // and confirm persistence before any possible external dispatch.
     await this.change(() => this.persistence.save(structuredClone(this.state)));
     const result = await this.client.execute(prepared);
+    if (prepared.operation === "runs.respond" && beforeSettlement) await beforeSettlement(result as AgentControlReceipt);
     if (prepared.operation === "runs.start") await this.retain(result as AgentRunSnapshot);
     await this.change(async () => {
       const next = structuredClone(this.state);
@@ -415,7 +420,7 @@ export class ProviderExecution {
     });
   }
   /** Observe a retained control receipt without delivering its mutation again. */
-  async readControl(prepared: AgentPreparedRequest): Promise<AgentControlReceipt> {
+  async readControl(prepared: AgentPreparedRequest, beforeSettlement?: (receipt: AgentControlReceipt) => Promise<void>): Promise<AgentControlReceipt> {
     if (!["runs.respond", "runs.cancel", "runs.control"].includes(prepared.operation) || !prepared.runId)
       throw new Error("This request is not a retained run control.");
     const input = JSON.parse(prepared.body) as { requestId: string; expectedGeneration?: string };
@@ -426,6 +431,7 @@ export class ProviderExecution {
       throw new Error("The observed receipt belongs to another control.");
     if (input.expectedGeneration !== undefined && receipt.generation !== input.expectedGeneration)
       throw new AgentApiError("provider_identity_changed", "The observed control belongs to another execution generation.", 409);
+    await beforeSettlement?.(receipt);
     await this.retainControl(receipt);
     return receipt;
   }

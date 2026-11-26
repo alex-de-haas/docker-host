@@ -3,6 +3,17 @@ namespace Haas.Hosty.Core;
 internal sealed class WorkspaceInspectionAuthorization(AppServiceTokenService services, AppRegistryStore apps,
     AppIdentityService identity, UserDirectoryStore users)
 {
+    public async Task<DateTimeOffset> RequireRemovalDeliveryAsync(HttpRequest request, string appId, CancellationToken ct)
+    {
+        if (!services.ValidateToken(appId, CoreSessionAuthorization.ReadBearerToken(request) ?? "") ||
+            request.Cookies.ContainsKey(CoreSessionAuthorization.SessionCookieName))
+            throw new AppIdentityException("token_invalid", "The owning app service identity is required.");
+        var app = await apps.GetAppAsync(appId, ct);
+        if (app is null || !AppManagementAuthorization.HasPermission(app, CoreAppPermissions.Sources))
+            throw new AppIdentityException("app_permission_required", "The current installation requires workspace source permission.");
+        return app.InstalledAt;
+    }
+
     public async Task<string> RequireAsync(HttpRequest request, string appId, CancellationToken ct, bool manage = false)
     {
         if (!services.ValidateToken(appId, CoreSessionAuthorization.ReadBearerToken(request) ?? ""))
@@ -32,6 +43,16 @@ internal static class WorkspaceInspectionEndpoints
             context.HttpContext.Response.Headers.CacheControl = "no-store";
             return await next(context);
         });
+        routes.MapGet("/writer-stops", async (string appId, HttpRequest request, WorkspaceInspectionAuthorization auth,
+            WorkspaceCleanupService cleanup, CancellationToken ct) => await Handle(async () =>
+                await cleanup.WriterStopsAsync(appId, await auth.RequireRemovalDeliveryAsync(request, appId, ct), ct)));
+        routes.MapGet("/chat-removals", async (string appId, HttpRequest request, WorkspaceInspectionAuthorization auth,
+            WorkspaceCleanupService cleanup, CancellationToken ct) => await Handle(async () =>
+                await cleanup.ChatRemovalsAsync(appId, await auth.RequireRemovalDeliveryAsync(request, appId, ct), ct)));
+        routes.MapPost("/{workspaceId}/chat-removals/{requestId}/ack", async (string appId, string workspaceId, string requestId,
+            HttpRequest request, WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
+            await Handle(async () => await cleanup.AcceptChatRemovalsAsync(appId,
+                await auth.RequireRemovalDeliveryAsync(request, appId, ct), workspaceId, requestId, ct)));
         routes.MapGet("/events", (string appId, HttpRequest request, HttpResponse response,
             WorkspaceInspectionAuthorization auth, WorkspaceInspectionService service, CoreEventHub events,
             IHostApplicationLifetime lifetime, CancellationToken ct) =>
@@ -59,8 +80,12 @@ internal static class WorkspaceInspectionEndpoints
             WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
             await Handle(async () => await cleanup.DeleteDetailsAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, ct)));
         routes.MapPost("/{workspaceId}/delete", async (string appId, string workspaceId, WorkspaceDeleteCommand input, HttpRequest request,
-            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
-            await Handle(async () => await cleanup.ApplyDeleteAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, input, ct)));
+            WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, AppRegistryStore apps, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var actor = await AppExecutionTargetEndpoints.AppActor(appId, request, auth, apps, true, ct);
+                return await cleanup.ApplyDeleteAsync(workspaceId, actor.UserId, appId, input, ct, authority: actor);
+            }));
         routes.MapGet("/{workspaceId}/delete/status", async (string appId, string workspaceId, HttpRequest request,
             WorkspaceInspectionAuthorization auth, WorkspaceCleanupService cleanup, CancellationToken ct) =>
             await Handle(async () => await cleanup.DeleteStatusAsync(workspaceId, await auth.RequireAsync(request, appId, ct, manage: true), appId, request.Query["requestId"].ToString(), ct)));

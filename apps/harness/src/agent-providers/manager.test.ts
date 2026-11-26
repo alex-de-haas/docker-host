@@ -34,6 +34,38 @@ describe("SessionManager public provider integration", () => {
     expect(f.controls).toHaveLength(0);
   });
 
+  it("reopens one exact near-1-MiB reply from chat.sqlite after receiving a different streamed draft and a clipped summary", async () => {
+    const f = await publicProviderFixture(true); fixtures.push(f);
+    const record = await chat(f), runId = f.starts[0]!.runId;
+    await vi.waitFor(() => expect(f.activeHistoryStreams()).toBe(1));
+    const messageId = "message", left = "🙂".repeat(125000), right = "b".repeat(540000) + " end";
+    const expected = left + right;
+    f.emit(runId, "message.delta", { messageId, text: "Earlier draft which the model replaced." });
+    f.emit(runId, "message.started", { messageId, text: "" });
+    f.emit(runId, "message.delta", { messageId, text: left });
+    f.emit(runId, "message.delta", { messageId, text: right });
+    const completion = f.emit(runId, "message.completed", { messageId });
+    f.complete(runId, "Clipped summary");
+    await vi.waitFor(async () => expect((await f.store.readRecord(record.id))?.status).toBe("idle"), { timeout: 8000 });
+    // A second delivery of the completion can arrive after the terminal summary.
+    f.publishHistory(f.starts[0]!.sessionId, runId, f.owner, { kind: "event", event: completion, cursor: "cursor-" + completion.sequence });
+    await f.manager.shutdown();
+    const restored = f.makeManager();
+    await restored.manager.recoverProviderRuns();
+    await vi.waitFor(async () => {
+      const events = await restored.store.readEvents(record.id);
+      const messages = events.filter(event => event.type === "assistant_text");
+      expect(messages).toHaveLength(1);
+      expect(typeof messages[0]?.text === "string" && messages[0].text === expected).toBe(true);
+      const boundaries = events.filter(event => event.type === "provider_fragment" && event.messageBoundary === "complete");
+      expect(boundaries).toHaveLength(1);
+      const tail = await restored.store.readEvents(record.id, messages[0]!.seq - 1);
+      const reconnected = tail.filter(event => event.type === "assistant_text");
+      expect(reconnected).toHaveLength(1);
+      expect(reconnected[0]?.text === expected).toBe(true);
+    }, { timeout: 8000 });
+  }, 20000);
+
   it.each(["denied", "timeout"] as const)("recovers a disconnected legacy observer after %s and imports the native outcome once", async issue => {
     const f = await fixture(); f.behavior.legacyHistoryRoute = true;
     const record = await chat(f), runId = f.starts[0]!.runId;
@@ -268,17 +300,17 @@ describe("SessionManager public provider integration", () => {
     await vi.waitFor(() => expect(liveStreams()).toBe(2), { timeout: 5000 });
     f.complete(aliceRun, "Held for Alice");
     f.complete(bobRun, "Delivered to Bob");
-    const inbox = path.join(f.store.dataDir, "provider-history-inbox", alice.id);
     const positionDir = path.join(f.store.dataDir, "provider-history");
     await vi.waitFor(async () => {
       expect((await broken.store.readEvents(bob.id)).filter(e => e.type === "assistant_text").map(e => e.text)).toEqual(["Delivered to Bob"]);
       const checkpoint = JSON.parse(await readFile(path.join(positionDir, (await readdir(positionDir))[0]!), "utf8"));
       expect(checkpoint.cursor).toBe("feed-4");
-      if (damagedFile === "provider-execution.json") expect((await readdir(inbox)).filter(f => f.endsWith(".json"))).toHaveLength(1);
+      if (damagedFile === "provider-execution.json") expect(await broken.store.withTranscript(alice.id, db => db.pending())).toHaveLength(1);
       else expect(checkpoint.incomplete).toContain(alice.id);
     }, { timeout: 5000 });
     expect(liveStreams()).toBe(2);
-    expect((await broken.store.readEvents(alice.id)).some(e => e.text === "Held for Alice")).toBe(false);
+    if (damagedFile === "record.json") await expect(broken.store.readEvents(alice.id)).rejects.toThrow();
+    else expect((await broken.store.readEvents(alice.id)).some(e => e.text === "Held for Alice")).toBe(false);
     await broken.manager.shutdown();
     await writeFile(source, original);
 
@@ -287,7 +319,7 @@ describe("SessionManager public provider integration", () => {
     await vi.waitFor(async () => {
       const texts = (await repaired.store.readEvents(alice.id)).filter(e => e.type === "assistant_text").map(e => e.text);
       expect(texts).toEqual(["Held for Alice"]);
-      if (damagedFile === "provider-execution.json") expect(await readdir(inbox)).toEqual([]);
+      if (damagedFile === "provider-execution.json") expect(await repaired.store.withTranscript(alice.id, db => db.pending())).toEqual([]);
     }, { timeout: 5000 });
     expect((await repaired.store.readEvents(bob.id)).filter(e => e.type === "assistant_text").map(e => e.text)).toEqual(["Delivered to Bob"]);
     expect(f.authorizations).toHaveLength(startCount);
@@ -448,7 +480,7 @@ describe("SessionManager public provider integration", () => {
     expect((await f.store.readProviderExecution(record.id))!.runId).toBe(runId);
     await expect(f.manager.postMessage(record.id, "Do not duplicate", f.credential)).rejects.toThrow();
     expect(f.starts).toHaveLength(1);
-    expect(f.controls).toMatchObject([{ runId, path: `/runs/${runId}/cancel` }]);
+    expect(f.controls).toMatchObject([{ runId, path: `/runs/${runId}/stop` }]);
   });
 
   it("allows Stop to wait for slow public admission outside the manager queue and cancels its exact run", async () => {
@@ -460,7 +492,7 @@ describe("SessionManager public provider integration", () => {
     await Promise.resolve(); release();
     await posting; await stopping;
     expect(f.starts).toHaveLength(1);
-    expect(f.controls).toMatchObject([{ runId: f.starts[0]!.runId, path: `/runs/${f.starts[0]!.runId}/cancel` }]);
+    expect(f.controls).toMatchObject([{ runId: f.starts[0]!.runId, path: `/runs/${f.starts[0]!.runId}/stop` }]);
     expect((await f.store.readRecord(record.id))!.status).toBe("cancelled");
     expect((await f.store.readProviderExecution(record.id))!.run?.stopConfirmed).toBe(true);
   });
@@ -552,21 +584,22 @@ describe("SessionManager public provider integration", () => {
     expect(f.starts).toHaveLength(1);
   });
 
-  it.each(["running", "failed-and-reattached"])("projects a stopped snapshot's tool output before cancellation without reopening %s", async mode => {
+  it.each(["running", "status-lost-and-reattached"])("projects a stopped snapshot's tool output before cancellation without reopening %s", async mode => {
     const f = await fixture(), record = await chat(f), runId = f.starts[0]!.runId;
     let { manager, store } = f;
     await waitForStream(f, runId);
     const tool = { id: "native-command", source: { agentId: "root" }, name: "Bash", input: { command: "node harmless-timer.mjs" }, state: "running" as const };
     f.update(runId, { tools: [tool] });
     await vi.waitFor(async () => expect((await f.store.readEvents(record.id)).filter(event => event.type === "tool_use")).toHaveLength(1));
-    if (mode === "failed-and-reattached") {
+    if (mode === "status-lost-and-reattached") {
       f.update(runId, { state: "unknown", phase: "interrupted", freshness: "last_known", effects: { certainty: "unknown", unresolvedCallIds: [tool.id] } });
-      await vi.waitFor(async () => expect((await store.readRecord(record.id))!.status).toBe("failed"));
+      await vi.waitFor(async () => expect(await store.readRecord(record.id)).toMatchObject({ status: "running", providerStatusContact: { runId } }));
       await manager.shutdown(); ({ manager, store } = f.makeManager());
       await manager.refreshSessionCredentials(record.id, f.owner, f.credential);
       f.update(runId, { tools: [{ ...tool, state: "unknown", output: "Command interrupted", command: { status: "unknown" } }] });
       await vi.waitFor(async () => expect((await store.readProviderExecution(record.id))!.cursor).toBe(f.snapshot(runId).cursor));
-      expect((await store.readEvents(record.id)).filter(event => ["tool_result", "command_result"].includes(event.type))).toEqual([]);
+      const recovered = (await store.readEvents(record.id)).filter(event => ["tool_result", "command_result"].includes(event.type));
+      expect(recovered.every(event => event.status === "unknown")).toBe(true);
     }
     // These SSE observations queue behind the manager's Stop lane. Its synchronous
     // public read already contains the terminal output before the observer catches up.
@@ -577,6 +610,8 @@ describe("SessionManager public provider integration", () => {
     const events = await store.readEvents(record.id), call = events.find(event => event.type === "tool_use")!;
     const output = events.find(event => event.type === "tool_result")!, command = events.find(event => event.type === "command_result")!;
     const cancelled = events.find(event => event.type === "session_status" && event.status === "cancelled")!;
+    expect(events.filter(event => event.type === "tool_result" && event.toolUseId === call.toolUseId)).toHaveLength(1);
+    expect(events.filter(event => event.type === "command_result" && event.toolUseId === call.toolUseId)).toHaveLength(1);
     expect(output).toMatchObject({ toolUseId: call.toolUseId, status: "unknown", output: "Command interrupted" });
     expect(command).toMatchObject({ toolUseId: call.toolUseId, status: "unknown" }); expect(command).not.toHaveProperty("exitCode");
     expect(output.seq).toBeLessThan(cancelled.seq); expect(command.seq).toBeLessThan(cancelled.seq);
@@ -638,6 +673,6 @@ describe("SessionManager public provider integration", () => {
     await expect(restored.manager.deleteSession(record.id, f.owner, f.credential)).rejects.toMatchObject({ code: "stop_unconfirmed" });
     expect(await restored.store.readRecord(record.id)).not.toBeNull();
     expect(f.starts).toHaveLength(1);
-    expect(f.controls).toMatchObject([{ runId, path: `/runs/${runId}/cancel` }]);
+    expect(f.controls).toMatchObject([{ runId, path: `/runs/${runId}/stop` }]);
   });
 });

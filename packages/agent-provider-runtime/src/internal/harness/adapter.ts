@@ -134,7 +134,11 @@ export type HarnessEvent = (
 /** Registry-owned durable history, separate from credential cache and per-run skill discovery. */
 export interface NativeHistoryHome { home: string; directories: Readonly<Record<string, string>> }
 
+export interface NativeObservationCheckpoint { read(): unknown; write(value: unknown): void; flush?(): Promise<void> }
 export interface HarnessStartOptions {
+  /** The host cannot contain arbitrary commands or write-capable descendants. */
+  restrictedHost?: true;
+  nativeObservations?: NativeObservationCheckpoint;
   nativeTools?: "provider_default" | "none";
   nativeConfigHome?: string;
   subagents?: { enabled: boolean; maxConcurrency?: number };
@@ -199,8 +203,32 @@ export interface HarnessRun {
   stop(): Promise<void>;
   /** Confirm native execution exit before a queued ordinary-runtime transition releases source. */
   stopAndWait?(): Promise<void>;
+  /** Confirm the root of an explicit Stop while still draining known observations. */
+  stopForCancellation?(): Promise<{ drained: Promise<void> }>;
   /** Stop observing a remote run without cancelling it. */
   detach?(): Promise<void>;
+}
+
+type HarnessRunLifecycle = Pick<HarnessRun, "stop" | "stopAndWait" | "stopForCancellation">;
+
+/** Keep adapter methods bound to their original receiver while wrapping ownership of shutdown. */
+export function withRunLifecycle(run: HarnessRun, lifecycle: HarnessRunLifecycle): HarnessRun {
+  const bound = {
+    waitForAdmission: run.waitForAdmission?.bind(run),
+    finishSuggestions: run.finishSuggestions?.bind(run),
+    disableSuggestions: run.disableSuggestions?.bind(run),
+    readUsage: run.readUsage?.bind(run),
+    send: run.send.bind(run),
+    resolveApproval: run.resolveApproval.bind(run),
+    resolveQuestion: run.resolveQuestion.bind(run),
+    setMcpServers: run.setMcpServers.bind(run),
+    interrupt: run.interrupt.bind(run),
+    stop: lifecycle.stop,
+    stopAndWait: lifecycle.stopAndWait,
+    stopForCancellation: lifecycle.stopForCancellation,
+    detach: run.detach?.bind(run),
+  } satisfies Record<keyof HarnessRun, unknown>;
+  return bound;
 }
 
 export interface HarnessAdapter {

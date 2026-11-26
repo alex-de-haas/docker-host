@@ -5,6 +5,7 @@ import { openSpeech } from "./speech.js";
 
 export const codexEngine: ProviderEngine<CodexConnections> = {
   openInterfaces: openSpeech,
+  managedNativeScopes: true,
   capabilities: codexCapabilities,
   gitSkillWorkflowTimeoutMs: 240_000,
   settings: codexSettings,

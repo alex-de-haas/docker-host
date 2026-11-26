@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { AgentApiError } from "@hosty-sdk/app/agent";
 import type { AgentPendingDecision, AgentToolBlock, AgentSource, AgentRunState } from "@hosty-sdk/app/agent";
 import type { HarnessEventSource } from "./internal/harness/adapter.js";
 import type { WorkerEvent, WorkerReceipt } from "./internal/worker/contracts.js";
@@ -53,6 +54,13 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
   record.nativeSequence = frame.sequence;
   const event = frame.event, snapshot = record.snapshot, source = publicSource(event.source), child = source.agentId !== "root";
   const emit = (type: Parameters<ProviderStore["emit"]>[1], data: Record<string, unknown>) => store.emit(record, type, data, source);
+  const emitTextParts = (id: string | undefined, value: string) => {
+    // The incoming native frame is at most 1 MiB. Both parts fit with the public envelope.
+    let split = Math.floor(value.length / 2);
+    if (split && value.charCodeAt(split) >= 0xdc00 && value.charCodeAt(split) <= 0xdfff) split--;
+    emit("message.delta", { messageId: id, text: value.slice(0, split) });
+    emit("message.delta", { messageId: id, text: value.slice(split) });
+  };
   const truncated = (kind: "messages" | "tools") => {
     const coverage = snapshot.coverage ??= { messages: "complete", tools: "complete" };
     if (coverage[kind] === "truncated") return;
@@ -109,8 +117,31 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
       if (session.nativeId && session.nativeId !== event.harnessSessionId) throw new Error("Native continuation changed its session identity.");
       session.nativeId = event.harnessSessionId; session.session.nativeState = "available";
       emit("session.bound", { sessionId: session.id, nativeState: "available" }); break;
-    case "assistant_delta": { const block = message(); block.text = text(block.text + event.text); fitMessages(); emit("message.delta", { messageId, text: text(event.text) }); break; }
-    case "assistant_text": { const block = message(); block.text = text(event.text); block.state = "complete"; fitMessages(); emit("message.completed", { messageId, text: block.text, truncated: snapshot.coverage?.messages === "truncated" }); break; }
+    case "assistant_delta": {
+      const block = message();
+      block.text = text(block.text + event.text); fitMessages();
+      // Preserve the original in durable delivery even when the presentation snapshot is clipped.
+      // A native frame fits 1 MiB before the larger public envelope is added.
+      try { emit("message.delta", { messageId, text: event.text }); }
+      catch (error) {
+        if (!(error instanceof AgentApiError) || error.code !== "event_budget") throw error;
+        emitTextParts(messageId, event.text);
+      }
+      break;
+    }
+    case "assistant_text": {
+      const block = message(); block.text = text(event.text); block.state = "complete"; fitMessages();
+      try { emit("message.completed", { messageId, text: event.text }); }
+      catch (error) {
+        if (!(error instanceof AgentApiError) || error.code !== "event_budget") throw error;
+        // The final native text replaces any streamed draft. The explicit empty start, both
+        // deltas and one value-less completion share a message ID and one durable transaction.
+        emit("message.started", { messageId, text: "" });
+        emitTextParts(messageId, event.text);
+        emit("message.completed", { messageId });
+      }
+      break;
+    }
     case "tool_use": {
       const id = publicToolId(event.toolUseId ?? `unidentified-${frame.sequence}`, source.agentId);
       const block: AgentToolBlock = { id, source, name: event.toolName, input: bounded(event.input), state: "running" };
@@ -161,33 +192,44 @@ export function projectEvent(store: ProviderStore, session: SessionRecord, recor
 }
 export function projectReceipt(store: ProviderStore, session: SessionRecord, record: RunRecord, receipt: WorkerReceipt): void {
   const snapshot = record.snapshot;
-  const before = valueHash([snapshot.state, snapshot.phase, snapshot.stopConfirmed, snapshot.pending, snapshot.effects, snapshot.selection, snapshot.agents]);
+  const closedState = snapshot.stopConfirmed && snapshot.phase === "terminal" ? snapshot.state : undefined;
+  const hadUnresolvedAtExit = snapshot.stopConfirmed && snapshot.effects.unresolvedCallIds.length > 0;
+  const before = valueHash([snapshot.state, snapshot.phase, snapshot.stopConfirmed, snapshot.writerScopeClosed, snapshot.pending, snapshot.effects, snapshot.selection, snapshot.agents]);
   record.nativeRevision = receipt.revision; record.nativeGeneration = receipt.generation;
   if (receipt.usage && Number.isSafeInteger(receipt.usage.sequence) && receipt.usage.sequence >= 0 && (!snapshot.executionUsage || BigInt(receipt.usage.sequence) > BigInt(snapshot.executionUsage.sequence))) {
     snapshot.executionUsage = { sequence: String(receipt.usage.sequence), activeMs: receipt.usage.activeMs, unknown: receipt.usage.unknown };
     store.emit(record, "usage.updated", { execution: structuredClone(snapshot.executionUsage) });
   }
   snapshot.stopConfirmed = receipt.exitConfirmed === true;
+  if (receipt.writerScopeClosed !== undefined && snapshot.writerScopeClosed !== true)
+    snapshot.writerScopeClosed = receipt.writerScopeClosed;
   snapshot.state = ({ accepted: "queued", running: "running", awaiting_input: "waiting_for_input", suggesting: "running", parking: "waiting_for_input", parked: "waiting_for_input", cancelling: "running", completed: snapshot.result?.status === "failed" ? "failed" : "succeeded", failed: "failed", cancelled: "cancelled", interrupted: "unknown" } as const)[receipt.state];
   snapshot.phase = ({ accepted: "preparing", running: "executing", awaiting_input: "waiting", suggesting: "finalizing", parking: "waiting", parked: "parked", cancelling: "cancelling", completed: "terminal", failed: "terminal", cancelled: "terminal", interrupted: "interrupted" } as const)[receipt.state];
   snapshot.freshness = receipt.state === "interrupted" ? "last_known" : "current";
   const pendingIds = new Set((receipt.pending ?? []).map(frame => nativeDecision(frame)?.id));
   snapshot.pending = snapshot.pending.filter(value => value.delivery === "next_turn" || record.proxyDecisions?.includes(value.id) || pendingIds.has(value.id));
   if (snapshot.pending.some(value => record.proxyDecisions?.includes(value.id)) && receipt.state === "running") { snapshot.state = "waiting_for_input"; snapshot.phase = "waiting"; }
-  snapshot.effects = { certainty: receipt.state === "interrupted" || Object.values(receipt.effects ?? {}).includes("unknown") ? "unknown" : "known", unresolvedCallIds: Object.keys(receipt.effects ?? {}).map(publicEffectId) };
-  if (snapshot.effects.unresolvedCallIds.length && snapshot.stopConfirmed) { snapshot.stopConfirmed = false; snapshot.state = "unknown"; snapshot.phase = "interrupted"; snapshot.freshness = "last_known"; }
+  snapshot.effects = { certainty: receipt.state === "interrupted" || Object.values(receipt.effects ?? {}).some(value => value === "unknown" || receipt.exitConfirmed) ? "unknown" : "known", unresolvedCallIds: Object.keys(receipt.effects ?? {}).map(publicEffectId) };
+  if (snapshot.stopConfirmed && record.decisionsFenced) {
+    snapshot.state = closedState ?? "cancelled"; snapshot.phase = "terminal"; snapshot.freshness = "current";
+  }
+  if (record.decisionsFenced) {
+    snapshot.pending = [];
+    if (!snapshot.stopConfirmed) snapshot.phase = "cancelling";
+  }
   if (snapshot.stopConfirmed) {
     for (const agent of snapshot.agents ?? []) {
       const state = ["queued", "running", "waiting_for_input"].includes(agent.state) && receipt.state !== "parked"
         ? "unknown" : agent.state;
-      if (agent.stopConfirmed === true && agent.state === state) continue;
-      agent.stopConfirmed = true; agent.state = state;
+      const stopConfirmed = agent.stopConfirmed === true || snapshot.writerScopeClosed === true;
+      if (agent.stopConfirmed === stopConfirmed && agent.state === state) continue;
+      agent.stopConfirmed = stopConfirmed; agent.state = state;
       const source = { agentId: agent.agentId, ...(agent.parentAgentId ? { parentAgentId: agent.parentAgentId } : {}),
         ...(agent.parentToolCallId ? { parentToolCallId: agent.parentToolCallId } : {}) };
       store.emit(record, "agent.updated", { agent: structuredClone(agent) }, source);
     }
   }
-  if (receipt.state === "parked" && snapshot.stopConfirmed) {
+  if (receipt.state === "parked" && snapshot.stopConfirmed && snapshot.effects.unresolvedCallIds.length === 0) {
     for (const decision of snapshot.pending) {
       const frame = receipt.pending?.find(frame => frame.event.type === "question_request" && frame.event.questionId === decision.id
         && frame.event.blocking !== false && String(frame.sequence) === decision.revision);
@@ -208,10 +250,10 @@ export function projectReceipt(store: ProviderStore, session: SessionRecord, rec
     record.completedAt ??= new Date().toISOString();
   }
   projectAppliedDecisionControls(store, record);
-  if (before !== valueHash([snapshot.state, snapshot.phase, snapshot.stopConfirmed, snapshot.pending, snapshot.effects, snapshot.selection, snapshot.agents])) {
-    if (receipt.exitConfirmed === true && snapshot.effects.unresolvedCallIds.length)
+  if (before !== valueHash([snapshot.state, snapshot.phase, snapshot.stopConfirmed, snapshot.writerScopeClosed, snapshot.pending, snapshot.effects, snapshot.selection, snapshot.agents])) {
+    if (!hadUnresolvedAtExit && receipt.exitConfirmed === true && snapshot.effects.unresolvedCallIds.length)
       store.emit(record, "warning", { code: "native_effect_outcomes_unresolved",
-        message: `The native process has stopped, but outcomes of ${snapshot.effects.unresolvedCallIds.length} native tool call(s) remain unresolved. This execution stays fenced until supported provider reconciliation.` });
+        message: `The native process has stopped, but outcomes of ${snapshot.effects.unresolvedCallIds.length} native tool call(s) remain unresolved. The provider retained the unknown outcomes.` });
     store.lifecycle(record);
   }
 }

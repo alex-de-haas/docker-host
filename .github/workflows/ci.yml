@@ -458,8 +458,12 @@ jobs:
         run: npm run marketplace:build
 
   agent-providers:
-    name: Agent providers
-    runs-on: ubuntu-latest
+    name: Agent providers (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     needs: changes
     if: needs.changes.outputs.agent_providers == 'true'
@@ -472,6 +476,7 @@ jobs:
           node-version: 24
           cache: npm
       - name: Validate selected providers with one isolated dependency closure
+        if: runner.os == 'Linux'
         env:
           CI_PLAN: ${{ needs.changes.outputs.plan }}
         run: |
@@ -491,6 +496,24 @@ jobs:
             }
           NODE
           fi
+
+      - name: Install the writer qualification dependencies
+        if: hashFiles('packages/agent-provider-runtime/scripts/writer-scope-acceptance.mjs') != ''
+        run: npm ci --workspace @hosty/agent-provider-runtime --include=dev --ignore-scripts --no-audit --no-fund
+      - name: Qualify native Windows Job Object writer closure
+        if: runner.os == 'Windows' && hashFiles('packages/agent-provider-runtime/scripts/writer-scope-acceptance.mjs') != ''
+        run: node packages/agent-provider-runtime/scripts/writer-scope-acceptance.mjs required
+      - name: Verify Windows native streams, job membership and bridge reuse
+        if: runner.os == 'Windows' && hashFiles('packages/agent-provider-runtime/src/windows-job-cache.test.mjs') != ''
+        run: npm test --workspace @hosty/agent-provider-runtime -- src/windows-native.test.ts src/windows-job-cache.test.mjs scripts/doctor.test.mjs
+      - name: Qualify delegated Linux cgroup writer closure
+        if: runner.os == 'Linux' && hashFiles('packages/agent-provider-runtime/scripts/writer-scope-acceptance.mjs') != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo systemd-run --quiet --wait --pipe --collect --property=Delegate=yes --uid="$(id -u)" \
+            --working-directory="$PWD" --setenv=PATH="$PATH" "$(command -v node)" \
+            packages/agent-provider-runtime/scripts/writer-scope-acceptance.mjs required
 
   opus:
     name: OPUS Translate

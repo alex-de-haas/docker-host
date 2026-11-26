@@ -11,10 +11,10 @@ export async function serveHistory(controller: ProviderController, request: Inco
   const route = url.pathname.split("/").at(-1);
   const live = route === "live";
   controller.requireCapabilities(route === "events" ? ["installation-history"] : ["installation-history", "installation-history.live"]);
-  if (request.method !== "GET") throw new AgentApiError("method_not_allowed", "History is read-only.", 405);
+  if (request.method !== (route === "ack" ? "POST" : "GET")) throw new AgentApiError("method_not_allowed", "Unsupported history method.", 405);
   const paged = request.headers.accept?.split(",").some(value => value.split(";")[0]?.trim() === "application/json");
   const keys = Array.from(url.searchParams.keys());
-  const allowed = route === "states" ? ["through", "afterSession", "limit"]
+  const allowed = route === "ack" ? ["sessionId", "epoch", "through"] : route === "states" ? ["through", "afterSession", "limit"]
     : route === "range" ? ["through", "epoch", "sessionId", "from", "to", "limit"]
     : paged && !live ? ["after", "through", "limit"] : ["after"];
   if (new Set(keys).size !== keys.length || keys.some(key => !allowed.includes(key)))
@@ -40,6 +40,14 @@ export async function serveHistory(controller: ProviderController, request: Inco
       throw new AgentApiError("invalid_input", "Invalid numeric history parameter.", 400);
     return Number(value);
   };
+  if (route === "ack") {
+    if (!actor.acknowledge) throw new AgentApiError("permission_denied", "The history credential does not authorize acknowledgement.", 403);
+    const sessionId = param("sessionId"), epoch = param("epoch"), through = positive("through");
+    if (!sessionId || sessionId.length > 512 || !epoch || epoch.length > 512)
+      throw new AgentApiError("invalid_input", "Invalid durable history receipt.", 400);
+    history.acknowledgeThrough(actor, sessionId, epoch, through);
+    return { through };
+  }
   const limit = positive("limit", 32);
   if (limit > 100) throw new AgentApiError("invalid_input", "Invalid history page size.", 400);
   if (route === "states") return history.states(actor, param("through"), param("afterSession"), limit);

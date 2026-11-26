@@ -7,7 +7,7 @@ import { CoreAgentBackend } from "./agent-providers/core.js";
 import { AgentConnectionDirectory } from "./agent-providers/directory.js";
 import { AgentConsumerConnections } from "./agent-providers/connections.js";
 import { currentAgentAuthority } from "./agent-providers/context.js";
-import { assertCleanProviderCutover } from "./agent-providers/cutover.js";
+import { openProviderStore } from "./agent-providers/cutover.js";
 import { DevelopmentClient } from "./sessions/development.js";
 import { WaitingNotifier } from "./notifications.js";
 import { mkdir } from "node:fs/promises";
@@ -33,7 +33,7 @@ await acquireStorageOwner(config.dataDir, "coordinator");
 const agentBackend = config.coreOrigin && config.serviceToken ? new CoreAgentBackend({ coreOrigin: config.coreOrigin,
   appId: config.appId, serviceToken: config.serviceToken, runningInContainer: config.executionMode === "docker" }) : null;
 if (config.harness !== "fake" && !agentBackend) throw new Error("Harness requires its ordinary Core app identity.");
-const store = new SessionStore(config.dataDir, config.cacheDir);
+const store = agentBackend && config.harness !== "fake" ? await openProviderStore(config.dataDir, config.cacheDir) : new SessionStore(config.dataDir, config.cacheDir);
 const connections = agentBackend && config.harness !== "fake" ? new AgentConsumerConnections({
   directory: new AgentConnectionDirectory(config.dataDir, agentBackend, async () =>
     (await store.listRecords()).flatMap(record => [
@@ -48,7 +48,6 @@ const adapter: HarnessAdapter = config.harness === "fake" ? new FakeHarnessAdapt
   probe: async () => ({ available: true }),
   start: () => { throw new Error("Choose a provider connection before starting a chat."); },
 };
-if (connections?.remote) await assertCleanProviderCutover(store);
 const audit = new AuditReporter(config.coreOrigin, config.serviceToken, config.appId);
 const notifier = new WaitingNotifier(config.coreOrigin, config.serviceToken, config.appId);
 const settings = new SettingsStore(config.dataDir, config.retentionDays);
@@ -116,6 +115,9 @@ const sweep = (): void => {
 };
 sweep();
 const sweepTimer = setInterval(sweep, 24 * 60 * 60 * 1000);
+manager.wakeRemovalCleanup();
+const removalTimer = setInterval(() => manager.wakeRemovalCleanup(), 5000);
+removalTimer.unref();
 
 /**
  * A session waiting for a person past this holds a harness process, a proxy route and its share of
@@ -158,6 +160,7 @@ server.listen(config.port, () => {
 
 const shutdown = (): void => {
   clearInterval(sweepTimer);
+  clearInterval(removalTimer);
   clearInterval(abandonTimer);
   server.close();
   void stopToolActivity().then(() => server.stopTaskDispatch()).then(() => manager.shutdown()).then(() => connections?.shutdown()).finally(() => process.exit(0));

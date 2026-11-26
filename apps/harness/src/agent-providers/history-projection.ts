@@ -59,6 +59,7 @@ export function reconcileHistoryProjection(current: AgentRunSnapshot, prior: His
     if (!lifecycle && !details && !accounting) return;
     if (lifecycle) {
       next.state = incoming.state; next.phase = incoming.phase; next.stopConfirmed = incoming.stopConfirmed;
+      if (incoming.writerScopeClosed !== undefined && next.writerScopeClosed !== true) next.writerScopeClosed = incoming.writerScopeClosed;
       next.effects = incoming.effects; next.configurationRevision = incoming.configurationRevision; next.freshness = incoming.freshness;
       next.pending = mergeRows(incoming.pending, current.pending, decisionSlot, later) ?? [];
       clock.lifecycle = sequence;

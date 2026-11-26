@@ -346,6 +346,7 @@ public record HostyMediatedProviderInvocation(int Version, string UserId, string
 [JsonSerializable(typeof(HostyAgentHistoryBinding))]
 [JsonSerializable(typeof(HostyAgentHistoryOwner))]
 [JsonSerializable(typeof(HostyAgentHistorySelection))]
+[JsonSerializable(typeof(HostyAgentRecoveryRequest))]
 [JsonSerializable(typeof(HostyAgentHistoryIntrospection))]
 [JsonSerializable(typeof(HostyAgentAuthorization))]
 [JsonSerializable(typeof(HostyAgentInvocation))]

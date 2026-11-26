@@ -13,17 +13,17 @@ internal sealed record CoreAgentAuthorizeRequest(HostyProviderRef Provider, stri
     CoreAgentConversation? Conversation = null);
 internal sealed record CoreAgentReference(string AdmissionRef, string? Generation = null);
 internal sealed record CoreAgentIntrospection(string Token, string Operation, string Method, string Path, string BodyHash);
-internal sealed record CoreAgentToken(string Id, long Expires);
+internal sealed record CoreAgentToken(string Id, long Expires, string? GrantEpoch = null);
 internal sealed record CoreAgentBinding(HostyProviderRef Provider, string BaseUrl, string Token,
     DateTimeOffset ExpiresAt, string AdmissionRef, DateTimeOffset AuthorityExpiresAt, string[] SupportedWorkflowCapabilities);
 internal sealed record CoreAgentInvocation(int Version, string UserId, string HostRole, string PrincipalId,
     string CallerAppId, string CallerInstallation, HostyProviderRef Provider, string Operation,
     JsonElement? ResourceIds, string AdmissionRef, string? SessionId, string? RunId,
-    string? ConfigurationDigest, JsonElement? Ceiling, DateTimeOffset ExpiresAt);
+    string? ConfigurationDigest, JsonElement? Ceiling, DateTimeOffset ExpiresAt, string? OriginalStartDigest = null, bool CleanupOnly = false);
 internal sealed record CoreAgentAuthorization(string Id, CoreCallerAuthority Origin, string UserId, string PrincipalId,
     string CallerAppId, DateTimeOffset CallerInstallation, string? CallerRevision,
     CoreAgentAuthorizeRequest Request, string? ProviderRevision, DateTimeOffset ExpiresAt, bool Admitted = false,
-    CoreAgentLease[]? Leases = null, CoreAgentTaskAuthority? Authority = null, bool WorkspaceLeasesClosed = false, string? Generation = null, string? ImplementationIncarnation = null);
+    CoreAgentLease[]? Leases = null, CoreAgentTaskAuthority? Authority = null, bool WorkspaceLeasesClosed = false, string? Generation = null, string? ImplementationIncarnation = null, int ProtocolVersion = 1, string? GrantEpoch = null, bool WriterScopeClosed = false);
 internal sealed record CoreAgentLease(string WorkspaceId, string WorktreeId, string SessionId, string LeaseId, string? RequestId = null, bool Released = false, long? Revision = null);
 
 // Only authorization metadata is retained. Prompts, native histories and bearer secrets never enter this store.
@@ -44,7 +44,7 @@ internal sealed partial class CoreAgentAuthorizationStore(CoreDataPaths paths)
     internal async Task<CoreAgentAuthorization> Get(string id, CancellationToken ct)
         => await JsonStorage.ReadAsync<CoreAgentAuthorization>(File(id), ct)
             ?? throw new CoreProviderException("not_found", "Agent authorization not found.", 404);
-    internal async Task<CoreAgentAuthorization> Put(CoreAgentAuthorization value, CancellationToken ct)
+    internal async Task<CoreAgentAuthorization> Put(CoreAgentAuthorization value, CancellationToken ct, CoreAgentAuthorization? expired = null)
     {
         await gate.WaitAsync(ct);
         try
@@ -54,20 +54,18 @@ internal sealed partial class CoreAgentAuthorizationStore(CoreDataPaths paths)
             if (previous is not null)
             {
                 RequireSameConversation(previous.Request.Conversation, value.Request.Conversation);
-                return previous;
+                if (value.Request.Operation == "runs.start" && CoreJson.Text(previous.Request with { Conversation = null })
+                    != CoreJson.Text(value.Request with { Conversation = null }))
+                    throw new CoreProviderException("execution_conflict", "Recover this run with its original input and workflow binding.", 409);
+                // A fresh sign-in can resume the exact unadmitted command. Admitted work retains its
+                // original authority and replacement provider implementations have a distinct lifecycle.
+                if (expired is null || previous.GrantEpoch != expired.GrantEpoch || value.Request.Operation != "runs.start"
+                    || previous.Admitted || previous.Authority is not null
+                    || previous.Origin == value.Origin || previous.ImplementationIncarnation != value.ImplementationIncarnation
+                    || previous.ProviderRevision != value.ProviderRevision || previous.CallerRevision != value.CallerRevision)
+                    return previous;
+                value = previous with { Origin = value.Origin, ExpiresAt = value.ExpiresAt, GrantEpoch = Guid.NewGuid().ToString("N") };
             }
-            if (value.Request.Operation == "runs.start" && Directory.Exists(Path.GetDirectoryName(file)))
-                foreach (var otherFile in Directory.EnumerateFiles(Path.GetDirectoryName(file)!, "*.json"))
-                {
-                    var other = await JsonStorage.ReadAsync<CoreAgentAuthorization>(otherFile, ct);
-                    if (other is null || other.Request.Operation != "runs.start" || other.UserId != value.UserId
-                        || other.CallerAppId != value.CallerAppId || other.CallerInstallation != value.CallerInstallation
-                        || other.Request.Provider != value.Request.Provider || other.Request.SessionId != value.Request.SessionId
-                        || other.Request.RunId != value.Request.RunId) continue;
-                    RequireSameConversation(other.Request.Conversation, value.Request.Conversation);
-                    if (CoreJson.Text(CoreAgentExecution.Workflow(other.Request)) != CoreJson.Text(CoreAgentExecution.Workflow(value.Request)))
-                        throw new CoreProviderException("execution_conflict", "Recover this run with its original consumer workflow binding.", 409);
-                }
             await JsonStorage.WriteOwnerFileAsync(file, value, ct); return value;
         }
         finally { gate.Release(); }
@@ -160,7 +158,7 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
     AgentPolicyStore policies, HostyCoreRuntimeConfig config, DevelopmentWorkspaceService workspaces, AgentSkillLibrary skills,
     CoreTaskAdapter tasks, CoreProviderOperationStore operations, UserDirectoryStore users)
 {
-    internal const string Prefix = "hosty_agent.1.";
+    internal const string Prefix = "hosty_agent.2.";
     internal const string ExecutionHeader = "X-Hosty-Agent-Execution";
     internal static CoreProviderException Invalid(string message) => new("invalid_input", message, 400);
     private static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
@@ -193,9 +191,11 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
             ("PUT", "sessions.configure") => Guid.TryParse(input.SessionId, out _) && Regex.IsMatch(path, "^/sessions/" + Regex.Escape(input.SessionId!) + "/configurations/[A-Za-z0-9-]+$"),
             ("PUT", "runs.start") => Guid.TryParse(input.SessionId, out _) && Guid.TryParse(input.RunId, out _) && path == $"/sessions/{input.SessionId}/runs/{input.RunId}",
             ("GET", "runs.read") => Guid.TryParse(input.RunId, out _) && path == "/runs/" + input.RunId,
+            ("GET", "runs.closure") => Guid.TryParse(input.RunId, out _) && path == $"/runs/{input.RunId}/closure",
             ("GET", "runs.events") => Guid.TryParse(input.RunId, out _) && path == $"/runs/{input.RunId}/events",
             ("POST", "runs.respond") => Guid.TryParse(input.RunId, out _) && path == $"/runs/{input.RunId}/responses",
-            ("POST", "runs.cancel") => Guid.TryParse(input.RunId, out _) && path == $"/runs/{input.RunId}/cancel",
+            ("PUT", "runs.discard") => Guid.TryParse(input.RunId, out _) && path == $"/runs/{input.RunId}/discard",
+            ("PUT", "runs.cancel") => Guid.TryParse(input.RunId, out _) && path == $"/runs/{input.RunId}/stop",
             ("POST", "runs.control") => Guid.TryParse(input.RunId, out _) && path == $"/runs/{input.RunId}/controls",
             ("GET", "runs.controls.read") => Guid.TryParse(input.RunId, out _) && Regex.IsMatch(path, "^/runs/" + Regex.Escape(input.RunId!) + "/controls/[A-Za-z0-9-]+$"),
             _ => false,
@@ -206,9 +206,14 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
         if (input.Resources is { } resources) ValidateResources(resources);
         if (input.Ceiling is { } metadata) ValidateCeiling(metadata);
     }
+    private static string OriginalStartId(AppRecord consumer, string userId, string principalId, HostyProviderRef provider, string sessionId, string runId)
+        => Hash(CoreJson.Text(new[] { "admission-v2", consumer.Id, consumer.InstalledAt.ToString("O"),
+            userId, principalId, CoreJson.Text(provider), sessionId, runId }));
+
     internal async Task<CoreAgentBinding> Authorize(AppRecord consumer, string credential, CoreAgentAuthorizeRequest input, CancellationToken ct)
     {
         Validate(input);
+        if (input.Operation == "runs.discard") throw DenyCleanup();
         ValidateWorkflowOwner(consumer, input);
         if (input.Conversation is { } conversation)
         {
@@ -252,14 +257,20 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
         // A run submission retains its original admission, even if the provider is updated.
         // Other operations can get fresh authority without making old signed references valid again.
         var id = input.Operation == "runs.start"
-            ? Hash(requestIdentity)
-            : Hash($"operation-v2:{CoreJson.Text(consumer.PermissionRevision)}:{CoreJson.Text(provider.PermissionRevision)}:{requestIdentity}");
+            ? OriginalStartId(consumer, caller.User.Id, caller.PrincipalId, input.Provider, input.SessionId!, input.RunId!)
+            : Hash($"operation-v3:{CoreJson.Text(consumer.PermissionRevision)}:{CoreJson.Text(provider.PermissionRevision)}:{requestIdentity}");
         if (input.Operation != "runs.start" && descriptor.Incarnation is { } generation) id = Hash($"{id}:{generation}");
-        var record = await store.Put(new(id, origin, caller.User.Id, caller.PrincipalId,
-            consumer.Id, consumer.InstalledAt, consumer.PermissionRevision, input, provider.PermissionRevision, expires, Authority: input.Authority, ImplementationIncarnation: descriptor.Incarnation), ct);
-        await ValidateRecord(provider, record, ct, admitted: false);
+        var proposed = new CoreAgentAuthorization(id, origin, caller.User.Id, caller.PrincipalId,
+            consumer.Id, consumer.InstalledAt, consumer.PermissionRevision, input, provider.PermissionRevision, expires, Authority: input.Authority, ImplementationIncarnation: descriptor.Incarnation, ProtocolVersion: 2);
+        var record = await store.Put(proposed, ct);
+        try { await ValidateRecord(provider, record, ct, admitted: false); }
+        catch (AppIdentityException) when (input.Operation == "runs.start" && !record.Admitted && record.Authority is null && record.Origin != origin)
+        {
+            record = await store.Put(proposed, ct, expired: record);
+            await ValidateRecord(provider, record, ct, admitted: false);
+        }
         var tokenExpires = clock.UtcNow.AddMinutes(2); if (record.ExpiresAt < tokenExpires) tokenExpires = record.ExpiresAt;
-        var token = SignToken(Prefix, new CoreAgentToken(id, tokenExpires.ToUnixTimeSeconds()));
+        var token = SignToken(Prefix, new CoreAgentToken(id, tokenExpires.ToUnixTimeSeconds(), record.GrantEpoch));
         var managementAvailable = input.Authority is null && descriptor.Capabilities.Contains("workflow.profile-management")
             && ProviderAccessService.Describe(consumer, "agent-sessions", named: true).Any(session =>
                 session is { Available: true, Version: 1 } && session.Capabilities.Contains(CoreProviderMediation.ProfileManagementCapability));
@@ -270,13 +281,13 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
     {
         if (PanelIdentity.Installation(provider) != reference.InstallationId) throw new CoreProviderException("provider_unavailable", "The provider installation changed.", 503);
         var descriptor = ProviderAccessService.Find(provider, "agent", reference.Key, reference.ImplementationId);
-        if (descriptor is not { Available: true, Version: 1, Url: not null }) throw new CoreProviderException("provider_unavailable", "The selected agent interface is unavailable.", 503);
+        if (descriptor is not { Available: true, Version: 2, Url: not null }) throw new CoreProviderException("provider_unavailable", "The selected agent interface is unavailable.", 503);
         return descriptor;
     }
     internal async Task<(CoreAgentAuthorization Record, CoreCapabilityCaller Origin)> ValidateRecord(AppRecord provider,
         CoreAgentAuthorization record, CancellationToken ct, bool admitted = true)
     {
-        if (record.Request.Provider.AppId != provider.Id || record.Request.Provider.InstallationId != PanelIdentity.Installation(provider)
+        if (record.ProtocolVersion != 2 || record.Request.Provider.AppId != provider.Id || record.Request.Provider.InstallationId != PanelIdentity.Installation(provider)
             || record.ProviderRevision != provider.PermissionRevision || record.ExpiresAt <= clock.UtcNow
             || admitted && !record.Admitted) throw new AppIdentityException("permission_denied", "This execution authority is unavailable.");
         if (Descriptor(provider, record.Request.Provider).Incarnation != record.ImplementationIncarnation)
@@ -324,10 +335,12 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
     }
     internal async Task<CoreAgentInvocation> Introspect(AppRecord provider, CoreAgentIntrospection input, CancellationToken ct)
     {
+        if (input.Token?.StartsWith(CleanupPrefix, StringComparison.Ordinal) == true)
+            return await IntrospectCleanup(provider, input, ct);
         var token = ReadToken<CoreAgentToken>(Prefix, input.Token);
         if (token.Expires <= clock.UtcNow.ToUnixTimeSeconds()) throw new AppIdentityException("token_invalid", "The operation credential expired.");
         var record = await store.Get(token.Id, ct);
-        if (record.Request.Operation != input.Operation || record.Request.Method != input.Method || record.Request.Path != input.Path
+        if (record.GrantEpoch != token.GrantEpoch || record.Request.Operation != input.Operation || record.Request.Method != input.Method || record.Request.Path != input.Path
             || record.Request.BodyHash != input.BodyHash) throw new AppIdentityException("permission_denied", "This credential is bound to another exact operation.");
         var (_, caller) = await ValidateRecord(provider, record, ct, admitted: false);
         return Invocation(record, caller);
@@ -356,7 +369,7 @@ internal sealed partial class CoreAgentExecution(AppIdentityService identity,
         var record = await store.Get(reference, ct);
         if (metadataOnly)
         {
-            if (!record.Admitted || record.Request.Operation != "runs.start" || record.Request.Provider.AppId != provider.Id
+            if (record.ProtocolVersion != 2 || !record.Admitted || record.Request.Operation != "runs.start" || record.Request.Provider.AppId != provider.Id
                 || record.Request.Provider.InstallationId != PanelIdentity.Installation(provider))
                 throw new AppIdentityException("permission_denied", "This provider does not own the admitted question source.");
             var (user, _) = await identity.RequireAccessibleUserAsync(provider.Id, record.UserId, ct);

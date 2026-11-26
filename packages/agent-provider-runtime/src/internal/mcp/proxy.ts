@@ -82,6 +82,7 @@ export class McpProxy {
   policy?: McpToolPolicy;
   /** Client-side source binding and native stop coordination; Core still authorizes the invocation. */
   platformCall?: (sessionId: string, name: string, input: unknown, guard: () => Promise<void>) => Promise<{ result: unknown } | null>;
+  dispatch?: <T>(sessionId: string, start: () => Promise<T>) => Promise<T>;
   beforeDispatch?: (sessionId: string) => Promise<void>;
   identity?: (appId: string) => Promise<string>;
   deniedTools?: (appId: string) => Promise<readonly string[]>;
@@ -261,7 +262,11 @@ export class McpProxy {
             const coordinated = appId === "hosty:core" ? await this.platformCall?.(sessionId, rpc.params.name, rpc.params.arguments ?? {}, dispatchGuard) : null;
             if (coordinated) sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id,
               result: { content: [{ type: "text", text: JSON.stringify(coordinated.result) }] } });
-            else await this.forward(request, response, target, token.token, body);
+            else {
+              const bearer = token.token;
+              const forward = () => this.forward(request, response, target, bearer, body);
+              await (this.dispatch ? this.dispatch(sessionId, forward) : forward());
+            }
           }
         } catch (error) { if (!response.headersSent && !response.destroyed) sendJson(response, 200, { jsonrpc: "2.0", id: rpc.id,
           error: { code: -32001, message: error instanceof Error ? error.message : "MCP request refused." } }); }

@@ -26,7 +26,7 @@ afterEach(async () => { await service?.close(); service = undefined; vi.restoreA
 it.each(["task-result", "task-fail", "task-wait", "task-request-input"])("recovers the exact %s acknowledgement after response loss and consumer service restart", async action => {
   let stopped = false;
   const business = vi.fn(async () => ({ recorded: true, requestId: input.input.requestId }));
-  const manager = { store: { dataDir: directory }, workspaceAction: business,
+  const manager = { store: { dataDir: directory, preferencesDir: directory }, workspaceAction: business,
     providerWorkflow: vi.fn(async (_id: string, _input: AgentSessionWorkflowRequest, _authority: MediatedProviderInvocation,
       validate: () => Promise<MediatedProviderInvocation>, recovery: { retained: boolean; dispatch: (guard: () => Promise<void>) => Promise<unknown> }) => {
       await validate();

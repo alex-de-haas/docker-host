@@ -102,6 +102,8 @@ def check_self_switch(context, app, app_origin, call):
 
 
 def check_provider_reinstallation(context, app, app_origin, link, recovery):
+    import sqlite3
+    from contextlib import closing
     from workspace_sessions_acceptance import session_browser
     browser = session_browser(context, app, app_origin, link)
     owner = browser('activation-fixture@example.test', 'Fixture operator')
@@ -116,7 +118,17 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
     assert json.loads(manifest.read_text())['id'] == provider_id
     apps = [context['cli'], '--data-root', context['root'], 'apps']
     provider_data = context['root']/'apps'/provider_id/'data'
-    native_records = provider_data/'agent-sessions'
+    native_records = provider_data/'agent-sessions'/'execution-v2.sqlite'
+
+    def rows(database, query, params=()):
+        # Inspect only the test instance, from a read-only transaction consistent with live WAL writes.
+        assert database.is_relative_to(context['root']) and database.is_file()
+        with closing(sqlite3.connect(database.resolve().as_uri()+'?mode=ro', uri=True)) as connection:
+            return connection.execute(query, params).fetchall()
+
+    def native_session_ids():
+        return {row[0] for row in rows(native_records, 'SELECT id FROM execution_sessions')}
+
     api = '/api/apps/' + provider_id
 
     def installed():
@@ -143,9 +155,12 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
     workspaces = '/development-workspaces/' + tree['workspaceId']
     tree_route = workspaces + '/worktrees/' + tree['id']
     original_leases = set(owner.harness(tree_route)['leases'])
-    participant = owner.harness(workspaces + '/participants')
-    owner.harness(route + '/workspaces', {'action': 'attach', 'workspaceId': tree['workspaceId'],
-        'expectedRevision': participant['revision'], 'requestId': str(uuid.uuid4())})
+    connection = next(row for row in owner.harness('/connections')['connections'] if row['id'] == connection_id)
+    workspace_writer = bool({'workspace.edit', 'scope.workspace-writers'}.intersection(connection['capabilities']))
+    if workspace_writer:
+        participant = owner.harness(workspaces + '/participants')
+        owner.harness(route + '/workspaces', {'action': 'attach', 'workspaceId': tree['workspaceId'],
+            'expectedRevision': participant['revision'], 'requestId': str(uuid.uuid4())})
     sentinel = pathlib.Path(tree['path']).resolve()/'retirement-fixture.txt'
     assert sentinel.is_relative_to(context['root'].resolve()) and sentinel.read_text() == 'Preserve this uncommitted work.'
 
@@ -185,13 +200,17 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
             return run if current['status'] == 'idle' and not current.get('sourceAdmission') else None
 
         run = context['wait_for'](finished, 90)
-        stored = json.loads((native_records/(run['sessionId'] + '.json')).read_text())
+        [(body,)] = rows(native_records, 'SELECT body FROM execution_sessions WHERE id=?', (run['sessionId'],))
+        stored = json.loads(body)
+        stored['runs'] = {key: json.loads(payload) for key, payload in
+            rows(native_records, 'SELECT id,body FROM execution_runs WHERE session=?', (run['sessionId'],))}
         assert stored['session']['ref'] == {'provider': run['ref']['provider'], 'id': run['sessionId']}
         assert stored['nativeId']
         received = stored['runs'][run['ref']['id']]['input']
         assert received['input']['text'] == text
         if record['id'] == chat['id']:
-            assert any(item['kind'] == 'worktree' and item['id'] == tree['id'] for item in received['resources'])
+            linked = [item for item in received.get('resources', []) if item['kind'] == 'worktree']
+            assert [item['id'] for item in linked] == ([tree['id']] if workspace_writer else [])
         return run, stored, received
 
     def choice(options, item, mode, model):
@@ -212,10 +231,46 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
     old_name = attachment('old-file-' + token + '.txt', old_data)
     old_text = 'mcp completed MCP_OUTPUT_MARKER_' + token
     tool_output = 'tool-result-' + token
+    tool_names = {'mcp__hosty-core__list_apps', 'mcp__hosty-core__get_app'}
     first, first_store, first_input = send(chat, old_text, [old_name])
     first_file, = first_input['input']['attachments']
     check_file(first_file, old_name, old_data, first)
-    assert any(tool_output in tool.get('output', '') for tool in first['tools']), 'The scripted tool result must exist before testing for its absence'
+    first_run_id = first['ref']['id']
+    delivery = first_store['runs'][first_run_id]['events']
+    results = [event for event in delivery if event['type'] == 'tool.completed'
+        and event['data']['name'] in tool_names and event['data']['state'] == 'completed']
+    assert len(results) == len(tool_names) and {event['data']['name'] for event in results} == tool_names
+    for event in results:
+        assert event['runId'] == first_run_id and event['generation'] == first['generation'] and event['source']['agentId'] == 'root'
+        assert json.loads(event['data']['output'])['content'] == [{'type': 'text', 'text': tool_output}]
+
+    def assert_transcript_tool_results():
+        # Chat status can come from the compact history lane before the browser stream
+        # replays the complete positioned output. Follow the same durable events as the UI.
+        calls, completed, restored = {}, {}, {}
+        deadline = time.monotonic() + 90
+        with owner.client.open(app_origin + '/api' + route + '/events?after=0', timeout=35) as response:
+            for raw in response:
+                if time.monotonic() >= deadline:
+                    break
+                if not raw.startswith(b'data: '):
+                    continue
+                event = json.loads(raw[6:])
+                source = event.get('providerSource') or {}
+                if event['type'] == 'provider_history_order' and 'toolOutput' in event:
+                    restored[event['target']] = event['toolOutput']
+                elif source.get('runId') == first_run_id and source.get('generation') == first['generation'] and source.get('provider') == first['ref']['provider']:
+                    if event['type'] == 'tool_use' and event['toolName'] in tool_names:
+                        calls[event['toolUseId']] = event['toolName']
+                    if event['type'] == 'tool_result' and event['status'] == 'completed':
+                        completed[event['toolUseId']] = event
+                found = {name for call, name in calls.items() if call in completed and tool_output in
+                    restored.get(completed[call]['providerEventId'], completed[call]['output'])}
+                if found == tool_names:
+                    return
+        raise AssertionError('The original marked tool results must be replayable in the owner transcript')
+
+    assert_transcript_tool_results()
     queued_chat = owner.harness('/sessions', {'title': 'Composer continuation after provider reinstall',
         'connectionId': connection_id, 'profileId': None, 'appIds': []})
     queue_before, queue_before_store, _ = send(queued_chat, 'Before composer continuation')
@@ -236,7 +291,8 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
     still_stopped = owner.harness(previously_completed)['providerExecution']['run']
     assert still_stopped['ref'] == prior_run['ref'] and still_stopped['generation'] == prior_run['generation']
     visitor.harness(previously_completed, method='DELETE', expected=404)
-    assert owner.harness(previously_completed, method='DELETE') == {'deleted': True}
+    owner.delete_session(previously_completed, original_provider_replaced=True)
+    visitor.harness(previously_completed + '/deletion', expected=404)
     owner.harness(previously_completed, expected=404)
     resumed = owner.harness(route + '/context', resume)
     assert resumed['id'] == chat['id'] and resumed['selection']['connection'] == original['connection']
@@ -259,11 +315,11 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
     queue_record = owner.harness(queued_route)
     assert queue_record['selectionRevision'] == fact.get('selectionRevision', 0)
     assert queue_record['selection']['provider']['installationId'] == retained_install
-    assert owner.harness(queued_route, method='DELETE') == {'deleted': True}
+    owner.delete_session(queued_route, original_provider_replaced=True)
     context['say']('PASS: normal composer Send resumed the same verified public and native session after reinstall')
 
     new_install = reinstall(wipe=True)
-    assert not (native_records/(first['sessionId'] + '.json')).exists()
+    assert first['sessionId'] not in native_session_ids()
     empty = owner.harness(route + '/context-options')
     assert empty['currentConnectionId'] is None and not any(item['available'] for item in empty['connections'])
     # Recreate the original display name, then offer another account with exactly the same models.
@@ -283,17 +339,17 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
             cwd=context['workspace'], check=True, timeout=150, text=True,
             input=json.dumps({'core': context['origin'], 'harness': app_origin, 'harnessAppId': app,
                 'link': link, 'password': context['password'], 'chatId': chat['id'],
-                'connectionId': selected['id'], 'model': initial_models[-1]['id']}))
+                'connectionId': selected['id'], 'model': initial_models[-1]['id'], 'lastUserMessage': resumed_text}))
     refused = owner.harness(route + '/context', choice(options, selected, 'resume', initial_models[-1]['id']), expected=409)
     assert refused['code'] == 'native_context_missing'
     # Dismissing the choices sends no mutation to Harness and creates no provider session.
     assert owner.harness(route)['providerExecution']['run']['ref'] == continued['ref']
-    assert not list(native_records.glob('*.json'))
+    assert not native_session_ids()
     fresh = choice(options, selected, 'fresh', initial_models[-1]['id'])
     changed = owner.harness(route + '/context', fresh)
     assert changed['id'] == chat['id'] and changed['selection']['provider']['installationId'] == new_install
     assert changed['connectionId'] == second_account['id'] and changed['executionSelection']['model'] == fresh['model']
-    assert not changed['providerExecution'].get('runId') and not list(native_records.glob('*.json'))
+    assert not changed['providerExecution'].get('runId') and not native_session_ids()
     assert changed['providerExecution']['sessionId'] != first['sessionId']
     assert owner.harness(route + '/context', fresh)['selectionRevision'] == changed['selectionRevision']
     new_text = 'fresh-message-' + uuid.uuid4().hex
@@ -305,18 +361,20 @@ def check_provider_reinstallation(context, app, app_origin, link, recovery):
     assert last_input['continuation'] == 'start' and last_input['selection']['model'] == fresh['model']
     last_file, = last_input['input']['attachments']
     check_file(last_file, new_name, new_data, last)
+    assert_transcript_tool_results()
     for marker in (old_text, old_name, old_data.decode(), first_file['id'], first_file['digest'], resumed_text,
                    tool_output, 'Apps checked', first['ref']['id'], continued['ref']['id']):
         assert marker not in json.dumps([last_input, last_store['session']['configuration']]), 'The new public provider payload included an old prompt, tool result, run or attachment'
     assert {p.name for p in (provider_data/'attachments').iterdir()} == {last_file['id']}
     with owner.client.open(app_origin + '/api' + route + '/attachments/' + old_name, timeout=30) as response:
         assert response.read() == old_data
-    events = [json.loads(line) for line in (context['root']/'apps'/app/'data'/'sessions'/chat['id']/'events.ndjson').read_text().splitlines() if line.strip()]
+    events = [json.loads(body) for body, in rows(context['root']/'apps'/app/'data'/'execution-v2'/'sessions'/chat['id']/'chat.sqlite',
+        'SELECT body FROM transcript ORDER BY seq')]
     assert [e['text'] for e in events if e.get('type') == 'user_message'] == [old_text, resumed_text, new_text]
     assert [e['contextMode'] for e in events if e.get('contextChanged')] == ['resume', 'fresh']
     sibling = '/sessions/' + recovery['otherChatId']
     previous_sibling = owner.harness(sibling)['providerExecution']['run']
-    assert owner.harness(route, method='DELETE') == {'deleted': True}
+    owner.delete_session(route, original_provider_replaced=True)
     owner.harness(route, expected=404)
     assert owner.harness(sibling)['providerExecution']['run']['ref'] == previous_sibling['ref']
     assert set(owner.harness(tree_route)['leases']) == original_leases

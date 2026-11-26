@@ -11,7 +11,7 @@ import type { AgentConnectionEntry, AgentConnectionSelection, AgentDirectoryBack
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 const capabilityData: AgentCapabilities = {
-  version: 1, eventVersions: ["agent-event.1"], capabilities: ["mcp.core", "decisions.questions", "decisions.deny-reason"],
+  version: 2, eventVersions: ["agent-event.1"], capabilities: ["mcp.core", "decisions.questions", "decisions.deny-reason"],
   limits: { maxCommandBytes: 1024, maxEventBytes: 1024, maxSnapshotBytes: 1024, maxReplayBytes: 4096, replayRetentionMs: 1000, maxControls: 10, maxPageSize: 10 },
   configuration: { resumeCompatible: [] },
 };

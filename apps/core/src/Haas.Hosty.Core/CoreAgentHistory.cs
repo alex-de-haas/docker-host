@@ -2,17 +2,17 @@ using HostySdk.App;
 
 namespace Haas.Hosty.Core;
 
-internal sealed record CoreAgentHistoryRequest(HostyProviderRef Provider);
+internal sealed record CoreAgentHistoryRequest(HostyProviderRef Provider, bool Acknowledge = false);
 internal sealed record CoreAgentHistoryIntrospection(string Token, string Key);
 internal sealed record CoreAgentHistoryBinding(string Token, DateTimeOffset ExpiresAt, string Endpoint);
 internal sealed record CoreAgentHistoryInvocation(string CallerAppId, string CallerInstallation, HostyProviderRef Provider,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt, bool Acknowledge = false);
 internal sealed record CoreAgentHistoryToken(string CallerAppId, DateTimeOffset CallerInstallation, string? CallerRevision,
-    HostyProviderRef Provider, string? ProviderRevision, DateTimeOffset ExpiresAt, string? ImplementationIncarnation = null);
+    HostyProviderRef Provider, string? ProviderRevision, DateTimeOffset ExpiresAt, string? ImplementationIncarnation = null, bool Acknowledge = false);
 
 internal sealed partial class CoreAgentExecution
 {
-    private const string HistoryPrefix = "hosty_agent_history.1.";
+    private const string HistoryPrefix = "hosty_agent_history.2.";
 
     internal async Task<CoreAgentHistoryBinding> AuthorizeHistory(AppRecord consumer, CoreAgentHistoryRequest input, CancellationToken ct)
     {
@@ -23,7 +23,7 @@ internal sealed partial class CoreAgentExecution
         var descriptor = Descriptor(provider, input.Provider);
         var expiresAt = clock.UtcNow.AddHours(4);
         var claims = new CoreAgentHistoryToken(consumer.Id, consumer.InstalledAt, consumer.PermissionRevision,
-            input.Provider, provider.PermissionRevision, expiresAt, descriptor.Incarnation);
+            input.Provider, provider.PermissionRevision, expiresAt, descriptor.Incarnation, input.Acknowledge);
         return new(SignToken(HistoryPrefix, claims), expiresAt, descriptor.Url!);
     }
 
@@ -39,7 +39,7 @@ internal sealed partial class CoreAgentExecution
         if (consumer is null || consumer.InstalledAt != token.CallerInstallation || consumer.PermissionRevision != token.CallerRevision)
             throw new AppIdentityException("permission_denied", "The consuming installation or its reviewed grants changed.");
         RequireHistoryPermission(consumer);
-        return new(consumer.Id, consumer.InstalledAt.ToString("O"), token.Provider, token.ExpiresAt);
+        return new(consumer.Id, consumer.InstalledAt.ToString("O"), token.Provider, token.ExpiresAt, token.Acknowledge);
     }
 
     private static void RequireHistoryPermission(AppRecord consumer)

@@ -76,13 +76,22 @@ public sealed class CoreAgentSessionHttpTests
         var environment = (await created.Content.ReadFromJsonAsync<CoreEnvironmentView>())!;
         var root = "/api/core-environments/" + environment.Id + "/consumers";
         var registration = new CoreEnvironmentConsumerRegister(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), environment.Revision, source.Run.Ref);
+        using var unsupported = await CoreReviewFixture.AsUserAsync(client, HttpMethod.Post, root + "/register", session, registration);
+        Assert.False(unsupported.IsSuccessStatusCode);
+        Assert.Contains("environment_consumer_scope_unavailable", await unsupported.Content.ReadAsStringAsync());
+        source.Run = source.Run with { WriterScopeClosed = false };
         using var registered = await CoreReviewFixture.AsUserAsync(client, HttpMethod.Post, root + "/register", session, registration);
         registered.EnsureSuccessStatusCode();
         var consumer = (await registered.Content.ReadFromJsonAsync<CoreEnvironmentConsumerResult>())!.Consumer;
         Assert.Equal(CoreCapabilityAuthorization.OperatorPrincipal("owner", AppIdentityService.HashToken(session)), consumer.PrincipalId);
         source.Run = source.Run with { Revision = "2", State = "cancelled", StopConfirmed = true };
-        using var released = await CoreReviewFixture.AsUserAsync(client, HttpMethod.Post, root + "/release", session,
-            new CoreEnvironmentConsumerRelease(consumer.ConsumerId, Guid.NewGuid().ToString(), consumer.Revision, new("provider-confirmed-stop", DateTimeOffset.UtcNow, "Provider confirmed exit")));
+        var release = new CoreEnvironmentConsumerRelease(consumer.ConsumerId, Guid.NewGuid().ToString(), consumer.Revision,
+            new("provider-confirmed-stop", DateTimeOffset.UtcNow, "Provider confirmed exit"));
+        using var rootOnly = await CoreReviewFixture.AsUserAsync(client, HttpMethod.Post, root + "/release", session, release);
+        Assert.False(rootOnly.IsSuccessStatusCode);
+        Assert.Contains("environment_consumer_stop_unconfirmed", await rootOnly.Content.ReadAsStringAsync());
+        source.Run = source.Run with { Revision = "3", WriterScopeClosed = true };
+        using var released = await CoreReviewFixture.AsUserAsync(client, HttpMethod.Post, root + "/release", session, release);
         released.EnsureSuccessStatusCode();
         Assert.Equal("released", (await released.Content.ReadFromJsonAsync<CoreEnvironmentConsumerResult>())!.Consumer.State);
     }

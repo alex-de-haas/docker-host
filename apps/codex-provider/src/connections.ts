@@ -10,6 +10,8 @@ import { AgentConnections, ConnectionError, type AgentConnection, type Connectio
 import type { ConnectionSecrets } from "@hosty/agent-provider-runtime/connections/secrets";
 import type { HarnessAdapter } from "@hosty/agent-provider-runtime/harness/adapter";
 import { absentUsage, type ProviderUsage } from "@hosty/agent-provider-runtime/harness/provider-usage";
+import { CodexChildren } from "./adapter/codex-children.js";
+import type { ProviderConnections } from "@hosty/agent-provider-runtime/connections/registry";
 import { CodexHarnessAdapter } from "./adapter/codex.js";
 import { CodexLogin, CodexLoginError, codexLoginFailure } from "./connections/codex-login.js";
 export const speechKinds = ["speech-to-text", "text-to-speech"] as const;
@@ -605,6 +607,18 @@ export class CodexConnections extends AgentConnections {
       await rm(legacy, { recursive: true });
     }
   }
+  async recoverChildObservations({ sessionId, nativeId, attemptId, checkpoint, emit }: Parameters<NonNullable<ProviderConnections["recoverChildObservations"]>>[0]): Promise<void> {
+    if (!/^[a-zA-Z0-9-]{1,100}$/.test(sessionId) || !/^[a-zA-Z0-9-]{1,100}$/.test(nativeId)) return;
+    const home = path.join(this.dataDir, "native-sessions", sessionId);
+    if (!(await lstat(home)).isDirectory()) return;
+    const client = new CodexLogin(home);
+    try {
+      await client.initialize();
+      const children = new CodexChildren(attemptId, new Map(),
+        threadId => client.request("thread/read", { threadId, includeTurns: true }), emit, () => true, undefined, checkpoint);
+      await children.recover(nativeId);
+    } finally { await client.closeAndWait(); }
+  }
   async inspectNativeContext(sessionId: string, nativeId: string): Promise<"available" | "missing"> {
     if (!/^[a-zA-Z0-9-]{1,100}$/.test(sessionId) || !/^[a-zA-Z0-9-]{1,100}$/.test(nativeId)) throw new Error("Invalid retained native identity.");
     const home = path.join(this.dataDir, "native-sessions", sessionId);
@@ -645,7 +659,7 @@ export class CodexConnections extends AgentConnections {
 }
 
 export const codexCapabilities: AgentCapabilities = {
-  version: 1, eventVersions: ["agent-event.1"],
+  version: 2, eventVersions: ["agent-event.1"],
   capabilities: ["installation-history", "installation-history.live", "session.resume", "session.reconnect", "configuration.resume-compatible", "configuration.approval-mode", "skills.catalog", "skills.exclusive-selection", "mcp.core", "mcp.apps", "mcp.policy-update", "workflow.consumer", "workflow.subagents", "workflow.profile-management", "model.change-on-resume", "decisions.questions", "decisions.auto-allow", "connections.usage", "runs.park", "runs.barrier", "runs.reconcile", "runs.retire", "decisions.next-turn", "predictions", "subagents.native"],
   limits: { maxCommandBytes: 1024 * 1024, maxEventBytes: 1024 * 1024, maxSnapshotBytes: 1024 * 1024, maxReplayBytes: 64 * 1024 * 1024, replayRetentionMs: 7 * 24 * 60 * 60 * 1000, maxControls: 10000, maxPageSize: 100, maxDurationMs: 24 * 60 * 60 * 1000  },
   configuration: { resumeCompatible: ["instructions", "systemPrompt", "skills", "nativeTools", "approvalMode", "predictions"] },

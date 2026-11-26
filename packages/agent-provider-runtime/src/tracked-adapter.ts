@@ -1,13 +1,9 @@
 import { AgentApiError } from "@hosty-sdk/app/agent";
-import type { HarnessAdapter, HarnessRun } from "./internal/harness/adapter.js";
+import { withRunLifecycle, type HarnessAdapter, type HarnessRun } from "./internal/harness/adapter.js";
 import type { TrackedNativeProcesses } from "./tracked-process.js";
 
 /** An SDK stream ending is separate from proof that the known native process tree stopped. */
 export function trackedAdapter(adapter: HarnessAdapter, processes: TrackedNativeProcesses): HarnessAdapter {
-  const confirm = async () => {
-    const evidence = await processes.stop();
-    if (!evidence.stopped || !evidence.allClosed) throw new AgentApiError("exit_unconfirmed", "Provider-owned receipts have not confirmed native process-tree exit.", 503, false, { reason: evidence.reason });
-  };
   return {
     name: adapter.name, capabilities: adapter.capabilities, probe: () => adapter.probe(),
     // Disposing a probe that never returned a run cleans resources without inventing SDK proof.
@@ -26,7 +22,6 @@ export function trackedAdapter(adapter: HarnessAdapter, processes: TrackedNative
           setMcpServers: async () => false, interrupt: async () => { await processes.stop(); }, stop: uncertainStop, stopAndWait: uncertainStop };
       }
       const stop = async () => {
-        let sdkError: unknown, cleanupError: unknown;
         try {
           if (!run.stopAndWait) {
             await run.stop();
@@ -34,19 +29,24 @@ export function trackedAdapter(adapter: HarnessAdapter, processes: TrackedNative
           }
           await run.stopAndWait();
           await processes.confirmSdkStop();
-        } catch (error) { sdkError = error; }
-        // Cleanup is still necessary when the SDK cannot confirm stop, but receipts alone
-        // cannot erase that uncertainty or authorize a subsequent native turn.
-        try { await confirm(); } catch (error) { cleanupError = error; }
-        if (sdkError) throw sdkError;
-        if (cleanupError) throw cleanupError;
+        } finally {
+          // The native runners own descendant cleanup independently of the SDK and root slot.
+          // A terminal attempt still needs separate writer-scope proof before physical release.
+          void processes.stop().catch(() => {});
+        }
       };
-      const wrapped: HarnessRun = { send: text => run.send(text), resolveApproval: (...args) => run.resolveApproval(...args), resolveQuestion: (...args) => run.resolveQuestion(...args),
-        setMcpServers: value => run.setMcpServers(value), interrupt: () => run.interrupt(), stop, stopAndWait: stop };
-      if (run.readUsage) wrapped.readUsage = () => run.readUsage!();
-      if (run.disableSuggestions) wrapped.disableSuggestions = () => run.disableSuggestions!();
-      if (run.finishSuggestions) wrapped.finishSuggestions = () => run.finishSuggestions!();
-      return wrapped;
+      let stopping: ReturnType<NonNullable<HarnessRun["stopForCancellation"]>> | undefined;
+      const stopForCancellation = run.stopForCancellation && (() => stopping ??= (async () => {
+        try {
+          const { drained } = await run.stopForCancellation!();
+          await processes.confirmSdkStop(true);
+          return { drained: drained.catch(() => {}).then(() => processes.stop()).then(() => {}) };
+        } catch (error) {
+          void processes.stop().catch(() => {});
+          throw error;
+        }
+      })());
+      return withRunLifecycle(run, { stop, stopAndWait: stop, stopForCancellation });
     },
   };
 }

@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile, readdir, lstat, stat, copyFile, rename, rm, rmdir, readlink } from "node:fs/promises";
@@ -6,11 +7,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { cp } from "node:fs/promises";
 import { projectNpm } from "../../../scripts/npm-workspace.mjs";
 
+import { initializeGeneration, useGeneration, unusedGeneration, generationBuildEnvironment, reclaimGenerations } from "../../../packages/agent-provider-runtime/scripts/generation-use.mjs";
+
 export const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const inputs = [
   "package.json", "package-lock.json", "apps/harness/manifest.json", "apps/harness/package.json",
   "apps/harness/tsconfig.json", "apps/harness/scripts/local-runtime.mjs",
-  "apps/harness/scripts/build-local.mjs", "apps/harness/scripts/stage-runtime.mjs", "scripts/npm-workspace.mjs", "apps/harness/src", "apps/harness/shared",
+  "packages/agent-provider-runtime/scripts/generation-use.mjs", "apps/harness/scripts/build-local.mjs", "apps/harness/scripts/stage-runtime.mjs", "scripts/npm-workspace.mjs", "apps/harness/src", "apps/harness/shared",
   "apps/harness/web/package.json", "apps/harness/web/next.config.ts", "apps/harness/web/tsconfig.json",
   "apps/harness/web/postcss.config.mjs", "apps/harness/web/src", "apps/harness/web/public",
   "packages/app-sdk/package.json", "packages/app-sdk/src", "shared/web",
@@ -136,7 +139,7 @@ export function buildEnvironment() {
 
 export async function run(command, args, cwd, { boundedBuild = false } = {}) {
   await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env: { ...buildEnvironment(), ...(boundedBuild ? { HOSTY_HARNESS_BOUNDED_BUILD: "1" } : {}) }, stdio: "inherit",
+    const child = spawn(command, args, { cwd, env: { ...buildEnvironment(), ...generationBuildEnvironment(cwd), ...(boundedBuild ? { HOSTY_HARNESS_BOUNDED_BUILD: "1" } : {}) }, stdio: "inherit",
       shell: process.platform === "win32" && command === "npm" });
     child.once("error", reject);
     child.once("exit", (code, signal) => code === 0 ? resolve() :
@@ -202,16 +205,27 @@ export async function build(snapshot) {
     await rm(path.join(snapshot, directory), { recursive: true, force: true });
 }
 
+async function selectedGeneration(store, key) {
+  try {
+    const pointer = JSON.parse(await readFile(path.join(store, key + ".json"), "utf8"));
+    if (pointer.key === key && typeof pointer.directory === "string" &&
+        pointer.directory.startsWith(key + "-") && /^[a-f0-9-]{36}$/.test(pointer.directory.slice(key.length + 1)))
+      return path.join(store, pointer.directory);
+  } catch (error) { if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error; }
+  return path.join(store, key);
+}
+
 export async function prepare({ root = repository, store = path.join(root, "apps/harness/.local-runtime"),
   files, identity = platformIdentity(), buildBundle = build, log = console.log } = {}) {
   const discover = files === undefined;
   files ??= await sourceFiles(root);
   const key = await fingerprint(root, files, identity);
-  const generation = path.join(store, key);
   const started = performance.now();
   await mkdir(store, { recursive: true });
   const release = await lock(store);
   try {
+    let generation = await selectedGeneration(store, key);
+    await reclaimGenerations(store, generation);
     if (await completeBundle(generation, key)) {
       log("[local-runtime] Reusing production bundle " + key.slice(0, 12) + " (" +
         Math.round(performance.now() - started) + " ms); no install or build.");
@@ -219,6 +233,7 @@ export async function prepare({ root = repository, store = path.join(root, "apps
     }
     const staging = path.join(store, ".build-" + randomUUID());
     await mkdir(staging);
+    initializeGeneration(staging);
     try {
       log("[local-runtime] Preparing production bundle " + key.slice(0, 12));
       for (const file of files) {
@@ -235,10 +250,20 @@ export async function prepare({ root = repository, store = path.join(root, "apps
       if (!await completeBundle(staging, key)) throw new Error("Harness production bundle is incomplete.");
       if (await fingerprint(root, discover ? await sourceFiles(root) : files, identity) !== key)
         throw new Error("Harness source changed during preparation; retry with the current source.");
-      // Preserve an incomplete generation for any existing consumers instead of overwriting it.
-      try { await rename(generation, generation + ".incomplete-" + randomUUID()); }
-      catch (error) { if (error.code !== "ENOENT") throw error; }
+      // A reader can still load lazy imports or web assets by their original absolute path.
+      // Publish a distinct replacement if the existing generation is held or has no ownership marker.
+      const exists = await stat(generation).then(() => true, error => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      });
+      if (exists && unusedGeneration(generation)) await rename(generation, path.join(store, key + ".incomplete-" + randomUUID()));
+      else if (exists) generation = path.join(store, key + "-" + randomUUID());
       await rename(staging, generation);
+      if (path.basename(generation) !== key) {
+        const pointer = path.join(store, key + ".json"), temporary = pointer + "." + randomUUID() + ".tmp";
+        await writeFile(temporary, JSON.stringify({ key, directory: path.basename(generation) }));
+        await rename(temporary, pointer);
+      }
       log("[local-runtime] Production bundle ready (" + Math.round(performance.now() - started) + " ms).");
       return generation;
     } finally { await rm(staging, { recursive: true, force: true }); }
@@ -248,15 +273,21 @@ export async function prepare({ root = repository, store = path.join(root, "apps
 export async function start(service, root = repository) {
   if (service !== "api") throw new Error("Expected api; native execution belongs to an installed agent provider.");
   const key = await fingerprint(root, await sourceFiles(root));
-  const generation = path.join(root, "apps/harness/.local-runtime", key);
-  if (!await completeBundle(generation, key))
-    throw new Error("Harness production bundle is absent or incomplete. Run node scripts/local-runtime.mjs prepare first.");
+  const store = path.join(root, "apps/harness/.local-runtime");
+  const release = await lock(store);
+  let generation;
+  try {
+    generation = await selectedGeneration(store, key);
+    if (!await completeBundle(generation, key))
+      throw new Error("Harness production bundle is absent or incomplete. Run node scripts/local-runtime.mjs prepare first.");
+    useGeneration(generation);
+  } finally { await release(); }
   process.env.NODE_ENV = "production";
   process.env.HOSTY_HARNESS_WEB_OUTPUT = path.join(generation, "web");
   await import(pathToFileURL(path.join(generation, service + ".mjs")).href);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   try {
     if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Harness cached development requires Node.js 24 or newer.");
     if (process.argv[2] === "prepare") await prepare();

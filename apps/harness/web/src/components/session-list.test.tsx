@@ -36,7 +36,7 @@ it("keeps the embedded history waiting label and session action with a decorativ
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
   const waiting = { id: "waiting", title: "Needs review", status: "awaiting_question", createdAt: "2026-10-23T12:00:00Z" } as AssistantSession;
-  const unconfirmed: AssistantSession = { ...waiting, id: "lost", providerHistoryContact: { reason: "unavailable", runId: "run", observedAt: waiting.createdAt } };
+  const unconfirmed: AssistantSession = { ...waiting, id: "lost", providerStatusContact: { reason: "unavailable", runId: "run", observedAt: waiting.createdAt } };
   const onPick = vi.fn();
   try {
     await act(async () => root.render(<SessionList sessions={[waiting, unconfirmed]} activeId={waiting.id} onPick={onPick} onRename={vi.fn()} onDelete={vi.fn()} />));

@@ -73,6 +73,8 @@ export function suitePlan(suite, { platform = process.platform, node = process.e
           command('docker', ['build', '-f', 'apps/harness/Dockerfile', '-t', image, '.']),
         ] : []),
         command(python, ['scripts/check-workspace-activation.py', '.', suite, '--managed'], image ? { HOSTY_AGENT_PROVIDERS_API_IMAGE: image } : {}),
+        ...(image ? [command(python, ['scripts/check-workspace-activation.py', '.', 'agent-cutover', '--managed'],
+          { HOSTY_AGENT_PROVIDERS_API_IMAGE: image })] : []),
       ] };
     }
     case 'activation':

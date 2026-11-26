@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "agent-fixtures.1",
+  "schemaVersion": "agent-fixtures.2",
   "provider": {
     "appId": "org.example.unrelated",
     "installationId": "installation-1",
@@ -34,8 +34,8 @@
       }
     },
     {
-      "method": "POST",
-      "path": "/runs/22222222-2222-4222-8222-222222222222/cancel",
+      "method": "PUT",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/stop",
       "body": {
         "requestId": "44444444-4444-4444-8444-444444444444",
         "expectedGeneration": "33333333-3333-4333-8333-333333333333",
@@ -43,8 +43,8 @@
       }
     },
     {
-      "method": "POST",
-      "path": "/runs/22222222-2222-4222-8222-222222222222/cancel",
+      "method": "PUT",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/stop",
       "body": {
         "requestId": "44444444-4444-4444-8444-444444444444",
         "fenceIfNotAdmitted": {
@@ -104,6 +104,20 @@
         "count": 1,
         "data": "YQ=="
       }
+    },
+    {
+      "method": "PUT",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/stop",
+      "body": {
+        "requestId": "44444444-4444-4444-8444-444444444444"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/discard",
+      "body": {
+        "requestId": "33333333-3333-4333-8333-333333333333"
+      }
     }
   ],
   "invalidRequests": [
@@ -145,8 +159,8 @@
       }
     },
     {
-      "method": "POST",
-      "path": "/runs/22222222-2222-4222-8222-222222222222/cancel",
+      "method": "PUT",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/stop",
       "body": {
         "requestId": "44444444-4444-4444-8444-444444444444",
         "expectedGeneration": "33333333-3333-4333-8333-333333333333",
@@ -181,6 +195,30 @@
         "expectedRevision": "1",
         "command": "retire",
         "stopped": true
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/cancel",
+      "body": {
+        "requestId": "44444444-4444-4444-8444-444444444444",
+        "expectedGeneration": "33333333-3333-4333-8333-333333333333",
+        "expectedRevision": "1"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/discard",
+      "body": {
+        "requestId": "33333333-3333-4333-8333-333333333333"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/runs/22222222-2222-4222-8222-222222222222/discard",
+      "body": {
+        "requestId": "33333333-3333-4333-8333-333333333333",
+        "force": true
       }
     }
   ]

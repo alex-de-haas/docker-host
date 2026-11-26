@@ -44,6 +44,8 @@ test('agent providers check scripted native transports and a production Docker c
   assert.match(image, /^hosty-harness-api-acceptance:[a-f0-9-]{36}$/);
   assert.deepEqual(plan.steps[3].args, ['build', '-f', 'apps/harness/Dockerfile', '-t', image, '.']);
   assert.deepEqual(plan.steps[4].env, { HOSTY_AGENT_PROVIDERS_API_IMAGE: image });
+  assert.deepEqual(plan.steps[5].args, ['scripts/check-workspace-activation.py', '.', 'agent-cutover', '--managed']);
+  assert.deepEqual(plan.steps[5].env, plan.steps[4].env);
   assert.notEqual(suitePlan('agent-providers').steps[3].args[4], image);
   assert.deepEqual(plan.steps[4].args, ['scripts/check-workspace-activation.py', '.', 'agent-providers', '--managed']);
   assert.ok(plan.prerequisites.some(step => step.file === 'docker'));

@@ -26,7 +26,7 @@ beforeEach(async () => {
 });
 afterEach(async () => { await service?.close(); server?.closeAllConnections(); if (server) await new Promise<void>(resolve => server.close(() => resolve())); vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(directory, { recursive: true, force: true }); });
 async function start() {
-  service = new TaskService({ store: { dataDir: directory } } as SessionManager);
+  service = new TaskService({ store: { dataDir: directory, preferencesDir: directory } } as SessionManager);
   server = createServer((req, res) => {
     void service.route(req, res, new URL(req.url!, origin), async () => {
       let data = ""; for await (const chunk of req) data += chunk; return JSON.parse(data);
@@ -160,7 +160,7 @@ it("recovers v2 executor dispatch after source restart without saving a bearer t
   const response = await call(`/tasks/${task.ref.id}/actions`, "hosty_provider.2.test.signature", { requestId, expectedRevision: task.revision, action: "ready" });
   expect(response.status).toBe(200); task = await response.json() as TaskRecord;
   expect(await service.store.dispatch(task.ref.id)).toEqual(dispatch);
-  await service.close(); service = new TaskService({ store: { dataDir: directory } } as SessionManager); vi.spyOn(service.executor, "tick").mockResolvedValue();
+  await service.close(); service = new TaskService({ store: { dataDir: directory, preferencesDir: directory } } as SessionManager); vi.spyOn(service.executor, "tick").mockResolvedValue();
   delegated.mockClear(); await service.tick();
   expect(delegated).toHaveBeenCalledWith(expect.objectContaining({ dispatch, operation: "get", executionId: task.attempts[0]!.executionId }), undefined);
   const state = await import("node:fs/promises").then(fs => fs.readFile(path.join(directory, "tasks", "tasks.json"), "utf8"));

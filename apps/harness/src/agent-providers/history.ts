@@ -52,7 +52,8 @@ export class ProviderHistoryFeeds {
     private readonly contact: (id: string, issue: HistoryContactIssue | null) => Promise<void>,
     private readonly unsupported: (id: string) => void,
     gaps: (id: string, gaps: ProviderHistoryGap[]) => Promise<void> = async () => {},
-    private readonly state: (id: string, provider: AgentProviderRef, state: AgentHistorySessionState) => Promise<void> = async () => {}) {
+    private readonly state: (id: string, provider: AgentProviderRef, state: AgentHistorySessionState) => Promise<void> = async () => {},
+    private readonly observeStatus: (id: string, provider: AgentProviderRef, signal: AbortSignal) => Promise<void> = async () => {}) {
     this.coverage = new ProviderHistoryCoverage(store, gaps, (id, provider, sessionId) => {
       const binding = this.current.get(id);
       return binding?.key === providerKey(provider) && binding.sessionId === sessionId;
@@ -126,7 +127,12 @@ export class ProviderHistoryFeeds {
     const follow = () => this.follow(provider, supported => {
       feed.supported = supported; decide(supported); acknowledge(supported);
     }, () => acknowledge(true), feed);
-    feed.done = (existing ? existing.done.then(follow) : follow()).finally(() => { decide(false); acknowledge(false); });
+    if (existing && existing.supported === false) existing.stop.abort();
+    const run = async () => {
+      const signal = AbortSignal.any([feed.stop.signal, this.shutdown.signal]);
+      await Promise.all([follow(), this.monitorAttempts(provider, signal), this.deliverReceipts(provider, signal)]);
+    };
+    feed.done = (existing ? existing.done.then(run) : run()).finally(() => { decide(false); acknowledge(false); });
     return ready;
   }
 
@@ -137,6 +143,43 @@ export class ProviderHistoryFeeds {
     // The background owner can wait for definitive capability evidence across a temporary outage.
     // The HTTP caller receives an acknowledgement after its first probe.
     return this.feeds.get(key)?.attempted ?? ready;
+  }
+
+  /** Run status and inbox acknowledgement continue independently of history SSE and every browser. */
+  private async monitorAttempts(provider: AgentProviderRef, signal: AbortSignal) {
+    const key = providerKey(provider);
+    while (!signal.aborted) {
+      const ids = [...this.current].filter(([, binding]) => binding.key === key).map(([id]) => id);
+      const pendingStatus = ids[Symbol.iterator]();
+      const observe = async () => {
+        for (const id of pendingStatus) {
+          if (signal.aborted) return;
+          await this.observeStatus(id, provider, AbortSignal.any([signal, AbortSignal.timeout(12000)])).catch(() => {});
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(ids.length, 4) }, observe));
+      await delay(10000, undefined, { signal, ref: false }).catch(() => {});
+    }
+  }
+
+  private async deliverReceipts(provider: AgentProviderRef, signal: AbortSignal) {
+    const key = providerKey(provider);
+    while (!signal.aborted) {
+      const bound = new Set([...this.bindings.get(key)?.values() ?? []].flatMap(chats => [...chats.keys()]));
+      for (const id of bound) {
+        if (signal.aborted) return;
+        try {
+          await this.inbox.resume(id);
+          const receipts = await this.store.withTranscript(id, db => db.acknowledgements(provider));
+          for (const receipt of receipts ?? []) {
+            if (!this.bindings.get(key)?.get(receipt.sessionId)?.has(id)) continue;
+            await this.backend.acknowledgeHistory(provider, receipt, AbortSignal.any([signal, AbortSignal.timeout(15000)]));
+            await this.store.withTranscript(id, db => db.acknowledged(provider, receipt));
+          }
+        } catch { /* Unacknowledged work stays durable across service and provider restarts. */ }
+      }
+      await delay(10000, undefined, { signal, ref: false }).catch(() => {});
+    }
   }
 
   private async report(key: string, issue: HistoryContactIssue | null): Promise<void> {
@@ -199,7 +242,7 @@ export class ProviderHistoryFeeds {
           const id = this.match(key, observation.sessionId, observation.userId);
           if (id) await this.inbox.deliver(id, provider, observation);
           signal.throwIfAborted();
-          if (observation.item.kind === "event" && ["message.delta", "tool.output"].includes(observation.item.event.type)) continue;
+          if (!observation.sessionPosition && observation.item.kind === "event" && ["message.delta", "tool.output"].includes(observation.item.event.type)) continue;
           await durableWriteFile(filename, JSON.stringify({ version: 1, cursor: observation.cursor, ...(this.incomplete.size ? { incomplete: [...this.incomplete] } : {}) }));
           failures = 0; resetCursor = false; stage = "subscribe";
         }

@@ -16,10 +16,10 @@ async function fixture(suggestions = false) {
   cleanups.push(() => rm(directory, { recursive: true, force: true }));
   const journal = new WorkerJournal(directory); await journal.initialize();
   let options: HarnessStartOptions | undefined;
-  const release = vi.fn(), stop = vi.fn(async () => {});
+  const release = vi.fn(), stop = vi.fn(async () => {}), interrupt = vi.fn(async () => {});
   const engine = new WorkerEngine(journal, { reserve: async () => release, validateSelection: async () => {}, cwd: async () => directory,
     adapter: async () => ({ name: "Neutral fixture", capabilities: { questions: true, appMcp: false, liveReconfigure: false, autoAllow: false, denyReason: false, promptSuggestions: true },
-      probe: async () => ({ available: true }), start(value) { options = value; return { send() {}, interrupt: async () => {},
+      probe: async () => ({ available: true }), start(value) { options = value; return { send() {}, interrupt,
         stop, stopAndWait: stop, resolveApproval: () => false, resolveQuestion: () => false, setMcpServers: async () => false }; } }) }, 1);
   cleanups.push(() => engine.close());
   const runId = randomUUID(), request: WorkerRunRequest = { conversationId: "conversation", operation: "chat", binding: { connectionId: "account", connectionRevision: 1, harnessKind: "neutral.example" },
@@ -32,11 +32,14 @@ async function fixture(suggestions = false) {
   emit({ type: "tool_use", toolUseId: "same", toolName: "Bash", input: {}, source: child });
   emit({ type: "agent_status", ...child, state: "running", stopConfirmed: false, source: child });
   await journal.exclusive(async () => {});
-  return { engine, journal, runId, emit, release, stop };
+  return { engine, journal, runId, emit, release, stop, interrupt };
 }
 
 it.each([false, true])("persists matched cleanup terminals before the terminal receipt (predictions: %s)", async suggestions => {
   const f = await fixture(suggestions);
+  let terminalCommitted!: (state: string) => void, suggestionsReady!: () => void;
+  const terminal = new Promise<string>(resolve => { terminalCommitted = resolve; });
+  const suggesting = new Promise<void>(resolve => { suggestionsReady = resolve; });
   const atCompletion: Array<{ effects: unknown; outputs: number }> = [];
   const update = f.journal.update.bind(f.journal);
   vi.spyOn(f.journal, "update").mockImplementation(async (...args) => {
@@ -44,7 +47,10 @@ it.each([false, true])("persists matched cleanup terminals before the terminal r
       const retained = await f.journal.load(f.runId);
       atCompletion.push({ effects: retained.receipt.effects, outputs: retained.events.filter(frame => frame.event.type === "tool_result").length });
     }
-    return update(...args);
+    const receipt = await update(...args);
+    if (receipt.state === "suggesting") suggestionsReady();
+    if (["completed", "cancelled", "failed", "interrupted"].includes(receipt.state)) terminalCommitted(receipt.state);
+    return receipt;
   });
   f.stop.mockImplementation(async () => {
     f.emit({ type: "native_effect", id: "same", state: "settled", source: { ...child, parentToolCallId: "foreign-parent" } });
@@ -67,10 +73,10 @@ it.each([false, true])("persists matched cleanup terminals before the terminal r
   });
   f.emit({ type: "result", status: "success" });
   if (suggestions) {
-    await vi.waitFor(async () => expect((await f.journal.load(f.runId)).receipt.state).toBe("suggesting"));
+    await suggesting;
     f.emit({ type: "prompt_suggestion", text: "Next step" });
   }
-  await vi.waitFor(async () => expect((await f.journal.load(f.runId)).receipt.state).toBe("completed"));
+  expect(await terminal).toBe("completed");
   await f.journal.exclusive(async () => {});
   const retained = await f.journal.load(f.runId), events = retained.events.map(frame => frame.event);
   expect(atCompletion).toEqual([{ effects: {}, outputs: 2 }]);
@@ -124,3 +130,42 @@ it("fails closed when a cleanup callback has malformed source instead of settlin
   expect(retained.receipt.effects).toEqual({ same: "started", [nativeEventIdentity(child, "same")]: "started" });
   expect(retained.events.some(frame => frame.event.type === "native_effect" && frame.event.state === "settled")).toBe(false);
 });
+
+
+it.each([["root", undefined], ["child", child]] as const)(
+  "preserves an accepted Stop when the %s agent asks for a decision during interruption", async (_label, source) => {
+    const f = await fixture(true);
+    f.emit({ type: "approval_request", approvalId: "before", toolName: "Command", input: {}, source });
+    await f.journal.exclusive(async () => {});
+    let interrupted: Awaited<ReturnType<WorkerJournal["load"]>> | undefined;
+    f.interrupt.mockImplementation(async () => {
+      f.emit({ type: "approval_request", approvalId: "late", toolName: "Command", input: {}, source });
+      f.emit({ type: "question_request", questionId: "late", questions: [], blocking: true, source });
+      f.emit({ type: "native_effect", id: "same", state: "settled", source: { agentId: "" } });
+      f.emit({ type: "native_effect", id: "unseen", state: "unknown", source });
+      f.emit({ type: "tool_result", toolUseId: "same", status: "failed", output: "Wrong lineage", source: { ...child, parentToolCallId: "other" } });
+      f.emit({ type: "native_effect", id: "same", state: "settled", source });
+      f.emit({ type: "tool_result", toolUseId: "same", status: "cancelled", output: "Observed cancellation", source });
+      f.emit({ type: "native_effect", id: "racing-call", state: "started", source });
+      f.emit({ type: "result", status: "success" });
+      f.emit({ type: "error", message: "Native interrupt" });
+      interrupted = await f.journal.exclusive(() => f.journal.load(f.runId));
+    });
+    const receipt = await f.engine.cancel(f.runId, "stop");
+    expect(interrupted?.receipt).toMatchObject({ state: "cancelling", pending: [] });
+    expect(interrupted?.receipt.snapshot?.result).toBeUndefined();
+    expect(receipt).toMatchObject({ state: "cancelled", exitConfirmed: true, pending: [] });
+    expect(receipt.effects).toEqual({
+      [nativeEventIdentity(source ? undefined : child, "same")]: "started",
+      [nativeEventIdentity(source, "racing-call")]: "started",
+    });
+    const events = (await f.journal.load(f.runId)).events.map(frame => frame.event);
+    expect(events.filter(event => event.type === "approval_request" || event.type === "question_request"))
+      .toEqual([expect.objectContaining({ approvalId: "before" })]);
+    expect(events.filter(event => event.type === "tool_result")).toEqual([
+      expect.objectContaining({ toolUseId: "same", output: "Observed cancellation" }),
+    ]);
+    expect(f.stop).toHaveBeenCalledOnce();
+    expect(f.release).toHaveBeenCalledOnce();
+  },
+);

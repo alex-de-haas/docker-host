@@ -10,7 +10,7 @@ export function InlineError({ message, className, role = "alert" }: { message: s
   </Alert>;
 }
 
-export function StatusBadge({ value }: { value: string }) {
+export function StatusBadge({ value, label }: { value: string; label?: string }) {
   const normalized = value.toLowerCase();
   // "healthy" is matched exactly so it does not also light up on "unhealthy".
   const working = ["running", "starting", "stopping", "thinking", "working"].some(state => normalized.includes(state));
@@ -38,7 +38,7 @@ export function StatusBadge({ value }: { value: string }) {
         : attention ? <Diamond className="size-3 shrink-0" aria-hidden="true" />
         : transitional ? <span className="inline-flex shrink-0 motion-safe:animate-spin" aria-hidden="true"><Loader2 className="size-3" /></span>
         : <span className="size-2 shrink-0 rounded-full bg-muted-foreground" aria-hidden="true" />}
-      {value}
+      {label ?? value}
     </Badge>
   );
 }

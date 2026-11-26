@@ -55,7 +55,7 @@ async function fixture() {
     if (String(url).endsWith("/agent/authorize")) {
       const { provider: _provider, ...request } = JSON.parse(String(init?.body)) as AgentAuthorizationRequest & { provider: unknown };
       authorizations.push(structuredClone(request)); const token = randomUUID(); grants.set(token, request);
-      return Response.json({ provider, baseUrl: origin + "/api/agent/v1", token, expiresAt: new Date(Date.now() + 60000).toISOString() });
+      return Response.json({ provider, baseUrl: origin + "/api/agent/v2", token, expiresAt: new Date(Date.now() + 60000).toISOString() });
     }
     if (init?.body) sent.push({ path: new URL(String(url)).pathname, body: String(init.body) });
     const response = await fetch(url, init);
@@ -75,7 +75,7 @@ async function fixture() {
 }
 
 describe("Harness admission against the actual public provider controller", () => {
-  it("keeps an applied cancellation's exact bytes across repeated Stop and serialized consumer recovery while exit remains unknown", async () => {
+  it("keeps an accepted cancellation's exact bytes across repeated Stop and serialized consumer recovery while exit remains unknown", async () => {
     const f = await fixture(), run = f.run(); cleanup.push(() => run.detach());
     f.controller.driver.cancel = vi.fn(async runId => {
       await f.store.exclusive(async () => {
@@ -100,7 +100,7 @@ describe("Harness admission against the actual public provider controller", () =
       await expect(run.stopAndWait()).rejects.toMatchObject({ code: "stop_unconfirmed" });
       const original = f.durable().cancellations![runId]!.request;
       const input = JSON.parse(original.body);
-      await vi.waitFor(async () => expect((await f.client.control(runId, input.requestId)).state).toBe("applied"));
+      expect((await f.client.control(runId, input.requestId)).state).toBe("accepted");
       const controls = vi.spyOn(f.client, "control");
       // The public revision advances independently after command acknowledgement.
       await f.store.exclusive(async () => {
@@ -109,15 +109,15 @@ describe("Harness admission against the actual public provider controller", () =
       });
       await expect(run.stopAndWait()).rejects.toMatchObject({ code: "stop_unconfirmed" });
       expect(controls).toHaveBeenCalledWith(runId, input.requestId);
-      expect(f.durable().mutations).toEqual({});
-      expect(f.durable().cancellations![runId]).toEqual({ request: original, receipt: expect.objectContaining({ state: "applied", requestId: input.requestId }) });
+      expect(Object.values(f.durable().mutations ?? {})).toEqual([original]);
+      expect(f.durable().cancellations![runId]).toEqual({ request: original, receipt: expect.objectContaining({ state: "accepted", requestId: input.requestId }) });
       expect(run.stopProof).toBeNull();
       await run.detach();
       const serialized: ProviderExecutionState = JSON.parse(JSON.stringify(f.durable()));
       const restored = f.run(serialized); cleanup.push(() => restored.detach()); await restored.attach();
       await expect(restored.stopAndWait()).rejects.toMatchObject({ code: "stop_unconfirmed" });
       expect(serialized.cancellations![runId]!.request).toEqual(original);
-      expect(f.sent.filter(request => request.path.endsWith("/cancel"))).toEqual([{ path: `/api/agent/v1/runs/${runId}/cancel`, body: original.body }]);
+      expect(f.sent.filter(request => request.path.endsWith("/stop"))).toEqual([{ path: `/api/agent/v2/runs/${runId}/stop`, body: original.body }]);
       expect(f.controller.driver.cancel).toHaveBeenCalledOnce();
       expect(f.start).toHaveBeenCalledOnce();
       expect(restored.stopProof).toBeNull();
@@ -135,7 +135,9 @@ describe("Harness admission against the actual public provider controller", () =
     expect(f.authorizations.find(request => request.operation === "runs.start")?.configurationDigest).toBe(session.configurationDigest);
     expect(f.state.appliedConfiguration?.digest).toBe(session.configurationDigest);
     expect(f.sent.filter(request => request.path.includes("/configurations/"))).toEqual([]);
-    expect(f.start).toHaveBeenCalledExactlyOnceWith(f.state.sessionId, f.state.runId);
+    const runId = f.state.runId!;
+    const { record } = await f.store.run(runId);
+    expect(f.start).toHaveBeenCalledExactlyOnceWith(f.state.sessionId, runId, record.snapshot.generation);
   });
 
   it("retries a lost admission with its original digest, UUID and exact bytes without a second execution", async () => {
@@ -161,7 +163,8 @@ describe("Harness admission against the actual public provider controller", () =
     await execution.reconcileMutation(prepared);
     expect(f.sent.at(-1)?.body).toBe(prepared.body);
     expect(f.authorizations.at(-1)).toMatchObject({ runId, bodyHash: prepared.bodyHash, configurationDigest: session.configurationDigest });
-    expect(f.start).toHaveBeenCalledExactlyOnceWith(f.state.sessionId, runId);
+    const { record } = await f.store.run(runId);
+    expect(f.start).toHaveBeenCalledExactlyOnceWith(f.state.sessionId, runId, record.snapshot.generation);
   });
 
   it("does not retarget an old unadmitted start after the provider configuration changes", async () => {
@@ -187,7 +190,7 @@ describe("Harness admission against the actual public provider controller", () =
     const key = (request: typeof prepared | typeof cancel) => `${request.method}:${request.path}:${request.bodyHash}`;
     f.state.runId = runId; f.state.mutations = { [key(prepared)]: prepared, [key(cancel)]: cancel }; await f.persistence.save(f.state);
     const restored = f.run(); cleanup.push(() => restored.detach()); await restored.attach();
-    expect(f.sent.slice(1).map(request => request.path)).toEqual([`/api/agent/v1/runs/${runId}/cancel`, `/api/agent/v1/sessions/${f.state.sessionId}/runs/${runId}`]);
+    expect(f.sent.slice(1).map(request => request.path)).toEqual([`/api/agent/v2/runs/${runId}/stop`, `/api/agent/v2/sessions/${f.state.sessionId}/runs/${runId}`]);
     expect(f.state.run).toMatchObject({ ref: { id: runId }, state: "cancelled", stopConfirmed: true });
     expect(f.state.mutations).toEqual({});
     expect(f.start).not.toHaveBeenCalled();

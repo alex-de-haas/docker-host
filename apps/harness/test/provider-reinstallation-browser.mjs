@@ -31,6 +31,8 @@ try {
     const { id, createdBy, connectionId, connectionRevision, selection, selectionRevision, executionSelection, providerExecution, contextChanges } = await response.json();
     assert.equal(id, config.chatId);
     assert.equal(createdBy, identity.user.id);
+    assert.equal(providerExecution.run.stopConfirmed, true);
+    assert.equal(providerExecution.run.phase, "terminal");
     return { connectionId, connectionRevision, selection, selectionRevision, executionSelection,
       sessionId: providerExecution.sessionId, runId: providerExecution.runId, contextChanges };
   }
@@ -41,12 +43,13 @@ try {
     if (["GET", "HEAD", "OPTIONS"].includes(request.method())) return;
     const path = new URL(request.url()).pathname;
     if ([sessionPath + "/context", sessionPath + "/model", sessionPath + "/provider", sessionPath + "/messages"].includes(path)
-      || path.startsWith(sessionPath + "/message-queue") || path.startsWith("/api/agent/v1/")) mutations.push(path);
+      || path.startsWith(sessionPath + "/message-queue") || path.startsWith("/api/agent/v2/")) mutations.push(path);
   });
 
   await page.goto(config.harness + "/chats/?session=" + encodeURIComponent(config.chatId));
   const composer = page.getByRole("textbox", { name: "Message", exact: true });
   const draft = "Unsent recovery draft " + randomUUID();
+  await page.getByText(config.lastUserMessage, { exact: true }).last().waitFor();
   await composer.fill(draft);
   await page.getByRole("button", { name: /^Agent settings:/ }).click();
   await page.getByRole("button", { name: "Change session context…" }).click();

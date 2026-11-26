@@ -1,13 +1,13 @@
 ---
 created: 2026-11-12
-updated: 2026-11-24
+updated: 2026-11-25
 summary: Independent Local agent apps expose installation-qualified HTTP/SSE execution with provider-owned native state and Core-scoped authority.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
 
 # Agent Provider Execution
 
-Hosty exposes agent execution through an application-neutral HTTP/SSE v1 interface. Core discovers
+Hosty exposes agent execution through an application-neutral HTTP/SSE v2 interface. Core discovers
 confirmed `agent` providers and authorizes exact operations. A consumer sends inputs and receives
 execution data directly from the selected provider; Core does not relay the prompt or event stream.
 Generic Core skills, MCP and [Decisions](../shared-decisions/feature.md) retain their separate data
@@ -119,8 +119,8 @@ identity selects a provider or grants authority.
 
 ## Public HTTP And SSE Contract
 
-The first-party interface base is `/api/agent/v1`. Declarations supply the actual endpoint and path;
-consumers do not derive them from an app ID. Execution operations require an exact Core credential. Installation history uses a separate read-only credential.
+The first-party interface base is `/api/agent/v2`. Declarations supply the actual endpoint and path;
+consumers do not derive them from an app ID. Execution operations require an exact Core credential. Installation history uses a separate credential scoped to the receiving installation. A content owner can also acknowledge its committed delivery positions.
 The unauthenticated `/healthz` endpoint reports service liveness only.
 
 | Method and relative route | Operation |
@@ -137,8 +137,11 @@ The unauthenticated `/healthz` endpoint reports service liveness only.
 | `GET /runs/{uuid}/events?after={cursor}` | Sequenced `agent-event.1` SSE replay and live events |
 | `GET /history/events` | Installation-owned history across runs, returned as SSE or bounded JSON pages |
 | `POST /runs/{uuid}/responses` | Revision-bound approval/question response |
-| `POST /runs/{uuid}/cancel` | Cancellation or a lost-start admission fence |
-| `POST /runs/{uuid}/controls` | Capability-gated park, barrier, reconciliation or configuration control |
+| `PUT /runs/{uuid}/stop` | Record the desired stopped state for this attempt, including a Stop received before the original start |
+| `PUT /runs/{uuid}/discard` | Retire public delivery for the original closed attempt under the consuming installation’s cleanup grant |
+| `GET /runs/{uuid}/closure` | Read process closure, attempt identity and continuation state without reading chat content |
+| `POST /history/ack?sessionId=…&epoch=…&through=…` | Acknowledge a contiguous range committed by the transcript owner |
+| `POST /runs/{uuid}/controls` | Capability-gated barrier, configuration and other execution controls |
 | `GET /runs/{uuid}/controls/{requestId}` | Durable control receipt |
 
 A provider advertising `session.reconnect` can verify a retained native context after
@@ -196,7 +199,7 @@ sequenceDiagram
     H->>P: Start the authorized run
     H->>H: Retain the chat and qualified run association
     H->>C: Authenticate the installation for history delivery
-    C-->>H: Read-only credential for the selected provider
+    C-->>H: Installation-scoped history credential
     H->>P: Open live subscription
     P-->>H: Ready with installation boundary
     par Live updates
@@ -235,16 +238,14 @@ fragments have no durable position. A prior SQLite journal receives positions in
 commit order. Source history reconstructed from partial evidence carries `sourceHistoryIncomplete`.
 Rolling message and tool limits constrain the run summary independently of this journal.
 
-The provider commits completed messages, tool observations, decisions and execution state to a
-SQLite history journal. SSE resumes from an opaque installation-bound cursor. A client can also
-request `Accept: application/json` and page with `after`, `limit` and the returned `through`
-boundary, then resume the stream from that boundary. Streaming text fragments can disappear
-during an outage. Completed facts remain available throughout retention of the source history.
-Each run retains a receipt for the journal write. If a restored copy of the journal lacks
-that receipt, the provider invalidates the old installation cursor and rebuilds the available
-facts from its session records. An older run reconstructed from bounded evidence carries an
-explicit coverage gap. The per-run
-snapshot remains a summary of currently observable state.
+The provider's SQLite history journal holds completed messages, observed tool results, decisions
+and execution transitions for delivery. Harness commits each chat's durable facts to its own SQLite
+transcript before acknowledging its contiguous position for the provider session and epoch.
+A lost acknowledgement can be repeated. The provider keeps unacknowledged facts, a window of
+256 recent acknowledged positions and each run's latest state and sequence anchor. A read below
+the retained window returns an explicit unavailable-range response. Browser disconnects and
+other consumers' acknowledgements cannot advance a chat's delivery position. The provider's
+run snapshot summarizes current execution. A browser reads its owner's canonical Harness transcript.
 
 A session UUID, a run UUID, a native SDK session reference and a Harness conversation ID are separate
 identities. Protocol identity fields use opaque references rather than private native SDK session
@@ -360,25 +361,17 @@ snapshot. Ollama persists Hosty's loop messages, summary and effect receipts and
 context on each inference request. Ordinary consumer reconnects do not resend UI history as a new
 native conversation.
 
-Atomic provider session aggregates retain public snapshots, sequenced events, decisions and command
-receipts; a private native execution journal remains separate. Replay is bounded to 64 MiB per run
-and seven days after confirmed completion. Snapshot recovery replaces state and cursor together;
-expired replay returns an explicit reload requirement. Native context, pending questions and
-mutation tombstones have separate lifetimes; replay expiration does not purge them.
+The provider stores sessions, runs, immutable admission identities, accepted controls and
+Stop-before-admission intents in its execution database. The HTTP process commits incoming
+commands there. A detached supervisor holds an exclusive OS-backed scope lock for each attempt,
+owns its native adapter and records progress. Restarting HTTP reconnects to the existing scope.
+A supervisor that dies releases the lock. The process that acquires it recovers the attempt
+from its durable records and owned containment evidence.
 
-Admission capacity counts the last committed state and conservatively counts a session whose
-failed write could have occupied a slot. Maintenance and run lookup isolate that session from
-other sessions, which continue within the remaining capacity. Affected run IDs retain their own
-storage error. An authorized status read verifies the previously committed aggregate byte
-for byte when a failed replacement left a separate temporary file. It can clear the write
-fence only with that evidence. A replacement whose outcome cannot be verified remains fenced.
-The provider logs the failed storage stage and a bounded error code without command contents.
-
-The committed aggregate owns run admission and Stop receipts. SQLite installation history is
-published separately using the aggregate's durable outbox. A publication failure preserves
-the aggregate and outbox, and maintenance or startup retries history without executing the
-request again. A confirmed cancellation fence for an unadmitted run returns a terminal
-`run_not_admitted` result tied to the original run ID and start digest.
+The execution database commits each run transition and its installation-history facts in one
+transaction. A storage failure leaves both at the last committed revision. Stop received before admission records
+a fence. The exact late submission resolves to a terminal `run_not_admitted` result for its
+original UUID and digest. Another submission cannot reuse the UUID with different input bytes.
 
 The optional `latestContext` snapshot field retains the latest root context-usage observation at
 its original public event sequence. Explicit null usage clears the previous measurement. Harness
@@ -496,11 +489,11 @@ publishing the final receipt. It matches retained run/source/call identities and
 foreign ancestry and conflicting duplicate outcomes. These callbacks do not reopen a completed run;
 a missing terminal still leaves its effect unresolved.
 
-Harness retains each run's canonical cancellation bytes and acknowledgement independently of its
-pending outbox. An applied receipt can remove the pending entry without losing its UUID, body hash
-or original optimistic revisions. Repeated Stop and restored execution observe that same control;
-an unknown attempt can retry only its exact original bytes. A missing previously acknowledged
-receipt fails closed rather than replaying input or inventing a replacement cancellation.
+Harness retains the original start admission reference and the desired Stop. Core issues scoped
+credentials for the original consumer installation to repeat Stop and inspect closure and the
+relevant control receipts. The attempt can close after the original user's browser disconnects
+or loses content-read authority. Exact-input replay uses a separate Core grant checked against
+the original operation and its current authority.
 
 Harness also checks retained configuration-control receipts before admitting the next turn. A
 terminal run snapshot can precede the final control receipt in the event stream, so this check
@@ -516,45 +509,28 @@ tool-source pairing until its authoritative final output arrives; ordinary error
 and new user turns remain separate transcript boundaries. This retains genuine tool results without
 reopening a stopped conversation or treating an unknown command outcome as success.
 
-`state`, `phase`, `freshness`, effect certainty and `stopConfirmed` are independent snapshot fields.
-An accepted cancel/control receipt is not proof of process exit. Supported SDK stop-and-wait,
-provider-owned process containment and resolved tool effects determine stop confirmation. POSIX
-launches use a separate receipt writer and anchored process group. Native stdout/stderr receive
-fresh blocking pipe endpoints; Node forwards them with backpressure instead of inheriting its
-nonblocking output descriptors into the native binary. Native exit initiates owned descendant
-cleanup, while pipe EOF and output flush remain separate completion facts. Receipts distinguish
-physical tree closure from output delivery; producer loss never manufactures SDK-stop confirmation.
+A current `stopConfirmed` receipt establishes that the root agent exited or that its start was fenced before launch. It releases the attempt slot. Each tool call keeps its own observed outcome. A qualified writer scope reports `writerScopeClosed: false` while open and `true` after verified closure. A provider lacking that proof can omit the field. A native execution fenced before launch can establish that it created no writers.
+
+On macOS the normal Local profile supports editing under existing source grants. The provider records direct agent exit, attempts cleanup of its owned process group, and tracks output drain separately. A detached command can outlive the root and partial files remain available. Linux can qualify a delegated cgroup v2 for writer closure. Native stdout and stderr use blocking pipes with forwarding and backpressure.
+
 Windows uses a suspended native launch assigned to a non-breakaway kill-on-close Job Object and
-handle/accounting checks. Windows PowerShell compiles the bridge against the .NET Framework
-serialization and XML assemblies before it accepts a native command. Private control channels
+handle/accounting checks. The provider compiles its Job Object helper with the stock .NET Framework
+4.x C# compiler and reuses the executable from its private cache. Native launches and recovery of a
+named Job Object invoke that executable directly. Private control channels
 stay separate from native stdin/stdout/stderr. Native environments exclude Hosty service/control
 credentials and unrelated tool bearers.
 
-When the native receipt confirms physical exit but effect outcomes remain unresolved, the provider
-emits a distinct diagnostic and keeps ordinary execution fenced. Harness reports unreconciled tool
-outcomes separately from missing stop evidence. The original provider exposes `runs.retire` for an
-explicit owner-confirmed Harness Delete. It verifies the exact retained terminal journal, SDK exit
-and owned process-tree receipts, including records written before retirement support. The provider
-fences new work on that native session and applies the retirement receipt after releasing the
-original admission's workspace claims. Once the receipt is applied, the retired session leaves the
-provider's session list. The provider retains the native journal and authorized installation-history
-replay, including unresolved outcomes and recorded gaps, across restart and any subsequent Harness
-conversation cleanup failure.
-For an interrupted journal, SDK and process-tree receipts establish exit if the Worker has released
-its execution handle. An unverified exit continues through normal Stop and reconciliation.
+After root exit the provider releases ordinary activity claims through Core using the original admission and exact run generation. When the attempt has an open qualified writer scope, its activity lease stays with the supervisor until that scope closes. A provider-bound exclusive environment consumer uses a separate registration and requires a current affirmative writer-closure receipt to release. Ordinary chat continuation can proceed after Stop. A tool without a matching terminal result stays unresolved in history, and revoked approvals and superseded continuations remain fenced.
 
-The retirement request carries the exact run generation and revision. Harness saves the request
-before dispatch. Retrying after an uncertain reply or app restart reuses the same request and awaits
-the same cleanup. Ordinary cancellation, message admission and task completion still use
-`stopConfirmed`.
+For an owner-confirmed chat deletion, the original consumer submits a per-run delivery discard.
+The provider verifies agent closure, its required workspace cleanup, and the exact admission. One transaction erases the run's
+public replay and queued delivery, retires its immutable identity and records a content-free
+receipt. A delayed callback cannot recreate the erased content. Other runs and the independently
+owned native account context retain their own lifetimes.
 
-Before launching a child, the provider durably records its intent. Durable SDK-stop confirmation,
-matching child receipts and a sealed/exited producer support reconciliation after restart. Stop
-also rechecks this evidence for an interrupted run whose native handle has already been released.
-Missing proof stays `unknown`. A client-supplied stopped flag or a saved PID does not establish it.
-Automatic provider recovery never terminates processes by PIDs loaded from receipt files.
-Workspace release uses the original admission and begins after the provider confirms stop or
-accepts retirement.
+[Execution ownership, recovery and confirmed Delete](../agent-execution-reliability/feature.md)
+
+When a native handle is released, Stop rechecks the original scope evidence. A saved PID cannot identify its current owner.
 
 Codex protocol acknowledgments have a 30-second deadline, with a two-second polite interrupt
 budget and independently bounded metadata diagnostics. These bound RPC acknowledgments rather
@@ -568,8 +544,7 @@ bounded cleanup and typed command-terminal events before worker teardown. Cleanu
 alone does not settle an effect. A missing terminal result retains uncertainty rather than
 manufacturing successful effects; teardown has one additional bounded cleanup attempt if the
 polite interrupt cannot finish.
-Provider shutdown asks the driver to stop before draining background controls, so an accepted cancellation cannot block its
-own shutdown. Neither deadline nor a successful control receipt replaces native exit evidence.
+The attempt supervisor drives accepted Stop through native teardown. Its deadline and receipt have separate meanings from the recorded process exit.
 
 Claude's polite interrupt has a two-second bound and its complete SDK stop/stream-exit wait has a
 ten-second deadline. After the acknowledgement it allows up to two seconds for exact pending
@@ -611,12 +586,12 @@ Dependabot tracks all three provider applications and the shared runtime through
 workspace lockfile. Docker updates cover the production Harness coordinator; the retired embedded
 worker has no npm or Docker update target.
 
-Provider updates require operator-prepared quiescence: finish or cancel active runs through the
-provider API and wait for authoritative stop/effect confirmation before using Core lifecycle.
-Core's Local Stop forcibly terminates its app process group/job; it does not perform an SDK drain.
-Restarting an active provider can therefore retain an interrupted/unknown execution, even after
-its processes disappear. Client attestation cannot replace the missing provider-owned proof or
-settle unresolved effects, and the old input is not replayed automatically.
+The HTTP service and the native attempt have separate process lifetimes. A service restart
+recovers the public endpoints and pending requests from the provider database. An existing
+supervisor keeps its exclusive scope and reconnects through that database. Recovery of a lost
+supervisor uses recorded native scope evidence. A control request, an HTTP timeout and an
+unresolved tool each have distinct persisted outcomes. A provider reinstall changes its
+installation identity and uses the explicit, authorized context-reconnect workflow.
 
 The native HTTP listener uses the assigned `HOSTY_PORT_HTTP` on IPv4 `0.0.0.0`; authenticated API and
 settings operations enforce their distinct credentials. Consumers use Core's direct transport
@@ -673,9 +648,12 @@ account-secret cleanup.
 
 The read-only provider doctor reports startup prerequisites and workload-dependent tools without
 installing packages, altering a shell or importing credentials. Startup requires Node.js and npm,
-plus executable `/bin/ps` on POSIX hosts or stock Windows PowerShell 5.1 on Windows for native
-process-stop verification. The doctor recommends installing Linux procps or restoring the macOS
-system utility when `/bin/ps` is missing. Git remains a workspace prerequisite, and project SDKs
+plus executable `/bin/ps` on POSIX hosts for native process-stop verification. On Windows the
+provider prepares its Job Object helper with `csc.exe` under the system root's
+`Microsoft.NET/Framework64/v4.0.30319` or `Microsoft.NET/Framework/v4.0.30319` directory.
+The doctor checks those paths and recommends repairing the Windows .NET Framework 4.x component
+when the compiler is missing. On Linux it recommends installing procps, and on macOS it recommends
+restoring the system utility when `/bin/ps` is missing. Git remains a workspace prerequisite, and project SDKs
 remain optional workload tools. Independent source-only provider
 releases and selected lock closures are described in the
 [repository release model](../repository-release-model/feature.md).
@@ -723,7 +701,7 @@ working account. A synthetic protocol check does not establish real OpenAI accou
 - Provider tests cover lazy creation, strict resume, account/configuration compatibility, the fixed
   five-minute parking deadline with a controlled clock, revised next-turn delivery, lost
   admission/cancellation races, interrupted storage, decision delivery, process evidence and stdin
-  protocol preservation. Unknown native stop or tool effects keep the slot occupied. Storage
+  protocol preservation. Unconfirmed physical closure retains writer claims. Missing tool results retain their uncertainty after physical closure. Storage
   tests exercise independent admission, attachment upload, streaming and Stop during a
   retained write failure, along with exact request and history replay after SQLite publication
   failure. The Windows managed fixture reproduces a failed replacement using a sharing lock.
@@ -765,13 +743,13 @@ working account. A synthetic protocol check does not establish real OpenAI accou
 - Local packaging tests cover concurrent independent providers, preserved source dependencies,
   cache reuse, source changes, damaged/failed generations and direct-SDK dependency selection.
   Cover compact published paths, legacy generation pointers, malformed pointer rejection and actual
-  Windows native process launch from a prepared generation. Codex sign-in startup verification uses
+  Windows native process launch and recovery with the same prepared Job Object helper. Codex sign-in startup verification uses
   the pinned npm wrapper with an empty isolated home and confirms initialization and shutdown.
   CI/release fixtures require a Codex-only SDK pin to leave Claude, Ollama and Harness unselected.
-- Retirement tests cover a retained terminal journal with missing tool results, an unconfirmed process,
-  foreign ownership, stale revisions, a lost reply, exact workspace claim release and a fenced native
-  resume. The managed `agent-providers` suite exercises owner Delete against a retained provider run
-  with synthetic incomplete search outcomes and verifies that the dirty worktree survives.
+- Delete fixtures cover explicit owner confirmation, provider partitions, changed content-read
+  authority, retry after Harness restart, verified physical closure, delayed history, retained
+  sibling chats and independent source cleanup. Native execution keeps its exact original
+  admission throughout these scenarios.
 - Cleanup fixtures cover both storage locks, exact inventory digests, changed/linked paths, foreign
   or unsettled execution metadata, interrupted/replayed deletion and preservation of unrelated data.
 - Runtime acceptance uses Core-managed apps, normal password/app-code identity, separate test data

@@ -2,12 +2,16 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import type { AgentRun } from "@hosty-sdk/app/agent-sessions";
+import type { AgentRunSnapshot } from "@hosty-sdk/app/agent";
+import { sameProviderRef } from "../../shared/provider-reference.js";
 import type { HarnessRun } from "../harness/adapter.js";
 import type { SessionRecord, SessionStore } from "../sessions/store.js";
 
 export type ObservedNativeSession = { id: string; owner: string; conversation: string | null; binding: string; revision: string };
+type ProviderAttempt = Pick<AgentRunSnapshot, "ref" | "generation">;
 export type ObservedRun = { id: string; owner: string; conversation: string | null; nativeSession: string | null;
-  revision: string; state: AgentRun["state"]; observedAt: string; stopConfirmed: boolean; generation: string | null; retired?: true };
+  revision: string; state: AgentRun["state"]; observedAt: string; stopConfirmed: boolean; generation: string | null; retired?: true;
+  providerAttempt?: ProviderAttempt; writerScopeClosed?: boolean };
 export type CancellationReceipt = { key: string; fingerprint: string; runId: string; state: "pending" | "completed" | "rejected"; error?: { code: string; message: string; status: number } };
 type Observations = { sessions: ObservedNativeSession[]; runs: ObservedRun[]; cancellations: CancellationReceipt[] };
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -65,13 +69,33 @@ export class AgentObservations {
   async begin(record: SessionRecord, recovered = false): Promise<string> {
     return this.change(state => {
       if (state.runs.filter(r => r.owner === record.createdBy).length >= 100000) throw new Error("The retained execution metadata budget is exhausted.");
+      const attempt = record.providerExecution?.run;
       const run: ObservedRun = { id: randomUUID(), owner: record.createdBy, conversation: record.id, nativeSession: this.binding(state, record)?.id ?? null,
-        revision: "1", state: "queued", observedAt: new Date().toISOString(), stopConfirmed: false, generation: recovered ? null : this.generation };
+        revision: "1", state: "queued", observedAt: new Date().toISOString(), stopConfirmed: false, generation: recovered ? null : this.generation,
+        ...(attempt && { providerAttempt: { ref: attempt.ref, generation: attempt.generation }, writerScopeClosed: attempt.writerScopeClosed }) };
       state.runs.push(run);
       const native = state.sessions.find(s => s.id === run.nativeSession); if (native) native.revision = next(native.revision);
       return run.id;
     });
   }
+  async observeWriterScope(conversation: string, snapshot: AgentRunSnapshot, currentRunId?: string): Promise<void> {
+    const closed = snapshot.writerScopeClosed;
+    if (closed === undefined) return;
+    await this.change(state => {
+      const run = state.runs.find(candidate => {
+        if (candidate.conversation !== conversation || candidate.retired) return false;
+        const attempt = candidate.providerAttempt;
+        return attempt ? sameProviderRef(attempt.ref.provider, snapshot.ref.provider) && attempt.ref.id === snapshot.ref.id
+          && attempt.generation === snapshot.generation : candidate.id === currentRunId;
+      });
+      if (!run || run.writerScopeClosed === true || run.writerScopeClosed === closed) return;
+      run.providerAttempt ??= { ref: snapshot.ref, generation: snapshot.generation };
+      run.writerScopeClosed = closed;
+      run.revision = next(run.revision);
+      run.observedAt = snapshot.observedAt;
+    });
+  }
+
   async observe(id: string): Promise<void> {
     const record = await this.conversations.readRecord(id);
     await this.change(state => {

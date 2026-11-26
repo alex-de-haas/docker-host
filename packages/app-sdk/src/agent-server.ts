@@ -11,10 +11,11 @@ export type AgentParsedRequest = AgentParsedBase & (
   | { operation: "sessions.configure"; input: AgentConfigurationCreate }
   | { operation: "runs.start"; input: AgentRunInput }
   | { operation: "runs.respond"; input: AgentResponseInput }
+  | { operation: "runs.discard"; input: { requestId: string } }
   | { operation: "runs.cancel"; input: AgentCancelInput }
   | { operation: "runs.control"; input: AgentRunControlInput }
   | { operation: "attachments.write"; input: AgentAttachmentChunk }
-  | { operation: Exclude<AgentOperation, "sessions.create" | "sessions.configure" | "runs.start" | "runs.respond" | "runs.cancel" | "runs.control" | "attachments.write">; input: undefined }
+  | { operation: Exclude<AgentOperation, "sessions.create" | "sessions.configure" | "runs.start" | "runs.respond" | "runs.cancel" | "runs.discard" | "runs.control" | "attachments.write">; input: undefined }
 );
 function fail(message: string, status = 400, code = "invalid_input"): never { throw new AgentApiError(code, message, status); }
 const object = (value: unknown): value is ObjectValue => !!value && typeof value === "object" && !Array.isArray(value);
@@ -145,7 +146,7 @@ export function validateAgentCancelInput(value: unknown): asserts value is Agent
   if (value.fenceIfNotAdmitted !== undefined) {
     shape(value.fenceIfNotAdmitted, ["sessionId", "startDigest"], "delayed start fence");
     if (!opaque(value.fenceIfNotAdmitted.sessionId) || !digest(value.fenceIfNotAdmitted.startDigest) || value.expectedRevision !== undefined || value.expectedGeneration !== undefined) fail("A delayed-start fence requires only the exact intended session/digest.");
-  } else controlBase(value);
+  } else if (value.expectedRevision !== undefined || value.expectedGeneration !== undefined) controlBase(value);
 }
 /** This validates an attestation's shape only. Providers must independently confirm actual native exit. */
 export function validateAgentRunControlInput(value: unknown): asserts value is AgentRunControlInput {
@@ -167,7 +168,7 @@ export function validateAgentRequest(method: string, path: string, body: string 
   const url = new URL(path, "http://agent.invalid"), route = url.pathname, query: AgentParsedBase["query"] = {};
   let operation: AgentOperation | undefined, sessionId: string | undefined, runId: string | undefined, requestId: string | undefined, connectionId: string | undefined, attachmentId: string | undefined, chunkIndex: number | undefined;
   const attachment = /^\/attachments\/([A-Za-z0-9_-]{1,256})\/chunks\/(0|[1-9][0-9]?)$/.exec(route);
-  const match = /^\/(sessions|runs|connections)(?:\/([A-Za-z0-9_-]{1,256}))?(?:\/(configurations|runs|events|responses|cancel|controls|models|usage))?(?:\/([A-Za-z0-9_-]{1,256}))?$/.exec(route);
+  const match = /^\/(sessions|runs|connections)(?:\/([A-Za-z0-9_-]{1,256}))?(?:\/(configurations|runs|events|closure|discard|responses|stop|controls|models|usage))?(?:\/([A-Za-z0-9_-]{1,256}))?$/.exec(route);
   if (route === "/capabilities" && method === "GET") operation = "capabilities";
   else if (attachment && method === "PUT") { operation = "attachments.write"; attachmentId = attachment[1]; chunkIndex = Number(attachment[2]); if (!uuid(attachmentId)) fail("An attachment upload UUID is required."); }
   else if (match) {
@@ -182,9 +183,11 @@ export function validateAgentRequest(method: string, path: string, body: string 
     } else if (root === "runs" && id) {
       runId = id;
       if (!sub && method === "GET") operation = "runs.read";
+      else if (sub === "closure" && !child && method === "GET") operation = "runs.closure";
       else if (sub === "events" && !child && method === "GET") operation = "runs.events";
       else if (sub === "responses" && !child && method === "POST") operation = "runs.respond";
-      else if (sub === "cancel" && !child && method === "POST") operation = "runs.cancel";
+      else if (sub === "discard" && !child && method === "PUT") operation = "runs.discard";
+      else if (sub === "stop" && !child && method === "PUT") operation = "runs.cancel";
       else if (sub === "controls" && !child && method === "POST") operation = "runs.control";
       else if (sub === "controls" && child && method === "GET") { operation = "runs.controls.read"; requestId = child; }
     } else if (root === "connections") {
@@ -194,7 +197,7 @@ export function validateAgentRequest(method: string, path: string, body: string 
       else if (id && sub === "usage" && !child && method === "GET") operation = "connections.usage";
     }
   }
-  if (!operation || expectedOperation !== undefined && expectedOperation !== operation) fail("Use a declared agent v1 operation.", 422, "unsupported_operation");
+  if (!operation || expectedOperation !== undefined && expectedOperation !== operation) fail("Use a declared agent v2 operation.", 422, "unsupported_operation");
   const allowed = operation === "runs.events" ? ["after"] : ["sessions.list", "connections.list"].includes(operation) ? ["cursor", "limit"] : [];
   for (const [key, value] of url.searchParams) {
     if (!allowed.includes(key) || url.searchParams.getAll(key).length !== 1) fail("Unsupported or repeated query field.");
@@ -210,6 +213,10 @@ export function validateAgentRequest(method: string, path: string, body: string 
     else if (operation === "sessions.configure") { validateAgentConfigurationCreate(input); if (input.requestId !== requestId) fail("Configuration request ID must equal its path ID."); }
     else if (operation === "runs.start") validateAgentRunInput(input);
     else if (operation === "runs.respond") validateAgentResponseInput(input);
+    else if (operation === "runs.discard") {
+      shape(input, ["requestId"], "delivery discard");
+      if (!uuid(input.requestId)) fail("A discard request UUID is required.");
+    }
     else if (operation === "runs.cancel") validateAgentCancelInput(input);
     else if (operation === "runs.control") validateAgentRunControlInput(input);
     else if (operation === "attachments.write") validateAgentAttachmentChunk(input, chunkIndex);
@@ -243,13 +250,31 @@ export function validateAgentPendingDecision(value: unknown): asserts value is A
   if (value.source !== undefined) source(value.source);
   if (value.questions !== undefined) { if (!Array.isArray(value.questions) || value.questions.length > 128) responseProblem("Invalid question schema."); for (const q of value.questions) { if (!object(q) || !opaque(q.id) || !bounded(q.text, 65536) || q.options !== undefined && (!Array.isArray(q.options) || q.options.some(o => !object(o) || !opaque(o.id) || !bounded(o.label, 8192)))) responseProblem("Invalid question schema."); } }
 }
+export function validateAgentRunClosure(value: unknown): asserts value is import("./agent.js").AgentRunClosure {
+  if (!object(value)) responseProblem("Missing execution closure.");
+  qualified(value.ref);
+  if (!opaque(value.sessionId) || !uuid(value.generation) || !decimal(value.revision, true) || typeof value.stopConfirmed !== "boolean"
+    || value.writerScopeClosed !== undefined && (typeof value.writerScopeClosed !== "boolean" || value.writerScopeClosed && !value.stopConfirmed)
+    || !["queued", "running", "waiting_for_input", "succeeded", "failed", "cancelled", "unknown"].includes(String(value.state))
+    || !["preparing", "executing", "waiting", "finalizing", "cancelling", "parked", "interrupted", "terminal"].includes(String(value.phase))
+    || ["succeeded", "failed", "cancelled"].includes(String(value.state)) && !value.stopConfirmed) responseProblem("Invalid execution closure.");
+  if (value.pendingContinuations !== undefined) {
+    array(value.pendingContinuations, 256, "continuation references");
+    for (const item of value.pendingContinuations) {
+      if (!object(item) || !uuid(item.requestId) || !["pending", "awaiting_authorization", "admitted", "superseded"].includes(String(item.state)))
+        responseProblem("Invalid continuation receipt.");
+      qualified(item.run);
+    }
+  }
+}
 export function validateAgentRunSnapshot(value: unknown): asserts value is AgentRunSnapshot {
   if (!object(value)) responseProblem("A run snapshot is required.");
   qualified(value.ref);
   if (!opaque(value.sessionId) || !uuid(value.generation) || !decimal(value.revision, true) || !decimal(value.configurationRevision) || !decimal(value.lastSequence, true)
     || !["queued", "running", "waiting_for_input", "succeeded", "failed", "cancelled", "unknown"].includes(String(value.state))
     || !["preparing", "executing", "waiting", "finalizing", "cancelling", "parked", "interrupted", "terminal"].includes(String(value.phase))
-    || typeof value.stopConfirmed !== "boolean" || !["current", "last_known", "unavailable"].includes(String(value.freshness)) || !bounded(value.observedAt) || !Number.isFinite(Date.parse(value.observedAt)) || !bounded(value.cursor, 8192)
+    || typeof value.stopConfirmed !== "boolean"
+    || value.writerScopeClosed !== undefined && (typeof value.writerScopeClosed !== "boolean" || value.writerScopeClosed && !value.stopConfirmed) || !["current", "last_known", "unavailable"].includes(String(value.freshness)) || !bounded(value.observedAt) || !Number.isFinite(Date.parse(value.observedAt)) || !bounded(value.cursor, 8192)
     || !Array.isArray(value.pending) || value.pending.length > 256 || !object(value.effects) || !["known", "unknown"].includes(String(value.effects.certainty))) responseProblem("Invalid atomic run snapshot.");
   for (const decision of value.pending) validateAgentPendingDecision(decision);
   strings(value.effects.unresolvedCallIds, 1024);
@@ -307,7 +332,7 @@ export function validateAgentEvent(value: unknown): asserts value is AgentEvent 
   if (Buffer.byteLength(JSON.stringify(value)) > AGENT_COMMAND_MAX_BYTES) responseProblem("Event byte allowance exceeded.");
 }
 export function validateAgentCapabilities(value: unknown): asserts value is AgentCapabilities {
-  if (!object(value) || value.version !== 1 || !Array.isArray(value.eventVersions) || !value.eventVersions.includes(AGENT_EVENT_VERSION) || !object(value.limits) || !object(value.configuration)) responseProblem("Unsupported agent contract.");
+  if (!object(value) || value.version !== 2 || !Array.isArray(value.eventVersions) || !value.eventVersions.includes(AGENT_EVENT_VERSION) || !object(value.limits) || !object(value.configuration)) responseProblem("Unsupported agent contract.");
   strings(value.capabilities, 128); strings(value.configuration.resumeCompatible, 32);
   if (value.capabilities.some(item => !capabilityName.test(item))) responseProblem("Invalid capability contract key.");
   for (const key of ["maxCommandBytes", "maxEventBytes", "maxSnapshotBytes", "maxReplayBytes", "replayRetentionMs", "maxControls", "maxPageSize"]) if (!integer(value.limits[key])) responseProblem("Invalid agent limits.");

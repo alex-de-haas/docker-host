@@ -41,6 +41,17 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
     private string Records => System.IO.Path.Combine(Root, "workspaces");
     private string RepoPath(string id) => System.IO.Path.Combine(Root, "repositories", id + ".git");
     internal string RepositoryPath(string repository) => RepoPath(Hash(repository));
+    private string AllocationGenerationPath(WorkspaceOwner owner)
+    {
+        var path = System.IO.Path.Combine(Root, "allocation-generations", WorkspaceIdFor(owner) + ".json");
+        RequireDiscardStorage(path);
+        return path;
+    }
+    private static string AllocatedTreeId(WorkspaceOwner owner, string repositoryId, string? generation)
+    {
+        if (generation is not null) Id(generation);
+        return Hash(OwnerIdentity(owner) + "\n" + repositoryId + (generation is null ? "" : "\n" + generation));
+    }
     private string WorkPath(string id) => System.IO.Path.Combine(Root, "trees", id);
     private string RecordPath(string id) => System.IO.Path.Combine(Records, id + ".json");
     internal static AppLifecycleException Error(string code, string message) => new("workspace_" + code, message);
@@ -105,7 +116,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
         // Normalize only that optional addition; unknown lease/operation activity must still fail.
         w = w with { SandboxConsumers = w.SandboxConsumers ?? [] };
         if (owner is not null) await RequireSessionAccessAsync(w, owner, ct);
-        if (w.Id != id || w.Id != Hash(OwnerIdentity(w.Owner) + "\n" + w.RepositoryId) ||
+        if (w.Id != id || w.Id != AllocatedTreeId(w.Owner, w.RepositoryId, w.AllocationGeneration) ||
             w.Path != WorkPath(id) || w.RepositoryId != Hash(w.Repository) || !ValidWorkspaceBranch(w))
             throw Error("ownership_invalid", "Workspace ownership metadata is inconsistent.");
         return await WithNameAsync(w, ct);
@@ -217,7 +228,8 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
             var repositoryId = Hash(repository);
             return await Locked("repository-admission:" + repositoryId, async () =>
             {
-                var id = Hash(OwnerIdentity(owner) + "\n" + repositoryId);
+                var generation = await JsonStorage.ReadAsync<string>(AllocationGenerationPath(owner), ct);
+                var id = AllocatedTreeId(owner, repositoryId, generation);
                 var existing = await JsonStorage.ReadAsync<DevelopmentWorkspace>(RecordPath(id), ct);
                 if (existing is not null)
                 {
@@ -301,7 +313,7 @@ internal sealed partial class DevelopmentWorkspaceService(CoreDataPaths paths, A
                 if (input.ExpectedLocalHead is not null && baseHead != input.ExpectedLocalHead)
                     throw Error("local_head_changed", "Accepted main changed during preparation. Refresh and review it again.");
                 var naming = await AllocateBranchNaming(id, repositoryId, owner, ct);
-                var w = new DevelopmentWorkspace { Id = id, Owner = owner, Repository = repository, RepositoryId = repositoryId,
+                var w = new DevelopmentWorkspace { Id = id, AllocationGeneration = generation, Owner = owner, Repository = repository, RepositoryId = repositoryId,
                     Path = WorkPath(id), Branch = BranchFor(id, naming), BranchNaming = naming, TargetBranch = target, OriginalBase = baseHead,
                     IntegrationBase = baseHead, SessionPath = input.SessionPath, SourceGrant = grant,
                     Operations = [new(input.RequestId, "prepare", fingerprint, "pending", Actor: actor)] };

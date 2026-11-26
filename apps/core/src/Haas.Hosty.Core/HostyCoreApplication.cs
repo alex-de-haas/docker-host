@@ -157,6 +157,7 @@ internal static class HostyCoreApplication
         builder.Services.AddSingleton<DevelopmentWorkspaceService>();
         builder.Services.AddSingleton<SourceRepositoryFetchCoordinator>();
         builder.Services.AddSingleton<WorkspaceInspectionService>();
+        builder.Services.AddSingleton<WorkspaceDeletionReturns>();
         builder.Services.AddSingleton<WorkspaceCleanupService>();
         builder.Services.AddSingleton<WorkspaceInspectionAuthorization>();
         builder.Services.AddSingleton<SourceDocumentService>();

@@ -94,7 +94,7 @@ internal static class AppExecutionTargetEndpoints
                 : Task.FromResult<IResult>(CoreJson.Json(new ErrorResponse("admin_required", "An administrator is required."), 403)),
             requireCsrf: mutation, cancellationToken: ct);
 
-    private static async Task<WorkspaceActivationActor> AppActor(string appId, HttpRequest request,
+    internal static async Task<WorkspaceActivationActor> AppActor(string appId, HttpRequest request,
         WorkspaceInspectionAuthorization auth, AppRegistryStore apps, bool manage, CancellationToken ct)
     {
         var user = await auth.RequireAsync(request, appId, ct, manage);

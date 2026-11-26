@@ -56,12 +56,12 @@ async function fixture({ staleProviderCode = "provider_unavailable" } = {}) {
     expect(headers.get("authorization")).toBe("Bearer own-service");
     if (parsed.pathname === "/api/auth/apps/token") return Response.json({ accessToken: "hostyg_own-user", expiresInSeconds: 120 });
     if (parsed.pathname === "/api/auth/apps/revalidate") return Response.json({ active: input.accessToken === "hostyg_own-user", appId: consumer, userId: "operator" });
-    if (parsed.pathname.endsWith("/providers/agent")) return Response.json({ providers: [{ ...provider, available: true, version: 1 }] });
+    if (parsed.pathname.endsWith("/providers/agent")) return Response.json({ providers: [{ ...provider, available: true, version: 2 }] });
     if (parsed.pathname.endsWith("/agent/authorize")) {
       if (headers.get("X-Hosty-User-Token") !== "hostyg_own-user") return Response.json({ code: "actor_required" }, { status: 401 });
       if (input.provider.installationId !== provider.installationId) return Response.json({ code: staleProviderCode }, { status: 503 });
       const { provider: _ref, ...request } = input, token = randomUUID(); grants.set(token, request);
-      return Response.json({ provider, token, baseUrl: providerOrigin + "/api/agent/v1", expiresAt: new Date(Date.now() + 60000).toISOString() });
+      return Response.json({ provider, token, baseUrl: providerOrigin + "/api/agent/v2", expiresAt: new Date(Date.now() + 60000).toISOString() });
     }
     throw new Error("Unexpected Core route");
   };

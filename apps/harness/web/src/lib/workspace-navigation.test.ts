@@ -29,7 +29,8 @@ it("counts each current participant once across simultaneous work, attention, an
 });
 it("expires active observations while retaining terminal failures and never infers external activity from leases", () => {
   const space = workspace([participant("work", "running"), participant("failed", "failed"), participant("waiting", "awaiting_question"), participant("stopping", "stopping")]);
-  expect(workspaceCounts(space, [], now + 50_000)).toEqual({ working: 0, waiting: 0, failed: 1, unknown: 3 });
+  expect(workspaceCounts(space, [], now + 50_000)).toEqual({ working: 0, waiting: 0, failed: 1, unknown: 3,
+    lastSeen: ["running", "awaiting_question", "stopping"].map(status => ({ status, observedAt: new Date(now).toISOString() })) });
   expect(workspaceCounts({ ...space, participation: undefined, owner: { kind: "external", label: "Codex", reference: "task" } }, [], now)).toEqual({ working: 0, waiting: 0, failed: 0, unknown: 0 });
 });
 it("uses newer authorized own-session changes without aliasing a foreign session with the same id", () => {
@@ -96,4 +97,16 @@ it("navigates and counts hosted chats in external workspaces without exposing fo
   const item = navigationItems([space], [mine], now)[0];
   expect(item.matches).toEqual([mine]); expect(item.search).toContain("review external changes");
   expect(item.counts).toEqual({ working: 1, waiting: 0, failed: 0, unknown: 0 });
+});
+
+it("counts three quiet attempts from the same owner despite stale Core participation and an archive outage", () => {
+  const bindings = ["one", "two", "three"].flatMap(id => [
+    { ...participant(id, "idle", true), activityGroup: id },
+    { ...participant("native-" + id, "idle"), kind: "execution" as const, activityGroup: id },
+  ]);
+  const sessions = ["one", "two", "three"].map(id => ({ id, title: id, createdBy: "me", createdAt: new Date(now).toISOString(), status: "running",
+    providerHistoryContact: { runId: id, reason: "unavailable" as const, observedAt: new Date(now).toISOString() } }));
+  const space = workspace(bindings);
+  expect(workspaceCounts(space, sessions, now + 120000).working).toBe(3);
+  expect(workspaceCounts(space, sessions.map((row, i) => i ? row : { ...row, providerStatusContact: row.providerHistoryContact }), now + 120000).working).toBe(2);
 });

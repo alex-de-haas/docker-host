@@ -1,5 +1,5 @@
 // Loaded only by the disposable Codex provider in the live history browser acceptance.
-// Restrict the fixture to history response delivery. The provider still authorizes and serves each request.
+// Affect only outbound responses in the disposable fixture; every normal provider authorization still runs.
 import { channel } from "node:diagnostics_channel";
 import { readFileSync } from "node:fs";
 import { setTimeout as wait } from "node:timers/promises";
@@ -12,13 +12,19 @@ function rules() {
 
 channel("http.server.request.start").subscribe(({ request, response }) => {
   const url = new URL(request.url, "http://fixture.invalid");
+  const attempt = /^\/api\/agent\/v2\/runs\/([^/]+)$/.exec(url.pathname)?.[1];
+  if (request.method === "GET" && attempt && rules().disconnectedRun === attempt) {
+    response.end = () => { response.destroy(); return response; };
+    return;
+  }
   if (url.pathname.endsWith("/history/range")) {
     const session = url.searchParams.get("sessionId");
     const first = Number(url.searchParams.get("from"));
     const rule = rules()[session];
     if (!rule) return;
-    if (rule.pageSize) {
-      url.searchParams.set("limit", String(Math.min(Number(url.searchParams.get("limit") ?? 32), rule.pageSize)));
+    const nextHeld = rule.hold?.map(([from]) => from).filter(from => from > first).sort((a, b) => a - b)[0];
+    if (rule.pageSize || nextHeld) {
+      url.searchParams.set("limit", String(Math.min(Number(url.searchParams.get("limit") ?? 32), rule.pageSize ?? Infinity, nextHeld ? nextHeld - first : Infinity)));
       request.url = url.pathname + url.search;
     }
     const end = response.end.bind(response);
@@ -38,6 +44,7 @@ channel("http.server.request.start").subscribe(({ request, response }) => {
   if (url.pathname.endsWith("/history/live")) {
     const write = response.write.bind(response);
     response.write = (chunk, ...args) => {
+      if (typeof chunk === "string" && chunk.includes("\nevent: observation\n") && rules().silentLive) return true;
       // Redeliver the same provider event ID and bytes, as a reconnecting client may observe.
       if (typeof chunk === "string" && chunk.includes('"message.completed"') && chunk.includes("GAP-CHECK-") && chunk.includes("-DUPLICATE")) write(chunk);
       return write(chunk, ...args);

@@ -44,12 +44,12 @@ it("shows lost contact for the originating chat and its single execution while p
   const rows = space.participation!.sessions;
   rows[1] = { ...rows[1]!, status: "running", activityAt: rows[0]!.activityAt, activityGroup: "my-run" };
   rows.push({ ...rows[1]!, kind: "execution", canOpen: false, sessionId: "native", title: "Native execution" });
-  const mine: AssistantSession = { id: "second", title: "My chat", status: "running", createdAt: rows[1]!.activityAt!, providerHistoryContact: { runId: "native", reason: "unavailable", observedAt: rows[1]!.activityAt! } };
+  const mine: AssistantSession = { id: "second", title: "My chat", status: "running", createdAt: rows[1]!.activityAt!, providerStatusContact: { runId: "native", reason: "unavailable", observedAt: rows[1]!.activityAt! } };
   await act(async () => root.render(<WorkspaceSessions workspace={space} chats={[mine]} refresh={() => {}} />));
   const [other, own, native] = container.querySelectorAll("li");
   expect(other?.textContent).toContain("Owner · running");
-  expect(own?.textContent).toContain("unknown (not confirmed)");
-  expect(native?.textContent).toContain("unknown (not confirmed)");
+  expect(own?.textContent).toContain("Last seen running · ");
+  expect(native?.textContent).toContain("Last seen running · ");
 });
 
 it("shows native execution as activity alongside the selectable originating chat", async () => {
@@ -283,7 +283,7 @@ it("closes session confirmation immediately and restores row actions on refusal"
   const chooseDelete = () => act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent === "Delete session…")!.click());
   await chooseDelete();
   expect(remove).not.toHaveBeenCalled();
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("workspace files and other conversations are retained");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Workspace files and other conversations stay available");
   await act(async () => button("Delete session").click());
   expect(remove).toHaveBeenCalledWith("second");
   expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -317,16 +317,16 @@ it("reflects deletion started elsewhere and freezes controls while the workspace
   expect(button("Open session My chat").disabled).toBe(true);
   expect(button("Session actions for My chat")).toBeUndefined();
 });
-it("offers one Delete confirmation for an own chat with unconfirmed activity", async () => {
+it.each(["running", "waiting", "unknown"])("offers one Delete confirmation for an own %s chat", async status => {
   const space = workspace();
-  space.participation!.sessions[1].status = "unknown";
+  space.participation!.sessions[1].status = status;
   const remove = vi.fn().mockResolvedValue(undefined);
   await act(async () => root.render(<WorkspaceSessions workspace={space} refresh={() => {}} onDelete={remove} />));
   await openSessionMenu("My chat");
   const menu = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
   expect(menu.find(node => node.textContent === "Detach session")?.getAttribute("aria-disabled")).toBe("true");
   await act(async () => menu.find(node => node.textContent === "Delete session…")!.click());
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Any unreported tool outcomes stay unknown.");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Harness stops any active run and detaches this chat.");
   expect(remove).not.toHaveBeenCalled();
   await act(async () => button("Delete session").click());
   expect(remove).toHaveBeenCalledExactlyOnceWith("second");

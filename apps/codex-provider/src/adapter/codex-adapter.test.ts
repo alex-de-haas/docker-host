@@ -55,6 +55,17 @@ describe("codex harness adapter", () => {
     delete process.env.HOSTY_TEST_CODEX_DENIAL_MODE;
   });
 
+  it("refuses unrestricted resource-less starts and rejects native escalation on the restricted host", async () => {
+    const adapter = new CodexHarnessAdapter({ dataDir: authDir });
+    const options = { sessionId: "restricted", cwd: process.cwd(), restrictedHost: true as const, onEvent: (event: HarnessEvent) => events.push(event) };
+    expect(() => adapter.start({ ...options, autonomy: "autonomous" })).toThrow(/qualified native writer/);
+    run = adapter.start(options);
+    run.send("write");
+    await waitFor(() => events.find(event => event.type === "result" || event.type === "error"), "denied restricted native approval");
+    expect(events.some(event => event.type === "approval_request")).toBe(false);
+    expect(events.some(event => event.type === "result")).toBe(true);
+  });
+
   function start(resumeHarnessSessionId?: string): HarnessRun {
     const adapter = new CodexHarnessAdapter({ dataDir: authDir });
     run = adapter.start({
@@ -435,6 +446,17 @@ describe("codex harness adapter", () => {
       "harness_session",
     );
     expect(event).toMatchObject({ harnessSessionId: "thread-from-before-restart" });
+  });
+
+  it("preserves a final JSON-RPC answer split within a UTF-8 code point before Stop", async () => {
+    const active = start();
+    active.send("split final utf8");
+    await waitFor(() => events.find(event => event.type === "result"), "result after split UTF-8 frame");
+    await active.stopAndWait!();
+    expect(events.filter(event => event.type === "assistant_text")).toEqual([
+      { type: "assistant_text", text: "До остановки 🌍" },
+    ]);
+    expect(events.findIndex(event => event.type === "assistant_text")).toBeLessThan(events.findIndex(event => event.type === "result"));
   });
 
   it("streams deltas and the final assistant text, then completes the turn", async () => {

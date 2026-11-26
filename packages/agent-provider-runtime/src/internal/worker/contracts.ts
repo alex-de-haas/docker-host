@@ -18,7 +18,7 @@ export type WorkerRunRequest = {
   selection: ExecutionSelection;
   resource: ResourceReference;
   input: string;
-  options: Pick<HarnessStartOptions, "nativeTools" | "subagents" | "autonomy" | "systemPrompt" | "instructionSources" | "resumeHarnessSessionId" | "mcpServers" | "promptSuggestions" | "requireNativeResume">;
+  options: Pick<HarnessStartOptions, "restrictedHost" | "nativeTools" | "subagents" | "autonomy" | "systemPrompt" | "instructionSources" | "resumeHarnessSessionId" | "mcpServers" | "promptSuggestions" | "requireNativeResume">;
   autoAllowedPrefixes: string[];
 };
 export type RunState = "accepted" | "running" | "awaiting_input" | "suggesting" | "parking" | "parked" | "cancelling" | "completed" | "failed" | "cancelled" | "interrupted";
@@ -26,7 +26,7 @@ export type WorkerEvent = { runId: string; generation: string; sequence: number;
 export type WorkerRecovery = { requestId: string; generation: string; expectedRevision: number; consumerExitConfirmed: true; actorId: string; conversationId?: string };
 export type WorkerReceipt = {
   runId: string; conversationId: string; generation: string; state: RunState; revision: number;
-  boundary?: "container" | "local"; exitConfirmed?: boolean;
+  boundary?: "container" | "local"; exitConfirmed?: boolean; writerScopeClosed?: boolean;
   recovery?: { requestId: string; actorId: string; confirmedAt: string };
   pending?: WorkerEvent[];
   barrier?: WorkerBarrier;
@@ -58,7 +58,8 @@ export function validateRun(value: unknown): asserts value is WorkerRunRequest {
     throw new WorkerApiError(400, "invalid_run", "Invalid worker run request.");
   if (r.skillExportId !== undefined && (typeof r.skillExportId !== "string" || !/^[a-f0-9]{64}$/.test(r.skillExportId)))
     throw new WorkerApiError(400, "invalid_skills", "Invalid skill export reference.");
-  if (Object.keys(r.options).some(key => !["nativeTools", "subagents", "autonomy", "systemPrompt", "instructionSources", "resumeHarnessSessionId", "mcpServers", "promptSuggestions", "requireNativeResume"].includes(key))
+  if (Object.keys(r.options).some(key => !["restrictedHost", "nativeTools", "subagents", "autonomy", "systemPrompt", "instructionSources", "resumeHarnessSessionId", "mcpServers", "promptSuggestions", "requireNativeResume"].includes(key))
+    || r.options.restrictedHost !== undefined && (r.options.restrictedHost !== true || r.options.autonomy === "autonomous" || r.options.subagents?.enabled === true)
     || r.options.systemPrompt !== undefined && typeof r.options.systemPrompt !== "string"
     || r.options.instructionSources !== undefined && (!validInstructionTexts(r.options.instructionSources)
       || r.options.instructionSources.map(block => block.text).join("\n\n") !== r.options.systemPrompt?.trim())

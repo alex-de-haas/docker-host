@@ -14,6 +14,7 @@ export type DeleteDetails = {
   trees: { id: string; repository: string; path: string; branch: string; head: string | null; fingerprint: string;
     changedFiles: string[]; untrackedFiles: string[]; ignoredFiles: string[]; unmergedCommits: number }[];
   resources: { id: string; kind: string; state: string; name: string; dataPath?: string }[];
+  returnTargets?: { key: string; name: string; replacement: string }[];
   warnings?: string[];
   blockers?: string[];
 };
@@ -50,7 +51,7 @@ export function WorkspaceDelete({ workspaceId, name, pendingRequestId, onClose, 
           const value = await developmentRequest<DeleteProgress>(`/${workspaceId}/delete/status?requestId=${encodeURIComponent(previous.requestId)}`, undefined, abort.signal);
           if (ignore()) return;
           setProgress(value);
-          if (value.state === "removed" && !previous.sessionIds?.length) {
+          if (value.state === "removed") {
             retireCompleted(previous.requestId);
             // A completed receipt can outlive its source allocation. Inspect the current
             // workspace before offering a new request for a replacement with the same ID.
@@ -70,10 +71,10 @@ export function WorkspaceDelete({ workspaceId, name, pendingRequestId, onClose, 
     return () => abort.abort();
   }, [workspaceId]);
   const removed = progress?.state === "removed";
-  const sessionsPending = !!command?.sessionIds?.length;
   const submit = () => {
-    if (submitted.current || (removed && !sessionsPending)) return;
-    const request = command ?? { requestId: crypto.randomUUID() };
+    if (submitted.current || removed) return;
+    const request = command ?? { requestId: crypto.randomUUID(),
+      ...(details?.returnTargets?.length ? { returnTargets: details.returnTargets.map(target => target.key) } : {}) };
     submitted.current = true;
     onSubmit(!command && withSessions ? { ...request, captureSessions: true } : request);
     onClose();
@@ -88,10 +89,15 @@ export function WorkspaceDelete({ workspaceId, name, pendingRequestId, onClose, 
         {error && <p role="alert" className="text-sm text-destructive-foreground">{error}</p>}
         {!details && !progress && <p className="text-sm">Source and activity details are {loading ? "still loading" : "unavailable"}. Deletion includes any uncommitted files and unmerged commits. An agent may still be using this directory.</p>}
         {details && !progress && <>
+          {!!details.returnTargets?.length && <section className="space-y-1 text-sm">
+            <h3 className="font-semibold">Runtime changes included in this deletion</h3>
+            <ul>{details.returnTargets.map(target => <li key={target.key}>{target.name} will return to {target.replacement} before source removal.</li>)}</ul>
+            <p>Applications keep their current data when returning to a previous runtime.</p>
+          </section>}
           {!!details.blockers?.length && <Alert variant="destructive" aria-label="Workspace is in use">
             <AlertTitle>Workspace is in use</AlertTitle>
             <AlertDescription>
-              <p>Switch Core and applications away from this workspace, or use Return, before deleting it.</p>
+              <p>{details.returnTargets?.length ? "Core checks all consumers again before removing source." : "No automatic replacement was verified for these consumers."}</p>
               <ul className="list-disc pl-5">{details.blockers.map((blocker, index) => <li key={index}>{blocker}</li>)}</ul>
             </AlertDescription>
           </Alert>}
@@ -105,17 +111,17 @@ export function WorkspaceDelete({ workspaceId, name, pendingRequestId, onClose, 
           {!!details.warnings?.length && <section className="space-y-2 text-sm"><h3 className="font-semibold">Activity and unknown details</h3><ul className="list-disc space-y-1 pl-5">{details.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></section>}
         </>}
         {!removed && <p className="text-xs text-muted-foreground">Published pull requests, remote branches and ordinary application data are retained. Activity leases are retired; this does not prove that an external agent stopped.</p>}
-        {progress && <div className="space-y-2 text-sm"><p role="status">{removed ? "Workspace deletion completed." : "Deletion is pending. Retry continues the accepted request."}</p>
+        {progress && <div className="space-y-2 text-sm"><p role="status">{removed ? "Workspace deletion completed." : "Deletion is in progress. Core continues cleanup automatically."}</p>
           {progress.error && <p role="alert" className="text-destructive-foreground">{progress.error}</p>}
           <ul>{progress.trees.map(tree => <li key={tree.id}>Repository {tree.id.slice(0, 12)}: {tree.state}</li>)}{progress.resources.map(resource => <li key={`${resource.kind}:${resource.id}`}>{resource.kind} {resource.id.slice(0, 12)}: {resource.state}</li>)}</ul>
           {progress.activity?.map((item, index) => <p key={index}>{item.kind} {item.reference}: {item.state}. {item.detail}</p>)}
         </div>}
-        {sessionsPending && <p className="text-sm">This request includes deletion of your selected sessions after workspace removal.</p>}
+        {command?.captureSessions && <p className="text-sm">This request includes deletion of your selected sessions after workspace removal.</p>}
         {!command && !removed && (withSessions || !!sessionIds?.length) && <label className="flex items-center gap-2 text-sm"><Checkbox checked={withSessions} onCheckedChange={value => setWithSessions(value === true)} />Also delete all my attached sessions</label>}
       </DialogBody>
       <DialogFooter className="sm:justify-between">
         <Button variant="outline" onClick={onClose}>{removed ? "Close" : command ? "Close for now" : "Cancel"}</Button>
-        {(!removed || sessionsPending) && <Button variant="destructive" onClick={submit}>{removed ? "Retry session deletion" : command ? "Retry deletion" : "Delete"}</Button>}
+        {!removed && <Button variant="destructive" onClick={submit}>{command ? "Retry deletion" : "Delete"}</Button>}
       </DialogFooter>
     </DialogContent>
   </Dialog>;

@@ -50,7 +50,9 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
   DecisionResponse: { oneOf: [object({ kind: { const: "approval" }, decision: { enum: ["allow", "deny"] }, message: { type: "string", maxLength: 65536 } }, ["kind", "decision"]),
     object({ kind: { const: "question" }, answers: { type: "object", maxProperties: 128, propertyNames: id, additionalProperties: { oneOf: [{ type: "string", maxLength: 65536 }, list({ type: "string", maxLength: 65536 }, 128)] } } })] },
   ResponseInput: object({ ...baseControl, decisionId: id, decisionRevision: revision, response: ref("DecisionResponse") }),
-  CancelInput: { oneOf: [object(baseControl), object({ requestId: uuid, fenceIfNotAdmitted: object({ sessionId: id, startDigest: digest }) })] },
+  DiscardInput: object({ requestId: uuid }),
+  DiscardReceipt: object({ requestId: uuid, runId: uuid, state: { const: "discarded" } }),
+  CancelInput: { oneOf: [object({ requestId: uuid }), object(baseControl), object({ requestId: uuid, fenceIfNotAdmitted: object({ sessionId: id, startDigest: digest }) })] },
   ControlInput: { oneOf: [
     object({ ...baseControl, command: { const: "park" }, decisionId: id, decisionRevision: revision, reason: text(8192) }, [...Object.keys(baseControl), "command", "decisionId", "decisionRevision"]),
     object({ ...baseControl, command: { const: "barrier" }, barrierId: id, kind: { enum: ["task_adoption", "child_wait", "source_rebind", "limits", "human_input"] }, generation: revision, acknowledgedSequence: sequence, snapshot: text(8192) }, [...Object.keys(baseControl), "command", "barrierId", "kind", "generation", "acknowledgedSequence"]),
@@ -71,7 +73,7 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
   Tool: object({ id, source: ref("Source"), name: text(), input: {}, output: { type: "string", maxLength: 1048576 }, state: { enum: ["running", "completed", "failed", "cancelled", "unknown"] }, truncated: boolean,
     command: object({ status: { enum: ["completed", "failed", "cancelled", "unknown"] }, exitCode: { type: "integer" }, durationMs: { type: "integer", minimum: 0 }, summary: text(65536) }, ["status"]) }, ["id", "name", "state"], true),
   RunSnapshot: object({ ref: ref("QualifiedRef"), sessionId: id, generation: uuid, revision: sequence,
-    state: { enum: terminalStates }, phase: { enum: phases }, stopConfirmed: boolean, freshness: { enum: ["current", "last_known", "unavailable"] }, observedAt: { type: "string", format: "date-time" },
+    state: { enum: terminalStates }, phase: { enum: phases }, stopConfirmed: boolean, writerScopeClosed: boolean, freshness: { enum: ["current", "last_known", "unavailable"] }, observedAt: { type: "string", format: "date-time" },
     configurationRevision: revision, lastSequence: sequence, cursor: text(8192), pending: list(ref("PendingDecision"), 256),
     effects: object({ certainty: { enum: ["known", "unknown"] }, unresolvedCallIds: unique(id, 1024) }), result: ref("Result"), messages: list(ref("Message"), 4096), tools: list(ref("Tool"), 4096),
     agents: list(ref("ChildAgent"), 1024),
@@ -85,7 +87,7 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
     ["ref", "sessionId", "generation", "revision", "state", "phase", "stopConfirmed", "freshness", "observedAt", "configurationRevision", "lastSequence", "cursor", "pending", "effects"], true),
   HistoryObservation: object(historyObservation),
   LiveHistoryReady: object({ through: text(8192) }),
-  LiveHistoryObservation: object({ ...historyObservation, epoch: uuid, sessionPosition: positive, sourceHistoryIncomplete: { const: true } }, [...Object.keys(historyObservation), "epoch"]),
+  LiveHistoryObservation: object({ ...historyObservation, epoch: uuid, sessionPosition: positive, sourceHistoryIncomplete: { const: true } }, [...Object.keys(historyObservation), "epoch", "sessionPosition"]),
   HistoryStates: object({ through: text(8192), nextSession: nullableText, sessions: list(object({
     sessionId: id, userId: text(512), principalId: text(512), epoch: uuid, head: positive, snapshot: ref("RunSnapshot"), sourceHistoryIncomplete: { const: true },
   }, ["sessionId", "userId", "principalId", "epoch", "head", "snapshot"]), 100) }),
@@ -98,13 +100,17 @@ export const AGENT_SCHEMAS: Record<string, Schema> = {
     nativeState: { enum: ["not_created", "available", "missing", "unavailable", "unknown"] }, activeRun: { oneOf: [ref("QualifiedRef"), { type: "null" }] },
     resolvedSkills: list(object({ skillId: digest, digest }), 202), configuration: ref("Configuration"), correlation: object({ conversation: ref("QualifiedRef"), task: ref("QualifiedRef") }, []) },
     ["ref", "revision", "configurationRevision", "configurationDigest", "nativeState", "activeRun", "resolvedSkills"], true),
+  Closure: object({ ref: ref("QualifiedRef"), sessionId: id, generation: uuid, revision: sequence,
+    state: { enum: terminalStates }, phase: { enum: phases }, stopConfirmed: boolean, writerScopeClosed: boolean,
+    pendingContinuations: list(object({ requestId: uuid, run: ref("QualifiedRef"), state: { enum: ["pending", "awaiting_authorization", "admitted", "superseded"] } }), 256)
+  }, ["ref", "sessionId", "generation", "revision", "state", "phase", "stopConfirmed"]),
   ControlReceipt: object({ requestId: uuid, state: { enum: ["accepted", "applied", "rejected", "superseded", "unknown"] }, run: ref("QualifiedRef"), revision: sequence, generation: uuid, error: ref("ErrorDetail"),
     continuation: object({ run: ref("QualifiedRef"), state: { enum: ["pending", "awaiting_authorization", "admitted", "superseded"] } }) }, ["requestId", "state", "run", "revision"], true),
   ErrorDetail: object({ code: text(), message: { type: "string", maxLength: 8192 }, retryable: boolean, requestId: uuid, details: { type: "object", additionalProperties: true } }, ["code", "message", "retryable"], true),
   Error: object({ error: ref("ErrorDetail") }),
   Connection: object({ id, revision, name: text(), ready: boolean, reason: text(8192), capabilities: capability }, ["id", "revision", "name", "ready"], true),
   ModelCatalog: object({ revision: text(256), models: list(object({ id: text(), name: text(), reasoningEfforts: list(nullableText), defaultReasoningEffort: nullableText, capabilities: capability, unavailableReason: text(8192) }, ["id", "reasoningEfforts"], true), 1000), defaultModel: nullableText, nextCursor: { type: ["string", "null"], maxLength: 8192 } }, ["revision", "models", "defaultModel"], true),
-  Capabilities: object({ version: { const: 1 }, eventVersions: unique(text(), 16), capabilities: capability,
+  Capabilities: object({ version: { const: 2 }, eventVersions: unique(text(), 16), capabilities: capability,
     limits: object({ maxCommandBytes: positive, maxEventBytes: positive, maxSnapshotBytes: positive, maxReplayBytes: positive, replayRetentionMs: positive, maxControls: positive, maxPageSize: positive, maxDurationMs: positive, maxSkillSnapshotBytes: positive, maxSkillSnapshotFiles: positive },
       ["maxCommandBytes", "maxEventBytes", "maxSnapshotBytes", "maxReplayBytes", "replayRetentionMs", "maxControls", "maxPageSize"], true), configuration: object({ resumeCompatible: unique(text(), 32) }) }, ["version", "eventVersions", "capabilities", "limits", "configuration"], true),
 };
@@ -137,13 +143,17 @@ const historySecurity = [{ installationHistory: [] }];
 const historyParam = (name: string, schema: Schema, required = false) => ({ name, in: "query", schema, required });
 const pageLimit = historyParam("limit", { type: "integer", minimum: 1, maximum: 100 });
 export const AGENT_OPENAPI: Schema = {
-  openapi: "3.1.0", info: { title: "Hosty Agent Execution API", version: "1.0.0", description: "Independent provider execution. Paths are relative to the current Core-declared interface base. Exact UTF-8 command bytes and stable mutation UUIDs are retained across retries. No Harness dependency or raw native session IDs." },
+  openapi: "3.1.0", info: { title: "Hosty Agent Execution API", version: "2.0.0", description: "Independent provider execution. Paths are relative to the current Core-declared interface base. Exact UTF-8 command bytes and stable mutation UUIDs are retained across retries. No Harness dependency or raw native session IDs." },
   paths: {
     "/history/live": { get: { operationId: "history.live", security: historySecurity, parameters: [historyParam("after", text(8192))],
       description: "Open a fresh live subscription. The optional previous cursor checks archive ancestry. The ready event returns the subscribed boundary. Subsequent observation events carry an SSE id and every durable record carries its session position.",
       responses: { ...errors, "200": { description: "Ready boundary followed by live observations.", content: {
         "text/event-stream": { schema: { type: "string" }, "x-event-schemas": { ready: ref("LiveHistoryReady"), observation: ref("LiveHistoryObservation") } },
       } } } } },
+    "/history/ack": { post: { operationId: "history.ack", security: historySecurity,
+      description: "Commit the receiver's contiguous durable session position. Requires explicit acknowledgement authority for the consuming installation.",
+      parameters: [historyParam("sessionId", id, true), historyParam("epoch", uuid, true), historyParam("through", positive, true)],
+      responses: { ...errors, "200": { description: "Acknowledged contiguous position.", content: { "application/json": { schema: object({ through: positive }) } } } } } },
     "/history/states": { get: { operationId: "history.states", security: historySecurity,
       parameters: [historyParam("through", text(8192)), historyParam("afterSession", id), pageLimit],
       description: "List sessions with retained runs and their state and durable session head at the supplied or current installation boundary. Pass the returned boundary on later pages.",
@@ -171,7 +181,9 @@ export const AGENT_OPENAPI: Schema = {
       description: "At-least-once SSE. after and Last-Event-ID must agree. Persisted Event envelopes use event: agent and an opaque id cursor. 410 replay_expired requires installing a fresh atomic snapshot before following its cursor. Disconnect never cancels execution.",
       responses: { ...errors, "200": { description: "Persisted agent event stream.", content: { "text/event-stream": { schema: { type: "string" }, "x-event-schema": ref("Event") } } } } } },
     "/runs/{runId}/responses": { post: operation("runs.respond", "ControlReceipt", "ResponseInput", ["runId"], [200, 202]) },
-    "/runs/{runId}/cancel": { post: operation("runs.cancel", "ControlReceipt", "CancelInput", ["runId"], [200, 202]) },
+    "/runs/{runId}/closure": { get: operation("runs.closure", "Closure", undefined, ["runId"]) },
+    "/runs/{runId}/discard": { put: operation("runs.discard", "DiscardReceipt", "DiscardInput", ["runId"]) },
+    "/runs/{runId}/stop": { put: operation("runs.cancel", "ControlReceipt", "CancelInput", ["runId"], [200, 202]) },
     "/runs/{runId}/controls": { post: { ...operation("runs.control", "ControlReceipt", "ControlInput", ["runId"], [200, 202]), description: "Optional controls require their advertised capabilities. Reconcile input is an attestation, never proof of actual native exit. Retirement requires provider-owned evidence of native process exit. Its applied receipt records retirement of the exact run and preserves unresolved tool outcomes." } },
     "/runs/{runId}/controls/{requestId}": { get: operation("runs.controls.read", "ControlReceipt", undefined, ["runId", "requestId"]) },
   }, components: { securitySchemes: { installationHistory: { type: "http", scheme: "bearer", description: "Core-issued installation history credential." }, coreOperation: { type: "http", scheme: "bearer", description: "Fresh Core exact-operation credential, never the caller's service/user token." } }, schemas: AGENT_SCHEMAS },

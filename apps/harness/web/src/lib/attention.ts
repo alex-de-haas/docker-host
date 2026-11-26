@@ -11,11 +11,20 @@ export function isWaiting(status: string): boolean {
   return WAITING.has(status);
 }
 
-export function observedSessionStatus(session: Pick<AssistantSession, "status" | "providerHistoryContact">): string {
-  return session.providerHistoryContact ? "unknown" : session.status;
+export function observedSessionStatus(session: Pick<AssistantSession, "status" | "providerStatusContact">): string {
+  return session.providerStatusContact ? "unknown" : session.status;
 }
 
-export type Listed = Pick<AssistantSession, "id" | "status" | "providerHistoryContact" | "createdAt" | "updatedAt">;
+export type LastSeen = { status: string; observedAt?: string | null };
+export function lastSeenStatus(session: Pick<AssistantSession, "status" | "providerStatusContact">): LastSeen | undefined {
+  return session.providerStatusContact ? { status: session.status, observedAt: session.providerStatusContact.observedAt } : undefined;
+}
+export function lastSeenText(seen: LastSeen) {
+  const date = new Date(seen.observedAt ?? "");
+  return "Last seen " + seen.status.replaceAll("_", " ") + " · " + (Number.isFinite(date.getTime()) ? date.toLocaleString() : "time unavailable");
+}
+
+export type Listed = Pick<AssistantSession, "id" | "status" | "providerStatusContact" | "createdAt" | "updatedAt">;
 
 export function activityTime(value: { updatedAt?: string | null; createdAt?: string | null }): number {
   const updated = Date.parse(value.updatedAt ?? "");

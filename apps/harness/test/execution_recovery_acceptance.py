@@ -1,15 +1,10 @@
-"""Public provider continuity, crash fencing and quiescent updates in an isolated child.
-
-Only the app-owned synthetic Codex CLI is selected. Active Core Local restart is a
-hard-stop/crash, not a graceful SDK shutdown. Private evidence is observed only;
-no journal is seeded and no client assertion replaces provider-owned stop proof.
-"""
+"""Exercise the v2 provider through a real Core Local installation and its signed-in Harness consumer."""
 import collections
-from contextlib import contextmanager
-import hashlib
+from datetime import datetime
 import json
-import os
 from pathlib import Path
+import sqlite3
+import sys
 import urllib.error
 import urllib.request
 import uuid
@@ -17,169 +12,158 @@ import uuid
 from agent_provider_acceptance import execution_stopped
 
 
-def _owns_exit(proof):
-    manifest = proof.get('manifest') or {}
-    processes = proof.get('processes') or []
-    return (manifest.get('sdkStopConfirmed') is True and manifest.get('sealed') is True
-        and bool(manifest.get('spawns')) and len(processes) == len(manifest['spawns'])
-        and all(item.get('state') == 'stopped' and item.get('treeStopped') is True for item in processes))
+def native_proof(data, target):
+    """Read only the committed identities, effect counts and independently issued physical receipts."""
+    run_id, generation, session_id = target['ref']['id'], target['generation'], target['sessionId']
+    database = (data / 'agent-sessions' / 'execution-v2.sqlite').resolve()
+    with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as db:
+        db.execute('BEGIN')
+        public = json.loads(db.execute('SELECT body FROM execution_runs WHERE session=? AND id=?', (session_id, run_id)).fetchone()[0])
+        session = json.loads(db.execute('SELECT body FROM execution_sessions WHERE id=?', (session_id,)).fetchone()[0])
+        native = json.loads(db.execute('SELECT payload FROM native_attempts WHERE id=?', (run_id,)).fetchone()[0])
+    assert public['snapshot']['ref'] == target['ref'] and public['snapshot']['generation'] == generation
+    assert session['id'] == session_id and native['receipt']['runId'] == run_id
+    stop_time = next((event['occurredAt'] for event in public['events']
+        if event['type'] == 'run.updated' and event['data']['snapshot']['phase'] == 'terminal'
+        and event['data']['snapshot']['stopConfirmed']), None)
+    return {'runId': run_id, 'generation': generation, 'sessionId': session_id,
+        'nativeId': session.get('nativeId'), 'activeRun': (session['session'].get('activeRun') or {}).get('id'),
+        'nativeGeneration': native['receipt']['generation'], 'nativeState': native['receipt']['state'],
+        'effectIds': sorted((native['receipt'].get('effects') or {}).keys()),
+        'eventCounts': dict(collections.Counter(frame['event']['type'] for frame in native['events'])),
+        'stopConfirmedAt': stop_time, **native_process_receipts(data, target)}
 
 
-def _assert_private_crash_rejection(status, code, proof, target):
-    assert proof['runId'] == target['ref']['id'] and proof['generation'] == target['generation']
-    assert proof['sessionId'] == target['sessionId']
-    assert proof['providerSession']['activeRun'] == target['ref']['id'], 'A crash fence must retain the exact provider session reservation'
-    if (status, code) == (409, 'effects_unconfirmed'):
-        assert proof['receipt']['effectIds'], 'HTTP409 effects_unconfirmed requires retained private unresolved effects'
-    elif (status, code) == (503, 'exit_unconfirmed'):
-        assert not _owns_exit(proof), 'HTTP503 exit_unconfirmed requires missing provider-owned SDK/process-tree proof'
-    else:
-        raise AssertionError('Crash recovery must reject with an evidence-backed guard; got '+str(status)+' '+str(code))
+def native_process_receipts(data, target):
+    """Read the exact runner scope and OS receipts independently of the removable chat payload."""
+    run_id, generation = target['ref']['id'], target['generation']
+    root = data / 'native-processes' / run_id / generation
+    manifest = json.loads((root / 'manifest.json').read_text())
+    assert (manifest['runId'], manifest['generation']) == (run_id, generation)
+    receipts = []
+    for nonce in manifest['spawns']:
+        recovered = root / (nonce+'.closed.json')
+        receipt = json.loads((recovered if recovered.is_file() else root / (nonce+'.json')).read_text())
+        assert (receipt['nonce'], receipt['runId'], receipt['generation']) == (nonce, run_id, generation)
+        receipts.append({key: receipt.get(key) for key in
+            ('nonce', 'state', 'treeStopped', 'writerPid', 'nativePid', 'mechanism', 'observedAt')})
+    return {'producerNonce': manifest['producerNonce'], 'producerPid': manifest['producerPid'],
+        'spawns': manifest['spawns'], 'receipts': receipts}
 
 
-def _assert_crash_rejection(status, code, proof, state, target):
-    _assert_private_crash_rejection(status, code, proof, target)
-    assert state['ref'] == target['ref'] and state['generation'] == target['generation']
-    assert state['sessionId'] == target['sessionId']
-    assert state['state'] == 'unknown' and state['stopConfirmed'] is False
-    if (status, code) == (409, 'effects_unconfirmed'):
-        # NativeExecution checks effects before owned-stop receipts. Both exact-run
-        # views must confirm uncertainty; a status alone is never evidence.
-        assert state['effects']['unresolvedCallIds'], 'HTTP409 effects_unconfirmed requires retained public unresolved effects'
+def assert_same_attempt(original, later):
+    for key in ('runId', 'generation', 'sessionId', 'nativeId', 'nativeGeneration', 'producerNonce', 'spawns'):
+        assert later[key] == original[key], 'A service restart changed ' + key
+    for event in ('harness_session', 'execution_model', 'tool_use'):
+        assert later['eventCounts'].get(event, 0) == original['eventCounts'].get(event, 0), 'The attempt replayed ' + event
 
 
-def _wait_crash_projection(read, target, minimum_revision, wait, say):
-    observed = {}
-    def ready():
-        nonlocal observed
-        state = read()
-        observed = {key: state.get(key) for key in ('ref', 'sessionId', 'generation', 'revision', 'lastSequence', 'state', 'phase', 'freshness', 'stopConfirmed')}
-        observed['unresolvedEffects'] = len((state.get('effects') or {}).get('unresolvedCallIds') or [])
-        assert state['ref'] == target['ref'] and state['generation'] == target['generation']
-        assert state['sessionId'] == target['sessionId']
-        assert state['stopConfirmed'] is False, 'A crashed run without owned proof must remain reserved during reattachment'
-        assert isinstance(state['revision'], str) and state['revision'].isascii() and state['revision'].isdecimal()
-        return state if state['state'] == 'unknown' and int(state['revision']) >= int(minimum_revision) else None
-    try:
-        return wait(ready, 30)
-    finally:
-        # Bound diagnostics to state/identity metadata; never log messages, inputs or credentials.
-        say('Crash public projection: '+json.dumps({'minimumRevision': minimum_revision, 'observed': observed}))
+def physically_closed(data, target):
+    proof = native_proof(data, target)
+    if proof['activeRun'] is None and groups_closed(proof):
+        return proof
+    return None
 
 
-
-@contextmanager
-def _deny_windows_replacement(path):
-    """Keep exact aggregate reads available while denying its atomic replacement."""
-    import ctypes
-    from ctypes import wintypes
-
-    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-    create = kernel.CreateFileW
-    create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
-                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
-    create.restype = wintypes.HANDLE
-    close = kernel.CloseHandle
-    close.argtypes = (wintypes.HANDLE,)
-    close.restype = wintypes.BOOL
-    # GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_EXISTING.
-    handle = create(str(path), 0x80000000, 0x3, None, 3, 0x80, None)
-    if handle == ctypes.c_void_p(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
-    try:
-        yield
-    finally:
-        close(handle)
+def groups_closed(proof):
+    return bool(proof['spawns']) and len(proof['receipts']) == len(proof['spawns']) and all(
+        receipt['state'] == 'stopped' and receipt['treeStopped'] is True for receipt in proof['receipts'])
 
 
-def _check_windows_aggregate_replacement(context, app_origin, call, client, connection):
-    providers, wait, say = (context[key] for key in ('agentProviders', 'wait_for', 'say'))
-    provider_data = context['root']/'apps'/providers.entries['codex']['appId']/'data'
-    aggregates = provider_data/'agent-sessions'
-    assert aggregates.resolve().is_relative_to(context['root'].resolve())
-    old = call(app_origin, '/api/sessions', {'title': 'Windows aggregate replacement failure',
-        'connectionId': connection['id'], 'profileId': None})
-    old_route = '/api/sessions/'+old['id']
-    new = call(app_origin, '/api/sessions', {'title': 'Independent admission with an attachment',
-        'connectionId': connection['id'], 'profileId': None})
-    new_route = '/api/sessions/'+new['id']
+def check_mac_workspace_continuation(context, app, app_origin, call, client, connection):
+    if sys.platform != 'darwin' or context.get('scenario') != 'agent-providers':
+        return
+    wait, say = context['wait_for'], context['say']
+    capabilities = set(connection['capabilities'])
+    assert 'workspace.edit' in capabilities and 'scope.workspace-writers' not in capabilities
 
-    def snapshot(route):
-        return (call(app_origin, route).get('providerExecution') or {}).get('run') or {}
+    chat = call(app_origin, '/api/sessions',
+        {'title': 'Ordinary macOS worktree editing', 'connectionId': connection['id'], 'profileId': None})
+    route = '/api/sessions/' + chat['id']
+    tree = call(app_origin, route + '/workspaces', {'action': 'prepare', 'requestId': str(uuid.uuid4()),
+        'appId': app, 'targetBranch': 'main', 'name': 'Edit and continue an ordinary Mac chat'})
+    workspace = '/api/development-workspaces/' + tree['workspaceId']
+    participants = call(app_origin, workspace + '/participants')
+    call(app_origin, route + '/workspaces', {'action': 'attach', 'requestId': str(uuid.uuid4()),
+        'workspaceId': tree['workspaceId'], 'expectedRevision': participants['revision']})
+    source = Path(tree['path']).resolve()
+    assert source.is_relative_to(context['root'].resolve()), 'The edit must target the disposable Core worktree'
+    marker = uuid.uuid4().hex
+    edited = source / ('workspace-edit-' + marker + '.txt')
+    heartbeat = edited.with_name(edited.name + '.heartbeat')
+    data = context['root'] / 'apps' / context['agentProviders'].entries['codex']['appId'] / 'data'
+    queue_route = route + '/message-queue'
 
-    def pending(route):
-        state = snapshot(route)
-        return state if any(item['kind'] == 'approval' for item in state.get('pending', [])) and not state['stopConfirmed'] else None
+    def enqueue(phase):
+        queue = call(app_origin, queue_route)
+        assert not queue['entries']
+        if queue['paused']:
+            call(app_origin, queue_route + '/commands', {'requestId': str(uuid.uuid4()),
+                'expectedRevision': queue['revision'], 'command': {'type': 'resume'}})
+            queue = call(app_origin, queue_route)
+        entry_id = str(uuid.uuid4())
+        queued = call(app_origin, queue_route + '/commands', {'requestId': str(uuid.uuid4()),
+            'expectedRevision': queue['revision'], 'command': {'type': 'enqueue', 'entryId': entry_id,
+                'text': f'MAC_WORKSPACE_EDIT:{marker}:{phase}', 'attachments': []}})
+        assert queued['queue']['entries'][0]['id'] == entry_id
+        return entry_id
 
-    def send(route, attachments=()):
-        result = call(app_origin, route+'/messages', {'text': 'write', 'clientRequestId': str(uuid.uuid4()),
-            'attachments': list(attachments)})
-        assert result['state'] == 'accepted'
+    def observation(entry_id):
+        entry = next((row for row in call(app_origin, queue_route)['entries'] if row['id'] == entry_id), None)
+        if entry:
+            assert entry['state'] not in ('unknown', 'failed'), ('Ordinary chat admission failed', (entry.get('error') or {}).get('code'))
+            return None, {}
+        current = call(app_origin, route)
+        assert current.get('agentProfile') is None, 'The native execution must not require a profile'
+        return current, (current.get('providerExecution') or {}).get('run') or {}
 
-    files = b'First message attachment from the isolated Windows fixture.'
-    upload = urllib.request.Request(app_origin + new_route + '/attachments/replacement-fixture.txt',
-        data=files, method='PUT', headers={'Origin': app_origin, 'Content-Type': 'application/octet-stream'})
-    with client.open(upload, timeout=30) as response:
-        assert response.status == 201
-        attachment = json.load(response)['attachment']['name']
+    first_entry = enqueue('initial')
+    def running_edit():
+        _, run = observation(first_entry)
+        return run if run.get('state') == 'running' and run.get('effects', {}).get('unresolvedCallIds') and heartbeat.is_file() else None
+    first = wait(running_edit, 90)
+    assert edited.read_text() == 'Initial edit\n'
+    requested = call(app_origin, route + '/cancel', {})
+    assert isinstance(requested.get('cancelled'), bool)
 
-    send(old_route)
-    original = wait(lambda: pending(old_route), 90)
-    run_id = original['ref']['id']
-    aggregate = aggregates/(original['sessionId']+'.json')
-    approval_id = next(item['id'] for item in original['pending'] if item['kind'] == 'approval')
+    def cancelled():
+        current, run = observation(first_entry)
+        if not current or current['status'] != 'cancelled':
+            return None
+        assert run['ref'] == first['ref'] and run['generation'] == first['generation']
+        assert run['stopConfirmed'] and not current.get('stopUnconfirmed')
+        assert run['effects']['unresolvedCallIds'] == first['effects']['unresolvedCallIds']
+        return run
+    stopped = wait(cancelled, 90)
 
-    def linked_approval():
-        retained = json.loads(aggregate.read_bytes())
-        return retained['runs'][run_id].get('decisionLinks', {}).get(approval_id)
+    second_entry = enqueue('follow-up')
+    def continued():
+        current, run = observation(second_entry)
+        if not current or run.get('ref') == first['ref'] or current['status'] != 'idle' or not run.get('stopConfirmed'):
+            return None
+        assert run['state'] == 'succeeded' and run['sessionId'] == stopped['sessionId']
+        return run
+    wait(continued, 90)
+    proof = wait(lambda: physically_closed(data, stopped), 90)
+    # HTTP and background cleanup can finish between observations. Compare the committed
+    # public terminal event with writes by the descendant and closure of its actual group.
+    beats = [tuple(map(int, line.split())) for line in heartbeat.read_text().splitlines()]
+    app_server_pid, last_write = beats[-1]
+    receipt = next(item for item in proof['receipts'] if item['nativePid'] == app_server_pid)
+    stop_time = datetime.fromisoformat(proof['stopConfirmedAt']).timestamp()
+    group_closed = datetime.fromisoformat(receipt['observedAt']).timestamp()
+    assert stop_time < last_write / 1000 <= group_closed, (
+        'Expected an owned descendant to write after public Stop and before group closure',
+        {'stop': proof['stopConfirmedAt'], 'lastWriteMs': last_write, 'groupClosed': receipt['observedAt']})
+    assert edited.read_text() == 'Initial edit\nFollow-up edit\n'
 
-    # Let the decision mirror finish its aggregate write before Stop is fault-injected.
-    wait(linked_approval, 90)
-    with _deny_windows_replacement(aggregate):
-        original_bytes = aggregate.read_bytes()
-        retained = json.loads(original_bytes)
-        assert retained['session']['activeRun']['id'] == run_id
-        control_ids = set(retained['runs'][run_id]['controls'])
-        temp_pattern = aggregate.name+'.*.tmp'
-        earlier_temps = set(aggregates.glob(temp_pattern))
-        try:
-            call(app_origin, old_route+'/cancel', {})
-        except urllib.error.HTTPError as error:
-            assert (error.code, json.load(error).get('code')) == (503, 'storage_uncertain')
-        else:
-            raise AssertionError('Stop must report unconfirmed storage when Windows denies replacing its aggregate')
-        attempted, = set(aggregates.glob(temp_pattern)) - earlier_temps
-        command_id, = set(json.loads(attempted.read_text(encoding='utf-8'))['runs'][run_id]['controls']) - control_ids
+    # Chat removal is logical. It must not erase the independently selected source tree.
+    with client.open(urllib.request.Request(app_origin + route, headers={'Origin': app_origin}, method='DELETE'), timeout=60) as response:
+        assert response.status in (200, 202) and json.load(response)['deleted']
+    assert all(item['id'] != chat['id'] for item in call(app_origin, '/api/sessions')['sessions'])
+    assert edited.read_text() == 'Initial edit\nFollow-up edit\n'
+    say('PASS: native macOS edited the selected worktree without a profile, confirmed Stop before an owned descendant stopped writing, cleaned up its group, and accepted another edit in the same chat')
 
-        send(new_route, (attachment,))
-        independent = wait(lambda: pending(new_route), 90)
-        assert independent['sessionId'] != original['sessionId'] and independent['ref']['id'] != run_id
-        assert call(app_origin, new_route+'/cancel', {}) == {'cancelled': True}
-        finished = wait(lambda: state if (state := snapshot(new_route)).get('stopConfirmed') else None, 90)
-        assert finished['ref'] == independent['ref'] and finished['state'] == 'cancelled'
-        committed = json.loads((aggregates/(independent['sessionId']+'.json')).read_text(encoding='utf-8'))
-        provider_file, = committed['runs'][independent['ref']['id']]['input']['input']['attachments']
-        assert provider_file['name'] == attachment and provider_file['sizeBytes'] == len(files)
-        assert provider_file['digest'] == hashlib.sha256(files).hexdigest()
-
-        # The exact prior commit proves that the attempted Stop was never admitted. The status
-        # read can reopen the session from that evidence, without publishing the failed write.
-        review = call(app_origin, old_route+'/execution-recovery')
-        assert review is None or (review['runId'] == run_id and not review['recoverable'])
-        current = snapshot(old_route)
-        assert current['ref'] == original['ref'] and current['generation'] == original['generation']
-        assert current['stopConfirmed'] is False
-        assert aggregate.read_bytes() == original_bytes, 'A status read must not retry Stop or publish its temporary file'
-        assert set(aggregates.glob(temp_pattern)) == earlier_temps | {attempted}
-
-    assert call(app_origin, old_route+'/cancel', {}) == {'cancelled': True}
-    stopped = wait(lambda: state if (state := snapshot(old_route)).get('stopConfirmed') else None, 90)
-    assert stopped['ref'] == original['ref'] and stopped['state'] == 'cancelled'
-    committed = json.loads(aggregate.read_text(encoding='utf-8'))
-    assert set(committed['runs'][run_id]['controls']) - control_ids == {command_id}
-    assert committed['session'].get('activeRun') is None
-    say('PASS: Windows denied one provider aggregate replacement while another chat accepted a file, streamed and stopped. '
-        'Checking status never replayed Stop. After unlock, the original Stop reached the provider exactly once.')
 
 def check(context, app, app_origin, call, timed, link, client):
     providers, wait, say = (context[key] for key in ('agentProviders', 'wait_for', 'say'))
@@ -194,7 +178,14 @@ def check(context, app, app_origin, call, timed, link, client):
     def pending():
         state = snapshot()
         return state if state.get('pending') and not state.get('stopConfirmed') else None
-    request = {'text': 'write', 'clientRequestId': str(uuid.uuid4())}
+    workspace_edit = bool({'workspace.edit', 'scope.workspace-writers'}.intersection(connection['capabilities']))
+    gate_prompt = 'write' if workspace_edit else 'question-blocking'
+    gate_kind = 'approval' if workspace_edit else 'question'
+    gate_route = '/approvals/' if workspace_edit else '/questions/'
+    gate_event = 'approval_request' if workspace_edit else 'question_request'
+    gate_key = 'approvalId' if workspace_edit else 'questionId'
+    answer = {'decision': 'allow'} if workspace_edit else {'answers': {'first': 'fixture choice', 'second': 'fixture answer'}}
+    request = {'text': gate_prompt, 'clientRequestId': str(uuid.uuid4())}
     admitted = call(app_origin, route+'/messages', request)
     assert admitted['state'] == 'accepted'
     before = wait(pending, 90)
@@ -211,7 +202,7 @@ def check(context, app, app_origin, call, timed, link, client):
     assert resumed['sessionId'] == provider_session and resumed['generation'] == before['generation']
     assert call(app_origin, route+'/messages', request) == admitted, 'Consumer retry must retain the original receipt'
     assert snapshot()['ref']['id'] == run_id
-    approval = next(item for item in resumed['pending'] if item['kind'] == 'approval')
+    approval = next(item for item in resumed['pending'] if item['kind'] == gate_kind)
     card_id = 'agent-decision-' + json.dumps([run_id, approval['id']], separators=(',', ':'), ensure_ascii=False).encode().hex()
     # Harness cards are run-qualified; the provider's raw decision ID is not its API route ID.
     # Read the replayed public event so this check exercises the same card as the browser.
@@ -221,207 +212,99 @@ def check(context, app, app_origin, call, timed, link, client):
                 continue
             envelope = json.loads(raw[6:])
             event = envelope.get('event', envelope)
-            if event.get('type') == 'approval_request' and event.get('approvalId') == card_id:
+            if event.get('type') == gate_event and event.get(gate_key) == card_id:
                 break
         else:
             raise AssertionError('The exact run-qualified approval must survive consumer restart and SSE replay')
-    call(app_origin, route+'/approvals/'+card_id, {'decision': 'allow'})
+    call(app_origin, route+gate_route+card_id, answer)
     wait(lambda: execution_stopped(current()), 90)
     completed = snapshot()
     assert completed['ref']['id'] == run_id and completed['state'] == 'succeeded'
     assert completed['result']['status'] == 'succeeded'
-    say('PASS: real Harness restart preserves provider PID, exact pending run, immutable input receipt and live approval completion')
+    say('PASS: real Harness restart preserves provider PID, exact pending run, immutable input receipt and live decision completion')
 
-    # The provider restarts independently with its own durable public session/native binding.
+    check_mac_workspace_continuation(context, app, app_origin, call, client, connection)
+
+    data = context['root'] / 'apps' / provider['appId'] / 'data'
+    # Kill the HTTP service while the native agent is waiting for a decision. No operator
+    # attestation enters the protocol. Stop after restart applies to the exact original attempt.
+    call(app_origin, route+'/messages', {'text': gate_prompt, 'clientRequestId': str(uuid.uuid4())})
+    crash = wait(pending, 90)
+    before_crash = native_proof(data, crash)
+    assert before_crash['spawns'] and before_crash['nativeId']
     harness_identity = context['harnessRuntimeIdentity']()
-    providers.restart('codex')
+    try:
+        providers.restart('codex')
+    except Exception:
+        runtime_log = context['root'] / 'apps' / provider['appId'] / 'logs' / 'api.log'
+        if runtime_log.is_file():
+            with runtime_log.open('rb') as stream:
+                stream.seek(max(0, runtime_log.stat().st_size - 12000))
+                tail = stream.read().decode('utf-8', errors='replace')
+            say('Provider restart log: ' + context['sanitize_diagnostic'](tail))
+        raise
     assert context['harnessRuntimeIdentity']() == harness_identity
+    after_crash = native_proof(data, crash)
+    assert_same_attempt(before_crash, after_crash)
+    def after_restart():
+        value = snapshot()
+        if value.get('ref') != crash['ref'] or value.get('generation') != crash['generation']:
+            return None
+        return value if value.get('pending') or value.get('stopConfirmed') else None
+    attached = wait(after_restart, 90)
+    if not attached['stopConfirmed']:
+        acknowledgement = call(app_origin, route+'/cancel', {})
+        assert isinstance(acknowledgement.get('cancelled'), bool)
+    def closed_target():
+        value = snapshot()
+        assert value.get('ref') == crash['ref'] and value.get('generation') == crash['generation']
+        return value if value.get('stopConfirmed') else None
+    try:
+        stopped = wait(closed_target, 90)
+    except Exception:
+        latest = snapshot()
+        say('Stop evidence: ' + json.dumps({'state':latest.get('state'),'phase':latest.get('phase'),
+            'stopConfirmed':latest.get('stopConfirmed'),'private':native_proof(data,crash)}))
+        raise
+    assert stopped['ref'] == crash['ref'] and stopped['generation'] == crash['generation'] and stopped['pending'] == []
+    assert stopped['state'] in ('cancelled', 'failed')
+    closed = wait(lambda: physically_closed(data, stopped), 90)
+    assert_same_attempt(before_crash, closed)
+    obsolete_id = 'agent-decision-' + json.dumps([crash['ref']['id'], crash['pending'][0]['id']], separators=(',', ':')).encode().hex()
+    try:
+        call(app_origin, route + gate_route + obsolete_id, answer)
+    except urllib.error.HTTPError as error:
+        assert error.code == 409 and json.load(error)['code'] in ('approval_not_pending', 'question_not_pending', 'run_fenced', 'stale_decision')
+    else:
+        raise AssertionError('A physically closed attempt accepted its obsolete decision.')
     call(app_origin, route+'/messages', {'text': 'hello', 'clientRequestId': str(uuid.uuid4())})
-    next_run = wait(lambda: snapshot() if snapshot().get('ref', {}).get('id') != run_id else None, 90)
-    assert next_run['sessionId'] == provider_session
-    wait(lambda: execution_stopped(current()), 90)
-    assert snapshot()['state'] == 'succeeded'
-    say('PASS: independent provider restart preserves the public session and resumes through a fresh authorized run')
+    def completed_turn():
+        value = snapshot()
+        return value if value.get('ref', {}).get('id') != crash['ref']['id'] and value.get('stopConfirmed') else None
+    continued = wait(completed_turn, 90)
+    assert continued['state'] == 'succeeded' and continued['sessionId'] == provider_session
+    assert native_proof(data, continued)['nativeId'] == before_crash['nativeId']
+    say('PASS: provider restart and Stop close the original native tree, reject its obsolete decision, and preserve the next chat turn.')
 
-    # Core's normal Local Stop hard-kills its owned app group. An active restart
-    # therefore exercises crash uncertainty; supported updates first quiesce runs.
-    call(app_origin, route+'/messages', {'text': 'write', 'clientRequestId': str(uuid.uuid4())})
-    interrupted = wait(pending, 90)
-    def native_proof(stage, target=None):
-        target = target or interrupted
-        data = context['root']/'apps'/provider['appId']/'data'
-        evidence = {'stage': stage, 'runId': target['ref']['id'], 'generation': target['generation'], 'sessionId': target['sessionId']}
-        journal = data/'execution-journal'/(target['ref']['id']+'.json')
-        if journal.exists():
-            stored = json.loads(journal.read_text())
-            receipt = stored['receipt']
-            assert receipt['runId'] == target['ref']['id'], 'Native receipt must belong to the exact public run'
-            evidence['receipt'] = {key: receipt.get(key) for key in ('state', 'exitConfirmed', 'revision', 'updatedAt', 'generation')}
-            evidence['receipt']['effectIds'] = sorted((receipt.get('effects') or {}).keys())
-            evidence['eventCounts'] = dict(collections.Counter(frame.get('event', {}).get('type') for frame in stored['events']))
-            evidence['lastEvents'] = [{'type': frame.get('event', {}).get('type'), 'state': frame.get('event', {}).get('state')}
-                for frame in stored['events'][-8:]]
-        retained_file = data/'agent-sessions'/(target['sessionId']+'.json')
-        if retained_file.exists():
-            retained = json.loads(retained_file.read_text())
-            assert retained['id'] == target['sessionId']
-            evidence['providerSession'] = {'nativeId': retained.get('nativeId'),
-                'activeRun': (retained['session'].get('activeRun') or {}).get('id'), 'runIds': sorted(retained['runs'])}
-        native = data/'native-processes'/target['ref']['id']/target['generation']
-        manifest_file = native/'manifest.json'
-        if manifest_file.exists():
-            manifest = json.loads(manifest_file.read_text())
-            assert manifest.get('version') == 1 and manifest.get('runId') == target['ref']['id'] and manifest.get('generation') == target['generation']
-            evidence['manifest'] = {key: manifest.get(key) for key in ('sealed', 'sdkStopConfirmed', 'producerPid', 'spawns')}
-            evidence['processes'] = []
-            for nonce in manifest.get('spawns', []):
-                child = native/(nonce+'.json')
-                if child.exists():
-                    value = json.loads(child.read_text())
-                    assert value.get('nonce') == nonce and value.get('runId') == target['ref']['id'] and value.get('generation') == target['generation']
-                    evidence['processes'].append({key: value.get(key) for key in ('state', 'treeStopped', 'outputDrained', 'writerPid', 'groupPid', 'nativePid')})
-        (context['base']/('provider-restart-'+stage+'.json')).write_text(json.dumps(evidence))
-        say('Provider restart evidence: '+json.dumps(evidence))
-        return evidence
-
-    def no_replay(original, later):
-        assert later['runId'] == original['runId'] and later['generation'] == original['generation']
-        assert later['sessionId'] == original['sessionId']
-        assert later['manifest']['spawns'] == original['manifest']['spawns'], 'A retained run must not start another native process'
-        assert later['manifest']['producerPid'] == original['manifest']['producerPid']
-        assert later['providerSession']['runIds'] == original['providerSession']['runIds'], 'Recovery must not create a replacement public run'
-        assert later['providerSession']['nativeId'] == original['providerSession']['nativeId']
-        assert later['receipt']['generation'] == original['receipt']['generation']
-        for event in ('harness_session', 'execution_model', 'tool_use'):
-            assert later['eventCounts'].get(event, 0) == original['eventCounts'].get(event, 0), 'Recovery must not replay native input or tools'
-
-    before_crash = native_proof('before')
-    assert before_crash.get('manifest', {}).get('spawns') and before_crash.get('providerSession', {}).get('nativeId')
-    providers.restart('codex')
-    after_crash = native_proof('after')
-    no_replay(before_crash, after_crash)
-    review_route = route+'/execution-recovery'
-    def stopped_or_recoverable():
-        state = current()
-        if execution_stopped(state): return {'stopped': True}
-        review = call(app_origin, review_route)
-        return review if review and review.get('recoverable') else None
-    review = wait(stopped_or_recoverable, 90)
-    effects_remain = bool(after_crash['receipt']['effectIds'] or snapshot().get('effects', {}).get('unresolvedCallIds'))
-    proof_permits_recovery = _owns_exit(after_crash) and not effects_remain
-    recovery = None
-    if review.get('stopped'):
-        assert proof_permits_recovery, 'Process disappearance without SDK/effect proof must never release the retained execution'
-    else:
-        assert review['runId'] == interrupted['ref']['id'] and review['generation'] == interrupted['generation']
-        recovery = {'requestId': str(uuid.uuid4()), 'runId': review['runId'],
-            'generation': review['generation'], 'expectedRevision': review['expectedRevision'], 'consumerExitConfirmed': True}
-
-    rejected_guards = []
-    def recover_with_original_command():
-        assert recovery, 'Only the originally reviewed recovery command may be repeated'
-        if proof_permits_recovery:
-            assert call(app_origin, review_route, recovery) == {'recovered': True}
-            return
-        # The first guard may be effects or owned exit, depending on retained state.
-        # Each exact error needs current evidence; neither permits arbitrary 409/503.
-        try:
-            call(app_origin, review_route, recovery)
-        except urllib.error.HTTPError as error:
-            payload = json.load(error)
-            code = payload.get('code') or (payload.get('error') or {}).get('code')
-            proof = native_proof('recovery-rejected-'+str(len(rejected_guards)+1))
-            no_replay(before_crash, proof)
-            _assert_private_crash_rejection(error.code, code, proof, interrupted)
-            rejected_guards.append((error.code, code, proof))
-        else:
-            raise AssertionError('A crashed run without exact provider-owned proof must remain fenced')
-
-    if recovery:
-        recover_with_original_command()
-        recover_with_original_command()
-    if proof_permits_recovery:
-        wait(lambda: execution_stopped(current()), 90)
-    else:
-        assert after_crash['providerSession']['activeRun'] == interrupted['ref']['id'], 'An unproved run must retain its provider session reservation'
-    rejected = native_proof('after-recovery-review')
-    no_replay(before_crash, rejected)
-    timed('restart')
-    assert call(app_origin, route+'/credentials', {}) == {'updated': True}, 'Reconnect using the original operator after consumer restart'
-    if recovery:
-        recover_with_original_command()
-    if not proof_permits_recovery:
-        # Recovery GET reads the provider without projecting it into Harness. An
-        # observer whose old connection ended can retain a pre-crash UI snapshot.
-        # The already planned consumer restart/credentials reattaches that observer;
-        # require its fresh exact-run projection before validating every rejection.
-        fresh = _wait_crash_projection(snapshot, interrupted, review['expectedRevision'], wait, say)
-        assert rejected_guards, 'The crash must actually exercise its public recovery fence'
-        for status, code, proof in rejected_guards:
-            _assert_crash_rejection(status, code, proof, fresh, interrupted)
-    assert snapshot()['ref']['id'] == interrupted['ref']['id'] and snapshot()['sessionId'] == provider_session
-    assert snapshot()['generation'] == interrupted['generation']
-    after_consumer = native_proof('after-consumer-restart')
-    no_replay(before_crash, after_consumer)
-    if proof_permits_recovery:
-        assert execution_stopped(current())
-        say('PASS: retained provider-owned SDK/tree/effect proof permits immutable reconciliation without native replay')
-    else:
-        assert snapshot()['state'] == 'unknown' and not execution_stopped(current())
-        assert after_consumer['providerSession']['activeRun'] == interrupted['ref']['id']
-        guards = sorted({'HTTP'+str(status)+' '+code for status, code, _ in rejected_guards})
-        say('PASS: active Local restart is a crash; exact missing SDK/effect proof keeps the original run reserved across consumer restart ('+', '.join(guards)+')')
-
-    # Supported provider update: the operator cancels through the public consumer API
-    # and observes authoritative stop BEFORE Core hard-stops the idle provider.
-    fresh = call(app_origin, '/api/sessions', {'title': 'Quiescent provider update', 'connectionId': connection['id'], 'profileId': None})
+    fresh = call(app_origin, '/api/sessions', {'title': 'Independent stopped-effect conversation', 'connectionId': connection['id'], 'profileId': None})
     fresh_route = '/api/sessions/'+fresh['id']
-    def fresh_current(): return call(app_origin, fresh_route)
-    def fresh_snapshot(): return (fresh_current().get('providerExecution') or {}).get('run') or {}
-    def fresh_pending():
-        value = fresh_snapshot()
-        return value if value.get('pending') and not value.get('stopConfirmed') else None
-    call(app_origin, fresh_route+'/messages', {'text': 'write', 'clientRequestId': str(uuid.uuid4())})
-    cancel_target = wait(fresh_pending, 90)
-    assert cancel_target['sessionId'] != provider_session
-    before_cancel = native_proof('quiescent-before-cancel', cancel_target)
-    assert call(app_origin, fresh_route+'/cancel', {}) == {'cancelled': True}
-    wait(lambda: execution_stopped(fresh_current()), 90)
-    cancelled = fresh_snapshot()
-    assert cancelled['ref']['id'] == cancel_target['ref']['id'] and cancelled['generation'] == cancel_target['generation']
-    assert cancelled['state'] == 'cancelled' and cancelled['effects']['certainty'] == 'known' and not cancelled['effects']['unresolvedCallIds']
-    cancelled_proof = native_proof('quiescent-stopped', cancelled)
-    assert _owns_exit(cancelled_proof) and not cancelled_proof['receipt']['effectIds']
-    assert cancelled_proof['receipt']['exitConfirmed'] is True and cancelled_proof['providerSession']['activeRun'] is None
-    harness_identity = context['harnessRuntimeIdentity']()
-    providers.restart('codex')
-    assert context['harnessRuntimeIdentity']() == harness_identity
-    updated_proof = native_proof('quiescent-after-provider-restart', cancelled)
-    no_replay(cancelled_proof, updated_proof)
+    call(app_origin, fresh_route+'/messages', {'text': 'completed-with-unknown-search', 'clientRequestId': str(uuid.uuid4())})
+    def incomplete_result():
+        value = (call(app_origin, fresh_route).get('providerExecution') or {}).get('run') or {}
+        return value if value.get('stopConfirmed') and value.get('effects', {}).get('unresolvedCallIds') else None
+    partial = wait(incomplete_result, 90)
+    assert partial['state'] == 'succeeded' and partial['effects']['certainty'] == 'unknown'
+    proof = wait(lambda: physically_closed(data, partial), 90)
+    assert len(proof['effectIds']) == len(partial['effects']['unresolvedCallIds']) == 1
     call(app_origin, fresh_route+'/messages', {'text': 'hello', 'clientRequestId': str(uuid.uuid4())})
-    def fresh_resumed():
-        value = fresh_snapshot()
-        return value if value.get('ref', {}).get('id') != cancelled['ref']['id'] else None
-    continued = wait(fresh_resumed, 90)
-    assert continued['sessionId'] == cancel_target['sessionId']
-    wait(lambda: execution_stopped(fresh_current()), 90)
-    assert fresh_snapshot()['state'] == 'succeeded'
-    resumed_proof = native_proof('quiescent-resumed', fresh_snapshot())
-    assert resumed_proof['providerSession']['nativeId'] == before_cancel['providerSession']['nativeId'], 'A quiescent update must preserve the exact native context'
-    assert resumed_proof['providerSession']['activeRun'] is None
-    no_replay(before_crash, native_proof('abrupt-run-after-quiescent-update'))
-    if not proof_permits_recovery:
-        assert not execution_stopped(current()) and snapshot()['ref']['id'] == interrupted['ref']['id']
-    data = context['root']/'apps'/app/'data'
-    events = [json.loads(line) for line in (data/'sessions'/session['id']/'events.ndjson').read_text().splitlines() if line.strip()]
-    assert sum(event.get('type') == 'user_message' and event.get('text') == 'hello' for event in events) == 1
-    assert sum(event.get('type') == 'user_message' and event.get('text') == 'write' for event in events) == 2
-    assert not (data/'worker-service').exists(), 'The consumer must not create a private native execution journal'
-    say('PASS: public Cancel proves SDK/tree/effect stop before provider update, and the same public/native session resumes afterward')
-    # Reproduce the retained terminal shape using a real child process and provider
-    # journal, including the missing tool outcome. Restart before using owner Delete.
-    disposable = call(app_origin, '/api/sessions', {'title': 'Stopped turn with an unknown search outcome',
-        'connectionId': connection['id'], 'profileId': None})
+    def resumed_partial():
+        value = (call(app_origin, fresh_route).get('providerExecution') or {}).get('run') or {}
+        return value if value.get('ref', {}).get('id') != partial['ref']['id'] and value.get('stopConfirmed') else None
+    resumed = wait(resumed_partial, 90)
+    assert resumed['state'] == 'succeeded' and resumed['sessionId'] == partial['sessionId']
+    say('PASS: an unanswered tool outcome remains recorded on the original attempt and does not reserve the session.')
+
+    disposable = call(app_origin, '/api/sessions', {'title': 'Owner-selected deletion', 'connectionId': connection['id'], 'profileId': None})
     delete_route = '/api/sessions/'+disposable['id']
     tree = call(app_origin, delete_route+'/workspaces', {'action': 'prepare', 'requestId': str(uuid.uuid4()),
         'appId': app, 'targetBranch': 'main', 'name': 'Retain source during stopped session deletion'})
@@ -435,52 +318,34 @@ def check(context, app, app_origin, call, timed, link, client):
     assert tree_path.is_relative_to(context['root'].resolve())
     dirty_file = tree_path/'retirement-fixture.txt'
     dirty_file.write_text('Preserve this uncommitted work.')
-    call(app_origin, delete_route+'/messages', {'text': 'completed-with-unknown-search', 'clientRequestId': str(uuid.uuid4())})
-
-    def unresolved_search():
-        value = (call(app_origin, delete_route).get('providerExecution') or {}).get('run') or {}
-        if value.get('state') == 'unknown' and len(value.get('effects', {}).get('unresolvedCallIds', [])) == 1:
-            return value
-        return None
-
-    stopped = wait(unresolved_search, 90)
-    assert stopped['stopConfirmed'] is False
-    retained = native_proof('unknown-outcome-before-retirement', stopped)
-    assert _owns_exit(retained) and retained['receipt']['state'] == 'completed'
-    assert retained['receipt']['exitConfirmed'] is True and len(retained['receipt']['effectIds']) == 1
-    assert retained['providerSession']['activeRun'] == stopped['ref']['id']
-    retained_leases = set(call(app_origin, worktree_route)['leases'])
-    assert original_leases < retained_leases, 'The unresolved run must still have its own workspace lease'
-    providers.restart('codex')
-    no_replay(retained, native_proof('unknown-outcome-after-restart', stopped))
-
-    delete_request = urllib.request.Request(app_origin + delete_route, headers={'Origin': app_origin}, method='DELETE')
-    try:
-        with client.open(delete_request, timeout=60) as response:
-            assert json.load(response) == {'deleted': True}, 'One owner Delete request must retire a proven-stopped run with incomplete results'
-    except urllib.error.HTTPError as error:
-        payload = json.load(error)
-        code = payload.get('code') or (payload.get('error') or {}).get('code')
-        raise AssertionError(f'Owner Delete failed for the proven-stopped fixture: HTTP {error.code} {code}') from error
-    try:
-        call(app_origin, delete_route)
-    except urllib.error.HTTPError as error:
-        assert error.code == 404
+    if workspace_edit:
+        call(app_origin, delete_route+'/messages', {'text': gate_prompt, 'clientRequestId': str(uuid.uuid4())})
+        def waiting_writer():
+            value = (call(app_origin, delete_route).get('providerExecution') or {}).get('run') or {}
+            return value if value.get('pending') and not value.get('stopConfirmed') else None
+        writer = wait(waiting_writer, 90)
+        writer_scope = native_process_receipts(data, writer)
+        assert writer_scope['spawns']
+        assert original_leases < set(call(app_origin, worktree_route)['leases'])
     else:
-        raise AssertionError('The selected conversation still exists after Delete')
-    retired = native_proof('unknown-outcome-after-retirement', stopped)
-    no_replay(retained, retired)
-    assert retired['receipt'] == retained['receipt'], 'Retirement must preserve the exact native receipt and unresolved outcome'
-    assert retired['providerSession']['activeRun'] is None
-    settled_tree = call(app_origin, worktree_route)
-    assert settled_tree['branch'] == tree['branch'] and set(settled_tree['leases']) == original_leases
+        writer = None
+        say('The provider offers no workspace editing on this host. The resource-free attempt and source retention checks still run.')
+    delete = urllib.request.Request(app_origin+delete_route, headers={'Origin': app_origin}, method='DELETE')
+    with client.open(delete, timeout=60) as response:
+        result = json.load(response)
+        assert response.status in (200, 202) and result['deleted'] and result['requestId']
+    wait(lambda: call(app_origin, delete_route+'/deletion').get('state') == 'removed', 90)
+    if writer:
+        def writer_groups_closed():
+            proof = native_process_receipts(data, writer)
+            assert proof['producerNonce'] == writer_scope['producerNonce']
+            assert set(writer_scope['spawns']) <= set(proof['spawns'])
+            return groups_closed(proof)
+        wait(writer_groups_closed, 90)
     assert dirty_file.read_text() == 'Preserve this uncommitted work.'
-    assert not any(entry['sessionId'] == disposable['id'] and entry['attached']
-        for entry in call(app_origin, workspace_route+'/participants')['sessions'])
-    assert fresh_current()['id'] == fresh['id'], 'Deleting the stopped session must keep other conversations'
-    say('PASS: one authenticated Delete retires a previously retained proven-stopped run, preserves unknown evidence and deletes only its Harness conversation')
-    if os.name == 'nt':
-        _check_windows_aggregate_replacement(context, app_origin, call, client, connection)
-    return {'before': before_crash, 'after': after_crash, 'afterConsumer': after_consumer,
-        'quiescentStopped': cancelled_proof, 'quiescentResumed': resumed_proof, 'retired': retired,
+    wait(lambda: set(call(app_origin, worktree_route)['leases']) == original_leases, 90)
+    assert not any(item['sessionId'] == disposable['id'] and item['attached'] for item in call(app_origin, workspace_route+'/participants')['sessions'])
+    assert call(app_origin, route)['id'] == session['id']
+    say('PASS: confirmed session deletion completes cleanup while preserving separately owned workspace files and the sibling conversation.')
+    return {'before': before_crash, 'after': after_crash, 'quiescentStopped': closed, 'quiescentResumed': resumed,
         'completedChatId': fresh['id'], 'otherChatId': session['id'], 'retainedTree': tree}

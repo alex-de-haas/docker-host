@@ -26,7 +26,7 @@ export function contextChangeBlocked(record: SessionRecord, originalInstalled: b
   if (record.taskExecutionId || record.taskDispatch) return "An accepted task keeps its assigned provider and model.";
   if (record.handoffPending || ["queued", "unknown", "running"].includes(record.handoffDispatch?.state ?? ""))
     return "Finish the outstanding handoff before changing context.";
-  if (record.workerRun || record.workerRecovery?.state === "pending" || record.sourceAdmission || record.providerRetirement || record.providerRecovery?.state === "pending"
+  if (record.workerRun || record.workerRecovery?.state === "pending" || record.sourceAdmission || record.providerRetirement
       || record.retentionCleanup || record.subagentStartPending || record.subagentsPending
       || record.associationRequests?.some(request => request.state === "pending") || record.coreEnvironmentOperations?.some(op => op.state === "pending")
       || record.decisionWaitIds?.length || record.developmentLease && record.developmentLeaseState !== "stopped")

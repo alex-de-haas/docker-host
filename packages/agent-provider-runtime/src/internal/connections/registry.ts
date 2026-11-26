@@ -1,6 +1,6 @@
 import { ConnectionUsage } from "./usage.js";
 import { absentUsage, type ProviderUsage } from "../harness/provider-usage.js";
-import type { HarnessAdapter, HarnessAvailability, HarnessRun } from "../harness/adapter.js";
+import { withRunLifecycle, type HarnessAdapter, type HarnessAvailability, type HarnessRun } from "../harness/adapter.js";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -53,7 +53,7 @@ export abstract class AgentConnections {
   }
   protected queue: Promise<unknown> = Promise.resolve();
   protected syncErrors = new Map<string, string>();
-  protected syncTimer: ReturnType<typeof setInterval>;
+  protected syncTimer?: ReturnType<typeof setInterval>;
   constructor(
     protected readonly dataDir: string,
     protected readonly cacheDir: string | null,
@@ -62,6 +62,9 @@ export abstract class AgentConnections {
     protected readonly applicationMode?: "native" | "docker",
   ) {
     this.usageCache = new ConnectionUsage(path.join(dataDir, "connection-usage"));
+    // The public service owns installation-wide credential maintenance. Attempt processes only
+    // open their pinned connection and must not replace settings from a private cached registry.
+    if (process.argv[2] === "--hosty-attempt") return;
     this.syncTimer = setInterval(() => {
       void this.syncCredentials();
     }, 5000);
@@ -402,25 +405,28 @@ export abstract class AgentConnections {
           } });
           const runs = this.usageRuns.get(current.id) ?? new Set<HarnessRun>();
           runs.add(run); this.usageRuns.set(current.id, runs);
-          const removeRun = () => { runs.delete(run); if (!runs.size) this.usageRuns.delete(current.id); };
+          const finish = () => {
+            if (released) return;
+            runs.delete(run);
+            if (!runs.size) this.usageRuns.delete(current.id);
+            release();
+          };
 
-          return {
-            readUsage: run.readUsage ? () => run.readUsage!() : undefined,
-            send: (text) => run.send(text),
-            resolveApproval: (id, decision, message) =>
-              run.resolveApproval(id, decision, message),
-            resolveQuestion: (id, answers) => run.resolveQuestion(id, answers),
-            interrupt: () => run.interrupt(),
-            setMcpServers: (servers) => run.setMcpServers(servers),
-            ...(run.stopAndWait ? { stopAndWait: async () => {
-              await run.stopAndWait!();
-              removeRun(); release();
-            } } : {}),
+          return withRunLifecycle(run, {
             stop: async () => {
               await run.stop();
-              removeRun(); release();
+              finish();
             },
-          };
+            stopAndWait: run.stopAndWait && (async () => {
+              await run.stopAndWait!();
+              finish();
+            }),
+            stopForCancellation: run.stopForCancellation && (async () => {
+              const closure = await run.stopForCancellation!();
+              finish();
+              return closure;
+            }),
+          });
         } catch (error) {
           release();
           throw error;
@@ -573,10 +579,13 @@ export abstract class AgentConnections {
   async cancelLogin(_id: string): Promise<void> { throw new ConnectionError(404, "login_not_found", "This login attempt expired. Start sign-in again."); }
   async shutdown(): Promise<void> {
     clearInterval(this.syncTimer); await Promise.allSettled([...this.usageUpdates]); await this.usageCache.close();
-    await this.closeConnections(); await this.syncCredentials();
+    await this.closeConnections(); if (this.syncTimer) await this.syncCredentials();
   }
 }
 /** The execution runtime depends only on this structural application-owned connection surface. */
 export type ProviderConnections = Pick<AgentConnections, "list" | "binding" | "reserve" | "adapter" | "prepareAdapter" | "models" | "usage" | "shutdown"> & {
+  recoverChildObservations?(input: { sessionId: string; nativeId: string; attemptId: string;
+    checkpoint: import("../harness/adapter.js").NativeObservationCheckpoint;
+    emit(event: import("../harness/adapter.js").HarnessEvent): void }): Promise<void>;
   inspectNativeContext?(sessionId: string, nativeId: string): Promise<"available" | "missing">;
 };

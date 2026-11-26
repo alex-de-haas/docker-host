@@ -143,14 +143,14 @@ describe("native provider children in the Harness transcript", () => {
     await vi.waitFor(async () => expect(statuses(await f.store.readEvents(record.id))).toHaveLength(2));
     f.update(runId, { agents: retainInventory ? agents : [], state: "unknown", phase: "interrupted", freshness: "last_known",
       messages: [{ id: "partial", source: child, role: "assistant", state: "interrupted", text: "Partial research" }], effects: { certainty: "unknown", unresolvedCallIds: ["unfinished-tool"] } });
-    await vi.waitFor(async () => expect((await f.store.readRecord(record.id))!.status).toBe("failed"));
+    await vi.waitFor(async () => expect((await f.store.readRecord(record.id))?.providerStatusContact?.reason).toBe("unavailable"));
+    expect((await f.store.readRecord(record.id))?.status).toBe("running");
     const events = await f.store.readEvents(record.id), states = statuses(events);
     expect(states.filter(event => (event.providerSource as AgentSource).agentId === "child")).toMatchObject([
       { state: "running" }, { state: "unknown", lastKnownState: "running", freshness: "last_known", stopConfirmed: false }]);
     expect(states.filter(event => (event.providerSource as AgentSource).agentId === "completed").every(event => event.state === "succeeded")).toBe(true);
     const notice = events.find(event => event.type === "notice" && String(event.message).includes("cannot be reconciled"));
-    expect(notice?.message).toContain("1 native tool outcome is unresolved");
-    expect(notice?.message).not.toContain("Native exit is unconfirmed");
+    expect(notice).toBeUndefined();
     expect(events.find(event => event.type === "assistant_text")).toMatchObject({ text: "Partial research", incomplete: true, providerSource: { agentId: "child", runId } });
     // Reconnect can restore the same native cursor; this is a new observation, not new work.
     await f.manager.shutdown();

@@ -56,6 +56,8 @@ function spawnTarget(args: string[]): { command: string; args: string[] } {
     : { command: resolved, args };
 }
 
+const restrictedFeatures = ["shell_tool", "unified_exec", "shell_snapshot", "code_mode_host", "computer_use", "hooks", "plugins", "apps", "multi_agent"];
+
 export class CodexHarnessAdapter implements HarnessAdapter {
   readonly name = "codex-app-server";
   // Pinned 0.162.1 supports structured questions in default mode with the explicit feature flag.
@@ -154,6 +156,8 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   }
 
   start(options: HarnessStartOptions): HarnessRun {
+    if (options.restrictedHost && (options.autonomy === "autonomous" || options.subagents?.enabled === true))
+      throw new Error("This execution profile requires a qualified native writer scope.");
     return new ReconfigurableCodexRun(options, this.auth);
   }
 }
@@ -174,6 +178,10 @@ class ReconfigurableCodexRun implements HarnessRun {
   async disableSuggestions(): Promise<void> { this.options.promptSuggestions = false; await this.active.disableSuggestions(); }
   async stop(): Promise<void> { this.stopped = true; await this.active.stop(); }
   async stopAndWait(): Promise<void> { this.stopped = true; await this.active.stopAndWait(); }
+  stopForCancellation(): Promise<{ drained: Promise<void> }> {
+    this.stopped = true;
+    return this.active.stopForCancellation();
+  }
   async setMcpServers(servers: Record<string, unknown>): Promise<boolean> {
     if (this.stopped || this.replacing || !this.active.resumableThread) return false;
     this.replacing = true;
@@ -241,12 +249,9 @@ class CodexRun implements HarnessRun {
   private predictedTurns = new Set<string>();
   private activityTurnId: string | null = null;
   private readonly interruptedTurns = new Map<string, Set<() => void>>();
-  private readonly commandRun = randomUUID();
+  private readonly commandRun: string;
   private commandTurn = 0;
-  private readonly children = new CodexChildren(this.commandRun, this.childSources,
-    threadId => this.request("thread/read", { threadId, includeTurns: true }, CODEX_CHILD_METADATA_TIMEOUT_MS),
-    event => this.emit(event), () => !this.stopped && !this.failed,
-    threadId => this.request("thread/turns/list", { threadId, limit: 1, itemsView: "full" }, CODEX_CHILD_METADATA_TIMEOUT_MS));
+  private readonly children: CodexChildren;
   private readonly commandCalls = new Map<string, { id: string; turnId: string }>();
   private readonly completedCommandCalls = new Set<string>();
   private readonly completedToolCalls = new Set<string>();
@@ -278,6 +283,11 @@ class CodexRun implements HarnessRun {
     private readonly auth: CodexAuthConfig,
     private readonly strictResume = false,
   ) {
+    this.commandRun = options.workerRunId ?? randomUUID();
+    this.children = new CodexChildren(this.commandRun, this.childSources,
+    threadId => this.request("thread/read", { threadId, includeTurns: true }, CODEX_CHILD_METADATA_TIMEOUT_MS),
+    event => this.emit(event), () => !this.stopped && !this.failed,
+    threadId => this.request("thread/turns/list", { threadId, limit: 1, itemsView: "full" }, CODEX_CHILD_METADATA_TIMEOUT_MS), options.nativeObservations);
     // Resolved synchronously from the mode: the login itself already happened during probe, and a
     // session must not wait on it. In interactive mode this is the operator's own home.
     const env = authMode(auth) === "api-key"
@@ -292,7 +302,8 @@ class CodexRun implements HarnessRun {
     const mcp = toCodexMcpConfig(options.mcpServers);
     // The pinned 0.167 CLI exposes multi_agent as a stable feature. Make the advertised default
     // explicit for this process instead of inheriting an operator's mutable native config.
-    const providerArgs = ["app-server", "-c", "features.default_mode_request_user_input=true", "-c", "features.multi_agent=true", ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args];
+    const toolPolicy = options.restrictedHost ? restrictedFeatures.flatMap(feature => ["-c", `features.${feature}=false`]) : ["-c", "features.multi_agent=true"];
+    const providerArgs = ["app-server", "-c", "features.default_mode_request_user_input=true", ...toolPolicy, ...(auth.managedHome ? ["-c", 'cli_auth_credentials_store="file"'] : []), ...mcp.args];
     const target = spawnTarget(providerArgs);
     const spawnOptions = {
       stdio: ["pipe", "pipe", "pipe"] as const,
@@ -311,7 +322,7 @@ class CodexRun implements HarnessRun {
       this.pendingRequests.clear();
       if (!this.stopped) this.emit({ type: "error", message: "Codex process could not start." });
     });
-    this.child.stdout.on("data", (chunk: Buffer) => this.onStdout(chunk));
+    this.child.stdout.setEncoding("utf8").on("data", (chunk: string) => this.onStdout(chunk));
     this.child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString().trim();
       // Codex logs routine startup noise (MCP status, OAuth refreshes) to stderr; only surface a
@@ -369,7 +380,7 @@ class CodexRun implements HarnessRun {
 
   resolveApproval(approvalId: string, decision: "allow" | "deny", message?: string): boolean {
     const pending = this.approvals.get(approvalId);
-    if (!pending) {
+    if (!pending || this.stopped) {
       return false;
     }
 
@@ -478,6 +489,14 @@ class CodexRun implements HarnessRun {
     });
   }
 
+  async stopForCancellation(): Promise<{ drained: Promise<void> }> {
+    const transport = this.options.processTransport;
+    const drained = this.stopAndWait();
+    if (transport?.waitForTargetExit) await Promise.race([drained, transport.waitForTargetExit(this.child)]);
+    else await drained;
+    return { drained };
+  }
+
   async stop(): Promise<void> {
     if (this.stopTask) return this.stopTask;
     this.stopped = true;
@@ -579,14 +598,21 @@ class CodexRun implements HarnessRun {
       if (!this.selectedModel) throw new Error("Codex did not report its default model; select a model explicitly.");
     }
 
+    const threadConfig = {
+      ...(this.selectedEffort ? { model_reasoning_effort: this.selectedEffort } : {}),
+      ...(this.options.restrictedHost ? {
+        features: { ...Object.fromEntries(restrictedFeatures.map(feature => [feature, false])), default_mode_request_user_input: true },
+        agents: { max_depth: 0 },
+      } : {}),
+    };
     if (this.options.resumeHarnessSessionId) {
       const resumed = (await this.request(CODEX_METHODS.threadResume, {
         threadId: this.options.resumeHarnessSessionId,
         cwd: this.options.cwd,
         model: this.selectedModel,
-        ...(this.selectedEffort ? { config: { model_reasoning_effort: this.selectedEffort } } : {}),
+        ...(Object.keys(threadConfig).length ? { config: threadConfig } : {}),
         sandbox: this.options.autonomy === "autonomous" ? "danger-full-access" : "read-only",
-        approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
+        approvalPolicy: this.options.restrictedHost || this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
       }).catch((error) => { if (this.auth.isolated || this.strictResume) throw new Error("The original native thread could not be resumed."); return null; })) as { thread?: { id?: string } } | null;
       if ((this.strictResume || this.auth.isolated || resumed) && resumed?.thread?.id !== this.options.resumeHarnessSessionId)
         throw new Error("Codex did not resume the requested thread.");
@@ -600,10 +626,10 @@ class CodexRun implements HarnessRun {
       const started = (await this.request(CODEX_METHODS.threadStart, {
         cwd: this.options.cwd,
         model: this.selectedModel,
-        ...(this.selectedEffort ? { config: { model_reasoning_effort: this.selectedEffort } } : {}),
+        ...(Object.keys(threadConfig).length ? { config: threadConfig } : {}),
         // Apply explicit chat policy on both initial start and every turn, including resumed threads.
         sandbox: this.options.autonomy === "autonomous" ? "danger-full-access" : "read-only",
-        approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
+        approvalPolicy: this.options.restrictedHost || this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
       })) as { threadId?: string; thread?: { id?: string } };
       this.reportSelection(started);
       this.threadId = started.threadId ?? started.thread?.id ?? null;
@@ -667,7 +693,7 @@ class CodexRun implements HarnessRun {
         input: [{ type: "text", text }],
         model: this.selectedModel,
         effort: this.selectedEffort,
-        approvalPolicy: this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
+        approvalPolicy: this.options.restrictedHost || this.options.autonomy === "autonomous" ? "never" : APPROVAL_POLICY,
         // A tracked local runner observes the process tree; it does not supply a filesystem or
         // network sandbox. Preserve the same explicit native policy with either spawn path.
         sandboxPolicy: { type: this.options.autonomy === "autonomous" ? "dangerFullAccess" : "readOnly" },
@@ -684,8 +710,8 @@ class CodexRun implements HarnessRun {
     // turnActive is cleared by the turn/completed notification, which also drives the next pump.
   }
 
-  private onStdout(chunk: Buffer): void {
-    this.buffer += chunk.toString();
+  private onStdout(chunk: string): void {
+    this.buffer += chunk;
     for (;;) {
       const newline = this.buffer.indexOf("\n");
       if (newline < 0) {
@@ -744,6 +770,12 @@ class CodexRun implements HarnessRun {
           this.emit({ type: "notice", message: "Codex question rejected: " + reason });
         }
       } else if (APPROVAL_METHODS.has(message.method)) {
+        if (this.options.restrictedHost) {
+          const result = message.method === "item/permissions/requestApproval" ? { permissions: {}, scope: "turn" }
+            : { decision: approvalDecision(message.method, "deny", "This host cannot contain an unrestricted native command.") };
+          this.respond(message.id, result);
+          return;
+        }
         const approvalId = randomUUID();
         const params = message.params ?? {};
         const proposal = message.method === "item/fileChange/requestApproval" ? this.takeFileChangeProposal(params) : undefined;
@@ -1125,6 +1157,7 @@ class CodexRun implements HarnessRun {
         source = { agentId: id, parentAgentId: parent, ...(callId ? { parentToolCallId: callId } : {}) };
         this.childSources.set(id, source);
       }
+      if (spawning) this.children.correlate(id, item.senderThreadId, String(params.turnId), this.commandTurn);
       const value = states[id], status = value && typeof value === "object" ? (value as Record<string, unknown>).status : undefined;
       // A wait/list/close operation may only name a receiver, even after it has
       // already finished. That is not a new observation of the child's state.

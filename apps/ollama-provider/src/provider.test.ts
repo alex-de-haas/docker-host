@@ -7,6 +7,6 @@ it("declares only the agent interface and owns its runtime engine definition", a
   expect(manifest.provides).toEqual(["agent"]);
   expect(Object.keys(manifest.interfaces)).toEqual(["agent"]);
   expect(manifest.interfaces.agent[0].capabilities.some((capability: string) => capability.startsWith("translation."))).toBe(false);
-  expect(ollamaEngine.capabilities.version).toBe(1);
+  expect(ollamaEngine.capabilities.version).toBe(2);
   expect(ollamaEngine.settings.authentication.length).toBeGreaterThan(0);
 });

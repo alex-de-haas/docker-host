@@ -180,3 +180,24 @@ it("never shows hidden setup output or assigns a hidden duplicate identity to a 
   expect(transcriptItems([visible, hidden, output], new Set())[0]).toMatchObject({ toolResults: {} });
   expect(transcriptItems([{ ...hidden, toolName: "mcp__hosty-workspaces__environment_setup" }, output], new Set())).toHaveLength(1);
 });
+
+it("renders sparse partial input in its original item until final content replaces it", () => {
+  const fragment = (seq: number, position: number, text: string) => ({ seq, ts: "", type: "provider_fragment", target: "run:message:child:a",
+    providerEventId: "run:fragment:" + position, providerHistoryPosition: { sessionId: "s", epoch: "e", position }, text });
+  const chunks = [fragment(1, 2, "world"), fragment(2, 1, "Hello ")];
+  expect(orderedHistory(chunks)).toMatchObject([{ type: "assistant_text", text: "Hello world", incomplete: true }]);
+  expect(orderedHistory([...chunks, { seq: 3, ts: "", type: "assistant_text", providerEventId: "run:message:child:a", text: "Final" }]))
+    .toMatchObject([{ type: "assistant_text", text: "Final" }]);
+});
+
+it("recovers a replaced draft in one row only after the complete range arrives", () => {
+  const target = "run:message:root:msg";
+  const fragment = (seq: number, sourceSequence: string, text: string, messageBoundary?: "start" | "complete") =>
+    event(seq, "provider_fragment", { target, sourceSequence, text, messageBoundary });
+  const draft = fragment(1, "20", "obsolete"), reset = fragment(3, "21", "", "start");
+  const summary = event(2, "assistant_text", { providerEventId: target, text: "excerpt" });
+  const right = fragment(4, "23", "reply"), end = fragment(5, "24", "", "complete");
+  expect(orderedHistory([draft, summary, reset, right, end]).map(row => row.text)).toEqual(["excerpt"]);
+  const left = fragment(6, "22", "new ");
+  expect(orderedHistory([draft, summary, reset, right, end, left, left]).map(row => row.text)).toEqual(["new reply"]);
+});

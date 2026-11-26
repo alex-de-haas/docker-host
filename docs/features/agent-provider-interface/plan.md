@@ -1,7 +1,7 @@
 ---
 status: In Progress
 created: 2026-10-10
-updated: 2026-11-21
+updated: 2026-11-25
 summary: Extract independent local agent-provider apps consumed by Docker-hosted Harness, with explicit discovery, authority, recovery and host-tool readiness.
 components: [apps/core, apps/harness, apps/codex-provider, apps/claude-code-provider, apps/ollama-provider, packages/agent-provider-runtime, packages/app-sdk, packages/app-sdk-dotnet]
 ---
@@ -330,7 +330,7 @@ The owner has accepted this protocol and approved implementation of the focused 
 
 Owner acceptance, 2026-11-12: the execution v1 contract below is accepted. D2 design is complete;
 this acceptance is design evidence, not runtime evidence. The owner subsequently approves the
-focused extraction implementation and transfers the second-app product scope to its own plan. The declared interface base is illustrated as `/api/agent/v1`; consumers use the
+focused extraction implementation and transfers the second-app product scope to its own plan. The [v2 execution contract](../agent-execution-reliability/feature.md) supersedes the v1 lifecycle and recovery entry points described here. D5 retains its independent provider and consumer qualification matrix. The original interface base was `/api/agent/v1`. Consumers use the
 current Core descriptor rather than construct another app's URL. JSON requests use UTF-8 and
 `application/json`; streams use `text/event-stream`. Publish OpenAPI plus versioned event schemas
 and the server-side SDK client. Provider app release versions are independent of API major version.

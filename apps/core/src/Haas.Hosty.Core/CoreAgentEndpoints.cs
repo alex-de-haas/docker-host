@@ -5,6 +5,12 @@ internal static class CoreAgentEndpoints
     internal static void Map(WebApplication app)
     {
         const string root = "/api/internal/apps/{appId}/agent";
+        app.MapPost(root + "/replay/token", (string appId, CoreAgentCleanupRequest input, HttpRequest request,
+            ProviderAccessService access, CoreAgentExecution service, CancellationToken ct) => Handle(async () =>
+                await service.AuthorizeReplay(await AuthenticateInstallation(appId, request, access, ct), input, ct)));
+        app.MapPost(root + "/cleanup/token", (string appId, CoreAgentCleanupRequest input, HttpRequest request,
+            ProviderAccessService access, CoreAgentExecution service, CancellationToken ct) => Handle(async () =>
+                await service.AuthorizeCleanup(await AuthenticateInstallation(appId, request, access, ct), input, ct)));
         app.MapPost(root + "/history/token", (string appId, CoreAgentHistoryRequest input, HttpRequest request,
             ProviderAccessService access, CoreAgentExecution service, CancellationToken ct) => Handle(async () =>
                 await service.AuthorizeHistory(await AuthenticateInstallation(appId, request, access, ct), input, ct)));
@@ -44,7 +50,7 @@ internal static class CoreAgentEndpoints
     private static Task<AppRecord> AuthenticateInstallation(string id, HttpRequest request, ProviderAccessService access, CancellationToken ct)
     {
         if (request.Headers.ContainsKey("X-Hosty-User-Token"))
-            throw new AppIdentityException("app_credential_mixed", "History delivery uses installation service identity only.");
+            throw new AppIdentityException("app_credential_mixed", "This operation requires installation service identity only.");
         return Authenticate(id, request, access, ct);
     }
     private static Task<AppRecord> Authenticate(string id, HttpRequest request, ProviderAccessService access, CancellationToken ct)

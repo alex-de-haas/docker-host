@@ -62,7 +62,22 @@ public record HostyAgentExecutionSnapshot(HostyRunRef Ref, string SessionId, str
     string ConfigurationRevision, string LastSequence, string Cursor, JsonElement[] Pending, JsonElement Effects,
     JsonElement? Result = null, JsonElement[]? Messages = null, JsonElement[]? Tools = null,
     JsonElement[]? Agents = null, JsonElement? Selection = null, string? AdmissionRef = null,
-    JsonElement? LatestContext = null);
+    JsonElement? LatestContext = null, bool? WriterScopeClosed = null) : IJsonOnDeserialized
+{
+    void IJsonOnDeserialized.OnDeserialized() => HostyAgentClosure.ValidateWriterEvidence(StopConfirmed, WriterScopeClosed);
+}
+/// <summary>Physical execution state, accessible to its original cleanup owner.</summary>
+public record HostyAgentClosure(HostyRunRef Ref, string SessionId, string Generation, string Revision, string State,
+    string Phase, bool StopConfirmed, JsonElement[]? PendingContinuations = null, bool? WriterScopeClosed = null) : IJsonOnDeserialized
+{
+    void IJsonOnDeserialized.OnDeserialized() => ValidateWriterEvidence(StopConfirmed, WriterScopeClosed);
+
+    internal static void ValidateWriterEvidence(bool stopped, bool? writerScopeClosed)
+    {
+        if (writerScopeClosed == true && !stopped)
+            throw new HostyProviderException("provider_response_invalid", "A closed writer scope requires confirmed agent stop.", 502);
+    }
+}
 /// <summary>A requested control receipt, independent of terminal execution truth.</summary>
 public record HostyAgentExecutionControlReceipt(string RequestId, string State, HostyRunRef Run, string Revision,
     string? Generation = null, JsonElement? Error = null, JsonElement? Continuation = null);
@@ -89,7 +104,12 @@ public record HostyAgentHistoryStatesPage(string Through, HostyAgentHistorySessi
 /// <summary>Consecutive durable facts of a single session.</summary>
 public record HostyAgentHistoryRange(HostyAgentHistoryObservation[] Observations, long? NextPosition);
 
-/// <summary>Direct HTTP/SSE consumer for agent v1. It never retries mutations or silently changes providers.</summary>
+/// <summary>Stable stop command identity, including retries before native admission.</summary>
+public sealed record HostyAgentStop(Guid RequestId);
+/// <summary>Receipt for erasure of the original delivery copy after physical closure.</summary>
+public sealed record HostyAgentDiscardReceipt(string RunId, Guid RequestId, string State);
+
+/// <summary>Direct HTTP/SSE consumer for agent v2. It never retries mutations or silently changes providers.</summary>
 /// <param name="http">Use automatic redirects disabled, with a timeout suitable for streaming.</param>
 /// <param name="provider">Explicit installation and interface selection.</param>
 /// <param name="authorize">Per-request Core authorization callback.</param>
@@ -121,11 +141,14 @@ public sealed class HostyAgentExecutionClient(HttpClient http, HostyProviderRef 
         => Prepare("runs.start", "PUT", $"/sessions/{Segment(sessionId)}/runs/{Segment(runId)}", input,
             AgentJsonContext.Default.HostyAgentRunCreate, sessionId, runId, input.Resources,
             new(input.Mcp, input.Resources, ConfigurationRevision: input.ConfigurationRevision));
+    /// <summary>Prepare a durable stop that targets this run across revision changes and lost responses.</summary>
+    public static HostyAgentPreparedRequest PrepareStop(string runId, Guid requestId)
+        => Prepare("runs.cancel", "PUT", $"/runs/{Segment(runId)}/stop", new HostyAgentStop(requestId), AgentJsonContext.Default.HostyAgentStop, runId: runId);
     /// <summary>Prepare an approval response, cancellation or capability-gated control using the documented JSON shape.</summary>
     public static HostyAgentPreparedRequest PrepareControl(string runId, string operation, JsonElement input, string? sessionId = null)
     {
-        var suffix = operation switch { "runs.respond" => "responses", "runs.cancel" => "cancel", "runs.control" => "controls", _ => throw new ArgumentException("Unknown run control.", nameof(operation)) };
-        return Prepare(operation, "POST", $"/runs/{Segment(runId)}/{suffix}", input, AgentJsonContext.Default.JsonElement, sessionId, runId);
+        var suffix = operation switch { "runs.respond" => "responses", "runs.cancel" => "stop", "runs.control" => "controls", _ => throw new ArgumentException("Unknown run control.", nameof(operation)) };
+        return Prepare(operation, operation == "runs.cancel" ? "PUT" : "POST", $"/runs/{Segment(runId)}/{suffix}", input, AgentJsonContext.Default.JsonElement, sessionId, runId);
     }
     /// <summary>Prepare one immutable attachment chunk with a stable attachment UUID.</summary>
     public static HostyAgentPreparedRequest PrepareAttachmentChunk(string attachmentId, int index, HostyAgentAttachmentChunk input)
@@ -208,6 +231,24 @@ public sealed class HostyAgentExecutionClient(HttpClient http, HostyProviderRef 
     {
         var value = Decode(await GetAsync("runs.read", "/runs/" + Segment(runId), runId: runId, cancellationToken: cancellationToken), AgentJsonContext.Default.HostyAgentExecutionSnapshot);
         if (value.Ref.Provider != provider || value.Ref.Id != runId) throw new HostyProviderException("provider_response_invalid", "Run identity changed.", 502);
+        return value;
+    }
+    /// <summary>Discard the original transcript owner's delivery copy after the run closes.</summary>
+    public async Task<HostyAgentDiscardReceipt> DiscardDeliveryAsync(string runId, Guid requestId, CancellationToken cancellationToken = default)
+    {
+        var command = Prepare("runs.discard", "PUT", $"/runs/{Segment(runId)}/discard", new HostyAgentStop(requestId),
+            AgentJsonContext.Default.HostyAgentStop, runId: runId);
+        var value = Decode(await SendAsync(command, cancellationToken), AgentJsonContext.Default.HostyAgentDiscardReceipt);
+        if (value.RequestId != requestId || value.RunId != runId || value.State != "discarded")
+            throw new HostyProviderException("provider_response_invalid", "Delivery discard receipt identity changed.", 502);
+        return value;
+    }
+    /// <summary>Read physical closure without retrieving transcript content.</summary>
+    public async Task<HostyAgentClosure> ClosureAsync(string runId, CancellationToken cancellationToken = default)
+    {
+        var value = Decode(await GetAsync("runs.closure", "/runs/" + Segment(runId) + "/closure", runId: runId, cancellationToken: cancellationToken), AgentJsonContext.Default.HostyAgentClosure);
+        if (value.Ref?.Provider != provider || value.Ref.Id != runId || !Guid.TryParse(value.Generation, out _) || string.IsNullOrEmpty(value.SessionId))
+            throw new HostyProviderException("provider_response_invalid", "Execution closure identity changed.", 502);
         return value;
     }
     private static async IAsyncEnumerable<string> Lines(StreamReader reader, int maxBytes, [EnumeratorCancellation] CancellationToken ct)
@@ -296,8 +337,7 @@ public sealed class HostyAgentExecutionClient(HttpClient http, HostyProviderRef 
             else if (kind == "observation" && ready)
             {
                 var fact = ValidateHistory(JsonSerializer.Deserialize(json, AgentJsonContext.Default.HostyAgentHistoryObservation), id);
-                if (string.IsNullOrEmpty(fact.Epoch) || (fact.Item.Event?.Type is "message.delta" or "tool.output"
-                    ? fact.SessionPosition is not null : fact.SessionPosition is null or < 1)) throw InvalidHistory();
+                if (string.IsNullOrEmpty(fact.Epoch) || fact.SessionPosition is null or < 1) throw InvalidHistory();
                 yield return new(null, fact);
             }
             else throw InvalidHistory();
@@ -347,11 +387,22 @@ public sealed class HostyAgentExecutionClient(HttpClient http, HostyProviderRef 
         foreach (var value in page.Observations)
         {
             var fact = ValidateHistory(value, value?.Cursor);
-            if (fact.SessionId != sessionId || fact.Epoch != epoch || fact.SessionPosition != next || next > to || fact.Item.Event?.Type is "message.delta" or "tool.output") throw InvalidHistory();
+            if (fact.SessionId != sessionId || fact.Epoch != epoch || fact.SessionPosition != next || next > to) throw InvalidHistory();
             next = checked(next + 1);
         }
         if (page.NextPosition != (next > to ? (long?)null : next)) throw InvalidHistory();
         return page;
+    }
+
+    /// <summary>Acknowledge a contiguous session position after committing the transcript.</summary>
+    public async Task AcknowledgeHistoryAsync(HostyAgentHistoryBinding binding, string sessionId, string epoch, long through, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(sessionId) || string.IsNullOrEmpty(epoch) || through is < 1 or > MaxHistoryPosition)
+            throw new ArgumentException("Invalid durable history receipt.");
+        using var response = await HistoryResponse(binding, null, "application/json", null, null, cancellationToken, "ack",
+            [new("sessionId", sessionId), new("epoch", epoch), new("through", through.ToString(System.Globalization.CultureInfo.InvariantCulture))]);
+        var answer = await Read(response, cancellationToken);
+        if (!answer.TryGetProperty("through", out var value) || !value.TryGetInt64(out var confirmed) || confirmed != through) throw InvalidHistory();
     }
 
     private static HostyProviderException InvalidHistory() => new("provider_response_invalid", "Invalid positioned history response.", 502);
@@ -395,7 +446,7 @@ public sealed class HostyAgentExecutionClient(HttpClient http, HostyProviderRef 
         if (limit is not null) query.Add("limit=" + limit.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
         if (parameters is not null) foreach (var parameter in parameters) query.Add(parameter.Key + "=" + Uri.EscapeDataString(parameter.Value));
         uri.Query = string.Join("&", query);
-        using var request = new HttpRequestMessage(HttpMethod.Get, uri.Uri);
+        using var request = new HttpRequestMessage(route == "ack" ? HttpMethod.Post : HttpMethod.Get, uri.Uri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", binding.Token);
         request.Headers.Accept.Add(new(accept));
         var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -445,11 +496,14 @@ public sealed class HostyAgentExecutionClient(HttpClient http, HostyProviderRef 
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(HostyAgentStop))]
+[JsonSerializable(typeof(HostyAgentDiscardReceipt))]
 [JsonSerializable(typeof(HostyAgentSessionCreate))]
 [JsonSerializable(typeof(HostyAgentConfigurationCreate))]
 [JsonSerializable(typeof(HostyAgentRunCreate))]
 [JsonSerializable(typeof(HostyAgentAttachmentChunk))]
 [JsonSerializable(typeof(HostyAgentExecutionSession))]
+[JsonSerializable(typeof(HostyAgentClosure))]
 [JsonSerializable(typeof(HostyAgentExecutionSnapshot))]
 [JsonSerializable(typeof(HostyAgentExecutionEvent))]
 [JsonSerializable(typeof(HostyAgentHistoryObservation))]

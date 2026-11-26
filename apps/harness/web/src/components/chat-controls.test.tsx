@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { approvalDecisions, cancelledQuestions, ToolActivity, TranscriptEvent, type ApprovalDecision } from "./transcript";
 import type { AssistantEvent } from "../lib/assistant-api";
+import { providerDecisionCardId } from "../../../src/agent-providers/decision-identity";
 
 describe("chat action cards", () => {
   let container: HTMLDivElement;
@@ -83,6 +84,38 @@ describe("chat action cards", () => {
     expect(container.querySelector("input")).toBeNull();
     events.push({ seq: 4, ts: "", type: "approval_decision", approvalId: "a", decision: "deny", message: "Cancelled by operator" });
     expect(approvalDecisions(events).get("a")).toEqual({ decision: "deny", message: "Cancelled by operator" });
+  });
+
+  it("closes only the superseded approval immediately and preserves a confirmed action", async () => {
+    const first = providerDecisionCardId("first-run", "same-decision");
+    const second = providerDecisionCardId("next-run", "same-decision");
+    const request = { ...approval, approvalId: first };
+    const superseded: AssistantEvent = { seq: 4, ts: "", type: "approval_decision", approvalId: first, decision: "cancelled" };
+    const events: AssistantEvent[] = [request, { ...approval, seq: 3, approvalId: second }, superseded];
+    const decisions = approvalDecisions(events);
+    expect(decisions.get(first)?.decision).toBe("cancelled");
+    expect(decisions.has(second)).toBe(false);
+    await act(async () => root.render(
+      <TranscriptEvent event={request} decision={decisions.get(first)!} answers={null} denyReason onDecide={vi.fn()} onAnswer={vi.fn()} />,
+    ));
+    expect(button("Allow once")).toBeUndefined();
+    expect(button("Deny")).toBeUndefined();
+    expect(container.textContent).toContain("Cancelled");
+    const allowed: AssistantEvent = { ...superseded, seq: 2, decision: "allow" };
+    expect(approvalDecisions([request, allowed, superseded]).get(first)?.decision).toBe("allow");
+    expect(approvalDecisions([request, superseded, { ...allowed, seq: 5 }]).get(first)?.decision).toBe("allow");
+  });
+
+  it("closes only the superseded question and keeps an acknowledged answer", () => {
+    const first = providerDecisionCardId("first-run", "same-question");
+    const second = providerDecisionCardId("next-run", "same-question");
+    const request: AssistantEvent = { seq: 1, ts: "", type: "question_request", questionId: first };
+    const superseded: AssistantEvent = { seq: 4, ts: "", type: "question_cancelled", questionId: first };
+    const next = { ...request, seq: 3, questionId: second };
+    const answered = { ...superseded, seq: 2, type: "question_answered", answers: { question: "Yes" } };
+    expect([...cancelledQuestions([request, next, superseded])]).toEqual([first]);
+    expect(cancelledQuestions([request, answered, next, superseded]).size).toBe(0);
+    expect(cancelledQuestions([request, next, superseded, { ...answered, seq: 5 }]).size).toBe(0);
   });
 
   it("preserves explicit decisions when the session is subsequently cancelled", () => {

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { AgentClient, readAgentHistoryPage, readAgentHistoryRange, readAgentHistoryStates, watchAgentHistory, watchLiveAgentHistory, parseAgentSse, prepareAgentCancel, prepareAgentControl, prepareAgentRun, prepareAgentSessionCreate } from "./agent-client.js";
 import { AGENT_CAPABILITIES, AgentApiError, type AgentAttachmentChunk, type AgentEvent, type AgentRunInput, type AgentRunSnapshot, type AgentSession } from "./agent.js";
-import { agentReplayCursor, encodeAgentSseEvent, validateAgentAttachmentChunk, validateAgentConfiguration, validateAgentEvent, validateAgentRequest, validateAgentResponseInput, validateAgentRunSnapshot } from "./agent-server.js";
+import { agentReplayCursor, encodeAgentSseEvent, validateAgentAttachmentChunk, validateAgentConfiguration, validateAgentEvent, validateAgentRequest, validateAgentResponseInput, validateAgentRunClosure, validateAgentRunSnapshot } from "./agent-server.js";
 import { AGENT_EVENT_SCHEMA, AGENT_OPENAPI } from "./agent-schemas.js";
 
 const provider = { appId: "org.example.unrelated-provider", installationId: "installation-1", key: "execution" };
@@ -18,7 +18,7 @@ const runInput = (): AgentRunInput => ({ expectedSessionRevision: "1", configura
 const snapshot = (sequence = "1", done = false): AgentRunSnapshot => ({ ref: { provider, id: runId }, sessionId, generation, revision: "1", state: done ? "succeeded" : "running", phase: done ? "terminal" : "executing", stopConfirmed: done,
   freshness: "current", observedAt: new Date().toISOString(), configurationRevision: "1", lastSequence: sequence, cursor: `cursor-${sequence}`, pending: [], effects: { certainty: "known", unresolvedCallIds: [] }, messages: [] });
 const event = (sequence: string, type: AgentEvent["type"] = "message.delta", data: Record<string, unknown> = { messageId: "message-1", text: "Привет" }): AgentEvent => ({ schemaVersion: "agent-event.1", runId, generation, sequence, revision: "1", occurredAt: new Date().toISOString(), type, source: { agentId: "root" }, data });
-const authorization = () => ({ provider, baseUrl: "http://provider.test/declared/agent/v1", token: "scoped-operation", expiresAt: new Date(Date.now() + 60000).toISOString() });
+const authorization = () => ({ provider, baseUrl: "http://provider.test/declared/agent/v2", token: "scoped-operation", expiresAt: new Date(Date.now() + 60000).toISOString() });
 const stream = (value: string, split = 19): Response => {
   const bytes = new TextEncoder().encode(value);
   return new Response(new ReadableStream<Uint8Array>({ start(controller) { for (let i = 0; i < bytes.length; i += split) controller.enqueue(bytes.slice(i, i + split)); controller.close(); } }), { headers: { "content-type": "text/event-stream; charset=utf-8" } });
@@ -61,7 +61,7 @@ describe("independent agent request boundary", () => {
     expect(() => validateAgentRequest("POST", `/runs/${runId}/controls`, JSON.stringify({ ...barrier, acknowledgedSequence: undefined }))).toThrow();
     const fence = prepareAgentCancel(runId, { requestId, fenceIfNotAdmitted: { sessionId, startDigest: hash("original input") } });
     expect(JSON.parse(fence.body)).not.toHaveProperty("expectedGeneration");
-    expect(() => validateAgentRequest("POST", `/runs/${runId}/cancel`, JSON.stringify({ ...JSON.parse(fence.body), expectedRevision: "1" }))).toThrow();
+    expect(() => validateAgentRequest("PUT", `/runs/${runId}/stop`, JSON.stringify({ ...JSON.parse(fence.body), expectedRevision: "1" }))).toThrow();
   });
   it("prepares retirement for the exact run without accepting caller-supplied exit proof", () => {
     expect(AGENT_CAPABILITIES.retire).toBe("runs.retire");
@@ -113,6 +113,13 @@ describe("agent operation transport", () => {
     const another = new AgentClient({ provider, authorize: async () => authorization(), fetch: vi.fn().mockResolvedValue(Response.json({ ...session(), ref: { provider, id: "another-session" } })) });
     await expect(another.createSession(sessionId, { configuration })).rejects.toMatchObject({ code: "response_invalid" });
     expect(() => validateAgentRunSnapshot({ ...snapshot(), state: "succeeded", stopConfirmed: false })).toThrow();
+    for (const validate of [validateAgentRunClosure, validateAgentRunSnapshot]) {
+      expect(() => validate({ ...snapshot(), writerScopeClosed: true })).toThrow();
+      expect(() => validate({ ...snapshot(), writerScopeClosed: "yes" })).toThrow();
+      expect(() => validate({ ...snapshot(), writerScopeClosed: false })).not.toThrow();
+      expect(() => validate({ ...snapshot("2", true) })).not.toThrow();
+      expect(() => validate({ ...snapshot("2", true), writerScopeClosed: true })).not.toThrow();
+    }
   });
   it("accepts opaque model catalog content revisions while bounding malformed revisions", async () => {
     const catalog = { revision: hash("native catalog"), models: [{ id: "local:model", reasoningEfforts: [], defaultReasoningEffort: null }], defaultModel: "local:model", nextCursor: null };
@@ -185,7 +192,7 @@ describe("provider-owned immutable attachments", () => {
   it("uploads bounded chunks with stable bytes and returns a verified provider reference", async () => {
     const bytes = new Uint8Array(512 * 1024 + 3).fill(7), received = new Map<number, Buffer>(); const bodies: string[] = [];
     const fetcher = vi.fn(async (url: string | URL | Request, options?: RequestInit) => {
-      const parsed = validateAgentRequest("PUT", new URL(String(url)).pathname.replace("/declared/agent/v1", ""), String(options?.body));
+      const parsed = validateAgentRequest("PUT", new URL(String(url)).pathname.replace("/declared/agent/v2", ""), String(options?.body));
       if (parsed.operation !== "attachments.write") throw new Error("Wrong route");
       bodies.push(String(options?.body)); received.set(parsed.chunkIndex!, Buffer.from(parsed.input.data, "base64"));
       const all = received.size === parsed.input.count ? Buffer.concat([...received].sort(([a], [b]) => a - b).map(([, value]) => value)) : null;
@@ -338,11 +345,11 @@ describe("installation history", () => {
 
 describe("published interoperability artifacts", () => {
   it("ships identical JSON schemas and typed SDK schema exports", () => {
-    expect(JSON.parse(readFileSync(new URL("../schemas/agent-v1.openapi.json", import.meta.url), "utf8"))).toEqual(AGENT_OPENAPI);
+    expect(JSON.parse(readFileSync(new URL("../schemas/agent-v2.openapi.json", import.meta.url), "utf8"))).toEqual(AGENT_OPENAPI);
     expect(JSON.parse(readFileSync(new URL("../schemas/agent-event-v1.schema.json", import.meta.url), "utf8"))).toEqual(AGENT_EVENT_SCHEMA);
   });
   it("validates reusable independent-consumer conformance vectors", () => {
-    const fixtures = JSON.parse(readFileSync(new URL("../schemas/agent-v1.fixtures.json", import.meta.url), "utf8")) as { validRequests: Array<{ method: string; path: string; body: unknown }>; invalidRequests: Array<{ method: string; path: string; body: unknown }> };
+    const fixtures = JSON.parse(readFileSync(new URL("../schemas/agent-v2.fixtures.json", import.meta.url), "utf8")) as { validRequests: Array<{ method: string; path: string; body: unknown }>; invalidRequests: Array<{ method: string; path: string; body: unknown }> };
     for (const fixture of fixtures.validRequests) expect(() => validateAgentRequest(fixture.method, fixture.path, JSON.stringify(fixture.body))).not.toThrow();
     for (const fixture of fixtures.invalidRequests) expect(() => validateAgentRequest(fixture.method, fixture.path, JSON.stringify(fixture.body))).toThrow();
   });

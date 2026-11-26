@@ -146,6 +146,33 @@ function originalTurnOrder(events: AssistantEvent[]): AssistantEvent[] {
 interface HistoryPosition { sessionId: string; epoch: string; archiveGeneration?: string; position: number }
 
 /** Arrival sequence remains the browser resume cursor. Only the presentation order changes. */
+/** Materialize positioned fragments in provider order until a complete item replaces them. */
+function partialHistory(rows: AssistantEvent[]): AssistantEvent[] {
+  const finals = new Set<string>();
+  const outputs = new Set<string>();
+  for (const row of rows) {
+    if (row.type === "assistant_text" && typeof row.providerEventId === "string") finals.add(row.providerEventId.replace(/:interrupted$/, ""));
+    if (row.type === "tool_result") outputs.add(String(row.toolUseId));
+  }
+  const partials = new Map<string, AssistantEvent>();
+  const result: AssistantEvent[] = [];
+  for (const row of rows) {
+    if (row.type !== "provider_fragment") { result.push(row); continue; }
+    const key = String(row.target);
+    if (finals.has(key) || row.toolUseId && outputs.has(String(row.toolUseId))) continue;
+    let item = partials.get(key);
+    if (!item) {
+      item = { ...row, providerEventId: key, type: row.toolUseId ? "tool_result" : "assistant_text",
+        ...(row.toolUseId ? { status: "unknown", output: "" } : { text: "", incomplete: true }) };
+      partials.set(key, item);
+      result.push(item);
+    }
+    if (row.toolUseId) item.output = (String(item.output) + String(row.text ?? "")).slice(0, 32768);
+    else item.text = (row.messageBoundary === "start" ? "" : String(item.text)) + String(row.text ?? "");
+  }
+  return result;
+}
+
 export function orderedHistory(events: AssistantEvent[], gaps: ProviderHistoryGap[] = []): AssistantEvent[] {
   const positions = new Map<string, HistoryPosition>();
   const rows = originalTurnOrder(applyProviderHistoryContent(events).filter(event => {
@@ -178,8 +205,8 @@ export function orderedHistory(events: AssistantEvent[], gaps: ProviderHistoryGa
     bucket.push({ type: "provider_history_gap", seq: Number.MIN_SAFE_INTEGER + i, ts: "", gap });
     markers.set(slot, bucket);
   }
-  if (!markers.size) return rows;
-  return [...rows.flatMap((event, slot) => [...markers.get(slot) ?? [], event]), ...markers.get(rows.length) ?? []];
+  if (!markers.size) return partialHistory(rows);
+  return partialHistory([...rows.flatMap((event, slot) => [...markers.get(slot) ?? [], event]), ...markers.get(rows.length) ?? []]);
 }
 
 export function transcriptItems(events: AssistantEvent[], claimed: ReadonlySet<string>, decided: ReadonlyMap<string, ApprovalDecision> = new Map(), ordered = false): TranscriptItem[] {
