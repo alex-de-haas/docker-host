@@ -40,6 +40,13 @@ async function start(f: Awaited<ReturnType<typeof fixture>>) {
   const id = randomUUID(), command: AgentRunInput = { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start", input: { text: "Start" } };
   await f.controller.startRun(f.sessionId, id, command, JSON.stringify(command), f.actor); return id;
 }
+async function waitForInitialWorkspaceRelease(f: Awaited<ReturnType<typeof fixture>>, id: string) {
+  // SDK stop can precede writer cleanup. Synchronization starts release once without retrying it.
+  await vi.waitFor(async () => {
+    await f.driver.synchronize(id);
+    expect(f.authority.workspace).toHaveBeenCalledTimes(1);
+  }, { timeout: 5000 });
+}
 async function retainedNativeRun() {
   const f = await fixture();
   const session = await f.store.load(f.sessionId);
@@ -197,7 +204,8 @@ describe("native authority renewal and stop reconciliation", () => {
     const park: AgentRunControlInput = { requestId: randomUUID(), expectedGeneration: waiting.generation, expectedRevision: waiting.revision,
       command: "park", decisionId: pending.id, decisionRevision: pending.revision };
     await f.controller.control(id, park, JSON.stringify(park), f.actor);
-    await vi.waitFor(async () => expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true)); await f.driver.synchronize(id);
+    await vi.waitFor(async () => expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true));
+    await waitForInitialWorkspaceRelease(f, id);
     const parked = await f.controller.snapshot(id), response = { requestId: randomUUID(), expectedGeneration: parked.generation, expectedRevision: parked.revision,
       decisionId: pending.id, decisionRevision: parked.pending[0]!.revision, response: { kind: "question" as const, answers: { choice: "yes" } } };
     const receipt = await f.controller.respond(id, response, JSON.stringify(response), { ...f.actor, operation: "runs.respond", admissionRef: "response-admission-without-session" });
@@ -230,7 +238,7 @@ describe("native authority renewal and stop reconciliation", () => {
       await f.controller.cancel(id, cancel, JSON.stringify(cancel), f.actor);
     }
     await vi.waitFor(async () => expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true));
-    await f.driver.synchronize(id);
+    await waitForInitialWorkspaceRelease(f, id);
     const pending = (await f.store.run(id)).record.workspaceRelease;
     expect(pending).toEqual({ requestId: expect.any(String), state: "pending" });
     expect((await f.store.run(id)).record.workspaces).toBeUndefined(); // Core also owns leases created by MCP tools.
@@ -252,7 +260,8 @@ describe("native authority renewal and stop reconciliation", () => {
     vi.mocked(f.authority.workspace).mockResolvedValue({ state: "pending" } as never);
     const id = await start(f); await vi.waitFor(() => expect(f.starts).toHaveBeenCalledTimes(1));
     (f.starts.mock.calls[0]![0] as HarnessStartOptions).onEvent({ type: "result", status: "success" });
-    await vi.waitFor(async () => expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true)); await f.driver.synchronize(id);
+    await vi.waitFor(async () => expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true));
+    await waitForInitialWorkspaceRelease(f, id);
     const pending = (await f.store.run(id)).record.workspaceRelease, first = vi.mocked(f.authority.workspace).mock.calls[0]!;
     expect(pending).toEqual({ requestId: expect.any(String), state: "pending" });
     await f.close();
@@ -284,7 +293,8 @@ describe("native authority renewal and stop reconciliation", () => {
     vi.mocked(f.authority.workspace).mockRejectedValue(new Error("Core is unavailable."));
     const id = await start(f); await vi.waitFor(() => expect(f.starts).toHaveBeenCalledTimes(1));
     (f.starts.mock.calls[0]![0] as HarnessStartOptions).onEvent({ type: "result", status: "success" });
-    await vi.waitFor(async () => expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true)); await f.driver.synchronize(id);
+    await vi.waitFor(async () => expect((await f.controller.snapshot(id)).stopConfirmed).toBe(true));
+    await waitForInitialWorkspaceRelease(f, id);
     let resolveReply!: (value: { state: string }) => void;
     const reply = new Promise<{ state: string }>(resolve => { resolveReply = resolve; }), tasks: Promise<unknown>[] = [];
     vi.mocked(f.authority.workspace).mockImplementation(async () => await reply as never);
