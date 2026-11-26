@@ -87,3 +87,99 @@ it("defers cutover of a marked v1 store until its recorded writer drains", async
   await expect(readFile(path.join(root, "execution-v2", "agent-consumer-format.json"))).rejects.toMatchObject({ code: "ENOENT" });
   expect((await f.store.readRecord(id))?.status).toBe("running");
 });
+
+
+type ObservedRun = import("../agent-sessions/observations.js").ObservedRun;
+
+function legacyRun(owner: string, overrides: Partial<ObservedRun> = {}): ObservedRun {
+  return {
+    id: randomUUID(), owner, conversation: randomUUID(), nativeSession: null, revision: "1",
+    state: "failed", observedAt: new Date().toISOString(), stopConfirmed: false,
+    generation: randomUUID(), ...overrides,
+  };
+}
+
+function pendingCancellation(runId: string) {
+  return { key: "a".repeat(64), fingerprint: "b".repeat(64), runId, state: "pending" };
+}
+
+async function legacyJournal(root: string, inventory: unknown) {
+  await mkdir(root, { recursive: true });
+  const journal = path.join(root, "agent-observations.json");
+  const bytes = JSON.stringify(inventory, null, 2) + "\n";
+  await writeFile(path.join(root, "agent-consumer-format.json"), '{"version":1}');
+  await writeFile(journal, bytes);
+  return { journal, bytes, marker: path.join(root, "execution-v2", "agent-consumer-format.json") };
+}
+
+it("opens v2 with deleted legacy conversations and retains their stop and cancellation records", async () => {
+  const f = await fixture(), root = f.store.dataDir;
+  const archived = legacyRun(f.owner);
+  const retired = legacyRun(f.owner, { retired: true, state: "unknown", generation: null, conversation: null });
+  const retiredBeforeUnlink = legacyRun(f.owner, { retired: true, state: "unknown", generation: null });
+  const confirmed = legacyRun(f.owner, { stopConfirmed: true });
+  const { journal, bytes, marker } = await legacyJournal(root, {
+    sessions: [], runs: [archived, retired, retiredBeforeUnlink, confirmed], cancellations: [pendingCancellation(archived.id)],
+  });
+  const verified: ObservedRun[] = [];
+  const verifyArchivedExit = async (run: ObservedRun) => {
+    verified.push(run);
+    return run.id === archived.id;
+  };
+
+  const store = await openProviderStore(root, null, verifyArchivedExit);
+
+  expect(store.dataDir).toBe(path.join(root, "execution-v2"));
+  expect(await store.listRecords()).toEqual([]);
+  expect(JSON.parse(await readFile(marker, "utf8"))).toEqual({ version: 2 });
+  expect((await openProviderStore(root, null)).dataDir).toBe(store.dataDir);
+  expect(verified).toEqual([archived]);
+  expect(await readFile(journal, "utf8")).toBe(bytes);
+});
+
+it("keeps an orphaned run without verified exit offline and reports its id", async () => {
+  const f = await fixture(), root = f.store.dataDir;
+  const run = legacyRun(f.owner);
+  const { journal, bytes, marker } = await legacyJournal(root, { sessions: [], runs: [run], cancellations: [] });
+
+  await expect(openProviderStore(root, null, async () => false)).rejects.toThrow(run.id);
+
+  await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(journal, "utf8")).toBe(bytes);
+});
+
+it("refuses to treat an unconfirmed observation of a retained conversation as archived", async () => {
+  const f = await fixture(), root = f.store.dataDir, id = randomUUID(), now = new Date().toISOString();
+  await f.store.createSession({ id, status: "idle", createdAt: now, updatedAt: now, createdBy: f.owner,
+    harnessSessionId: null, title: "Retained", lastEventSeq: 0, context: null, retentionVersion: 1 });
+  const run = legacyRun(f.owner, { conversation: id });
+  const { marker } = await legacyJournal(root, { sessions: [], runs: [run], cancellations: [] });
+  const verified: string[] = [];
+
+  await expect(openProviderStore(root, null, async observation => {
+    verified.push(observation.id);
+    return true;
+  })).rejects.toThrow(run.id);
+
+  expect(verified).toEqual([]);
+  await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("reports a pending legacy cancellation whose original run is missing", async () => {
+  const f = await fixture(), root = f.store.dataDir, missingRun = randomUUID();
+  const { marker } = await legacyJournal(root, { sessions: [], runs: [], cancellations: [pendingCancellation(missingRun)] });
+
+  await expect(openProviderStore(root, null)).rejects.toThrow(missingRun);
+
+  await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("leaves v2 uninitialized for malformed legacy execution observations", async () => {
+  const f = await fixture(), root = f.store.dataDir;
+  const { journal, bytes, marker } = await legacyJournal(root, { sessions: [], runs: [null], cancellations: [] });
+
+  await expect(openProviderStore(root, null)).rejects.toThrow(/legacy/i);
+
+  await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(journal, "utf8")).toBe(bytes);
+});
