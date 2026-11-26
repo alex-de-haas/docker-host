@@ -86,8 +86,9 @@ the provider installation, run, session and generation. It requires the provider
 journal receipt and sealed native exit receipts for that generation. If the provider was
 reinstalled, an exact retained provider session record must establish the original installation.
 The archive's selected execution file must agree with the recorded attempt. Outstanding commands
-can remain in its archive only when they cancel that same run. An active conversation still has
-to pass the ordinary writer checks. A successful verification
+can remain in its archive only when they cancel that same run. A retained admitted continuation
+is allowed when it identifies the same provider run whose native exit is verified. An active
+conversation still has to pass the ordinary writer checks. A successful verification
 creates the v2 store marker while preserving the original evidence. Start Harness through Core
 afterward.
 

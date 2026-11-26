@@ -30,15 +30,18 @@ async function readEvidence(file: string, label: string, optional = false): Prom
   throw new Error("Invalid " + label + ".");
 }
 
-function hasOnlyCancellation(execution: LegacyExecution, runId: string, sessionId: string): boolean {
+function matchesClosedAttempt(execution: LegacyExecution, run: NonNullable<LegacyExecution["run"]>): boolean {
+  const { id: runId, provider } = run.ref;
   const mutations = execution.mutations ?? {};
   const continuations = execution.continuations ?? {};
   return typeof mutations === "object" && !Array.isArray(mutations)
     && typeof continuations === "object" && !Array.isArray(continuations)
-    && Object.values(continuations).every(item => item?.state === "superseded")
+    // Admission alone does not prove exit. The caller verifies the selected run's native receipts.
+    && Object.values(continuations).every(item => item?.state === "superseded" || (item?.state === "admitted"
+      && item.run?.id === runId && sameProviderRef(item.run.provider, provider)))
     && Object.values(mutations).every(request => request?.operation === "runs.cancel" && request.method === "POST"
       && request.path === "/runs/" + runId + "/cancel" && request.runId === runId
-      && (request.sessionId === undefined || request.sessionId === sessionId));
+      && (request.sessionId === undefined || request.sessionId === run.sessionId));
 }
 
 export async function createLegacyExitVerifier(dataDir: string, evidenceFile: string): Promise<VerifyArchivedExit> {
@@ -97,8 +100,8 @@ export async function createLegacyExitVerifier(dataDir: string, evidenceFile: st
       || record.providerStopRequestedRunId && record.providerStopRequestedRunId !== run.ref.id
       || (run.pendingContinuations !== undefined && (!Array.isArray(run.pendingContinuations)
         || run.pendingContinuations.some(item => item?.state !== "superseded")))
-      || !hasOnlyCancellation(execution, run.ref.id, run.sessionId)
-      || (sidecar && inline && (!hasOnlyCancellation(inline, run.ref.id, run.sessionId)
+      || !matchesClosedAttempt(execution, run)
+      || (sidecar && inline && (!matchesClosedAttempt(inline, run)
         || (inline.run && (inline.run.ref?.id !== run.ref.id || inline.run.generation !== run.generation
           || inline.run.sessionId !== run.sessionId || !sameProviderRef(inline.run.ref?.provider, provider)))))
       || !sameProviderRef(execution.selection?.provider, provider) || !sameProviderRef(record.selection?.provider, provider))

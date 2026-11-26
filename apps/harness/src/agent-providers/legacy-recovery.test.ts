@@ -134,6 +134,52 @@ it.each(["record", "sidecar"] as const)("accepts an exact legacy cancellation re
   expect(await Promise.all(sourceFiles.map(file => readFile(file)))).toEqual(before);
 });
 
+async function archiveContinuation(f: Awaited<ReturnType<typeof fixture>>, state: string,
+  runId = f.providerRun, provider = f.provider) {
+  const record = JSON.parse(await readFile(f.archivedRecord, "utf8"));
+  const sourceRunId = randomUUID(), requestId = randomUUID();
+  const providerExecution = {
+    ...record.providerExecution,
+    continuations: { [JSON.stringify([sourceRunId, requestId])]: {
+      requestId, sourceRunId, state, run: { id: runId, provider },
+      input: { expectedSessionRevision: "1", configurationRevision: "1", continuation: "start", input: { text: "Start" } },
+    } },
+  };
+  const sidecar = path.join(path.dirname(f.archivedRecord), "provider-execution.json");
+  await writeJson(f.archivedRecord, { ...record, providerExecution });
+  await writeJson(sidecar, providerExecution);
+  return sidecar;
+}
+
+it("accepts an admitted continuation for the exact resumed run with a verified exit", async () => {
+  const f = await fixture();
+  const sidecar = await archiveContinuation(f, "admitted");
+  const sourceFiles = [f.archivedRecord, sidecar, f.observations, f.journal, f.processReceipt];
+  const before = await Promise.all(sourceFiles.map(file => readFile(file)));
+
+  await f.open();
+
+  expect(JSON.parse(await readFile(f.marker, "utf8"))).toEqual({ version: 2 });
+  expect(await Promise.all(sourceFiles.map(file => readFile(file)))).toEqual(before);
+});
+
+it.each([
+  "admitted for a different run", "admitted for a different provider", "awaiting authorization", "pending",
+] as const)("rejects an archived continuation that is %s", async issue => {
+  const f = await fixture();
+  if (issue === "admitted for a different run") {
+    await archiveContinuation(f, "admitted", randomUUID());
+  } else if (issue === "admitted for a different provider") {
+    await archiveContinuation(f, "admitted", f.providerRun, { ...f.provider, key: "other-provider" });
+  } else {
+    await archiveContinuation(f, issue === "pending" ? "pending" : "awaiting_authorization");
+  }
+
+  await expect(f.open()).rejects.toThrow(f.observationId);
+
+  await expect(readFile(f.marker)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
 it.each(["different run", "pending start", "source admission", "missing selected sidecar"] as const)(
   "rejects a verified archive that retains %s",
   async issue => {
