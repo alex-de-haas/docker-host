@@ -1,6 +1,6 @@
 ---
 created: 2026-10-26
-updated: 2026-11-16
+updated: 2026-11-27
 summary: Independent OPUS-MT Big CPU translation app for English-to-Russian text and protected Markdown, with pinned native dependencies and verified model caching.
 components: [apps/opus]
 ---
@@ -9,7 +9,7 @@ components: [apps/opus]
 
 ## Application And Integration
 
-OPUS Translate (`hosty.opus`, version 0.2.1) is a headless native runtime app in `apps/opus`, with
+OPUS Translate (`hosty.opus`, version 0.2.2) is a headless native runtime app in `apps/opus`, with
 independent version, manifest, main feed and icon. It is the repository’s sole supplied translation app;
 Harness, Codex Provider and Claude Code Provider do not provide translation. It has local and
 development profiles, app-owned cache storage, logs and HTTP health. It has no
@@ -25,9 +25,10 @@ never overwritten. Translation output is not stored by this app.
 
 ## Native Runtime And Model
 
-Source setup requires Node.js 24 and `uv` on the host PATH. It builds the bundled Node HTTP service
-and uses `uv` to install managed Python 3.13 in the Core-provided `HOSTY_APP_CACHE_DIR`. The Python
-packages are pinned with hashes: CTranslate2 4.8.3, SentencePiece 0.2.2, NumPy 2.5.4 and PyYAML 6.0.3.
+Source setup requires Node.js 24 and `uv` on the host PATH. The bundled Node HTTP service provides
+Node's `createRequire` for CommonJS dependencies. Setup uses `uv` to install managed Python 3.13 in
+the Core-provided `HOSTY_APP_CACHE_DIR`. The Python packages are pinned with hashes: CTranslate2
+4.8.3, SentencePiece 0.2.2, NumPy 2.5.4 and PyYAML 6.0.3.
 Python and uv downloads belong to this app's cache, rather than the operator's Python environment.
 
 The resident Python worker loads the OPUS/Tatoeba `eng-zle` transformer-big checkpoint dated
@@ -115,6 +116,8 @@ selection, user data or running Core was changed. Linux and Windows native infer
 ## Testing Expectations
 
 - `npm run opus:build`: type check and bundle the shipped entry point.
+- `npm run test:bundle --workspace @haas/hosty-opus`: after building, start the shipped entry point
+  with an isolated cache and check `/healthz` without downloading model weights.
 - `npm run opus:test`: Markdown/real-plan structure, language and size limits, capacity, live authority
   checks at the HTTP boundary, host-interface reachability, process failure, cancellation and credential-free worker environment.
 - `python3 -m unittest discover -s apps/opus/runtime -p 'test_*.py'`: archive traversal/symlinks,
