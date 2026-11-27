@@ -531,6 +531,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run opus:build
+      - name: Start the bundled OPUS service and check HTTP health
+        run: npm run test:bundle --workspace @haas/hosty-opus
       - run: npm run opus:test
       - name: Verify model cache boundaries without downloading weights
         run: python3 -m unittest discover -s apps/opus/runtime -p 'test_*.py'
