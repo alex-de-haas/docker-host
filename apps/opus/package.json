@@ -1,6 +1,6 @@
 {
   "name": "@haas/hosty-opus",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -12,6 +12,7 @@
     "lint": "tsc --noEmit",
     "start": "node dist/main.mjs",
     "test": "node --import tsx --test test/*.test.ts",
+    "test:bundle": "node --test test/bundle.smoke.mjs",
     "test:native": "node --import tsx --test test/native.integration.ts"
   },
   "dependencies": {
