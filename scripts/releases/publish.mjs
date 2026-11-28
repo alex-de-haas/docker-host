@@ -126,8 +126,8 @@ export async function publishApps({ root, plan, artifacts, store, verify = verif
     }
     const previous = selected.previous ? store.json(store.refresh(), `apps/${app.id}/releases/${selected.previous.releaseId}/release.json`) : null;
     const files = releaseFiles(root, app, selected.manifest);
-    const release = appRelease({ files: files.map(({ data: _data, ...f }) => f), manifest: selected.manifest, app, sourceCommit: plan.sourceCommit,
-      sourceFingerprint: selected.sourceFingerprint, artifacts: artifactsForApp, previous });
+    const release = appRelease({ files: files.map(({ data: _data, ...f }) => f), manifest: selected.manifest, app, repository: plan.repository,
+      sourceCommit: plan.sourceCommit, sourceFingerprint: selected.sourceFingerprint, artifacts: artifactsForApp, previous });
     await validate({ root, app, release, files });
     release.descriptor.validation = { sourceCommit: plan.sourceCommit, runId: plan.validationRunId,
       manifestSha256: release.descriptor.manifestSha256, profiles: app.profiles, contract: 'app.0.2' };

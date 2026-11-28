@@ -509,11 +509,7 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             errors.Add(new("unsupported_app_manifest_schema_version", "Only app.0.1 and app.0.2 runtime app manifests are supported by Hosty Core.", "$.schemaVersion"));
         }
 
-        if (manifest.Source?.ManifestPath is { } sourceManifestPath &&
-            (string.IsNullOrWhiteSpace(sourceManifestPath) || sourceManifestPath.Contains('\\') || sourceManifestPath.Contains(':')
-             || sourceManifestPath.Split('/').Any(part => part is "" or "." or ".." || part.Any(char.IsControl))
-             || !sourceManifestPath.EndsWith("/manifest.json", StringComparison.Ordinal) && sourceManifestPath != "manifest.json"))
-            errors.Add(new("app_manifest_source_path_invalid", "source.manifestPath must name manifest.json inside the source repository.", "$.source.manifestPath"));
+        ValidateWorkspaceSources(manifest, errors);
 
         if (manifest.Role is not null && !string.Equals(manifest.Role, "system", StringComparison.Ordinal))
         {
@@ -591,12 +587,6 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         }
 
         var profileKeys = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var path in manifest.Source?.Paths ?? [])
-        {
-            if (!DockerSourceRuntime.SafeRelative(path) || path == ".")
-                errors.Add(new("app_manifest_source_path_invalid", "Source paths must be explicit relative files or directories within the checkout.", "$.source.paths"));
-        }
-
         var defaultProfileCount = 0;
         foreach (var profile in manifest.RuntimeProfiles)
         {
@@ -750,8 +740,12 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
             }
 
             if (manifest.SchemaVersion == SupportedSchemaVersion && !selectedProfile.Development
-                && runtimeType == "localCommand" && !Haas.Hosty.Releases.ArtifactIdentity.IsCommit(manifest.Source?.Commit))
-                errors.Add(new("app_manifest_source_commit_required", "Published localCommand profiles require a full immutable source.commit.", "$.source.commit"));
+                && runtimeType == "localCommand" && !Haas.Hosty.Releases.ArtifactIdentity.IsCommit(manifest.Source?.Commit)
+                && (manifest.Sources is null || manifest.PrimarySource is not null))
+            {
+                var commitPath = manifest.PrimarySource is { } primary ? $"$.sources.{primary}.commit" : "$.source.commit";
+                errors.Add(new("app_manifest_source_commit_required", "Published localCommand profiles require a full immutable source commit.", commitPath));
+            }
 
             if (runtime.SourceMount is null) ValidateSetup(service.Key, runtimeType, runtime.Setup, errors);
             DockerSourceRuntime.Validate(service.Key, selectedProfile, runtime, errors);
@@ -922,7 +916,15 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         }
 
         if (selectedProfile is not null)
+        {
             RuntimeServiceStorage.Validate(manifest, selectedProfile, selectedServices, errors);
+            if (manifest.Sources is not null && manifest.PrimarySource is null &&
+                selectedServices.Any(service => service.Artifact is "source" or "prebuilt"))
+            {
+                errors.Add(new("app_manifest_primary_source_required",
+                    "A named manifest with an app-level source runtime must declare primarySource.", "$.primarySource"));
+            }
+        }
 
         if (errors.Count > 0)
         {
@@ -1226,6 +1228,103 @@ internal sealed class AppManifestService(HttpClient? httpClient = null, PrivateS
         {
             errors.Add(new("app_manifest_prebuilt_delivery_path_required", $"Service '{serviceKey}' delivery.path is required for a folder delivery.", path));
         }
+    }
+
+    private static void ValidateWorkspaceSources(RuntimeAppManifest manifest, List<AppManifestValidationError> errors)
+    {
+        if (manifest.LegacySourceDeclared && manifest.NamedSourcesDeclared)
+            errors.Add(new("app_manifest_sources_conflict", "Declare one of source and sources.", "$.sources"));
+
+        var sources = manifest.Sources;
+        if (manifest.NamedSourcesDeclared && sources is null or { Count: 0 })
+            errors.Add(new("app_manifest_sources_required", "sources must be a non-empty object of named Git sources.", "$.sources"));
+
+        if (manifest.PrimarySource is { } primary && (sources is null || !sources.ContainsKey(primary)))
+            errors.Add(new("app_manifest_primary_source_unknown", "primarySource must name an entry in sources.", "$.primarySource"));
+
+        foreach (var service in manifest.Services)
+        {
+            if (service.SourceRef is { } sourceRef && (sources is null || !sources.ContainsKey(sourceRef)))
+                errors.Add(new("app_manifest_service_source_unknown", $"Service '{service.Key}' sourceRef must name an entry in sources.", "$.services[].sourceRef"));
+        }
+
+        if (manifest.LegacySource is { } legacy)
+            ValidateSourcePaths(legacy, "$.source", errors);
+
+        if (sources is null) return;
+
+        foreach (var (name, descriptor) in sources)
+        {
+            if (!ContractKeyPattern.IsMatch(name))
+                errors.Add(new("app_manifest_source_name_invalid", "Source names must match ^[a-z][a-z0-9-]{0,62}$.", "$.sources"));
+
+            var path = $"$.sources.{name}";
+            if (descriptor is null || descriptor.Type != "git")
+            {
+                errors.Add(new("app_manifest_named_source_invalid", "A named source must declare type git and a repository.", path));
+                continue;
+            }
+
+            try
+            {
+                var repository = descriptor.Repository ?? "";
+                AppSourceService.ValidateManagedRepository(repository);
+                if (repository.Any(char.IsControl) || repository != repository.Trim() ||
+                    !Path.IsPathFullyQualified(repository) && Uri.TryCreate(repository, UriKind.Absolute, out var uri) &&
+                        (!string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment)))
+                {
+                    errors.Add(new("app_manifest_named_source_invalid", "A repository cannot contain control characters, surrounding whitespace, URL queries or fragments.", $"{path}.repository"));
+                }
+            }
+            catch (AppLifecycleException error)
+            {
+                errors.Add(new("app_manifest_named_source_invalid", error.Message, $"{path}.repository"));
+            }
+
+            ValidateSourcePaths(descriptor, path, errors);
+        }
+    }
+
+    private static void ValidateSourcePaths(RuntimeAppSource source, string path, List<AppManifestValidationError> errors)
+    {
+        if (source.ManifestPath is { } manifestPath &&
+            (string.IsNullOrWhiteSpace(manifestPath) || manifestPath.Contains('\\') || manifestPath.Contains(':')
+             || manifestPath.Split('/').Any(part => part is "" or "." or ".." || part.Any(char.IsControl))
+             || !manifestPath.EndsWith("/manifest.json", StringComparison.Ordinal) && manifestPath != "manifest.json"))
+        {
+            errors.Add(new("app_manifest_source_path_invalid", "manifestPath must name manifest.json inside the source repository.", $"{path}.manifestPath"));
+        }
+
+        foreach (var sourcePath in source.Paths ?? [])
+        {
+            if (!DockerSourceRuntime.SafeRelative(sourcePath) || sourcePath == ".")
+                errors.Add(new("app_manifest_source_path_invalid", "Source paths must be explicit relative files or directories within the checkout.", $"{path}.paths"));
+        }
+    }
+
+    internal static bool WorkspaceSourcesChanged(RuntimeAppManifest baseline, RuntimeAppManifest candidate)
+    {
+        var before = baseline.Sources;
+        var after = candidate.Sources;
+        if (before is null || after is null) return before is not null || after is not null;
+        if (baseline.PrimarySource != candidate.PrimarySource || before.Count != after.Count) return true;
+
+        foreach (var (key, source) in before)
+        {
+            if (!after.TryGetValue(key, out var current) ||
+                (source.WithoutReleasePin() with { Paths = null }) != (current.WithoutReleasePin() with { Paths = null }) ||
+                !(source.Paths ?? []).SequenceEqual(current.Paths ?? [], StringComparer.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        static IEnumerable<(string Key, string? SourceRef)> ServiceReferences(RuntimeAppManifest manifest) =>
+            manifest.Services.Where(service => service.SourceRef is not null)
+                .OrderBy(service => service.Key, StringComparer.Ordinal)
+                .Select(service => (service.Key, service.SourceRef));
+
+        return !ServiceReferences(baseline).SequenceEqual(ServiceReferences(candidate));
     }
 
     private static void ValidateRequired(string? value, string path, List<AppManifestValidationError> errors)
@@ -3552,7 +3651,32 @@ internal sealed class RuntimeAppManifest
     // client System grouping and lifecycle policy. Any other value fails validation, so a manifest
     // written for a newer role vocabulary cannot install as an ordinary runtime app by accident.
     public string? Role { get; init; }
-    public RuntimeAppSource? Source { get; init; }
+    // Track explicit JSON nulls so the two wire forms remain mutually exclusive.
+    internal bool LegacySourceDeclared { get; private set; }
+    internal bool NamedSourcesDeclared { get; private set; }
+
+    [JsonPropertyName("source"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public RuntimeAppSource? LegacySource
+    {
+        get;
+        init { field = value; LegacySourceDeclared = true; }
+    }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, RuntimeAppSource>? Sources
+    {
+        get;
+        init { field = value; NamedSourcesDeclared = true; }
+    }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PrimarySource { get; init; }
+
+    // App-level operations keep the existing single-source contract. Secondary sources only add workspace editing inputs.
+    [JsonIgnore]
+    public RuntimeAppSource? Source => Sources is null ? LegacySource
+        : PrimarySource is { } primary && Sources.TryGetValue(primary, out var source) ? source : null;
+
     public IReadOnlyList<RuntimeProfileManifest> RuntimeProfiles { get => field ?? []; init; } = [];
     public string? DefaultRuntime { get; init; }
     public IReadOnlyList<RuntimeAppServiceManifest> Services { get => field ?? []; init; } = [];
@@ -3738,7 +3862,11 @@ internal sealed record RuntimeAppSource(
     string? Tag,
     string? Commit,
     IReadOnlyList<string>? Paths = null,
-    string? ManifestPath = null);
+    string? ManifestPath = null)
+{
+    // Workspace targets come from Branch or the Git default. Tag and Commit pin released code.
+    internal RuntimeAppSource WithoutReleasePin() => this with { Tag = null, Commit = null };
+}
 
 internal sealed class RuntimeProfileManifest
 {
@@ -3770,6 +3898,8 @@ internal sealed class RuntimeAppServiceManifest
 {
     public RuntimeServiceInjection? Injection { get; init; }
     public string Key { get => field ?? ""; init; } = "";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceRef { get; init; }
     public IReadOnlyList<RuntimeServiceDependency> DependsOn { get => field ?? []; init; } = [];
     public IReadOnlyDictionary<string, RuntimeServiceProfileManifest> Runtimes { get => field ??= new Dictionary<string, RuntimeServiceProfileManifest>(); init; } = new Dictionary<string, RuntimeServiceProfileManifest>();
 }

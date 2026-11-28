@@ -1,7 +1,8 @@
 namespace Haas.Hosty.Core;
 
 internal sealed record CanonicalWorkspacePrepare(string RequestId, string TaskId, string AppId, string LeaseId,
-    string Name, string? TargetBranch = null, string? NavigationPath = null);
+    string Name, string? TargetBranch = null, string? NavigationPath = null,
+    Dictionary<string, string>? SourceConnections = null);
 internal sealed record CoreWorkspaceQuery(string? TaskId = null, bool IncludeReleased = true);
 
 // Allocation context is opaque client metadata. A chat, agent runner or first-party app is not
@@ -32,10 +33,12 @@ internal static class CoreSourceApi
                 DevelopmentWorkspaceService.ValidateWorkspaceName(input.Name);
                 if (!Guid.TryParse(input.LeaseId, out _)) throw DevelopmentWorkspaceService.Error("lease_invalid", "An activity lease UUID is required.");
                 var owner = caller.Owner(input.TaskId);
-                var result = await service.PrepareAsync(owner, new(input.RequestId, input.TaskId, input.AppId, input.NavigationPath,
-                    input.TargetBranch, input.LeaseId, Name: input.Name), ct);
-                await ExternalWorkspaceMcpTools.AuditAsync(audit, clock, caller, result, input.RequestId, "prepare", "api");
-                return await service.SessionProjectionAsync(result, owner, ct);
+                var result = await service.PrepareApplicationAsync(owner, new(input.RequestId, input.TaskId, input.AppId,
+                    input.NavigationPath, input.TargetBranch, input.LeaseId, Name: input.Name,
+                    SourceConnections: input.SourceConnections), ct);
+                if (WorkspacePreparationResponse.Representative(result) is { } tree)
+                    await ExternalWorkspaceMcpTools.AuditAsync(audit, clock, caller, tree, input.RequestId, "prepare", "api");
+                return await WorkspacePreparationResponse.ProjectAsync(service, result, owner, ct);
             }));
         app.MapPost(Root + "/query", async (CoreWorkspaceQuery input, HttpRequest request,
             CoreCapabilityAuthorization auth, DevelopmentWorkspaceService service, CancellationToken ct) =>

@@ -46,11 +46,20 @@ export function releaseProfileKeys(manifest, app) {
   return keep;
 }
 
-export function appRelease({ manifest, app, sourceCommit, sourceFingerprint, artifacts, previous, files = [] }) {
+export function appRelease({ manifest, app, repository, sourceCommit, sourceFingerprint, artifacts, previous, files = [] }) {
   if (!fullCommit(sourceCommit)) throw new Error('A qualified full source commit is required.');
   if (manifest.id !== app.id) throw new Error('Manifest identity differs from its publication target.');
   const emitted = structuredClone(manifest); emitted.schemaVersion = 'app.0.2';
-  if (emitted.source) emitted.source.manifestPath = app.manifest;
+  const namedPrimary = emitted.sources && typeof emitted.primarySource === 'string' && Object.hasOwn(emitted.sources, emitted.primarySource)
+    ? emitted.sources[emitted.primarySource] : undefined;
+  if (namedPrimary && repository) {
+    const url = URL.parse(namedPrimary.repository);
+    const name = url?.pathname.replace(/\/+$/, '').replace(/\.git$/i, '').slice(1).toLowerCase();
+    if (url?.origin !== 'https://github.com' || url.username || url.password || url.search || url.hash || name !== repository.toLowerCase())
+      throw new Error('The primary source repository must match the qualified publication checkout.');
+  }
+  const releaseSource = namedPrimary ?? emitted.source;
+  if (releaseSource) releaseSource.manifestPath = app.manifest;
   const keep = releaseProfileKeys(manifest, app);
   const omitted = new Set(emitted.runtimeProfiles.filter(profile => !keep.has(profile.key)).map(profile => profile.key));
   emitted.runtimeProfiles = emitted.runtimeProfiles.filter(profile => keep.has(profile.key));
@@ -73,9 +82,12 @@ export function appRelease({ manifest, app, sourceCommit, sourceFingerprint, art
     }
   }
   if (hasSource) {
+    if (emitted.sources != null && !namedPrimary)
+      throw new Error('Publishing localCommand profiles with named sources requires a declared primarySource.');
     const prior = previous?.source;
     const pin = app.sourceReusable === true && prior?.inputFingerprint === sourceFingerprint && fullCommit(prior.commit) ? prior.commit : sourceCommit;
-    emitted.source = { ...emitted.source, commit: pin };
+    if (releaseSource) releaseSource.commit = pin;
+    else emitted.source = { commit: pin };
     identities.push({ type: 'source', commit: pin, inputFingerprint: sourceFingerprint, fingerprintFormat: 'hosty-source-inputs.0.1' });
   }
   identities.sort((a,b) => canonical(a).localeCompare(canonical(b), 'en'));

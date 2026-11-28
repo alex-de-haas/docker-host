@@ -255,6 +255,8 @@ internal static class CoreJson
 [JsonSerializable(typeof(CoreRemoteQuery))]
 [JsonSerializable(typeof(CoreRemoteMutation))]
 [JsonSerializable(typeof(WorkspacePrepare))]
+[JsonSerializable(typeof(WorkspacePreparationReceipt))]
+[JsonSerializable(typeof(WorkspacePreparationResult))]
 [JsonSerializable(typeof(WorkspaceCommitReview))]
 [JsonSerializable(typeof(WorkspaceCommitReviewRequest))]
 [JsonSerializable(typeof(WorkspaceParticipationView))]

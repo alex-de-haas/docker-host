@@ -1,6 +1,6 @@
 ---
 created: 2026-06-03
-updated: 2026-10-17
+updated: 2026-11-27
 summary: Source checkouts, local overrides and runtime switching for installed apps, with Git inspection.
 components: [apps/core, apps/shell]
 ---
@@ -20,7 +20,10 @@ flowchart LR
 
 ## Source State
 
-An app manifest may declare one app-level source repository. Multi-repository runtime apps are out of scope for the first source runtime implementation; split independently-owned services into separate runtime apps. Private repositories are read through [private app sources](../private-app-sources/feature.md).
+Core uses one app-level source repository for source execution. A manifest with named service
+sources can prepare several repositories in a [development workspace](../multi-repository-workspaces/feature.md)
+and designate its primary app-level source. Private repositories are read through
+[private app sources](../private-app-sources/feature.md).
 
 Core stores source state as Host installation state, not as public manifest metadata:
 

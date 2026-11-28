@@ -27,6 +27,8 @@ internal sealed record InspectedWorktree(string Id, string WorkspaceId, string R
     InspectionPullRequest[] PullRequests, InspectionConsumer[] Consumers, InspectionCommit[] Commits,
     bool CommitsTruncated = false, string? DetailError = null)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public WorkspaceSourceBinding[]? ServiceSources { get; init; }
     public AppSourceFile[] SessionChanges { get; init; } = [];
     public bool HasSandboxConsumers { get; init; }
     public string ObservationRevision { get; init; } = "";

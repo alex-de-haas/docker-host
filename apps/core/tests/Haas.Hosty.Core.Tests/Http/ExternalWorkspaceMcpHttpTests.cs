@@ -32,7 +32,9 @@ public sealed class ExternalWorkspaceMcpHttpTests
             Guid.NewGuid().ToString(), "Improve source behavior", "main");
         using var response = await client.PostAsJsonAsync("/api/workspaces/v1/prepare", input);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var tree = (await response.Content.ReadFromJsonAsync<DevelopmentWorkspace>())!;
+        var prepared = await ReadJsonAsync(response);
+        Assert.False(prepared.TryGetProperty("preparation", out _));
+        var tree = prepared.Deserialize<DevelopmentWorkspace>(JsonSerializerOptions.Web)!;
         Assert.Equal(clientApp.Id, tree.Owner.AppId);
         Assert.Equal(input.TaskId, tree.Owner.SessionId);
         Assert.Null(tree.SessionPath);
@@ -47,6 +49,157 @@ public sealed class ExternalWorkspaceMcpHttpTests
         await apps.UpsertAppAsync(clientApp with { GrantedCorePermissions = [] });
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/workspaces/v1/query", new CoreWorkspaceQuery())).StatusCode);
         Assert.True(Directory.Exists(tree.Path));
+    }
+
+    [Fact]
+    public async Task CanonicalWorkspaceApi_PreparesAllNamedSourcesAndPreservesReplacedCheckout()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await SeedAdminAsync(host);
+        var backendOrigin = await SeedSourceAsync(host);
+        await GitAsync(backendOrigin, "branch", "integration");
+        var webOrigin = await CreateSourceRepositoryAsync(
+            Path.Combine(host.Services.GetRequiredService<CoreDataPaths>().CoreRoot, "web-source"), "trunk");
+        await SetNamedSourceManifestAsync(host, backendOrigin, webOrigin);
+
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", await IssueAsync(host, WorkspaceScopes));
+        var input = new CanonicalWorkspacePrepare(Guid.NewGuid().ToString(), "edit-api", SourceApp,
+            Guid.NewGuid().ToString(), "Improve API service", "integration");
+        var first = await PrepareNamedSourcesAsync(client, input);
+
+        Assert.True(first.Preparation.Complete);
+        Assert.Empty(first.Preparation.Failures);
+        Assert.Equal(2, first.Preparation.Worktrees.Length);
+        var backend = Assert.Single(first.Preparation.Worktrees, tree => tree.Id == first.RepresentativeId);
+        var web = Assert.Single(first.Preparation.Worktrees, tree => tree.Id != backend.Id);
+        Assert.Equal("integration", backend.TargetBranch);
+        Assert.Equal("trunk", web.TargetBranch);
+        Assert.Equal(new[] { "api", "jobs" }, Assert.Single(backend.ServiceSources!).ServiceKeys);
+        Assert.Equal("web", Assert.Single(Assert.Single(web.ServiceSources!).ServiceKeys));
+        Assert.Equal(2, first.Preparation.Leases.Select(lease => lease.LeaseId).Distinct().Count());
+        Assert.All(first.Preparation.Worktrees, tree =>
+        {
+            Assert.Equal(first.WorkspaceId, tree.WorkspaceId);
+            Assert.True(Directory.Exists(tree.Path));
+            Assert.Contains(Assert.Single(first.Preparation.Leases, lease => lease.WorktreeId == tree.Id).LeaseId, tree.Leases);
+        });
+        await File.WriteAllTextAsync(Path.Combine(backend.Path, "README.md"), "unfinished backend edit");
+        await File.WriteAllTextAsync(Path.Combine(web.Path, "README.md"), "unfinished frontend edit");
+
+        var reopened = await PrepareNamedSourcesAsync(client, input);
+        Assert.True(reopened.Preparation.Complete);
+        Assert.Equal(first.Preparation.Leases, reopened.Preparation.Leases);
+        Assert.Equal(first.Preparation.Worktrees.Select(tree => (tree.Id, tree.Path)),
+            reopened.Preparation.Worktrees.Select(tree => (tree.Id, tree.Path)));
+
+        var replacementOrigin = await CreateSourceRepositoryAsync(
+            Path.Combine(host.Services.GetRequiredService<CoreDataPaths>().CoreRoot, "replacement-web-source"), "next");
+        await SetNamedSourceManifestAsync(host, backendOrigin, replacementOrigin);
+
+        using var stale = await client.PostAsJsonAsync("/api/workspaces/v1/prepare", input);
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        var current = await PrepareNamedSourcesAsync(client,
+            input with { RequestId = Guid.NewGuid().ToString(), LeaseId = Guid.NewGuid().ToString() });
+
+        Assert.True(current.Preparation.Complete);
+        Assert.Equal(first.WorkspaceId, current.WorkspaceId);
+        Assert.Equal(backend.Id, current.RepresentativeId);
+        Assert.Equal(2, current.Preparation.Worktrees.Length);
+        var newWeb = Assert.Single(current.Preparation.Worktrees, tree => tree.Id != backend.Id);
+        Assert.NotEqual(web.Id, newWeb.Id);
+        Assert.Equal("next", newWeb.TargetBranch);
+        Assert.Equal("unfinished backend edit", await File.ReadAllTextAsync(Path.Combine(backend.Path, "README.md")));
+        Assert.Equal("unfinished frontend edit", await File.ReadAllTextAsync(Path.Combine(web.Path, "README.md")));
+        Assert.Equal("source\n", await File.ReadAllTextAsync(Path.Combine(newWeb.Path, "README.md")));
+        Assert.Equal("source\n", await File.ReadAllTextAsync(Path.Combine(backendOrigin, "README.md")));
+        Assert.Equal("source\n", await File.ReadAllTextAsync(Path.Combine(webOrigin, "README.md")));
+
+        using var previousResponse = await client.GetAsync($"/api/workspaces/v1/{web.Id}");
+        Assert.Equal(HttpStatusCode.OK, previousResponse.StatusCode);
+        var previous = (await previousResponse.Content.ReadFromJsonAsync<DevelopmentWorkspace>())!;
+        Assert.Equal(web.Path, previous.Path);
+        Assert.True(Assert.Single(previous.ServiceSources!).Previous);
+    }
+
+    [Fact]
+    public async Task CanonicalWorkspaceApi_RetriesMissingNamedBranchWithoutLosingPreparedEdits()
+    {
+        await using var host = await CoreHttpHarness.StartAsync();
+        await SeedAdminAsync(host);
+        var backendOrigin = await SeedSourceAsync(host);
+        var webOrigin = await CreateSourceRepositoryAsync(
+            Path.Combine(host.Services.GetRequiredService<CoreDataPaths>().CoreRoot, "web-delayed"), "trunk");
+        await SetNamedSourceManifestAsync(host, backendOrigin, webOrigin, "ready-for-work");
+
+        using var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", await IssueAsync(host, WorkspaceScopes));
+        var input = new CanonicalWorkspacePrepare(Guid.NewGuid().ToString(), "retry-web", SourceApp,
+            Guid.NewGuid().ToString(), "Prepare both source repositories");
+        var partial = await PrepareNamedSourcesAsync(client, input);
+
+        Assert.False(partial.Preparation.Complete);
+        Assert.Equal("web", Assert.Single(Assert.Single(partial.Preparation.Failures).SourceIds));
+        var backend = Assert.Single(partial.Preparation.Worktrees);
+        var originalLease = Assert.Single(partial.Preparation.Leases);
+        Assert.Equal(backend.Id, originalLease.WorktreeId);
+        await File.WriteAllTextAsync(Path.Combine(backend.Path, "README.md"), "preserved partial workspace edit");
+
+        await GitAsync(webOrigin, "branch", "ready-for-work");
+        var releaseCommit = (await GitAsync(backendOrigin, "rev-parse", "HEAD")).Trim();
+        await SetNamedSourceManifestAsync(host, backendOrigin, webOrigin, "ready-for-work", releaseCommit, "v1.1.0");
+        var retried = await PrepareNamedSourcesAsync(client, input);
+
+        Assert.True(retried.Preparation.Complete);
+        Assert.Empty(retried.Preparation.Failures);
+        Assert.Equal(partial.WorkspaceId, retried.WorkspaceId);
+        Assert.Equal(backend.Id, retried.RepresentativeId);
+        Assert.Equal(2, retried.Preparation.Worktrees.Length);
+        Assert.Equal(backend.Path, Assert.Single(retried.Preparation.Worktrees, tree => tree.Id == backend.Id).Path);
+        Assert.Equal("ready-for-work", Assert.Single(retried.Preparation.Worktrees, tree => tree.Id != backend.Id).TargetBranch);
+        Assert.Contains(originalLease, retried.Preparation.Leases);
+        Assert.Equal("preserved partial workspace edit", await File.ReadAllTextAsync(Path.Combine(backend.Path, "README.md")));
+    }
+
+    private sealed record NamedSourcePreparation(bool Complete, DevelopmentWorkspace[] Worktrees,
+        WorkspacePreparationFailure[] Failures, WorkspacePreparationLease[] Leases);
+
+    private static async Task<(string WorkspaceId, string RepresentativeId, NamedSourcePreparation Preparation)> PrepareNamedSourcesAsync(
+        HttpClient client, CanonicalWorkspacePrepare input)
+    {
+        using var response = await client.PostAsJsonAsync("/api/workspaces/v1/prepare", input);
+        var content = await ReadJsonAsync(response);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, content.GetRawText());
+        return (content.GetProperty("workspaceId").GetString()!, content.GetProperty("id").GetString()!,
+            content.GetProperty("preparation").Deserialize<NamedSourcePreparation>(JsonSerializerOptions.Web)!);
+    }
+
+    internal static async Task SetNamedSourceManifestAsync(CoreHttpHarness host, string backend, string web, string? webBranch = null,
+        string? commit = null, string? tag = null)
+    {
+        var manifest = Path.Combine(host.Services.GetRequiredService<CoreDataPaths>().CoreRoot, "installed-named-source.json");
+        await File.WriteAllTextAsync(manifest, JsonSerializer.Serialize(new
+        {
+            schemaVersion = "app.0.1",
+            id = SourceApp,
+            name = "Named source fixture",
+            version = "1.0.0",
+            primarySource = "backend",
+            sources = new
+            {
+                backend = new { type = "git", repository = backend, branch = "main", commit, tag },
+                web = new { type = "git", repository = web, branch = webBranch },
+            },
+            runtimeProfiles = new[] { new { key = "docker", type = "docker" } },
+            services = new[] { "api", "jobs", "web" }.Select(key => new
+            {
+                key,
+                sourceRef = key == "web" ? "web" : "backend",
+                runtimes = new { docker = new { type = "docker", image = "example/service:1.0.0" } },
+            }),
+        }));
+        await host.Services.GetRequiredService<AppRegistryStore>().UpdateAppAsync(SourceApp,
+            app => app with { ManifestPath = manifest, InstallManifestPath = manifest });
     }
 
     [Theory]
@@ -588,17 +741,23 @@ public sealed class ExternalWorkspaceMcpHttpTests
     internal static async Task<string> SeedSourceAsync(CoreHttpHarness host, string appId = SourceApp)
     {
         var paths = host.Services.GetRequiredService<CoreDataPaths>();
-        var origin = Path.Combine(paths.CoreRoot, appId == SourceApp ? "external-source" : appId);
-        Directory.CreateDirectory(origin);
-        await GitAsync(origin, "init", "--initial-branch=main");
-        await File.WriteAllTextAsync(Path.Combine(origin, "README.md"), "source\n");
-        await GitAsync(origin, "add", "README.md");
-        await GitAsync(origin, "-c", "user.name=Test Author", "-c", "user.email=author@example.test", "commit", "-m", "initial");
+        var origin = await CreateSourceRepositoryAsync(
+            Path.Combine(paths.CoreRoot, appId == SourceApp ? "external-source" : appId), "main");
         var now = host.Services.GetRequiredService<IClock>().UtcNow;
         await host.Services.GetRequiredService<AppRegistryStore>().UpsertAppAsync(new AppRecord(appId, "Source", null,
             "1.0.0", "runtime", false, "installed", null, null, "docker", "installed", "stopped", null, null, [],
             new Dictionary<string, AppSettingValue>(), [], [], [], now, now)
             { SourceState = new("git", origin, "main", null, origin, null, now) });
+        return origin;
+    }
+
+    private static async Task<string> CreateSourceRepositoryAsync(string origin, string branch)
+    {
+        Directory.CreateDirectory(origin);
+        await GitAsync(origin, "init", "--initial-branch=" + branch);
+        await File.WriteAllTextAsync(Path.Combine(origin, "README.md"), "source\n");
+        await GitAsync(origin, "add", "README.md");
+        await GitAsync(origin, "-c", "user.name=Test Author", "-c", "user.email=author@example.test", "commit", "-m", "initial");
         return origin;
     }
 

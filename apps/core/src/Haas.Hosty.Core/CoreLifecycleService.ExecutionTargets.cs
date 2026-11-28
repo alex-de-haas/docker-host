@@ -54,10 +54,13 @@ internal sealed partial class CoreLifecycleService
         var currentWorktreeId = workspaceBound ? operation!.WorktreeId : null;
         AppExecutionChoice current = new(!workspaceBound && packages.Any(p => p.Key == app.SelectedRuntime && (!p.Development || !manualOverride))
             ? "package" : "legacy", app.SelectedRuntime, null, null, app.SelectedRuntime ?? "Unknown runtime");
+        var namedSource = await DevWorkspaces.ReadNamedRuntimeWorkspaceSourceAsync(app, ct);
         foreach (var workspace in inventory.Workspaces.Where(w => w.State != "released"))
         {
-            var candidates = workspace.Worktrees.Where(t => t.State == "active" && t.Apps.Any(a => a.AppId == appId && a.Installed)).ToArray();
-            if (candidates.Length == 0) continue;
+            var boundTrees = workspace.Worktrees.Where(t => t.State == "active" && t.Apps.Any(a => a.AppId == appId && a.Installed)).ToArray();
+            if (boundTrees.Length == 0) continue;
+            var candidates = boundTrees.Where(tree => DevWorkspaces.IsRuntimeWorkspaceSource(namedSource, app,
+                tree.Repository, tree.ServiceSources)).ToArray();
             var allowed = candidates.Where(t => selectableWorktrees is null || selectableWorktrees.Contains(t.Id)).ToArray();
             var resolved = await ResolveWorkspaceTreeAsync(app, workspace.Id, allowed.Select(t => t.Id).ToArray(),
                 null, currentWorktreeId, ct);
@@ -67,7 +70,7 @@ internal sealed partial class CoreLifecycleService
             var legacyRecipe = tree is not null && resolved.Runtime is null
                 ? await JsonStorage.ReadAsync<WorkspaceExecutionRecipe>(WorkspaceRecipePath(app.Id, tree.Id), ct) : null;
             string? recipe = null;
-            try { if (tree is not null) recipe = await ReadWorkspaceRecipeAsync(app, tree.Id, ct,
+            try { if (tree is not null) recipe = await ReadWorkspaceRecipeAsync(app, tree.Id, namedSource, ct,
                 resolved.Runtime, legacyRecipe, legacyRecipeRead: true); }
             catch (Exception error) when (error is AppLifecycleException or AppManifestException or IOException or UnauthorizedAccessException)
             { /* An unavailable candidate must not remove the installed package's Return choice. */ }
@@ -77,10 +80,14 @@ internal sealed partial class CoreLifecycleService
             var choice = new AppExecutionChoice("workspace", recipe, workspace.Id, tree?.Id,
                 workspace.Name ?? workspace.Owner.Label, reason is null, reason);
             if (allowed.Length > 0) choices.Add(choice);
-            if (currentWorktreeId is not null && candidates.SingleOrDefault(t => t.Id == currentWorktreeId) is { } activeTree)
-                current = new("workspace", app.SelectedRuntime, workspace.Id, activeTree.Id, choice.Name,
-                    allowed.Any(t => t.Id == activeTree.Id), allowed.Any(t => t.Id == activeTree.Id) ? null
-                        : "This workspace belongs to another user or credential.");
+            if (currentWorktreeId is not null && boundTrees.SingleOrDefault(t => t.Id == currentWorktreeId) is { } activeTree)
+            {
+                var activeAllowed = allowed.Any(t => t.Id == activeTree.Id);
+                current = new("workspace", app.SelectedRuntime, workspace.Id, activeTree.Id, choice.Name, activeAllowed,
+                    activeAllowed ? null : candidates.Any(t => t.Id == activeTree.Id)
+                        ? "This workspace belongs to another user or credential."
+                        : "This worktree is no longer the application's primary source.");
+            }
         }
         return new(appId, current, await PackageRuntimeAsync(app, ct), choices.ToArray());
     }
@@ -88,11 +95,12 @@ internal sealed partial class CoreLifecycleService
     private string WorkspaceRecipePath(string appId, string treeId) => Path.Combine(
         AppExecutionStore.DirectoryFor(paths, appId), "recipes", treeId + ".json");
 
-    private async Task<string?> ReadWorkspaceRecipeAsync(AppRecord app, string treeId, CancellationToken ct,
+    private async Task<string?> ReadWorkspaceRecipeAsync(AppRecord app, string treeId,
+        DevelopmentWorkspaceService.NamedRuntimeWorkspaceSource? namedSource, CancellationToken ct,
         string? configured = null, WorkspaceExecutionRecipe? legacyRecipe = null, bool legacyRecipeRead = false)
     {
         var tree = await DevWorkspaces.Read(treeId, null, ct);
-        await DevWorkspaces.CheckDevTreeAsync(tree, app, tree.Owner, ct);
+        await DevWorkspaces.CheckDevTreeAsync(tree, app, tree.Owner, namedSource, ct);
         await DevWorkspaces.RequireExternalSourceAsync(tree, ct, localOnly: true);
         await new HostPathAuthority(paths, apps).OverrideAsync(app, tree.Path, ct);
         var profiles = (await manifests.ReadRuntimeProfilesAsync(CombineManifestSubpath(tree.Path, app.SourceState?.ManifestSubpath), ct))
@@ -212,12 +220,16 @@ internal sealed partial class CoreLifecycleService
             return journal with { State = "completed", Phase = "completed", Code = null, Error = null, Review = null };
         }
 
+        var namedSource = await DevWorkspaces.ReadNamedRuntimeWorkspaceSourceAsync(app, ct);
         var candidates = (await DevWorkspaces.ListAsync(null, false, ct)).Workspaces.Where(t =>
             t.WorkspaceId == request.WorkspaceId && t.State == "active" &&
-            t.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt)).ToArray();
+            t.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt) &&
+            DevWorkspaces.IsRuntimeWorkspaceSource(namedSource, app, t.Repository, t.ServiceSources)).ToArray();
         var explicitTree = request.WorktreeId is { } requestedTree ? await DevWorkspaces.Read(requestedTree, null, ct) : null;
         if (explicitTree is not null && (explicitTree.WorkspaceId != request.WorkspaceId))
             throw DevError("workspace_forbidden", "The selected worktree is outside this workspace.");
+        if (explicitTree is not null && !DevWorkspaces.IsRuntimeWorkspaceSource(namedSource, app, explicitTree.Repository, explicitTree.ServiceSources))
+            throw DevError("workspace_forbidden", "Only the application's current primary repository can supply a runtime workspace.");
         var resolvedTree = await ResolveWorkspaceTreeAsync(app, request.WorkspaceId!, candidates.Select(t => t.Id).ToArray(),
             explicitTree?.Id, active is { Active: true } ? active.WorktreeId : null, ct);
         var candidateTree = candidates.SingleOrDefault(t => t.Id == resolvedTree.WorktreeId)
@@ -228,8 +240,8 @@ internal sealed partial class CoreLifecycleService
             ? new WorkspaceOwner(callerApp, installation, journal.Actor.UserId, journal.Request.RequestId)
             : WorkspaceOwner.ForExternal(journal.Actor.UserId, journal.Actor.Principal ?? "local-control", journal.Request.RequestId, "Runtime selection");
         // The operator deliberately selects editable workspace source; an editing lease is not a lifecycle lock.
-        await DevWorkspaces.CheckDevTreeAsync(candidateTree, app, sourceActor, ct);
-        var runtime = request.Runtime ?? await ReadWorkspaceRecipeAsync(app, candidateTree.Id, ct, resolvedTree.Runtime)
+        await DevWorkspaces.CheckDevTreeAsync(candidateTree, app, sourceActor, namedSource, ct);
+        var runtime = request.Runtime ?? await ReadWorkspaceRecipeAsync(app, candidateTree.Id, namedSource, ct, resolvedTree.Runtime)
             ?? throw DevError("recipe_required", "Configure a development runtime during workspace setup.");
         if (active is { Phase: "active" } && active.WorktreeId == candidateTree.Id && active.TargetRuntime == runtime && journal.Phase == "pending")
         {

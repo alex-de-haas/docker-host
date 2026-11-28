@@ -2,16 +2,26 @@ namespace Haas.Hosty.Core;
 
 internal sealed partial class CoreAgentExecution
 {
-    internal async Task<DevelopmentWorkspace> McpPrepare(CoreCallerAuthority origin, string userId, WorkspaceOwner actor, WorkspacePrepare input, CancellationToken ct)
+    internal async Task<WorkspacePreparationResult> McpPrepare(CoreCallerAuthority origin, string userId,
+        WorkspaceOwner actor, WorkspacePrepare input, CancellationToken ct)
     {
-        return await McpLease(origin, userId, actor, input.RequestId, input.LeaseId!, async () =>
+        var reference = origin.Mcp?.AgentAdmissionRef
+            ?? throw new AppIdentityException("permission_denied", "An admitted execution is required.");
+        return await store.WithWorkspaceLease(reference, async _ =>
         {
-            var record = await store.Get(origin.Mcp!.AgentAdmissionRef!, ct);
+            var record = await McpLeaseRecord(origin, userId, actor, input.RequestId, input.LeaseId!, ct);
             var conversation = record.Request.Conversation;
             var chat = conversation is null ? null : new WorkspaceChatOrigin(
                 new(record.CallerAppId, record.CallerInstallation, record.UserId, conversation.SessionId), conversation,
                 record.Id, record.Request.RunId!, record.Generation);
-            return await workspaces.PrepareAsync(actor, input, ct, chat, nativeExecution: true);
+            var result = await workspaces.PrepareApplicationAsync(actor, input, ct, chat, nativeExecution: true,
+                recordLeaseIntent: (requestId, leaseId) => RecordMcpLease(origin, userId, actor, requestId, leaseId, null, ct));
+            foreach (var lease in result.Leases)
+            {
+                var tree = result.Worktrees.Single(w => w.Id == lease.WorktreeId);
+                await RecordMcpLease(origin, userId, actor, lease.RequestId, lease.LeaseId, tree, ct);
+            }
+            return result;
         }, ct);
     }
 

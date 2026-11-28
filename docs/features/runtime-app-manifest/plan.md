@@ -1,8 +1,8 @@
 ---
 status: Draft
 created: 2026-11-05
-updated: 2026-11-12
-summary: Review app.0.2 around package execution, simple native setup/command and one Git-workspace development workflow while retaining Docker tags and optional feeds.
+updated: 2026-11-27
+summary: Review app.0.2 package execution, native setup and command, and one Git workspace development workflow while retaining Docker tags and optional feeds.
 ---
 
 # Manifest app.0.2 And Workspace Execution
@@ -183,6 +183,11 @@ Existing override readers and original operation recovery stay during migration.
 legacy entry points, converting non-Git users and deciding unsupported cases needs the separate
 Development Controls D1 assessment/approval. This Draft authorizes assessment, not retirement.
 
+### Editing One Application Across Repositories
+
+[Multi-repository application workspaces](../multi-repository-workspaces/feature.md) provide
+named service sources and workspace preparation for one application with several repositories.
+
 ### Installation, New Apps And Manifest-Only Wrappers
 
 | Scenario | Intended behavior |
@@ -291,7 +296,7 @@ added design-decision gate. No implementation is complete and no deliverable is 
 - [ ] D2. Implement the approved general app.0.2 admission and preserve the simple native contract: Docker tags/digests, optional setup plus command, source/prebuilt/interpreted cases and strict malformed-input handling, retaining old schema readers and existing application-owned preparation behavior without a Core build engine or SDK installer.
 - [ ] D3. Align install/update/runtime and artifact-lock paths with the approved package/source/preparation model; preserve exact reviewed identities, same-tag updates, private access, current data and original-request recovery without forcing feeds.
 - [ ] D4. Separate explicit ready-release validation from ordinary schema admission in publisher and Core migration guards; verify complete production inputs, old immutable release compatibility, digest reuse and promotion.
-- [ ] D5. Align manifest workspace recipes and Core/CLI/Shell/Harness/MCP discovery, preview, preparation and recovery around the approved single workflow, including manifest-only/local-Git cases; coordinate override retirement through Development Controls D1 rather than duplicate it.
+- [ ] D5. Align manifest workspace recipes and Core/CLI/Shell/Harness/MCP discovery, preview, preparation and recovery around the approved single workflow, including manifest-only/local-Git cases. Coordinate override retirement through Development Controls D1.
 - [ ] D6. Complete the approved reader-first authoring/template/guide rollout, map existing profiles and source consumers without silent lifecycle/data changes, retain immutable releases and legacy recovery, and document independent-repository migration and minimum readers.
 - [ ] D7. Complete differential/contract and managed-runtime acceptance for the retained scenario matrix, including cold/warm/missing-output native starts; run affected checks, update reality documents/version artifacts, remove this plan only after all deliverables pass and regenerate the index.
 - [ ] D8. Resolve the remaining architecture and rollout decisions, freeze concrete schema examples and legacy mappings with the owner, assign cross-feature dependencies and approve a Ready implementation scope before coding.

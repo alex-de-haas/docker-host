@@ -110,6 +110,53 @@ test('mixed-service releases retain original build revisions and ignore unrelate
   assert.equal(first.descriptor.releaseId, appRelease({ manifest, app, sourceCommit: 'd'.repeat(40), sourceFingerprint: hash, artifacts }).descriptor.releaseId);
   assert.throws(() => appRelease({ manifest, app, sourceCommit: commit, sourceFingerprint: hash, artifacts: artifacts.slice(1) }), /Missing verified/);
 });
+test('Docker releases retain named editing sources without requiring a primary source', () => {
+  const app = { id: 'example.images', manifest: 'apps/images/manifest.json', profiles: ['docker'] };
+  const manifest = {
+    id: app.id, version: '1.0.0',
+    sources: { api: { type: 'git', repository: 'https://git.example.test/services/api.git', branch: 'trunk' } },
+    runtimeProfiles: [{ key: 'docker', type: 'docker' }],
+    services: [{ key: 'api', sourceRef: 'api', runtimes: { docker: { type: 'docker', image: 'example/api:1.0.0' } } }],
+  };
+  const image = { repository: 'example/api', digest: `sha256:${hash}` };
+  const artifact = { type: 'image', service: 'api', profile: 'docker', platforms: ['linux/arm64'], ...image };
+  const result = appRelease({ manifest, app, repository: 'example/app', sourceCommit: commit, sourceFingerprint: hash, artifacts: [artifact] });
+  assert.deepEqual(result.manifest.sources, manifest.sources);
+  assert.equal(result.manifest.services[0].sourceRef, 'api');
+  assert.deepEqual(result.manifest.services[0].runtimes.docker.image, image);
+  assert.equal(Object.hasOwn(result.manifest, 'source'), false);
+  assert.equal(Object.hasOwn(result.descriptor, 'source'), false);
+});
+
+test('published local source writes the manifest path and qualified pin only to the named primary', () => {
+  const app = { id: 'example.local', manifest: 'apps/local/manifest.json', profiles: ['local'], sourceReusable: true };
+  const manifest = {
+    id: app.id, version: '1.0.0', primarySource: 'application',
+    sources: {
+      application: { type: 'git', repository: 'https://github.com/example/app.git', branch: 'main' },
+      ui: { type: 'git', repository: 'https://git.example.test/services/ui.git', commit: 'e'.repeat(40) },
+    },
+    runtimeProfiles: [{ key: 'local', type: 'localCommand' }],
+    services: [{ key: 'api', sourceRef: 'application', runtimes: { local: { type: 'localCommand', command: 'run' } } }],
+  };
+  const options = { manifest, app, repository: 'Example/App', sourceCommit: commit, sourceFingerprint: hash, artifacts: [] };
+  const first = appRelease(options);
+  assert.deepEqual(first.manifest.sources.application, { ...manifest.sources.application, manifestPath: app.manifest, commit });
+  assert.deepEqual(first.manifest.sources.ui, manifest.sources.ui);
+  assert.equal(Object.hasOwn(first.manifest, 'source'), false);
+  assert.equal(Object.hasOwn(manifest.sources.application, 'commit'), false);
+  assert.equal(first.descriptor.source.inputFingerprint, hash);
+  assert.equal(first.descriptor.source.commit, commit);
+
+  const nextCommit = 'c'.repeat(40);
+  const reused = appRelease({ ...options, sourceCommit: nextCommit, previous: first.descriptor });
+  assert.equal(reused.manifest.sources.application.commit, commit);
+  assert.equal(reused.descriptor.sourceCommit, nextCommit);
+  assert.equal(reused.descriptor.releaseId, first.descriptor.releaseId);
+  assert.throws(() => appRelease({ ...options, repository: 'example/other' }), /qualified publication checkout/);
+  assert.throws(() => appRelease({ ...options, manifest: { ...manifest, primarySource: undefined } }), /declared primarySource/);
+});
+
 test('native release requires every role/RID and derives immutable URLs after identity', () => {
   const assets = ['cli','core'].map(role => ({ role, rid: 'custom-rid', fileName: role, size: 5, sha256: hash, inputFingerprint: hash, provenance: 'https://example.test/proof' }));
   const options = { version: '1.0.0', sourceCommit: commit, assets, repository: 'example/repo', rids: ['custom-rid'] };

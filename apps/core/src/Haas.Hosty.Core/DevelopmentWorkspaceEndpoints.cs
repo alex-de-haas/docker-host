@@ -58,9 +58,10 @@ internal static class DevelopmentWorkspaceEndpoints
             await Handle(async () =>
             {
                 var owner = await auth.RequireAsync(request, appId, sessionId, ct);
-                var result = await workspaces.PrepareAsync(owner, input, ct);
-                await Audit(audit, clock, owner.UserId, result, input.RequestId, "prepare", ct);
-                return await workspaces.SessionProjectionAsync(result, owner, ct);
+                var result = await workspaces.PrepareApplicationAsync(owner, input, ct);
+                if (WorkspacePreparationResponse.Representative(result) is { } tree)
+                    await Audit(audit, clock, owner.UserId, tree, input.RequestId, "prepare", ct);
+                return await WorkspacePreparationResponse.ProjectAsync(workspaces, result, owner, ct);
             }));
         routes.MapGet(internalRoot + "/{id}", async (string appId, string sessionId, string id, HttpRequest request,
             WorkspaceAuthorization auth, DevelopmentWorkspaceService workspaces, CancellationToken ct) =>

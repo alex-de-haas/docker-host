@@ -255,6 +255,6 @@ internal sealed class CoreTaskSessionMcpTools(IHttpContextAccessor accessor, Cor
     public Task<CallToolResult> TaskPlan([Description("Session workflow input object as described by this tool.")] JsonElement input, CancellationToken cancellationToken) => Invoke("task-plan", input, cancellationToken);
 
     [McpServerTool(Name = "task_bind_workspace", ReadOnly = false, Destructive = false)]
-    [Description("Bind or prepare the authorized root source workspace. Input: requestId UUID, expectedRevision, workspaceId or prepare {appId,name,targetBranch?}. Grants no lifecycle/publication authority.")]
+    [Description("Bind or prepare the authorized root source workspace. Input: requestId UUID, expectedRevision, workspaceId or prepare {appId,name,targetBranch?,sourceConnections?}. For additional private sources, supply authorized Git connection IDs keyed by source name. Grants no lifecycle/publication authority.")]
     public Task<CallToolResult> TaskBindWorkspace([Description("Session workflow input object as described by this tool.")] JsonElement input, CancellationToken cancellationToken) => Invoke("task-bind-workspace", input, cancellationToken);
 }

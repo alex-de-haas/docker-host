@@ -447,6 +447,39 @@ public sealed partial class CoreLifecycleServiceTests
         Assert.Equal(native, Assert.Single((await first.Workspaces.Read(worktreeId, null, default)).LeaseClaims!).Session);
     }
 
+    [Fact]
+    public async Task NamedWorkspaceSourcesRetainAndReleaseEveryNativeLease()
+    {
+        await using var fixture = await AgentLeaseRaceFixture.Create();
+        var apps = fixture.Host.Services.GetRequiredService<AppRegistryStore>();
+        const string sourceApp = "com.example.external-source";
+        var primary = (await apps.GetAppAsync(sourceApp))!.SourceState!.Repository!;
+        var secondary = await ExternalWorkspaceMcpHttpTests.SeedSourceAsync(fixture.Host, "unrelated.git-fixture");
+        await ExternalWorkspaceMcpHttpTests.SetNamedSourceManifestAsync(fixture.Host, primary, secondary);
+
+        var requestId = Guid.NewGuid().ToString();
+        var leaseId = Guid.NewGuid().ToString();
+        var response = await fixture.PrepareSource(sourceApp, requestId, leaseId);
+        Assert.False(response.TryGetProperty("error", out var error), error.ToString());
+        Assert.Equal(fixture.Tree.WorkspaceId, response.GetProperty("workspaceId").GetString());
+        var prep = response.GetProperty("preparation");
+        Assert.True(prep.GetProperty("complete").GetBoolean());
+        var leases = prep.GetProperty("leases").Deserialize<WorkspacePreparationLease[]>(JsonSerializerOptions.Web)!;
+        Assert.Equal(2, leases.Select(lease => lease.LeaseId).Distinct().Count());
+        Assert.Contains(leases, lease => lease.RequestId == requestId && lease.LeaseId == leaseId);
+        var admission = await fixture.Store.Get(fixture.Reference, default);
+        foreach (var lease in leases)
+        {
+            var claim = Assert.Single(admission.Leases!, retained => retained.LeaseId == lease.LeaseId);
+            Assert.Equal(lease.WorktreeId, claim.WorktreeId);
+            Assert.Contains(lease.LeaseId, (await fixture.Workspaces.Read(lease.WorktreeId, null, default)).Leases);
+        }
+        await fixture.ReleaseAll();
+        foreach (var lease in leases)
+            Assert.DoesNotContain(lease.LeaseId, (await fixture.Workspaces.Read(lease.WorktreeId, null, default)).Leases);
+        Assert.All((await fixture.Store.Get(fixture.Reference, default)).Leases!, lease => Assert.True(lease.Released));
+    }
+
     private sealed record AgentLeaseRaceFixture(CoreHttpHarness Host, CoreAgentExecution Service,
         CoreAgentAuthorizationStore Store, DevelopmentWorkspaceService Workspaces, CoreDataPaths Paths,
         AppRecord Provider, AppRecord Consumer, WorkspaceOwner Owner, DevelopmentWorkspace Tree,

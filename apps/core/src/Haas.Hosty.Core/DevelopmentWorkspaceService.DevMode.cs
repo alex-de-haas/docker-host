@@ -2,11 +2,46 @@ namespace Haas.Hosty.Core;
 
 internal sealed partial class DevelopmentWorkspaceService
 {
+    internal sealed record NamedRuntimeWorkspaceSource(string? SourceName, string? Repository);
+
+    internal async Task<NamedRuntimeWorkspaceSource?> ReadNamedRuntimeWorkspaceSourceAsync(AppRecord app, CancellationToken ct)
+    {
+        if (app.ManifestPath is not { } path) return null;
+        var manifest = await JsonStorage.ReadAsync<RuntimeAppManifest>(path, ct);
+        if (manifest?.Sources is null) return null;
+        if (manifest.PrimarySource is not { } primary || manifest.Source?.Repository is not { } repository)
+            return new(null, null);
+
+        try
+        {
+            var canonical = await CanonicalRepository(app.SourceState?.Repository ?? repository, app.SourceState?.LocalOverridePath, ct);
+            return new(primary, LogicalRepositoryIdentity(canonical));
+        }
+        catch (Exception error) when (error is AppLifecycleException or IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // Package Return remains available when the primary repository has gone away.
+            return new(primary, null);
+        }
+    }
+
+    internal bool IsRuntimeWorkspaceSource(NamedRuntimeWorkspaceSource? source, AppRecord app, string repository,
+        WorkspaceSourceBinding[]? bindings)
+        => source is null || source.SourceName is { } primary && source.Repository is { } canonical &&
+            LogicalRepositoryIdentity(repository) == canonical && bindings?.Any(binding =>
+                binding.AppId == app.Id && binding.Installation == app.InstalledAt && binding.Primary &&
+                !binding.Previous && binding.SourceIds.Contains(primary, StringComparer.Ordinal)) == true;
+
     internal async Task CheckDevTreeAsync(DevelopmentWorkspace tree, AppRecord app, WorkspaceOwner? actor, CancellationToken ct)
+        => await CheckDevTreeAsync(tree, app, actor, await ReadNamedRuntimeWorkspaceSourceAsync(app, ct), ct);
+
+    internal async Task CheckDevTreeAsync(DevelopmentWorkspace tree, AppRecord app, WorkspaceOwner? actor,
+        NamedRuntimeWorkspaceSource? source, CancellationToken ct)
     {
         if (tree.State != "active" || tree.Operations.Any(o => o.State is "pending" or "unknown") ||
             !tree.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt))
             throw Error("source_changed", "The worktree must be active, attached to this installation and free of uncertain Git operations.");
+        if (!IsRuntimeWorkspaceSource(source, app, tree.Repository, tree.ServiceSources))
+            throw Error("source_changed", "Only the application's current primary repository can supply a runtime workspace.");
         if (actor is not null) await RequireSessionAccessAsync(tree, actor, ct);
         if (actor is null && tree.Leases.Length > 0) throw Error("in_use", "Pause active workspace writers before a manual source transition.");
         await RequireOpenWorkflow(tree.Owner, ct);

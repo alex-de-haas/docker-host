@@ -5366,6 +5366,77 @@ public sealed partial class CoreLifecycleServiceTests
     }
 
     [Fact]
+    public async Task EditingOnlyNamedSourcesDoNotRetainLegacyPrimaryOnUpdate()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var manifestPath = Path.Combine(fixture.Root, "manifest.json");
+        const string initial = """
+            {
+              "schemaVersion":"app.0.1","id":"org.unrelated.portal","name":"Portal","version":"1.0.0",
+              "source":{"type":"git","repository":"https://example.test/team/old.git"},
+              "runtimeProfiles":[{"key":"docker","type":"docker"}],
+              "services":[{"key":"app","runtimes":{"docker":{"image":"example/portal:1.0.0"}}}]
+            }
+            """;
+        await File.WriteAllTextAsync(manifestPath, initial);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+        var installed = await fixture.Apps.GetAppAsync("org.unrelated.portal");
+        Assert.Equal("https://example.test/team/old.git", installed!.SourceState?.Repository);
+
+        var candidatePath = Path.Combine(fixture.Root, "candidate.json");
+        var candidate = initial.Replace(
+            """ "source":{"type":"git","repository":"https://example.test/team/old.git"} """.Trim(),
+            """ "sources":{"web":{"type":"git","repository":"https://example.test/team/web.git"}} """.Trim(),
+            StringComparison.Ordinal);
+        await File.WriteAllTextAsync(candidatePath, candidate);
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync(installed.Id, new AppUpdatePlanRequest(candidatePath));
+        Assert.True(plan.RequiresReview);
+        await fixture.Service.ApplyUpdateAsync(installed.Id, new AppUpdateApplyRequest(plan.PlanDigest, candidatePath));
+
+        var updated = await fixture.Apps.GetAppAsync(installed.Id);
+        Assert.Null(updated!.SourceState);
+        Assert.Equal(candidate, await File.ReadAllTextAsync(updated.ManifestPath!));
+    }
+
+    [Fact]
+    public async Task LiveSourceFolderRequiresReviewedUpdateForChangedWorkspaceSources()
+    {
+        var fixture = await LifecycleFixture.CreateAsync();
+        var folder = Path.Combine(fixture.Root, "live-app");
+        Directory.CreateDirectory(folder);
+        var manifestPath = Path.Combine(folder, "manifest.json");
+        const string original = """
+            {
+              "schemaVersion":"app.0.1","id":"org.unrelated.portal","name":"Portal","version":"1.0.0",
+              "sources":{
+                "api":{"type":"git","repository":"."},
+                "web":{"type":"git","repository":"https://example.test/team/web.git"}
+              },
+              "primarySource":"api",
+              "runtimeProfiles":[{"key":"dev","type":"localCommand","development":true}],
+              "services":[{"key":"app","sourceRef":"web","runtimes":{"dev":{"command":"./start"}}}]
+            }
+            """;
+        await File.WriteAllTextAsync(manifestPath, original);
+        await fixture.Service.InstallAsync(new AppInstallRequest(manifestPath));
+        var app = await fixture.Apps.GetAppAsync("org.unrelated.portal");
+        Assert.NotNull(app);
+
+        await File.WriteAllTextAsync(manifestPath, original.Replace("team/web.git", "team/new-web.git", StringComparison.Ordinal));
+
+        var load = await fixture.Service.LoadSelectionWithStatusAsync(app, CancellationToken.None);
+        Assert.False(load.LiveReconciled);
+        Assert.Contains("review", load.ManifestError, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(original, load.Selection.ManifestJson);
+        Assert.Equal(original, await File.ReadAllTextAsync(app.ManifestPath!));
+
+        var plan = await fixture.Service.CreateUpdatePlanAsync(app.Id, new AppUpdatePlanRequest(manifestPath));
+        Assert.True(plan.RequiresReview);
+        Assert.Contains("workspace-sources", plan.Changes);
+    }
+
+    [Fact]
     public async Task LoadSelection_LiveSourceFolder_LegacyRecordWithoutPersistedProfiles_StillLiveReconciles()
     {
         var fixture = await LifecycleFixture.CreateAsync();
