@@ -15,14 +15,14 @@
   "dependencies": {
     "@hosty/agent-provider-runtime": "*",
     "@hosty-sdk/app": "*",
-    "undici": "^8.12.4",
+    "undici": "^8.13.1",
     "@modelcontextprotocol/sdk": "1.32.2"
   },
   "devDependencies": {
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "@types/node": "^24.19.2",
-    "vitest": "^5.1.0"
+    "@types/node": "^24.19.3",
+    "vitest": "^5.1.1"
   },
   "hostyAgentProvider": {
     "external": [],

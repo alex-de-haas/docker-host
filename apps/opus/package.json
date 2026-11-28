@@ -22,7 +22,7 @@
     "micromark-extension-gfm": "3.0.0"
   },
   "devDependencies": {
-    "@types/node": "^24.19.2",
+    "@types/node": "^24.19.3",
     "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "6.0.3"
