@@ -48,6 +48,19 @@ describe("development session coordination", () => {
     await finish(session.id); await manager.shutdown(); manager = build();
     expect((await store.readEvents(session.id)).filter(e => e.type === "tool_use")).toEqual(edits);
   });
+  it("retains all named source worktrees and the preparation response", async () => {
+    const workspaceId = "b".repeat(64);
+    const primary = { ...tree, workspaceId };
+    const secondary = { ...tree, id: "c".repeat(64), path: "/owned/dependency", workspaceId, apps: [] };
+    const response = { ...primary, preparation: { complete: true, worktrees: [primary, secondary], failures: [], leases: [] } };
+    vi.mocked(client.call).mockResolvedValue(response);
+    const record = await manager.createSession({ createdBy: "admin", appIds: ["notes"] });
+    const input = { appId: "notes", requestId: randomUUID(), sourceConnections: { dependency: "reviewed-connection" } };
+    await expect(manager.workspaceAction(record.id, "prepare", input, "token", "admin")).resolves.toEqual(response);
+    expect((await store.readRecord(record.id))!.developmentWorkspaces).toEqual([primary, secondary]);
+    expect(client.call).toHaveBeenCalledWith(record.id, "token", "prepare", expect.objectContaining(input));
+  });
+
   it.each(["participants", "commit-review", "association", "rename", "activation-plan"] as const)("keeps %s metadata out of source bindings and persists the next native edit", async action => {
     const bound = { ...tree, workspaceId: "b".repeat(64), repository: "https://github.com/example/notes" };
     const metadata = { id: "metadata-receipt", sessions: [], paths: ["src/file.ts"] };
@@ -1178,7 +1191,7 @@ it("binds canonical preparation to the current native conversation and retains t
   const original = DevelopmentClient.prototype.call.bind(client);
   vi.mocked(client.call).mockImplementation(async (id, token, action, input) => action === "prepare"
     ? original(id, token, action, input) : action === "list" ? { workspaces: [bound] } : bound);
-  const input = { taskId: record.id, leaseId, requestId: "1e3214ed-fb38-4f60-a948-3ed25f9b96dd", appId: "notes", name: "Canonical source" };
+  const input = { taskId: record.id, leaseId, requestId: "1e3214ed-fb38-4f60-a948-3ed25f9b96dd", appId: "notes", name: "Canonical source", sourceConnections: { dependency: "reviewed-connection" } };
   await expect(manager.coordinateCoreTool(record.id, "prepare_workspace", { ...input, taskId: "another-chat" }, async () => {})).rejects.toThrow("taskId");
   const guard = vi.fn().mockResolvedValue(undefined);
   await expect(manager.coordinateCoreTool(record.id, "prepare_workspace", input, guard)).resolves.toMatchObject({ result: bound });

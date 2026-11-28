@@ -1,6 +1,6 @@
 ---
 created: 2026-06-04
-updated: 2026-11-03
+updated: 2026-11-27
 summary: The app.0.1 authoring and app.0.2 immutable release contracts for installing and running runtime apps.
 components: [apps/core]
 ---
@@ -12,14 +12,18 @@ components: [apps/core]
 `app.0.2` keeps the runtime manifest shape and replaces Docker tag references with
 `{"repository":"registry.example/team/app","digest":"sha256:<64 lowercase hex>"}`.
 Tags, ambiguous repositories and malformed digests are rejected in that schema. Production local
-source releases also carry a full `source.commit`; the publisher retains their original qualified
-source. Ordinary app version bumps do not change schemaVersion. Core continues reading app.0.1
+source releases also carry a full commit in the app-level source. For named sources the
+publisher retains that pin in the designated primary entry. Ordinary app version bumps do not change schemaVersion. Core continues reading app.0.1
 tag/string image references for existing installations and local authoring. See
 [release publication](../repository-release-model/feature.md) for generated release metadata.
 
 ## Description
 
 Hosty installs user workloads from an app manifest with `schemaVersion: "app.0.1"` or `"app.0.2"`. The manifest is the only supported install contract for new local development, tests, and runtime app lifecycle work. Legacy Docker metadata files are not part of the current workflow.
+
+A manifest can map services to named Git sources for
+[multi-repository workspace preparation](../multi-repository-workspaces/feature.md). Use the
+app-level `source` declaration for an application that shares one repository.
 
 ## Manifest Location
 

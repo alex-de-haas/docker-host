@@ -23,11 +23,25 @@ internal sealed record WorkspaceOwner(string AppId, DateTimeOffset Installation,
 }
 internal sealed record WorkspaceCoreBinding(string SourceRevision, string ProjectPath);
 internal sealed record WorkspaceApp(string AppId, DateTimeOffset Installation, string? Subpath);
+internal sealed record WorkspaceSourceBinding(string AppId, DateTimeOffset Installation, string[] SourceIds,
+    string[] ServiceKeys, string? TargetBranch, bool Primary, bool Previous = false);
 internal sealed record WorkspacePrepare(string RequestId, string SessionId, string AppId, string? SessionPath, string? TargetBranch = null,
     string? LeaseId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExternalLabel = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExpectedLocalHead = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Name = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Name = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string>? SourceConnections = null);
+internal sealed record WorkspacePreparationFailure(string Repository, string[] SourceIds, string Code, string Error);
+internal sealed record WorkspacePreparationLease(string WorktreeId, string RequestId, string LeaseId);
+internal sealed record WorkspacePreparationResult(DevelopmentWorkspace? Primary, DevelopmentWorkspace[] Worktrees,
+    WorkspacePreparationFailure[] Failures, WorkspacePreparationLease[] Leases, bool UsesNamedSources = false, string? WorkspaceId = null)
+{
+    public bool Complete => Failures.Length == 0;
+}
+internal sealed record WorkspacePreparationRepository(string Repository, string RequestId, string? LeaseId,
+    WorkspaceSourceBinding Binding, string? ConnectionId, WorkspacePreparationFailure? AdmissionFailure = null, string? AllocationGeneration = null);
+internal sealed record WorkspacePreparationReceipt(string Fingerprint, string ManifestRevision, DateTimeOffset Installation, string WorkspaceId,
+    WorkspacePreparationRepository[] Repositories, WorkspacePreparationFailure[]? Failures = null, string? AllocationGeneration = null);
 internal sealed record WorkspaceCommand(string RequestId, string? ExpectedHead = null, string? Message = null,
     string[]? Paths = null, string? AuthorName = null, string? AuthorEmail = null, string? LeaseId = null,
     string[]? PullRequests = null,
@@ -69,6 +83,8 @@ internal sealed record DevelopmentWorkspace
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public WorkspaceCoreBinding? Core { get; init; }
     public WorkspaceApp[] Apps { get; init; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public WorkspaceSourceBinding[]? ServiceSources { get; init; }
     public WorkspaceOperation[] Operations { get; init; } = [];
     public string[] Leases { get; init; } = [];
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

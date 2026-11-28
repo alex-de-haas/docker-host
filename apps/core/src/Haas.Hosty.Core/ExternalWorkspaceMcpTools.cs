@@ -9,21 +9,24 @@ namespace Haas.Hosty.Core;
 internal sealed class ExternalWorkspaceMcpTools
 {
     [McpServerTool(Name = "prepare_workspace", ReadOnly = false, Destructive = false, Idempotent = true)]
-    [Description("Prepare a Core-owned worktree for an installed source app on this local host. Requires direct mcp:read and mcp:workspaces, or reviewed application source authority. Use one stable opaque taskId per work context and a UUID requestId; reuse the same request and arguments after an uncertain response. Supply name as a short, purpose-based description of the work (for example Simplify runtime switching), not an agent name or generated branch/ID. Use rename_workspace when the task scope changes materially. Supply a UUID activity lease before editing or starting native processes. Read repository instructions and approved plans in the returned absolute directory. Keep verified plan progress current without waiting for commits. No app runtime, publication or conversation is created.")]
+    [Description("Prepare the registered worktrees for an installed source app on this host. Requires direct mcp:read and mcp:workspaces, or reviewed application source authority. Use one stable opaque taskId per work context and a UUID requestId; reuse the same request and arguments after an uncertain response. Supply name as a short, purpose-based description of the work (for example Simplify runtime switching), not an agent name or generated branch/ID. Use rename_workspace when the task scope changes materially. Supply a UUID activity lease before editing or starting native processes. Read repository instructions in each returned worktree. For named sources, inspect preparation.complete, worktrees, failures, and leases. Supply reviewed Git connections for additional private sources by name in sourceConnections. Keep verified plan progress current without waiting for commits. No app runtime, publication or conversation is created.")]
     public static Task<string> PrepareAsync(string requestId, string taskId, string appId, string leaseId, string name,
         ExternalWorkspaceMcpAuthorization authorization, DevelopmentWorkspaceService workspaces,
         IHttpContextAccessor accessor, AuditStore audit, IClock clock, CancellationToken cancellationToken,
-        string? targetBranch = null, string? label = null, string? navigationPath = null)
+        string? targetBranch = null, string? label = null, string? navigationPath = null,
+        Dictionary<string, string>? sourceConnections = null)
         => ExecuteAsync(async caller =>
         {
             DevelopmentWorkspaceService.ValidateWorkspaceName(name!);
             var owner = caller.Owner(taskId, label);
             var agent = caller.Authority?.Mcp?.AgentAdmissionRef is not null ? accessor.HttpContext!.RequestServices.GetRequiredService<CoreAgentExecution>() : null;
-            var input = new WorkspacePrepare(requestId, owner.SessionId, appId, navigationPath, targetBranch, leaseId, label, Name: name);
-            var result = agent is null ? await workspaces.PrepareAsync(owner, input, cancellationToken)
+            var input = new WorkspacePrepare(requestId, owner.SessionId, appId, navigationPath, targetBranch, leaseId, label,
+                Name: name, SourceConnections: sourceConnections);
+            var result = agent is null ? await workspaces.PrepareApplicationAsync(owner, input, cancellationToken)
                 : await agent.McpPrepare(caller.Authority!, caller.UserId, owner, input, cancellationToken);
-            await AuditAsync(audit, clock, caller, result, requestId, "prepare");
-            return CoreJson.Text(await workspaces.SessionProjectionAsync(result, owner, cancellationToken));
+            if (WorkspacePreparationResponse.Representative(result) is { } tree)
+                await AuditAsync(audit, clock, caller, tree, requestId, "prepare");
+            return CoreJson.Text(await WorkspacePreparationResponse.ProjectAsync(workspaces, result, owner, cancellationToken));
         }, authorization, accessor, cancellationToken);
 
     [McpServerTool(Name = "list_workspaces", ReadOnly = true)]

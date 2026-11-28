@@ -26,7 +26,7 @@ export function canonicalAlias(action: string, input: Record<string, unknown>, c
     case "prepare": {
       const leaseId = input.leaseId ?? context.leaseId;
       if (!leaseId) throw new AppContextError(409, "workspace_lease_required", "A native activity lease is required before preparing source.");
-      return call({ ...select(input, ["requestId", "appId", "name", "targetBranch"]), taskId: context.sessionId, leaseId,
+      return call({ ...select(input, ["requestId", "appId", "name", "targetBranch", "sourceConnections"]), taskId: context.sessionId, leaseId,
         navigationPath: `/assistant?session=${encodeURIComponent(context.sessionId)}` });
     }
     case "participants": return call({ workspaceId: workspace() });

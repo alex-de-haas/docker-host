@@ -12,7 +12,16 @@ version when shipping changes. Use the configured user Git identity. Plans are o
 follow the operator's editable instructions.
 
 A workspace can include several repositories. Use one registered worktree per repository and retain
-both the aggregate workspace ID and each worktree ID. Never pass the aggregate ID to source/Git tools.
+both the aggregate workspace ID and each worktree ID. Use the worktree ID for source and Git tools.
+
+For one Git repository use `source`. For several, declare a `sources` object keyed by name and
+refer to an entry from a service with `sourceRef`. Use `primarySource` to identify the named entry
+that owns the app-level manifest or runtime source when required. Choose one of `source` and
+`sources` when declaring Git sources. Named sources require Core 0.188.0 or later.
+Preparation returns the worktrees together. Check `preparation.complete` and use the returned
+paths. Supply reviewed Git connection IDs by source name in `sourceConnections` when needed.
+For an incomplete preparation inspect its failures and retry with the original request UUID and
+arguments after restoring access or availability.
 
 To connect an existing remote, get explicit authorization, choose a connection and target branch,
 then use remote_connect. remote_fetch observes upstream without changing local branches. Inspect

@@ -104,7 +104,7 @@ internal sealed partial class DevelopmentWorkspaceService
         await RequireSessionAccessAsync(tree, actor, ct);
     }
 
-    private async Task<DevelopmentWorkspace?> PrepareAssociatedAsync(WorkspaceOwner actor, WorkspacePrepare input, CancellationToken ct, WorkspaceParticipation? selected = null)
+    private async Task<DevelopmentWorkspace?> PrepareAssociatedAsync(WorkspaceOwner actor, WorkspacePrepare input, CancellationToken ct, WorkspaceParticipation? selected = null, WorkspacePreparationRepository? planned = null)
     {
         var participation = selected ?? await SessionParticipationAsync(actor, ct);
         if (participation is null)
@@ -119,29 +119,43 @@ internal sealed partial class DevelopmentWorkspaceService
         RequestId(input.RequestId);
         if (input.SessionId != actor.SessionId) throw Error("session_invalid", "Preparation must use the authenticated session.");
         var app = await apps.GetAppAsync(input.AppId, ct) ?? throw Error("app_missing", "An installed source app is required.");
-        var source = app.SourceState ?? throw Error("source_missing", "The app has no source repository.");
-        var repository = await CanonicalRepository(source.Repository, source.LocalOverridePath, ct);
+        var source = app.SourceState;
+        if (source is null && planned is null) throw Error("source_missing", "The app has no source repository.");
+        var repository = planned?.Repository ?? await CanonicalRepository(source?.Repository, source?.LocalOverridePath, ct);
         var all = (await ListAsync(null, true, ct)).Workspaces;
-        var tree = all.FirstOrDefault(t => t.WorkspaceId == participation.Id && t.Repository == repository);
-        if (tree is null) return await PrepareCoreAsync(participation.AllocationOwner, input, ct, actor: actor);
+        var tree = all.FirstOrDefault(t => t.WorkspaceId == participation.Id && t.Repository == repository &&
+            (planned is null || t.State is not ("released" or "releasing")));
+        if (tree is null) return await PrepareCoreAsync(participation.AllocationOwner, input, ct, actor: actor, planned: planned);
+        var grant = planned is { Binding.Primary: false } additional
+            ? await BindPreparationGrantAsync(additional, actor.UserId, ct) : null;
         return await Locked(Hash(OwnerIdentity(tree.Owner)), async () =>
         {
             tree = await Read(tree.Id, actor, ct);
             await RequireOpenWorkflow(tree.Owner, ct);
             if (tree.State != "active") throw Error("not_active", "This workspace no longer has active source.");
+            if (planned is not null)
+            {
+                if (planned.AllocationGeneration != tree.AllocationGeneration)
+                    throw Error("released", "This preparation belongs to a removed workspace allocation. Start a new preparation request.");
+                if (tree.Apps.Any(binding => binding.AppId == app.Id && binding.Installation != app.InstalledAt) ||
+                    (tree.ServiceSources ?? []).Any(binding => binding.AppId == app.Id && binding.Installation != app.InstalledAt))
+                    throw Error("app_reinstalled", "This source app was reinstalled; start a new development session.");
+                await ValidateTree(tree, ct);
+            }
             if (input.TargetBranch is not null && input.TargetBranch != tree.TargetBranch) throw Error("base_conflict", "The shared worktree has a different target branch.");
-            if (!tree.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt))
-                tree = Attach(tree, app, null);
-            var fingerprint = Hash(OwnerIdentity(actor) + "\n" + CoreJson.Text(input));
+            var fingerprint = Hash(OwnerIdentity(actor) + "\n" + (planned is null ? CoreJson.Text(input) : PreparationFingerprint(input, planned)));
             var previous = tree.Operations.FirstOrDefault(o => o.Id == input.RequestId);
             if (previous is not null)
             {
                 // A new repository in an existing allocation is first written by PrepareCoreAsync.
-                var initialPreparation = previous.Actor?.SameIdentity(actor) == true && previous.Fingerprint == Hash(CoreJson.Text(input));
+                var initialPreparation = previous.Actor?.SameIdentity(actor) == true && previous.Fingerprint == PreparationFingerprint(input, planned);
                 if (previous.Kind != "prepare" || previous.Fingerprint != fingerprint && !initialPreparation)
                     throw Error("request_conflict", "Reuse the original session and preparation arguments.");
-                return tree;
+                return planned is null ? tree : await Save(BindApplicationSource(tree, app, planned));
             }
+            if (planned is not null || !tree.Apps.Any(a => a.AppId == app.Id && a.Installation == app.InstalledAt))
+                tree = BindApplicationSource(tree, app, planned);
+            if (grant?.OwnerId == tree.Owner.UserId) tree = tree with { SourceGrant = grant };
             if (input.LeaseId is not null)
             {
                 if (!Guid.TryParse(input.LeaseId, out _)) throw Error("lease_invalid", "Lease ID must be a UUID.");

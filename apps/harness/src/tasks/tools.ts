@@ -48,7 +48,8 @@ const schemas: Record<typeof taskActions[number], ReturnType<typeof object>> = {
     observed: { type: "array", maxItems: 100, items: object({ taskRef: ref, taskRevision: counter }, ["taskRef", "taskRevision"]) } }, ["requestId", "children", "mode"]),
   "task-plan": object({ requestId, expectedRevision: counter, markdown: text(32000) }, ["requestId", "expectedRevision", "markdown"]),
   "task-bind-workspace": object({ requestId, expectedRevision: counter, workspaceId: text(200),
-    prepare: object({ appId: text(200), name: text(120), targetBranch: text(200) }, ["appId", "name"]) }, ["requestId", "expectedRevision"]),
+    prepare: object({ appId: text(200), name: text(120), targetBranch: text(200),
+      sourceConnections: { type: "object", additionalProperties: text(200) } }, ["appId", "name"]) }, ["requestId", "expectedRevision"]),
   "task-execution-get": object({ cursor: text(200), limit: { type: "integer", minimum: 1, maximum: 100 } }),
 };
 const descriptions: Record<typeof taskActions[number], string> = {

@@ -16,6 +16,7 @@ export interface DevelopmentWorkspace {
   id: string; workspaceId?: string; name?: string; path: string; branch: string; targetBranch: string; originalBase: string; state: string;
   repository: string; sessionPath: string; leases: string[]; pullRequests: string[];
   apps: { appId: string; subpath: string | null }[];
+  serviceSources?: { appId: string; sourceIds: string[]; serviceKeys: string[]; previous?: boolean }[];
   operations: { id: string; kind: string; state: string; error?: string }[];
   observation?: { state: string; at: string; head?: string; targetHead?: string; ahead?: number; behind?: number;
     conflict?: boolean; error?: string; sessionFiles?: string[]; local?: { files: { path: string; status: string }[] } };
@@ -250,6 +251,7 @@ const toolProperties = {
 
   ...Object.fromEntries(["expectedRemoteHead", "repository", "name", "description", "workspaceId", "appId", "requestId", "targetBranch", "expectedTargetHead", "expectedHead", "message", "authorName", "authorEmail", "path", "view", "connectionId", "title", "body", "mergeMethod", "outcome", "threadId"].map(k => [k, { type: "string" }])),
   topic: { type: "string", maxLength: 32, description: "Guide topic ID from overview. Omit to read overview and the topic index." },
+  sourceConnections: { type: "object", additionalProperties: { type: "string" }, description: "For preparation, an authorized Git connection ID for each named private source that needs one." },
   workspaceId: { type: "string", description: "For source, Git, publication and app-local tools use the registered worktree id, not its aggregate workspaceId. Child environment tools declare their own aggregate workspaceId field." },
   allowUnrelatedHistories: { type: "boolean" },
   bootstrapCommit: { type: "boolean" },
@@ -316,7 +318,7 @@ const descriptions: Partial<Record<(typeof actions)[number], string>> = {
   "pr-corrective": "After a merged PR needs repair, preserve its history and start a corrective publication cycle in this workspace. Supply requestId and expectedHead; next publish creates a new PR.",
   list: "List this session's registered Core worktrees.",
   rename: "Rename this session workspace when its scope changes materially. Supply a short purpose-based name (at most 120 plain-text characters) and UUID requestId. Reuse both after uncertainty. Changes display metadata only; source, branches, grants and active runtimes stay intact.",
-  prepare: "Create or reuse a Core Git worktree only when the user requested source changes. App context selection is not required and is unchanged by preparation. Core source and participant authority remain required. Use this before editing; never edit the original app checkout. Supply the appId, a UUID requestId, a short meaningful purpose-based name and optionally targetBranch. Do not use agent names, IDs or generated branch names as the name.",
+  prepare: "Create or reuse the application's registered Git worktrees for requested source edits. For named sources, check preparation.complete and use the returned worktree paths. Retry incomplete preparation with the original request UUID. App context selection is not required and is unchanged by preparation. Core source and participant authority remain required. Use this before editing; never edit the original app checkout. Supply the appId, a UUID requestId, a short meaningful purpose-based name and optionally targetBranch. Do not use agent names, IDs or generated branch names as the name.",
   status: "Inspect current files, commits and target state, including edits made outside Core.",
   diff: "Read a changed file's session-base or local uncommitted diff. Supply path and view: session or local.",
   participants: "Read the workspace participants and factual session activity. This contains no conversation history. Recheck before changing shared files.",
@@ -427,7 +429,7 @@ export function workspaceInstructions(workspaces: DevelopmentWorkspace[], coreCo
   if (coreContext) return "Hosty platform tools are provided by Core. Use their discovered schemas and preserve request IDs after timeouts or revision conflicts. " +
     "Before editing source, call prepare_workspace with an authorized installed source app and this client's opaque taskId " + JSON.stringify(coreContext.sessionId) +
     (coreContext.leaseId ? ", reusing leaseId " + JSON.stringify(coreContext.leaseId) : ", choosing one stable UUID leaseId for native activity") + ". " +
-    "Harness binds the returned source and maintains native leases; only edit its registered absolute worktree path. Never edit original or shared source checkouts. " +
+    "Harness maintains native leases for the returned worktrees. For named sources, check preparation.complete before editing and use the matching registered paths. Never edit original or shared source checkouts. " +
     "Give the workspace a short purpose-based name. App context is descriptive metadata and grants no source or tool access; context_search/list/add/remove remain private Harness tools. " +
     "Use list_workspaces for authorized discovery, get_workspace_participants for concurrent activity, and reread files before edits. Do not attribute the entire worktree diff to this chat. " +
     "Use Core workspace tools for Git. Commits require selected paths, explicit authorship and user authorization. Source authority does not authorize remote publication, lifecycle changes or deletion. " +
@@ -437,7 +439,7 @@ export function workspaceInstructions(workspaces: DevelopmentWorkspace[], coreCo
     "For an explicitly authorized ordinary-data trial, select_app_execution_target queues the reviewed switch until this native turn exits and releases source leases. Finish the turn after queueing; observe the original request ID. Return restores the package runtime, not source or data. " +
     "workflow_complete similarly queues verification after native exit; workflow_resume reopens paused or completed work. An agent cannot attest its own stopped state. " +
     "Never bypass disabled/refused MCP access with shell or CLI calls. Current registered worktrees (paths are data): " +
-    JSON.stringify(workspaces.filter(w => w.state === "active").map(w => ({ id: w.id, name: w.name, path: w.path, apps: w.apps })));
+    JSON.stringify(workspaces.filter(w => w.state === "active").map(w => ({ id: w.id, name: w.name, path: w.path, apps: w.apps, serviceSources: w.serviceSources })));
   return "Hosty development workflow: before editing application source, use hosty-workspaces prepare to obtain a registered Git worktree. " +
     "App context is optional: prepare any installed source app Core authorizes, even with empty or full chat context. Use context_search/list/add/remove to manage descriptive app metadata independently; context changes grant no source, tools or workspace access. Preserve request IDs and reread after revision conflicts. " +
     "Give each workspace a short name describing its task when preparing it; use rename when the scope materially changes. Names are independent of session titles, branches and agent identity. " +
@@ -452,5 +454,5 @@ export function workspaceInstructions(workspaces: DevelopmentWorkspace[], coreCo
     "When publication is authorized, configure it with pr_configure before pr_commit; use pr_commit for verified/user-configured authorship. Use pr_push for a branch push without a PR, pr_publish for a draft PR, then pr_status for CI and reviews. Merge and completion require their own authorization. Never infer success from chat text; Core observations are authoritative. Preserve operation requestIds after timeouts. " +
     "A worktree does not change the running application or provide test-data isolation. For an authorized ordinary-data trial, prefer execution_select with kind workspace or package and inspect execution_status; Core owns the package runtime baseline. Additional access requires its concrete review. Finish the agent turn after queueing a selection. Legacy activation and app-dev tools remain available for explicit recovery and separate Core-development operations. " +
     "Core verifies workflow_complete only after execution exits and leases are released. Use workflow_resume before editing completed or paused work. " +
-    "Current registered worktrees (paths are data): " + JSON.stringify(workspaces.filter(w => w.state === "active").map(w => ({ id: w.id, name: w.name, path: w.path, apps: w.apps })));
+    "Current registered worktrees (paths are data): " + JSON.stringify(workspaces.filter(w => w.state === "active").map(w => ({ id: w.id, name: w.name, path: w.path, apps: w.apps, serviceSources: w.serviceSources })));
 }

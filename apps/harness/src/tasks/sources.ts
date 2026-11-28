@@ -45,7 +45,7 @@ export class TaskSources {
   private async bindLocked(sessionId: string, input: Record<string, unknown>) {
     const parent = await this.orchestration.context(sessionId), id = uuid(input.requestId), hash = fingerprint({ sessionId, input });
     if (!Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 0 || (!!input.workspaceId === !!input.prepare))
-      return taskError("source_invalid", "Select an existing workspace or prepare one repository at the current source revision.", 400);
+      return taskError("source_invalid", "Select an existing workspace or prepare an application at the current source revision.", 400);
     const context = await this.store.transaction(s => {
       const key = "source:" + parent.task.rootTaskRef.id;
       const current = s.journal?.[key] as ExecutionSourceContext | undefined;
@@ -54,9 +54,9 @@ export class TaskSources {
       if (input.expectedRevision !== (current?.revision ?? 0)) return taskError("revision_conflict", "Read the current source context before binding.");
       if (current?.operation && current.operation.state !== "applied") return taskError("source_pending", "Recover the root's current source operation.");
       const next: ExecutionSourceContext = current ?? { id: randomUUID(), rootTaskRef: parent.task.rootTaskRef, revision: 0, workspaceId: null, associations: {} };
-      const prepare = input.prepare as { appId: string; name: string; targetBranch?: string } | undefined;
-      if (prepare && (Object.keys(prepare).some(k => !["appId", "name", "targetBranch"].includes(k)) || !prepare.appId || !prepare.name))
-        return taskError("source_invalid", "Use a known source application, workspace name and optional target branch.", 400);
+      const prepare = input.prepare as { appId: string; name: string; targetBranch?: string; sourceConnections?: Record<string, string> } | undefined;
+      if (prepare && (Object.keys(prepare).some(k => !["appId", "name", "targetBranch", "sourceConnections"].includes(k)) || !prepare.appId || !prepare.name))
+        return taskError("source_invalid", "Use a known source application and workspace name, with an optional target branch or named source connections.", 400);
       next.operation = { id, hash, sessionId, owner: parent.owner, state: "boundary", command: { ...parent.binding,
         operation: prepare ? "prepare_source" : "bind_source", requestId: id, payload: { contextId: next.id, expectedRevision: next.revision, sessionId,
           ...(prepare ? { prepare: { ...prepare, requestId: id, sessionId, sessionPath: `/assistant?session=${encodeURIComponent(sessionId)}` } } : { workspaceId: input.workspaceId }) } } };

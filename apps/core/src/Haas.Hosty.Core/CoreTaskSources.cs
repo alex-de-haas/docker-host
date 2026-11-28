@@ -79,7 +79,14 @@ internal sealed class CoreTaskSources(CoreDataPaths paths, CoreCapabilityAuthori
                     throw Invalid();
                 if (current is not null && (await workspaces.SessionParticipationAsync(owner, ct))?.Id != current.Reference.WorkspaceId)
                     throw new CoreProviderException("source_context_changed", "Attach the existing source context before preparing another repository.", 409);
-                workspaceId = (await workspaces.PrepareAsync(owner, preparation, ct)).WorkspaceId;
+                var prepared = await workspaces.PrepareApplicationAsync(owner, preparation, ct);
+                if (!prepared.Complete)
+                {
+                    var failure = prepared.Failures[0];
+                    throw new CoreProviderException(failure.Code,
+                        $"Workspace source '{failure.Repository}' is unavailable: {failure.Error}", 409);
+                }
+                workspaceId = prepared.WorkspaceId ?? WorkspacePreparationResponse.Representative(prepared)!.WorkspaceId;
             }
             else workspaceId = input.WorkspaceId!;
             await workspaces.ParticipationAsync(workspaceId, caller.User.Id, ct);

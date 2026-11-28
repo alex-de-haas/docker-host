@@ -2680,7 +2680,9 @@ export class SessionManager {
       }
       const result = await this.development.call(id, token, action, input);
       if (["list", "prepare", "status", "commit", "refresh", "merge", "merge-upstream", "abort-merge", "cleanup", "references"].includes(action)) {
-        const workspaces = action === "list" ? (result as { workspaces: unknown[] }).workspaces : [result];
+        const workspaces = action === "list" ? (result as { workspaces: unknown[] }).workspaces
+          : action === "prepare" ? (result as { preparation?: { worktrees: unknown[] } }).preparation?.worktrees ?? [result]
+          : [result];
         const known = new Map((session.record.developmentWorkspaces ?? []).filter(isWorktreeBinding).map(w => [w.id, w]));
         for (const w of workspaces.filter(isWorktreeBinding)) known.set(w.id, w);
         session.record.developmentWorkspaces = [...known.values()];

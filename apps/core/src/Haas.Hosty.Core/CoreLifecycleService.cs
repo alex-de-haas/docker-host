@@ -4362,8 +4362,10 @@ internal sealed partial class CoreLifecycleService(
 
     private AppSourceState? BuildSourceState(RuntimeAppManifestSelection selection, AppRecord? existing)
     {
+        // The canonical local Git store retains its independent ownership and accepted-main baseline.
         if (existing?.SourceState?.Type == "local-git") return existing.SourceState;
         var source = selection.Manifest.Source;
+        if (selection.Manifest.Sources is not null && source is null) return null;
         var localOverridePath = ResolveInstallLocalSourcePath(selection, source);
         if (source?.Repository is null)
         {
@@ -5290,6 +5292,10 @@ internal sealed partial class CoreLifecycleService(
                     ManifestError: $"Live source manifest declares app id '{live.Manifest.Id}', expected '{app.Id}'.");
             }
 
+            if (AppManifestService.WorkspaceSourcesChanged(lastGood.Manifest, live.Manifest))
+                return new AppSelectionLoad(lastGood, LiveReconciled: false, ManifestError:
+                    "Workspace source declarations changed. Review and apply an update from the source manifest before restarting.");
+
             if (lastGood.Services.Any(service => service.Runtime.Type == "docker") || live.Services.Any(service => service.Runtime.Type == "docker"))
             {
                 if (DockerSourceRuntime.RequiresReview(lastGood, live))
@@ -5633,6 +5639,9 @@ internal sealed partial class CoreLifecycleService(
         {
             changes.Add("role:runtime->system");
         }
+
+        if (AppManifestService.WorkspaceSourcesChanged(currentSelection.Manifest, targetSelection.Manifest))
+            changes.Add("workspace-sources");
 
         AddUpdateServiceChanges(changes, currentSelection, targetSelection);
         AddSettingChanges(changes, app, currentSelection.Manifest.Settings, BuildSettingDefinitions(targetSelection));

@@ -62,6 +62,50 @@ public sealed partial class CoreLifecycleServiceTests
         Path.Combine(AppExecutionStore.DirectoryFor(f.Paths, "test.created"), "workspace-recipes", tree.WorkspaceId + ".json");
 
     [Fact]
+    public async Task NamedApplicationOnlyAllowsCurrentPrimaryWorktreeToSupplyRuntime()
+    {
+        var (fixture, owner, workspaces, former, current) = await MultipleRecipeTrees();
+        var app = (await fixture.Apps.GetAppAsync("test.created"))!;
+        var manifest = JsonNode.Parse(await File.ReadAllTextAsync(app.ManifestPath!))!.AsObject();
+        var primary = manifest["source"]!.DeepClone();
+        manifest.Remove("source");
+        manifest["sources"] = new JsonObject
+        {
+            ["current"] = primary,
+            ["former"] = new JsonObject { ["type"] = "git", ["repository"] = Path.GetDirectoryName(former.Repository), ["branch"] = "main" },
+        };
+        manifest["primarySource"] = "current";
+        manifest["services"]![0]!["sourceRef"] = "former";
+        var manifestPath = Path.Combine(fixture.Root, "named-sources.json");
+        await File.WriteAllTextAsync(manifestPath, manifest.ToJsonString());
+        var plan = await fixture.Service.CreateUpdatePlanAsync(app.Id, new(manifestPath));
+        await fixture.Service.ApplyUpdateAsync(app.Id, new(plan.PlanDigest));
+
+        var inspection = new WorkspaceInspectionService(workspaces, fixture.Apps, fixture.Clock);
+        var before = await inspection.ListAsync(owner.UserId, default);
+        Assert.DoesNotContain((await fixture.Service.ReadExecutionTargetsAsync(app.Id, before, default)).Choices,
+            choice => choice.Kind == "workspace");
+        WorkspaceRecipeRequest Recipe(DevelopmentWorkspace tree) => new(Guid.NewGuid().ToString(), app.Id, tree.Id, "dev");
+        var denied = await Assert.ThrowsAsync<AppLifecycleException>(() =>
+            fixture.Service.ConfigureWorkspaceRecipeAsync(former.WorkspaceId, Recipe(former), owner.UserId, null, default));
+        Assert.Equal("workspace_source_changed", denied.Code);
+
+        var prepared = await workspaces.PrepareApplicationAsync(owner, new(Guid.NewGuid().ToString(), owner.SessionId,
+            app.Id, "/assistant", "main"), default);
+        Assert.Empty(prepared.Failures);
+        Assert.Equal(current.Id, prepared.Primary?.Id);
+        Assert.Contains(prepared.Worktrees, tree => tree.Id == former.Id);
+        var configured = await fixture.Service.ConfigureWorkspaceRecipeAsync(current.WorkspaceId, Recipe(current), owner.UserId, null, default);
+        Assert.Equal(current.Id, configured.WorktreeId);
+        var after = await inspection.ListAsync(owner.UserId, default);
+        var available = Assert.Single((await fixture.Service.ReadExecutionTargetsAsync(app.Id, after, default)).Choices,
+            choice => choice.Kind == "workspace");
+        Assert.Equal(current.Id, available.WorktreeId);
+        Assert.Equal(0, fixture.Adapter.StartCount);
+        Assert.Equal(0, fixture.Adapter.StopCount);
+    }
+
+    [Fact]
     public async Task WorkspaceRecipe_MultipleRepositoriesConfigureOneTreeForInventoryAndGroupExecution()
     {
         var (f, owner, workspaces, first, second) = await MultipleRecipeTrees();
